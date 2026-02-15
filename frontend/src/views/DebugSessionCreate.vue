@@ -497,7 +497,7 @@ function handleDurationChange(ev: Event) {
 
 // Roving tabindex helpers for radio group keyboard navigation
 function focusNextRadio(event: KeyboardEvent) {
-  const group = (event.currentTarget as HTMLElement)?.closest('[role="radiogroup"]');
+  const group = event.currentTarget as HTMLElement;
   if (!group) return;
   const items = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
   const current = (event.target as HTMLElement)?.closest('[role="radio"]') as HTMLElement | null;
@@ -510,7 +510,7 @@ function focusNextRadio(event: KeyboardEvent) {
 }
 
 function focusPrevRadio(event: KeyboardEvent) {
-  const group = (event.currentTarget as HTMLElement)?.closest('[role="radiogroup"]');
+  const group = event.currentTarget as HTMLElement;
   if (!group) return;
   const items = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
   const current = (event.target as HTMLElement)?.closest('[role="radio"]') as HTMLElement | null;
