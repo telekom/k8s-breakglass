@@ -5,7 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
 )
 
 func TestKeycloakIdentityProvider_GetEmail(t *testing.T) {
@@ -271,4 +273,24 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKeycloakIdentityProvider_LoggerInjection(t *testing.T) {
+	t.Run("injected logger is used", func(t *testing.T) {
+		logger, err := zap.NewDevelopment()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = logger.Sync() })
+		sugar := logger.Sugar()
+		kip := KeycloakIdentityProvider{log: sugar}
+
+		require.Same(t, sugar, kip.getLogger())
+	})
+
+	t.Run("fallback to global logger when no logger set", func(t *testing.T) {
+		kip := KeycloakIdentityProvider{}
+
+		require.Nil(t, kip.log, "log field should be nil when no logger set")
+		// getLogger() should still return a non-nil logger (global fallback)
+		require.NotNil(t, kip.getLogger())
+	})
 }

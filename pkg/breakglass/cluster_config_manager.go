@@ -13,10 +13,41 @@ import (
 // ClusterConfigManager provides access to ClusterConfig CRs by name.
 type ClusterConfigManager struct {
 	client client.Client
+	log    *zap.SugaredLogger
 }
 
-func NewClusterConfigManager(c client.Client) *ClusterConfigManager {
-	return &ClusterConfigManager{client: c}
+// ClusterConfigManagerOption configures a ClusterConfigManager during construction.
+type ClusterConfigManagerOption func(*ClusterConfigManager)
+
+// WithClusterConfigLogger sets a custom logger for the ClusterConfigManager.
+// If not provided, the global zap.S() logger is used as fallback.
+// Passing nil is a no-op (the existing logger is retained).
+func WithClusterConfigLogger(log *zap.SugaredLogger) ClusterConfigManagerOption {
+	return func(ccm *ClusterConfigManager) {
+		if log != nil {
+			ccm.log = log
+		}
+	}
+}
+
+// getLogger returns the injected logger or falls back to the global logger.
+func (ccm *ClusterConfigManager) getLogger() *zap.SugaredLogger {
+	if ccm.log != nil {
+		return ccm.log
+	}
+	return zap.S()
+}
+
+// NewClusterConfigManager creates a ClusterConfigManager backed by the provided client.
+// Configuration is applied via functional options (WithClusterConfigLogger).
+func NewClusterConfigManager(c client.Client, opts ...ClusterConfigManagerOption) *ClusterConfigManager {
+	ccm := &ClusterConfigManager{client: c}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(ccm)
+		}
+	}
+	return ccm
 }
 
 // GetClusterConfigByName fetches the ClusterConfig CR by metadata.name (which is usually the cluster name/ID)
@@ -48,7 +79,7 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 	// Fallback: do a full list scan (should be rare) - maintain original behavior for safety.
 	list2 := telekomv1alpha1.ClusterConfigList{}
 	if err := ccm.client.List(ctx, &list2); err != nil {
-		zap.S().Errorw("Failed to list ClusterConfig resources", "error", err.Error())
+		ccm.getLogger().Errorw("Failed to list ClusterConfig resources", "error", err)
 		return nil, fmt.Errorf("failed to list ClusterConfig resources: %w", err)
 	}
 	matching := make([]*telekomv1alpha1.ClusterConfig, 0, len(list2.Items))

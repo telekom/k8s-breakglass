@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -302,5 +303,43 @@ func TestSessionManager_FieldSelectorMethods(t *testing.T) {
 		sessions, err := manager.GetClusterUserBreakglassSessions(context.Background(), "fieldtestcluster", "fieldtestuser@example.com")
 		require.NoError(t, err)
 		assert.Len(t, sessions, 1)
+	})
+}
+
+func TestSessionManager_LoggerInjection(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+
+	t.Run("injected logger via opts is used", func(t *testing.T) {
+		logger := zap.NewNop().Sugar()
+		sm := NewSessionManagerWithClient(cli, WithSessionLogger(logger))
+
+		require.Same(t, logger, sm.getLogger())
+	})
+
+	t.Run("injected logger via client and reader constructor", func(t *testing.T) {
+		logger := zap.NewNop().Sugar()
+		sm := NewSessionManagerWithClientAndReader(cli, cli, WithSessionLogger(logger))
+
+		require.Same(t, logger, sm.getLogger())
+	})
+
+	t.Run("fallback to global logger when no logger provided", func(t *testing.T) {
+		sm := NewSessionManagerWithClient(cli)
+
+		require.Nil(t, sm.log, "log field should be nil when no logger injected")
+		// getLogger() should still return a non-nil logger (global fallback)
+		require.NotNil(t, sm.getLogger())
+	})
+
+	t.Run("nil option is safely skipped", func(t *testing.T) {
+		sm := NewSessionManagerWithClient(cli, nil)
+
+		require.Nil(t, sm.log, "nil option should not set the log field")
+	})
+
+	t.Run("WithSessionLogger with nil logger is no-op", func(t *testing.T) {
+		sm := NewSessionManagerWithClient(cli, WithSessionLogger(nil))
+
+		require.Nil(t, sm.log, "WithSessionLogger(nil) should not set the log field")
 	})
 }

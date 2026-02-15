@@ -17,28 +17,38 @@ type IdentityProvider interface {
 	GetUserIdentifier(*gin.Context, v1alpha1.UserIdentifierClaimType) (string, error)
 }
 
-type KeycloakIdentityProvider struct{}
+type KeycloakIdentityProvider struct {
+	log *zap.SugaredLogger
+}
+
+// getLogger returns the injected logger or falls back to the global logger.
+func (kip KeycloakIdentityProvider) getLogger() *zap.SugaredLogger {
+	if kip.log != nil {
+		return kip.log
+	}
+	return zap.S()
+}
 
 func (kip KeycloakIdentityProvider) GetEmail(c *gin.Context) (email string, err error) {
 	email = c.GetString("email")
 	if email == "" {
-		zap.S().Warn("Keycloak provider failed to retrieve email identity from context")
+		kip.getLogger().Warn("Keycloak provider failed to retrieve email identity from context")
 		err = errors.New("keycloak provider failed to retrieve email identity")
 	} else {
-		zap.S().Debugw("Keycloak provider retrieved email", "email", email)
+		kip.getLogger().Debugw("Keycloak provider retrieved email", "email", email)
 	}
 	return
 }
 
 func (kip KeycloakIdentityProvider) GetIdentity(c *gin.Context) string {
 	id := c.GetString("user_id")
-	zap.S().Debugw("Keycloak provider retrieved user_id", "user_id", id)
+	kip.getLogger().Debugw("Keycloak provider retrieved user_id", "user_id", id)
 	return id
 }
 
 func (kip KeycloakIdentityProvider) GetUsername(c *gin.Context) string {
 	username := c.GetString("username")
-	zap.S().Debugw("Keycloak provider retrieved username", "username", username)
+	kip.getLogger().Debugw("Keycloak provider retrieved username", "username", username)
 	return username
 }
 
@@ -69,6 +79,6 @@ func (kip KeycloakIdentityProvider) GetUserIdentifier(c *gin.Context, claimType 
 			return "", errors.New("email claim not found in token (default)")
 		}
 	}
-	zap.S().Debugw("Keycloak provider retrieved user identifier", "claimType", claimType, "identifier", identifier)
+	kip.getLogger().Debugw("Keycloak provider retrieved user identifier", "claimType", claimType, "identifier", identifier)
 	return identifier, nil
 }
