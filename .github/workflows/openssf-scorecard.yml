@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # This workflow generates an OpenSSF scorecard report, and uploads the report
 # (i) as an artifact to the actions tab, and (ii) to GitHub's code scanning dashboard
 # Note: This workflow file is slightly adpated version of
