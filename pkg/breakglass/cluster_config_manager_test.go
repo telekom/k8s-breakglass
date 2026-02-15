@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -110,7 +111,8 @@ func TestNewClusterConfigManager_Logger(t *testing.T) {
 	t.Run("without logger uses global", func(t *testing.T) {
 		mgr := NewClusterConfigManager(cli)
 
-		assert.NotNil(t, mgr.log)
+		// Should default to the global sugared logger
+		assert.Same(t, zap.S(), mgr.log)
 	})
 
 	t.Run("getLog returns nopLogger for zero-value", func(t *testing.T) {

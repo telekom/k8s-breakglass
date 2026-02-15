@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -125,8 +126,8 @@ func TestNewSessionManagerWithClientAndReader(t *testing.T) {
 	t.Run("without logger uses global", func(t *testing.T) {
 		mgr := NewSessionManagerWithClientAndReader(fakeClient, nil)
 
-		// Without explicit logger, getLoggerOrDefault returns zap.S()
-		assert.NotNil(t, mgr.log)
+		// Without explicit logger, should default to the global sugared logger
+		assert.Same(t, zap.S(), mgr.log)
 	})
 }
 
