@@ -54,8 +54,8 @@ const stateLabel = computed(() => {
 
 const stateClass = computed(() => (props.session.state || "unknown").toLowerCase());
 
-const canJoin = computed(() => props.session.state === "Active" && !props.isOwner);
-const canLeave = computed(() => props.session.state === "Active" && !props.isOwner);
+const canJoin = computed(() => props.session.state === "Active" && !props.isOwner && !props.session.isParticipant);
+const canLeave = computed(() => props.session.state === "Active" && !props.isOwner && props.session.isParticipant);
 const canTerminate = computed(() => props.session.state === "Active" && props.isOwner);
 const canRenew = computed(() => props.session.state === "Active" && props.isOwner);
 const canApprove = computed(() => props.session.state === "PendingApproval");

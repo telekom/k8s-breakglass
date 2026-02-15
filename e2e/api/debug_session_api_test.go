@@ -73,15 +73,16 @@ type DebugSessionListResponse struct {
 
 // DebugSessionSummary represents a summarized debug session for list responses
 type DebugSessionSummary struct {
-	Name         string                            `json:"name"`
-	TemplateRef  string                            `json:"templateRef"`
-	Cluster      string                            `json:"cluster"`
-	RequestedBy  string                            `json:"requestedBy"`
-	State        telekomv1alpha1.DebugSessionState `json:"state"`
-	StartsAt     *metav1.Time                      `json:"startsAt,omitempty"`
-	ExpiresAt    *metav1.Time                      `json:"expiresAt,omitempty"`
-	Participants int                               `json:"participants"`
-	AllowedPods  int                               `json:"allowedPods"`
+	Name          string                            `json:"name"`
+	TemplateRef   string                            `json:"templateRef"`
+	Cluster       string                            `json:"cluster"`
+	RequestedBy   string                            `json:"requestedBy"`
+	State         telekomv1alpha1.DebugSessionState `json:"state"`
+	StartsAt      *metav1.Time                      `json:"startsAt,omitempty"`
+	ExpiresAt     *metav1.Time                      `json:"expiresAt,omitempty"`
+	Participants  int                               `json:"participants"`
+	IsParticipant bool                              `json:"isParticipant"`
+	AllowedPods   int                               `json:"allowedPods"`
 }
 
 // DebugSessionTemplateAPIResponse matches the API response structure for templates
