@@ -198,7 +198,6 @@ jobs:
     needs: [build-image]
     permissions:
       packages: write
-      id-token: write
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.inspect.outputs.digest }}
@@ -237,6 +236,14 @@ jobs:
             echo "Error: No digest files found in /tmp/digests. Artifact download may have failed." >&2
             exit 1
           fi
+
+          # Verify all expected platform digests are present
+          for expected in linux-amd64 linux-arm64; do
+            if [ ! -f "/tmp/digests/${expected}" ]; then
+              echo "Error: Missing digest for platform ${expected}. Cannot assemble incomplete multi-arch manifest." >&2
+              exit 1
+            fi
+          done
 
           # Collect per-arch digests into an array
           DIGESTS=()
@@ -348,7 +355,6 @@ jobs:
     permissions:
       contents: write
       packages: read
-      id-token: write
     runs-on: ubuntu-latest
     steps:
       - name: Download manifests
