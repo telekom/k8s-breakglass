@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Frontend Auth Provider Consistency**: Added explicit Auth provider guards and removed non-null assertion usage in `BreakglassView`, `BreakglassSessionReview`, and `PendingApprovalsView` to fail fast instead of crashing later on missing app providers
+- **Session Approval Redirect Cleanup**: `SessionApprovalView` now enforces Auth provider presence and clears pending 401 redirect timers on unmount to prevent stale navigations after component teardown
 - **Frontend Auth Guard Hardening**: Added an explicit Auth provider guard in `AutoLogoutWarning` and removed unsafe auth casting so missing app providers fail fast with a clear error
 - **Frontend Auth Guard Consistency**: Added an explicit Auth provider guard in `MyPendingRequests` and removed nullable service fallback to prevent deferred runtime errors when app providers are misconfigured
 - **Dockerfile Cross-Compilation**: Added `GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}` to the `go build` command in Dockerfile, ensuring correct binary architecture when building multi-platform images and falling back to the host architecture for non-BuildKit builds
