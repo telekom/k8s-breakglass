@@ -124,7 +124,8 @@ func TestEventEmissionWithEventRecorder(t *testing.T) {
 	// Verify event was recorded
 	select {
 	case event := <-fakeRecorder.Events:
-		// Event format is "Normal TestEvent TestEvent Test message"
+		// Event format is "Normal TestEvent TestEvent Test message" — reason and action share the name.
+		//nolint:dupword // literal event format contains intentional duplicate word
 		assert.Contains(t, event, "Normal")
 		assert.Contains(t, event, "TestEvent")
 		assert.Contains(t, event, "Test message")

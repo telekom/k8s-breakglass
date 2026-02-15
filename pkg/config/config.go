@@ -334,12 +334,12 @@ func Load(configPath ...string) (Config, error) {
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return config, fmt.Errorf("trying to open breakglass config file %s: %v", configPath, err)
+		return config, fmt.Errorf("trying to open breakglass config file %s: %w", configPath, err)
 	}
 
 	err = yaml.Unmarshal(content, &config)
 	if err != nil {
-		return config, fmt.Errorf("error unmarshaling YAML %s: %v", configPath, err)
+		return config, fmt.Errorf("error unmarshaling YAML %s: %w", configPath, err)
 	}
 	return config, nil
 }

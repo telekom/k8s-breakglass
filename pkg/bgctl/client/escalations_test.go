@@ -187,7 +187,7 @@ func TestEscalationsList_ServerError(t *testing.T) {
 	_, err = client.Escalations().List(context.Background())
 	require.Error(t, err)
 
-	httpErr, ok := err.(*HTTPError)
-	require.True(t, ok)
+	var httpErr *HTTPError
+	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, http.StatusInternalServerError, httpErr.StatusCode)
 }

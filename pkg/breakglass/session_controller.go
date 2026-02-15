@@ -1004,7 +1004,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// Ignore errors; payload is optional. Guard against nil Request.Body which can occur in tests/clients.
 	if c.Request != nil && c.Request.Body != nil {
 		if err := decodeJSONStrict(c.Request.Body, &approverPayload); err != nil {
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) {
 				reqLog.Debugw("Failed to decode optional approver payload (using empty values)", "error", err)
 			}
 		}
