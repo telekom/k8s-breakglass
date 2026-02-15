@@ -13,8 +13,6 @@ e2e/
 charts/
 logs/
 *.md
-LICENSE
-NOTICE
 CODEOWNERS
 PROJECT
 Makefile
@@ -24,5 +22,7 @@ Makefile
 .gitignore
 .vscode/
 REUSE.toml
-LICENSES/
 frontend/dist
+
+# Keep license files available for Dockerfile COPY
+# (LICENCE, LICENSE, NOTICE, LICENSES/ are needed in the image)
