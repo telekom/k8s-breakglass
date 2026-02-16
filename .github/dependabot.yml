@@ -60,6 +60,15 @@ updates:
     commit-message:
       prefix: "deps(docker)"
 
+  - package-ecosystem: helm
+    directory: /charts/escalation-config
+    schedule:
+      interval: weekly
+      day: "monday"
+    commit-message:
+      prefix: "deps(helm)"
+    open-pull-requests-limit: 3
+
 # Note: The following tool versions are NOT tracked by Dependabot and require manual updates:
 #
 # Makefile:
