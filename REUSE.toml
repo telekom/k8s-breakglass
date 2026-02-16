@@ -10,60 +10,70 @@ SPDX-PackageDownloadLocation = "https://github.com/telekom/k8s-breakglass"
 
 # Go files
 [[annotations]]
+precedence = "aggregate"
 path = ["*.go", "go.mod", "go.sum", "pkg/**.go", "internal/**.go", "api/**.go", "pkg/*/templates/**.html", "cmd/**.go", "e2e/**.go"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
 # Config files
 [[annotations]]
+precedence = "aggregate"
 path = ["config/**.yaml", "charts/**.yaml", "charts/**.txt", "e2e/**.yaml", "utils/config/**.yaml","config.example.yaml","config/dev/resources/breakglass-e2e-realm.json","config/dev/resources/breakglass-e2e-contractors-realm.json"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
 # Scripts
 [[annotations]]
+precedence = "aggregate"
 path = ["*.sh", "Makefile", "Dockerfile", "hack/**", "tools/**", "e2e/**.sh", "e2e/**.yaml", "e2e/**.md", "config/dev/**.sh"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
 # Documentation
 [[annotations]]
+precedence = "aggregate"
 path = ["*.md", "docs/**", "config/samples/README.md"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"
 
 # Charts documentation under charts/ (recursive)
 [[annotations]]
+precedence = "aggregate"
 path = ["charts/**.md", "charts/**/README.md"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"
 
 # Frontend
 [[annotations]]
+precedence = "aggregate"
 path = ["frontend/**"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
 # Chart assets and templates
 [[annotations]]
+precedence = "aggregate"
 path = ["charts/**"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
 # REUSE config itself
 [[annotations]]
+precedence = "aggregate"
 path = ["REUSE.toml", ".reuse/"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC0-1.0"
 
 # CI files
 [[annotations]]
-path = [".github/**", ".gitlab-ci.yml", ".golangci.yml"]
+precedence = "aggregate"
+path = [".github/**", ".gitlab-ci.yml", ".golangci.yml", "codecov.yml", "versions.env"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC0-1.0"
 
 # ignore editor config files
 [[annotations]]
+precedence = "aggregate"
 path = [".editorconfig", ".dockerignore", ".gitignore", ".gitattributes", ".copilotignore", ".reuse/"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC0-1.0"
