@@ -59,7 +59,11 @@ func Setup(
 	}
 
 	// Create a manager for webhooks (separate from reconciler manager)
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load kubeconfig for webhook manager: %w", err)
+	}
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:           scheme,
 		WebhookServer:    webhookServer,
 		Metrics:          metricsServerOptions,
