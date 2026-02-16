@@ -108,9 +108,17 @@ For release signing, provenance, and supply-chain requirements, see [docs/releas
 This project supports AI coding assistants (GitHub Copilot, etc.):
 
 - **Project conventions**: See [`.github/copilot-instructions.md`](.github/copilot-instructions.md) for comprehensive coding guidelines that AI assistants load automatically.
-- **Agent instructions**: [`AGENTS.md`](AGENTS.md) provides a concise reference of critical rules (added via PR #376).
-- **Context filtering**: [`.copilotignore`](.copilotignore) excludes auto-generated files and build artifacts from AI context (added via PR #376).
+- **Agent instructions**: [`AGENTS.md`](AGENTS.md) provides a concise reference of critical rules.
+- **Context filtering**: [`.copilotignore`](.copilotignore) excludes auto-generated files and build artifacts from AI context.
 - **Prompt templates**: Reusable prompts in `.github/prompts/` for common tasks (planned).
+
+Key conventions documented in the instructions include:
+
+- **Go patterns**: controller-runtime idioms, SSA field ownership, structured logging
+- **Frontend**: Vue 3 + TypeScript conventions, Pinia store patterns
+- **Testing**: Go table-driven tests, fuzz tests, `//go:build` tags, frontend test setup
+- **Helm charts**: values structure, CRD management, RBAC generation
+- **REUSE compliance**: SPDX headers required in all new files
 
 When using AI to generate code, always verify:
 1. Auto-generated files (CRDs, DeepCopy) are not directly edited
