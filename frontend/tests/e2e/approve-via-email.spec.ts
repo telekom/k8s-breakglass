@@ -310,7 +310,8 @@ test.describe.serial("Approve Session via Email Link", () => {
 
         // Wait for redirect back to the app after Keycloak login
         // The OIDC callback should redirect to the original approval page path
-        await newPage.waitForURL(/localhost:\d+/, { timeout: 30000 });
+        // Use generous timeout — Keycloak JVM can be slow on CI cold-start
+        await newPage.waitForURL(/localhost:\d+/, { timeout: 60000 });
         console.log("Redirected back to app:", newPage.url());
 
         // Wait for callback processing and redirect to approval page

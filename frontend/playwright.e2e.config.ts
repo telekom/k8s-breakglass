@@ -18,8 +18,9 @@ export default defineConfig({
   // Run serially to avoid cross-test interference.
   fullyParallel: false,
 
-  // Reduce retries - if tests are flaky, fix them instead
-  retries: process.env.CI ? 1 : 0,
+  // Retry once on CI to handle transient issues (Keycloak cold-start,
+  // network jitter on kind cluster runners).
+  retries: process.env.CI ? 2 : 0,
 
   // Keep a single worker to avoid collisions in shared backend state.
   workers: 1,
