@@ -93,7 +93,7 @@ func getKeycloakToken(ctx context.Context, baseURL, realm, clientID, clientSecre
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // E2E test uses self-signed certs
 		},
 	}
 
@@ -128,7 +128,7 @@ func getKeycloakUser(ctx context.Context, baseURL, realm, token, email string) (
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // E2E test uses self-signed certs
 		},
 	}
 
@@ -166,7 +166,7 @@ func getKeycloakGroups(ctx context.Context, baseURL, realm, token, userID string
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // E2E test uses self-signed certs
 		},
 	}
 
