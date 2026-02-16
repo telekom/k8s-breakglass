@@ -28,8 +28,23 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] New and existing unit tests pass locally (`make test`)
 - [ ] Linting passes (`make lint`)
 - [ ] I have made corresponding changes to the documentation
+- [ ] `CHANGELOG.md` updated under `[Unreleased]` for user-facing changes
 - [ ] My changes generate no new warnings
-- [ ] REUSE compliance check passes (`reuse lint`)
+- [ ] REUSE SPDX license header compliance check passes (`reuse lint`)
+
+### If CRD / API types changed
+
+- [ ] Ran `make generate && make manifests` and committed generated files
+
+### If Helm chart affected
+
+- [ ] Updated `charts/escalation-config/` templates and values
+- [ ] Ran `helm lint charts/escalation-config` and `helm template test charts/escalation-config`
+
+### If Frontend changed
+
+- [ ] TypeScript type-check passes (`cd frontend && npm run typecheck`)
+- [ ] Frontend tests pass (`cd frontend && npm test`)
 
 ## Component Affected
 
