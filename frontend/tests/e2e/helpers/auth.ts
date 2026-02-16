@@ -277,6 +277,13 @@ export class AuthHelper {
   }
 
   /**
+   * Keycloak redirect timeout (ms). Increased from 30s to 60s because
+   * Keycloak in CI (kind cluster) can be slow to respond, especially
+   * on the first login when JVM is still warming up.
+   */
+  private static readonly KEYCLOAK_TIMEOUT = 60_000;
+
+  /**
    * Log in via Keycloak OIDC flow.
    * Navigates to the app, clicks login button, fills Keycloak credentials,
    * and waits for redirect back to the app.
@@ -307,8 +314,9 @@ export class AuthHelper {
       }
     }
 
-    // Wait for Keycloak login page (may take a moment)
-    await this.page.waitForURL(/.*keycloak.*|.*auth.*/, { timeout: 30000 });
+    // Wait for Keycloak login page — use generous timeout because Keycloak's
+    // JVM can be slow in CI (cold-start on kind cluster runners).
+    await this.page.waitForURL(/.*keycloak.*|.*auth.*/, { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
 
     // Fill login form
     await this.page.fill("#username", user.username);
@@ -316,7 +324,7 @@ export class AuthHelper {
     await this.page.click("#kc-login");
 
     // Wait for redirect back to app (use regex to match any localhost port)
-    await this.page.waitForURL(/localhost:\d+/, { timeout: 30000 });
+    await this.page.waitForURL(/localhost:\d+/, { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
 
     // Verify logged in state - wait for authenticated content to appear
     // The profile menu (data-testid="user-menu") may not be accessible in CI due to

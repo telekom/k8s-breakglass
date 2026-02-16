@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI E2E Keycloak timeout flake**: Increased Keycloak redirect timeouts from 30s to 60s in E2E auth helper and approve-via-email spec to prevent flaky failures when Keycloak JVM is cold-starting on CI runners. Increased Playwright retry count from 1 to 2 for additional resilience
 - **Replace GetConfigOrDie with GetConfig for graceful error handling**: Replaced panic-inducing `ctrl.GetConfigOrDie()` calls with `ctrl.GetConfig()` in webhook and certificate manager setup code, enabling graceful error handling instead of crashing the process on misconfiguration
 - **Debug Session Join button shown to owner/participants**: Join button was visible to the session creator and already-joined participants, resulting in 409 conflict errors. Added `isParticipant` field to `DebugSessionSummary` API response and updated both `DebugSessionCard` and `DebugSessionDetails` views to hide Join when the user is the owner or already a participant
 - **Debug pod name has redundant "debug-debug-" prefix**: Workload names for debug sessions had a double `debug-` prefix (e.g., `debug-debug-user-cluster-123`) because the session name already starts with `debug-` and the workload builder prepended another. Removed the extra prefix so workload names match the session name directly
