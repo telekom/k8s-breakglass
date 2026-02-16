@@ -296,18 +296,30 @@ jobs:
           # Display full manifest details for diagnostics
           docker buildx imagetools inspect "${IMG}"
 
-          # Extract the top-level digest from the inspect output.
-          # NOTE: --format '{{.Manifest.Digest}}' is unreliable across Buildx
-          # versions — some versions return the full human-readable output
-          # instead of just the digest, which corrupts $GITHUB_OUTPUT with
-          # multi-line content containing colons (e.g. "MediaType: ...").
-          # Instead, compute the digest from the raw manifest JSON.
-          DIGEST="sha256:$(docker buildx imagetools inspect "${IMG}" --raw | sha256sum | cut -d' ' -f1)"
+          # Extract the top-level digest from the manifest by hashing the raw
+          # manifest JSON. We do not rely on --format due to historical
+          # incompatibilities across Buildx versions.
+          RAW_MANIFEST_DIGEST="sha256:$(docker buildx imagetools inspect "${IMG}" --raw | sha256sum | cut -d' ' -f1)"
 
-          if [ -z "${DIGEST}" ] || [ "${DIGEST}" = "sha256:" ]; then
-            echo "Error: Failed to extract digest for ${IMG}" >&2
+          # Strictly validate the computed digest format: must be sha256: + 64 hex chars.
+          if ! printf '%s\n' "${RAW_MANIFEST_DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Error: Computed manifest digest has unexpected format: ${RAW_MANIFEST_DIGEST}" >&2
             exit 1
           fi
+
+          # Cross-check the computed digest against the Digest line reported by Buildx/registry.
+          REGISTRY_DIGEST="$(docker buildx imagetools inspect "${IMG}" | awk '/^Digest:/ {print $2; exit}')"
+          if [ -z "${REGISTRY_DIGEST}" ]; then
+            echo "Error: Failed to parse Digest line from 'docker buildx imagetools inspect ${IMG}' output." >&2
+            exit 1
+          fi
+
+          if [ "${REGISTRY_DIGEST}" != "${RAW_MANIFEST_DIGEST}" ]; then
+            echo "Error: Mismatch between computed manifest digest (${RAW_MANIFEST_DIGEST}) and registry-reported digest (${REGISTRY_DIGEST})." >&2
+            exit 1
+          fi
+
+          DIGEST="${RAW_MANIFEST_DIGEST}"
 
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Multi-arch manifest digest: ${DIGEST}"
