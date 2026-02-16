@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Package Documentation**: Added `doc.go` files to all packages missing Go package-level documentation comments
+
 ### Changed
 
 - **Upgraded JWT dependencies**: Migrated from `keyfunc/v1` to `keyfunc/v3` and `jwt/v4` to `jwt/v5` for improved security and maintainability. keyfunc/v3 uses context-based lifecycle management instead of manual `EndBackground()` calls, and automatically refreshes on unknown kid

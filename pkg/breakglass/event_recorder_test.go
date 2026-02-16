@@ -13,7 +13,7 @@ import (
 
 // Test that K8sEventRecorder emits Events into the same namespace as the object
 func TestEventRecorder_UsesObjectNamespace(t *testing.T) {
-	cs := fake.NewSimpleClientset() //nolint:staticcheck // TODO(#378): migrate to NewClientset when available
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // TODO(#381): migrate to NewClientset when available
 	logger, _ := zap.NewDevelopment()
 	rec := &K8sEventRecorder{Clientset: cs, Source: corev1.EventSource{Component: "test"}, Logger: logger.Sugar()}
 
@@ -50,7 +50,7 @@ func TestEventRecorder_UsesObjectNamespace(t *testing.T) {
 
 // Test that when object has no namespace, recorder falls back to controller namespace
 func TestEventRecorder_FallbackToPodNamespace(t *testing.T) {
-	cs := fake.NewSimpleClientset() //nolint:staticcheck // TODO(#378): migrate to NewClientset when available
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // TODO(#381): migrate to NewClientset when available
 	logger, _ := zap.NewDevelopment()
 	rec := &K8sEventRecorder{Clientset: cs, Source: corev1.EventSource{Component: "test"}, Namespace: "podns", Logger: logger.Sugar()}
 
