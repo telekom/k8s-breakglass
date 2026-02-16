@@ -41,6 +41,38 @@ jobs:
         continue-on-error: true
         run: govulncheck ./...
 
+  gosec:
+    name: Go Security Checker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      # actions: read is required by codeql-action/upload-sarif to resolve
+      # the workflow run context (ref, sha) for SARIF result correlation.
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.23.0
+
+      - name: Run gosec
+        continue-on-error: true
+        run: gosec -fmt sarif -out gosec-results.sarif ./...
+
+      - name: Upload gosec results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        with:
+          sarif_file: 'gosec-results.sarif'
+
   trivy:
     runs-on: ubuntu-latest
     steps:
@@ -95,7 +127,7 @@ jobs:
           output: 'trivy-fs-results.sarif'
 
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.2
+        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
         if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         with:
           sarif_file: 'trivy-fs-results.sarif'
