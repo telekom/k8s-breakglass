@@ -137,7 +137,11 @@ func (m *Manager) getManagerFactory() func(*runtime.Scheme) (ctrl.Manager, error
 	}
 
 	return func(scheme *runtime.Scheme) (ctrl.Manager, error) {
-		return ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		cfg, err := ctrl.GetConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
+		}
+		return ctrl.NewManager(cfg, ctrl.Options{
 			Scheme:           scheme,
 			LeaderElection:   false,
 			LeaderElectionID: "",
