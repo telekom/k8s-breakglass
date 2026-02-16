@@ -162,6 +162,9 @@ jobs:
           # Push by digest only — no tag yet; tags are created in the assemble step
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Note: buildx cache (cache-from/cache-to) is intentionally omitted for
+          # release builds to ensure clean, reproducible images without layer reuse
+          # from development iterations.
           build-args: |
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
@@ -209,7 +212,7 @@ jobs:
       digest: ${{ steps.inspect.outputs.digest }}
     steps:
       - name: Download all digests
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: digest-*
           merge-multiple: true
@@ -380,12 +383,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download manifests
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: manifests
           path: .
       - name: Download bgctl dist
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: bgctl-dist
           path: dist
