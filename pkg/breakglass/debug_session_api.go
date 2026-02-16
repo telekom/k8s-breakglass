@@ -743,7 +743,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// The session name is deterministic (debug-{user}-{cluster}-{timestamp}), so SSA
 	// would technically work, but we want explicit conflict detection for the API.
 	//
-	// TODO(SSA): Consider using SSA with a pre-check Get() if we want SSA semantics
+	// TODO(https://github.com/telekom/k8s-breakglass/issues/382): Consider using SSA with a pre-check Get() if we want SSA semantics
 	// while preserving conflict detection for duplicate session names.
 	if err := c.client.Create(apiCtx, session); err != nil {
 		if apierrors.IsAlreadyExists(err) {
