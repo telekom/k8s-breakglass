@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`approvalTimeout` Field Documentation**: Added documentation for the `approvalTimeout` escalation field in breakglass-escalation.md
 - **`BREAKGLASS_ALLOW_DEFAULT_ORIGINS` Documentation**: Documented the development-only environment variable for default CORS origins
 - **DebugSessionClusterBinding in README**: Added `DebugSessionClusterBinding` CRD to the main README CRD list
+- **AI-Assisted Development Guidelines**: Added AI-assisted development section to CONTRIBUTING.md with tool references and verification checklist
 
 ### Changed
 

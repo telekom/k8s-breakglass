@@ -108,9 +108,9 @@ For release signing, provenance, and supply-chain requirements, see [docs/releas
 This project supports AI coding assistants (GitHub Copilot, etc.):
 
 - **Project conventions**: See [`.github/copilot-instructions.md`](.github/copilot-instructions.md) for comprehensive coding guidelines that AI assistants load automatically.
-- **Agent instructions**: See [`AGENTS.md`](AGENTS.md) for a concise reference of critical rules.
-- **Context filtering**: [`.copilotignore`](.copilotignore) excludes auto-generated files and build artifacts from AI context.
-- **Prompt templates**: Reusable prompts in [`.github/prompts/`](.github/prompts/) for common tasks.
+- **Agent instructions**: [`AGENTS.md`](AGENTS.md) provides a concise reference of critical rules (added via PR #376).
+- **Context filtering**: [`.copilotignore`](.copilotignore) excludes auto-generated files and build artifacts from AI context (added via PR #376).
+- **Prompt templates**: Reusable prompts in `.github/prompts/` for common tasks (planned).
 
 When using AI to generate code, always verify:
 1. Auto-generated files (CRDs, DeepCopy) are not directly edited
