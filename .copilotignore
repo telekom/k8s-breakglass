@@ -3,6 +3,7 @@ config/crd/bases/
 config/rbac/
 config/webhook/manifests.yaml
 api/**/zz_generated.deepcopy.go
+api/**/applyconfiguration/
 
 # Build artifacts and binaries
 bin/

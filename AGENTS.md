@@ -48,7 +48,7 @@ config/                        Kustomize overlays
 
 ## Build Tags
 
-- `//go:build e2e` — E2E tests (run with `E2E_TEST=true`)
+- `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)
 - Standard unit tests have no build tags
 
 ## CRD Resources

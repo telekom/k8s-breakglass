@@ -133,18 +133,19 @@ npm test           # Vitest
 ### Fuzz Testing Convention
 Fuzz tests validate CRD type round-tripping and input resilience:
 ```go
-func FuzzBreakglassSessionSpec(f *testing.F) {
-    f.Add("user@example.com", "admin-group", "emergency access")
-    f.Fuzz(func(t *testing.T, user, group, reason string) {
-        spec := &BreakglassSessionSpec{User: user, Group: group, Reason: reason}
-        // Validate doesn't panic, marshal/unmarshal round-trips
+func FuzzValidateIdentifierFormat(f *testing.F) {
+    f.Add("admin-group")
+    f.Add("user@example.com")
+    f.Fuzz(func(t *testing.T, input string) {
+        // Validate doesn't panic on arbitrary input
+        _ = ValidateIdentifierFormat(input, field.NewPath("test"))
     })
 }
 ```
-Run fuzz tests with: `go test -fuzz=FuzzBreakglassSessionSpec ./api/v1alpha1/ -fuzztime=30s`
+Run fuzz tests with: `go test -fuzz=FuzzValidateIdentifierFormat ./api/v1alpha1/ -fuzztime=30s`
 
 ### Build Tags
-- `//go:build e2e` — E2E test files, only compiled when `E2E_TEST=true`
+- `//go:build e2e` — E2E test files, compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`
 - Standard unit tests have no build constraints
 - Frontend E2E tests use Playwright config: `playwright.e2e.config.ts`
 
