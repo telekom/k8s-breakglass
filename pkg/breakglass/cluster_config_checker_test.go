@@ -321,8 +321,13 @@ func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 	// Signal leadership - checker should start
 	close(leaderChan)
 
-	// Wait for goroutine to finish before defers restore package-level variables
-	<-done
+	// Wait for goroutine to finish before defers restore package-level variables.
+	// Use a timeout so the test cannot hang indefinitely on a regression.
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for checker.Start to return after context cancellation")
+	}
 }
 
 // OIDC-specific tests

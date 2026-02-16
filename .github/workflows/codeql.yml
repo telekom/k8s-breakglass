@@ -57,5 +57,8 @@ jobs:
         uses: github/codeql-action/analyze@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
         with:
           category: '/language:go'
-          # Skip SARIF upload on PRs to avoid conflict with default CodeQL setup
+          # Skip SARIF upload on PRs to avoid conflict with the repository's
+          # default CodeQL setup.  PR runs still serve as a smoke-test: the
+          # analysis executes fully and will surface build or query errors in
+          # the workflow log, ensuring new code passes CodeQL before merge.
           upload: ${{ github.event_name != 'pull_request' }}
