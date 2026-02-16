@@ -42,7 +42,7 @@
     "jose": "^6.1.2",
     "oidc-client-ts": "^3.4.1",
     "pinia": "^3.0.4",
-    "vue": "^3.5.27",
+    "vue": "^3.5.28",
     "vue-router": "^5.0.2"
   },
   "devDependencies": {
@@ -72,7 +72,7 @@
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.15",
-    "vue-eslint-parser": "^10.2.0",
+    "vue-eslint-parser": "^10.4.0",
     "vue-tsc": "^3.2.4"
   }
 }
