@@ -47,6 +47,9 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # actions: read is required by codeql-action/upload-sarif to resolve
+      # the workflow run context (ref, sha) for SARIF result correlation.
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -57,14 +60,15 @@ jobs:
           go-version-file: go.mod
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.23.0
 
       - name: Run gosec
-        run: gosec -fmt sarif -out gosec-results.sarif ./... || true
+        continue-on-error: true
+        run: gosec -fmt sarif -out gosec-results.sarif ./...
 
       - name: Upload gosec results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.2
-        if: always()
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         with:
           sarif_file: 'gosec-results.sarif'
