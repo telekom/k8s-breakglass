@@ -307,6 +307,7 @@ jobs:
       contents: read
       packages: write
       id-token: write  # Required for actions/attest-build-provenance
+      attestations: write  # Required to persist attestations
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set up QEMU
@@ -435,7 +436,7 @@ jobs:
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
