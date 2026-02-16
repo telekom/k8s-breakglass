@@ -130,6 +130,34 @@ npm test           # Vitest
 - Frontend: `frontend/tests/`, `npm test` (Vitest)
 - E2E: See "Running E2E Tests Locally" section below
 
+### Fuzz Testing Convention
+Fuzz tests validate CRD type round-tripping and input resilience:
+```go
+func FuzzValidateIdentifierFormat(f *testing.F) {
+    f.Add("admin-group")
+    f.Add("user@example.com")
+    f.Fuzz(func(t *testing.T, input string) {
+        // Validate doesn't panic on arbitrary input
+        _ = ValidateIdentifierFormat(input, field.NewPath("test"))
+    })
+}
+```
+Run fuzz tests with: `go test -fuzz=FuzzValidateIdentifierFormat ./api/v1alpha1/ -fuzztime=30s`
+
+### Build Tags
+- `//go:build e2e` — E2E test files, compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`
+- Standard unit tests have no build constraints
+- Frontend E2E tests use Playwright config: `playwright.e2e.config.ts`
+
+### Frontend Development Conventions
+- **Component patterns**: Vue 3 Composition API with `<script setup lang="ts">`
+- **State management**: Pinia is initialized in `frontend/src/main.ts`; define any future global stores under `frontend/src/stores/`
+- **TypeScript**: Strict mode enabled; all props and emits must be typed
+- **Testing**: Vitest for unit tests, Playwright for E2E
+- **Style**: Scoped `<style>` blocks; use CSS custom properties for theming
+- **API integration**: All API calls through composables in `frontend/src/composables/`
+- **Build flavours**: `UI_FLAVOUR=oss` (default) or `UI_FLAVOUR=telekom` (branded)
+
 ### Running E2E Tests Locally (CRITICAL)
 
 The E2E tests require a kind cluster with the full breakglass stack. **Use these exact commands matching CI:**

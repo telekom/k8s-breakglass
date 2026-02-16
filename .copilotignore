@@ -1,0 +1,39 @@
+# Auto-generated files (never edit these directly)
+config/crd/bases/
+config/rbac/
+config/webhook/manifests.yaml
+api/**/zz_generated.deepcopy.go
+api/**/applyconfiguration/
+
+# Build artifacts and binaries
+bin/
+main
+cover.out
+coverage.out
+dist/
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+
+# E2E test artifacts (generated at runtime)
+e2e/kind-setup-single-tdir/
+e2e/kind-setup-single-tls/
+e2e/kind-setup-multi-tdir/
+e2e/kind-setup-multi-tls/
+e2e/*.log
+e2e-setup-failure-logs/
+e2e-diagnostics/
+multi-cluster-e2e-diagnostics/
+logs/
+
+# Vendor directories
+vendor/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
