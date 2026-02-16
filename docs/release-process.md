@@ -37,9 +37,9 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 1. **Prepare** — generates Kustomize manifests, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
-3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version (and `latest` for tag pushes).
+3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version (and `latest` for tag pushes). Generates SLSA provenance attestation for supply-chain integrity.
 4. **Artifactory** — mirrors the multi-arch image to the internal Artifactory OCI registry.
-5. **Release** — creates a GitHub Release with manifests, `bgctl` binaries, checksums, and (when enabled) an SBOM.
+5. **Release** — creates a GitHub Release with manifests, `bgctl` binaries, checksums, and SBOM (SPDX-JSON format via Syft).
 
 > **Note:** Buildx layer caching (`cache-from`/`cache-to`) is intentionally omitted in
 > release builds to ensure clean, reproducible images without layer reuse from prior

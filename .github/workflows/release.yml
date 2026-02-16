@@ -210,6 +210,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.inspect.outputs.digest }}
@@ -295,14 +296,7 @@ jobs:
           DIGEST=$(docker buildx imagetools inspect "${IMG}" --format '{{.Manifest.Digest}}')
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Multi-arch manifest digest: ${DIGEST}"
-      - name: Attest provenance (skipped temporarily)
-        # TODO: Re-enable when id-token is available in all runners.
-        # When re-enabling:
-        #   1. Add `id-token: write` to the assemble job permissions
-        #   2. Update docs/release-process.md to note provenance attestation is active
-        # Note: docs/release-process.md currently lists provenance as a goal;
-        # it is not yet enforced until this step is re-enabled.
-        if: ${{ false }}
+      - name: Attest provenance
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -410,13 +404,11 @@ jobs:
           generate_release_notes: true
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
-        if: ${{ false }}
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           format: spdx-json
           artifact-name: sbom-${{ github.ref_name }}.json
       - name: Upload SBOM to Release (if GH_PUBLISH_TOKEN)
-        if: ${{ false }}
         run: |
           SBOM_FILE=sbom-${{ github.ref_name }}.json
           if [ -n "${{ secrets.GH_PUBLISH_TOKEN }}" ]; then
