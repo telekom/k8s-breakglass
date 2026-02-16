@@ -103,6 +103,23 @@ Any exceptions must be documented in the PR with justification.
 
 For release signing, provenance, and supply-chain requirements, see [docs/release-process.md](docs/release-process.md).
 
+## AI-Assisted Development
+
+This project supports AI coding assistants (GitHub Copilot, etc.):
+
+- **Project conventions**: See [`.github/copilot-instructions.md`](.github/copilot-instructions.md) for comprehensive coding guidelines that AI assistants load automatically.
+- **Agent instructions**: See [`AGENTS.md`](AGENTS.md) for a concise reference of critical rules.
+- **Context filtering**: [`.copilotignore`](.copilotignore) excludes auto-generated files and build artifacts from AI context.
+- **Prompt templates**: Reusable prompts in [`.github/prompts/`](.github/prompts/) for common tasks.
+
+When using AI to generate code, always verify:
+1. Auto-generated files (CRDs, DeepCopy) are not directly edited
+2. SPDX headers are present on new files
+3. Tests are included and pass (`make test`)
+4. Frontend tests pass (`cd frontend && npm test`)
+5. `make lint` passes without errors
+6. `CHANGELOG.md` is updated for user-facing changes
+
 ## Questions or Help
 
 Open an issue or discussion with context. See [SECURITY.md](SECURITY.md) for reporting security vulnerabilities.
