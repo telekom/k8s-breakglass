@@ -301,7 +301,7 @@ func TestSecurityApprovalRequired(t *testing.T) {
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, //nolint:gosec
+					InsecureSkipVerify: true, //nolint:gosec // E2E test uses self-signed certs
 				},
 			},
 		}
@@ -565,7 +565,7 @@ func TestSecurityDenyPolicyEnforcement(t *testing.T) {
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, //nolint:gosec
+					InsecureSkipVerify: true, //nolint:gosec // E2E test uses self-signed certs
 				},
 			},
 		}
