@@ -292,8 +292,23 @@ jobs:
         run: |
           set -euo pipefail
           IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+
+          # Display full manifest details for diagnostics
           docker buildx imagetools inspect "${IMG}"
-          DIGEST=$(docker buildx imagetools inspect "${IMG}" --format '{{.Manifest.Digest}}')
+
+          # Extract the top-level digest from the inspect output.
+          # NOTE: --format '{{.Manifest.Digest}}' is unreliable across Buildx
+          # versions — some versions return the full human-readable output
+          # instead of just the digest, which corrupts $GITHUB_OUTPUT with
+          # multi-line content containing colons (e.g. "MediaType: ...").
+          # Instead, compute the digest from the raw manifest JSON.
+          DIGEST="sha256:$(docker buildx imagetools inspect "${IMG}" --raw | sha256sum | cut -d' ' -f1)"
+
+          if [ -z "${DIGEST}" ] || [ "${DIGEST}" = "sha256:" ]; then
+            echo "Error: Failed to extract digest for ${IMG}" >&2
+            exit 1
+          fi
+
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Multi-arch manifest digest: ${DIGEST}"
       - name: Attest provenance
