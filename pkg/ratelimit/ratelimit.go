@@ -1,4 +1,3 @@
-// Package ratelimit provides per-IP and per-user rate limiting middleware for HTTP servers.
 package ratelimit
 
 import (

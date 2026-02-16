@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
-// Package mail provides email functionality for the breakglass controller.
-// This file contains the Service type which manages the mail queue lifecycle
-// and supports hot-reloading when the MailProvider configuration changes.
-
 package mail
 
 import (

@@ -14,9 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package apiresponses provides standardized HTTP API response helpers.
-// This package is designed to be imported by both pkg/api and pkg/breakglass
-// without creating import cycles.
 package apiresponses
 
 import (

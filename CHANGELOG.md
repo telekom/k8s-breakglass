@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **Package Documentation**: Added `doc.go` files to all packages missing Go package-level documentation comments
-
 ### Changed
 
 - **Upgraded JWT dependencies**: Migrated from `keyfunc/v1` to `keyfunc/v3` and `jwt/v4` to `jwt/v5` for improved security and maintainability. keyfunc/v3 uses context-based lifecycle management instead of manual `EndBackground()` calls, and automatically refreshes on unknown kid
@@ -25,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Package Documentation**: Added `doc.go` files to all packages missing Go package-level documentation comments
 - **Debug Session / Deny Policy Bypass Documentation**: Documented that active debug sessions bypass deny policy evaluation for pod-level operations (`exec`, `attach`, `portforward`, `log`)
 - **Webhook Evaluation Order Documentation**: Updated deny-policy, debug-session, and advanced-features docs to clarify the webhook evaluation order
 - **Debug Session Roadmap Table Correction**: Corrected the debug session roadmap table to reflect the implemented behavior

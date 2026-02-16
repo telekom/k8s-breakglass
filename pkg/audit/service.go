@@ -14,10 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package audit provides the audit trail system for the breakglass controller.
-// It captures and forwards audit events to configured sinks (Kafka, webhook, log, Kubernetes).
-//
-// The Service type manages the audit system lifecycle:
+// Service manages the audit system lifecycle:
 //   - Watches AuditConfig changes via the AuditConfigReconciler
 //   - Builds and configures sinks based on AuditConfig spec
 //   - Provides thread-safe Emit/EmitSync methods for sending audit events

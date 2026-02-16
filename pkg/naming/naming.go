@@ -1,5 +1,3 @@
-// Package naming provides utilities for converting arbitrary strings to Kubernetes-compatible names.
-// It uses the validation constants from k8s.io/apimachinery/pkg/util/validation.
 package naming
 
 import (
