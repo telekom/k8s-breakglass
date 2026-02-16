@@ -14,20 +14,27 @@ This document defines the release requirements for k8s-breakglass. It is intende
    - All release PRs require at least one approving review.
    - CI checks must be green on the release commit.
 
-2. **Artifact signing**
-   - All published release artifacts must be signed using a transparent signing service such as Sigstore Cosign.
-   - Signatures must be published alongside release artifacts.
+2. **Checksums**
+   - Publish SHA-256 checksums for every artifact.
 
-3. **Provenance**
+3. **Release notes**
+   - Include a summary of changes, security notes, and upgrade guidance.
+
+### Planned (not yet active)
+
+The following supply-chain security goals are defined but **not yet enforced** in CI. They are gated behind `if: ${{ false }}` in the release workflow pending infrastructure readiness (e.g., `id-token: write` permissions on all runners).
+
+4. **Artifact signing** _(planned)_
+   - Sign all published release artifacts using Sigstore Cosign.
+   - Publish signatures alongside release artifacts.
+
+5. **Provenance** _(planned)_
    - Provide SLSA-compatible provenance for all release artifacts.
    - Provenance must be publicly accessible and linked from the release notes.
 
-4. **Checksums**
-   - Publish SHA-256 checksums for every artifact.
-
-5. **Release notes**
-   - Include a summary of changes, security notes, and upgrade guidance.
-   - Link to the provenance and checksum files.
+6. **SBOM** _(planned)_
+   - Generate an SPDX SBOM for each release image using Syft.
+   - Attach the SBOM to the GitHub Release.
 
 ## Multi-Architecture Builds
 
@@ -50,13 +57,14 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Verify CI success on the release commit.
 - Ensure the changelog is up to date.
 - Generate artifacts via the release workflow.
-- Sign artifacts and publish provenance.
 - Publish checksums and update release notes.
+- _(When enabled)_ Sign artifacts and publish provenance.
+- _(When enabled)_ Attach SBOM to the release.
 
 ## Verification
 
 Consumers should be able to:
 
-- Verify signatures against published artifacts.
-- Verify provenance against the release commit.
 - Confirm checksums match the downloaded artifacts.
+- _(When signing is enabled)_ Verify signatures against published artifacts.
+- _(When provenance is enabled)_ Verify provenance against the release commit.
