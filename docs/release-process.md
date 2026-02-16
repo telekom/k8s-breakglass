@@ -20,21 +20,19 @@ This document defines the release requirements for k8s-breakglass. It is intende
 3. **Release notes**
    - Include a summary of changes, security notes, and upgrade guidance.
 
+4. **Provenance**
+   - SLSA-compatible provenance is generated for every release image using `actions/attest-build-provenance` in the assemble job.
+   - Provenance attestations are pushed to the container registry alongside the image.
+
+5. **SBOM**
+   - An SPDX-JSON SBOM is generated for each release image using Syft (`anchore/sbom-action`).
+   - The SBOM is attached to the GitHub Release (via `GH_PUBLISH_TOKEN` when available, or as a workflow artifact otherwise).
+
 ### Planned (not yet active)
 
-The following supply-chain security goals are defined but **not yet enforced** in CI. They are gated behind `if: ${{ false }}` in the release workflow pending infrastructure readiness (e.g., `id-token: write` permissions on all runners).
-
-4. **Artifact signing** _(planned)_
+6. **Artifact signing** _(planned)_
    - Sign all published release artifacts using Sigstore Cosign.
    - Publish signatures alongside release artifacts.
-
-5. **Provenance** _(planned)_
-   - Provide SLSA-compatible provenance for all release artifacts.
-   - Provenance must be publicly accessible and linked from the release notes.
-
-6. **SBOM** _(planned)_
-   - Generate an SPDX SBOM for each release image using Syft.
-   - Attach the SBOM to the GitHub Release.
 
 ## Multi-Architecture Builds
 
@@ -58,13 +56,15 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Ensure the changelog is up to date.
 - Generate artifacts via the release workflow.
 - Publish checksums and update release notes.
-- _(When enabled)_ Sign artifacts and publish provenance.
-- _(When enabled)_ Attach SBOM to the release.
+- Verify provenance attestation was pushed to the registry.
+- Verify SBOM is attached to the GitHub Release.
+- _(When enabled)_ Sign artifacts with Cosign and publish signatures.
 
 ## Verification
 
 Consumers should be able to:
 
 - Confirm checksums match the downloaded artifacts.
-- _(When signing is enabled)_ Verify signatures against published artifacts.
-- _(When provenance is enabled)_ Verify provenance against the release commit.
+- Verify provenance attestation via `gh attestation verify` or the GitHub attestation API.
+- Verify SBOM contents match the release image.
+- _(When signing is enabled)_ Verify Cosign signatures against published artifacts.
