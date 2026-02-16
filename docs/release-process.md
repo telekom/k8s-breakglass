@@ -29,6 +29,22 @@ This document defines the release requirements for k8s-breakglass. It is intende
    - Include a summary of changes, security notes, and upgrade guidance.
    - Link to the provenance and checksum files.
 
+## Multi-Architecture Builds
+
+Release images are built as multi-arch manifests supporting both `linux/amd64` and `linux/arm64` platforms. Each architecture is built natively on a dedicated runner (no QEMU emulation), then assembled into a single multi-arch manifest list.
+
+**Build pipeline:**
+
+1. **Prepare** — generates Kustomize manifests, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
+2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
+3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version (and `latest` for tag pushes).
+4. **Artifactory** — mirrors the multi-arch image to the internal Artifactory OCI registry.
+5. **Release** — creates a GitHub Release with manifests, `bgctl` binaries, checksums, and (when enabled) an SBOM.
+
+> **Note:** Buildx layer caching (`cache-from`/`cache-to`) is intentionally omitted in
+> release builds to ensure clean, reproducible images without layer reuse from prior
+> development iterations.
+
 ## Release Checklist
 
 - Verify CI success on the release commit.
