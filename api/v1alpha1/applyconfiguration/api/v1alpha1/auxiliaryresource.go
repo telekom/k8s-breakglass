@@ -35,7 +35,8 @@ type AuxiliaryResourceApplyConfiguration struct {
 	// template is the embedded resource template.
 	// Supports Go templating with session context variables using Sprout functions.
 	// See documentation for available variables and functions.
-	// Mutually exclusive with templateString. Deprecated: Use templateString for new templates.
+	// Mutually exclusive with templateString.
+	// Deprecated: Use templateString for new templates. Removal target: v1beta1.
 	Template *runtime.RawExtension `json:"template,omitempty"`
 	// createBefore specifies if this resource should be created before debug pods.
 	// Useful for NetworkPolicies that must exist before pods start.
@@ -45,7 +46,7 @@ type AuxiliaryResourceApplyConfiguration struct {
 	// failurePolicy determines behavior if resource creation fails.
 	FailurePolicy *apiv1alpha1.AuxiliaryResourceFailurePolicy `json:"failurePolicy,omitempty"`
 	// optional marks this resource as optional (same as failurePolicy=ignore).
-	// Deprecated: Use failurePolicy instead.
+	// Deprecated: Use failurePolicy instead. Removal target: v1beta1.
 	Optional *bool `json:"optional,omitempty"`
 }
 
