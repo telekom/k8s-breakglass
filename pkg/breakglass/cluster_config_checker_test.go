@@ -306,10 +306,12 @@ func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
+	done := make(chan struct{})
 	started := make(chan struct{})
 	go func() {
 		close(started)
 		checker.Start(ctx)
+		close(done)
 	}()
 	<-started
 
@@ -319,8 +321,8 @@ func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 	// Signal leadership - checker should start
 	close(leaderChan)
 
-	// Wait for context to be cancelled
-	<-ctx.Done()
+	// Wait for goroutine to finish before defers restore package-level variables
+	<-done
 }
 
 // OIDC-specific tests

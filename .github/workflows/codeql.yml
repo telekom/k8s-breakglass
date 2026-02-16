@@ -8,15 +8,17 @@ on:
   push:
     branches: [main]
     paths:
-      - '**.go'
+      - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - '.github/workflows/codeql.yml'
   pull_request:
     branches: [main]
     paths:
-      - '**.go'
+      - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - '.github/workflows/codeql.yml'
   schedule:
     # Weekly analysis on Sunday at 03:00 UTC
     - cron: '0 3 * * 0'
