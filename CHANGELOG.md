@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release
+- **SLSA provenance attestation re-enabled**: Assemble job now generates and pushes SLSA Build L1 provenance via actions/attest-build-provenance
+
 ### Changed
 
 - **Multi-arch release builds on native runners**:
