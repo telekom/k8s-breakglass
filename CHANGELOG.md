@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug pod name has redundant "debug-debug-" prefix**: Workload names for debug sessions had a double `debug-` prefix (e.g., `debug-debug-user-cluster-123`) because the session name already starts with `debug-` and the workload builder prepended another. Removed the extra prefix so workload names match the session name directly
 - **Silent token renewal blocked by CSP frame-ancestors**: The `frame-ancestors 'none'` Content Security Policy header prevented `oidc-client-ts` from performing iframe-based silent token renewal, forcing users to re-authenticate when tokens expired. Changed to `frame-ancestors 'self'` to allow same-origin iframe renewal while maintaining clickjacking protection
 - **extraDeployValues number/boolean type coercion**: String-encoded numbers (e.g., `"5"` instead of `5`) from HTML form inputs or YAML defaults caused `must be a number` validation errors and invalid template rendering. Added `CoerceExtraDeployValues` to normalize types before validation and storage, tolerant validation for string-encoded numbers, and frontend type coercion in `VariableForm`.
+- **REUSE compliance**: Added `precedence = "aggregate"` to all REUSE.toml annotation blocks to resolve path pattern ambiguity, added missing `codecov.yml` and `versions.env` to CI files coverage, fixed copyright year typo (2026→2025) in `.golangci.yml`, `.yamllint.yml`, and `.github/PULL_REQUEST_TEMPLATE.md`
 
 ### Added
 
