@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Upgraded JWT dependencies**: Migrated from `keyfunc/v1` to `keyfunc/v3` and `jwt/v4` to `jwt/v5` for improved security and maintainability. keyfunc/v3 uses context-based lifecycle management instead of manual `EndBackground()` calls, and automatically refreshes on unknown kid
 - **Removed unused frontend devDependencies**: Removed `jest`, `jest-environment-jsdom`, `ts-jest`, `@types/jest`, `happy-dom`, and `@rushstack/eslint-patch` (project uses Vitest)
-- **Added removal target (v1beta1) to all deprecated API fields**: Added explicit deprecation removal timeline comments to deprecated API fields (`AuxiliaryResource.Containers`, `DebugSessionConstraints.MaxDuration`, `IdentityProviderSpec.Groups`) for clearer migration planning. Normalized image SHA pin comments to use consistent `// <sha> <version>` format in workflow files
+- **Added removal target (v1beta1) to deprecated API fields**: Added explicit deprecation removal timeline comments to deprecated API fields (`AuxiliaryResource.Template`, `AuxiliaryResource.Optional`, `DebugSessionConstraints.RenewalLimit`, `IdentityProviderSpec.Primary`) for clearer migration planning. Updated image SHA pin comment in `.github/workflows/security.yml` from `# 0.34.0` to `# v0.34.0` for consistent version prefix formatting
 
 ### Fixed
 
