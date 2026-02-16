@@ -151,7 +151,7 @@ Run fuzz tests with: `go test -fuzz=FuzzValidateIdentifierFormat ./api/v1alpha1/
 
 ### Frontend Development Conventions
 - **Component patterns**: Vue 3 Composition API with `<script setup lang="ts">`
-- **State management**: Pinia stores in `frontend/src/stores/`
+- **State management**: Pinia is initialized in `frontend/src/main.ts`; define any future global stores under `frontend/src/stores/`
 - **TypeScript**: Strict mode enabled; all props and emits must be typed
 - **Testing**: Vitest for unit tests, Playwright for E2E
 - **Style**: Scoped `<style>` blocks; use CSS custom properties for theming
