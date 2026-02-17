@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Cosign keyless signing for release images**: Release workflow now signs container images and mirrors cosign signature/attestation OCI artifacts to the Artifactory registry using `cosign copy`, ensuring supply-chain verification is available on both GHCR and Artifactory
+- **Cosign keyless signing for release images**: Release workflow now signs container images and mirrors cosign signature/attestation OCI artifacts to the Artifactory registry using `cosign copy` on a best-effort basis, enabling supply-chain verification on both GHCR and Artifactory
 - **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release
 - **SLSA provenance attestation re-enabled**: Assemble job now generates and pushes SLSA Build L1 provenance via actions/attest-build-provenance
 

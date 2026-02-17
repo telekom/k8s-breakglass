@@ -372,8 +372,11 @@ jobs:
           # Cosign artifacts (signatures, SBOM attestations) are stored as OCI referrers
           # alongside the image in GHCR. docker buildx imagetools does not copy these,
           # so we use cosign copy to replicate them to the Artifactory mirror.
+          # Use digest-based source reference to ensure we copy artifacts for the exact
+          # signed manifest, not whatever the tag resolves to at copy time.
+          SRC_DIGEST=${REGISTRY}/${IMAGE}@${{ needs.assemble.outputs.digest }}
           echo "Copying cosign artifacts (signatures + attestations) to Artifactory"
-          cosign copy "${SRC}" "${DST}" --only=sig,att || echo "Warning: cosign copy failed — Artifactory image will not be verifiable via cosign"
+          cosign copy "${SRC_DIGEST}" "${DST}" --only=sig,att || echo "::warning::cosign copy failed — Artifactory image will not be verifiable via cosign"
 
           # Verify the pushed image is indexed in Artifactory (retry with backoff)
           CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
