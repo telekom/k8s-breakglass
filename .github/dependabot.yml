@@ -3,71 +3,128 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
-    # Group minor/patch updates to reduce PR noise
+      interval: "daily"
     groups:
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      go-major:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+        update-types:
+          - "major"
       go-minor-patch:
         patterns:
           - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
         update-types:
           - "minor"
           - "patch"
     commit-message:
       prefix: "deps(go)"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "daily"
     groups:
-      npm-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
       vue-ecosystem:
         patterns:
           - "vue*"
           - "@vue/*"
           - "vite*"
           - "@vitejs/*"
+      npm-major:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "vue*"
+          - "@vue/*"
+          - "vite*"
+          - "@vitejs/*"
+        update-types:
+          - "major"
+      npm-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "vue*"
+          - "@vue/*"
+          - "vite*"
+          - "@vitejs/*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps(npm)"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "daily"
     groups:
-      actions-all:
+      actions-major:
         patterns:
           - "*"
+        update-types:
+          - "major"
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "ci(deps)"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
 
   - package-ecosystem: docker
     directory: /
     schedule:
-      interval: weekly
-      day: "monday"
+      interval: "daily"
+    groups:
+      docker-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps(docker)"
+    open-pull-requests-limit: 5
 
   - package-ecosystem: helm
     directory: /charts/escalation-config
     schedule:
-      interval: weekly
-      day: "monday"
+      interval: "daily"
+    groups:
+      helm-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      helm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps(helm)"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
 
 # Note: The following tool versions are NOT tracked by Dependabot and require manual updates:
 #
