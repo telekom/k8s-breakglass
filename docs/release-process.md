@@ -28,11 +28,10 @@ This document defines the release requirements for k8s-breakglass. It is intende
    - An SPDX-JSON SBOM is generated for each release image using Syft (`anchore/sbom-action`).
    - The SBOM is attached to the GitHub Release (via `GH_PUBLISH_TOKEN` when available, or as a workflow artifact otherwise).
 
-### Planned (not yet active)
-
-6. **Artifact signing** _(planned)_
-   - Sign all published release artifacts using Sigstore Cosign.
-   - Publish signatures alongside release artifacts.
+6. **Artifact signing**
+   - Release images are signed using keyless Sigstore Cosign (OIDC-based, no static keys).
+   - An SPDX-JSON SBOM attestation is attached to each signed image via `cosign attest`.
+   - Cosign signatures and attestations are mirrored to Artifactory on a best-effort basis via `cosign copy`.
 
 ## Multi-Architecture Builds
 
@@ -42,8 +41,8 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 1. **Prepare** — generates Kustomize manifests, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
-3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version (and `latest` for tag pushes). Generates SLSA provenance attestation for supply-chain integrity.
-4. **Artifactory** — mirrors the multi-arch image to the internal Artifactory OCI registry.
+3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version (and `latest` for tag pushes). Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
+4. **Artifactory** — mirrors the multi-arch image and cosign artifacts (signatures + attestations) to the internal Artifactory OCI registry (best-effort).
 5. **Release** — creates a GitHub Release with manifests, `bgctl` binaries, checksums, and SBOM (SPDX-JSON format via Syft).
 
 > **Note:** Buildx layer caching (`cache-from`/`cache-to`) is intentionally omitted in
@@ -58,7 +57,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Publish checksums and update release notes.
 - Verify provenance attestation was pushed to the registry.
 - Verify SBOM is attached to the GitHub Release.
-- _(When enabled)_ Sign artifacts with Cosign and publish signatures.
+- Verify Cosign signature was pushed to the registry.
 
 ## Verification
 
@@ -67,4 +66,12 @@ Consumers should be able to:
 - Confirm checksums match the downloaded artifacts.
 - Verify provenance attestation via `gh attestation verify` or the GitHub attestation API.
 - Verify SBOM contents match the release image.
-- _(When signing is enabled)_ Verify Cosign signatures against published artifacts.
+- Verify Cosign signature: `cosign verify ghcr.io/telekom/k8s-breakglass@<digest> --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'`
+- Verify SBOM attestation:
+  ```bash
+  cosign verify-attestation ghcr.io/telekom/k8s-breakglass@<digest> \
+    --type spdxjson \
+    --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' \
+    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+    | jq -r '.payload' | base64 -d | jq
+  ```

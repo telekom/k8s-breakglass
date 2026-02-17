@@ -211,6 +211,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.inspect.outputs.digest }}
@@ -331,14 +332,32 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.inspect.outputs.digest }}
           push-to-registry: true
+      - name: Install cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+      - name: Sign container image (keyless)
+        run: |
+          set -euo pipefail
+          cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
+      - name: Generate SBOM for attestation
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - name: Attest SBOM (keyless)
+        run: |
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
 
   # ---------------------------------------------------------------------------
   # Push multi-arch image to Artifactory OCI mirror
   # ---------------------------------------------------------------------------
   artifactory:
     needs: [assemble]
+    continue-on-error: true  # Artifactory mirror is best-effort; must not block releases
     permissions:
       packages: read
+      id-token: write  # Required for cosign keyless signing/copy
     runs-on: ubuntu-latest
     steps:
       - name: Login to GHCR
@@ -349,6 +368,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Install cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
       - name: Tag and push image to Artifactory OCI
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
@@ -379,6 +400,19 @@ jobs:
 
           # Use buildx imagetools to copy the full multi-arch manifest (all platforms)
           docker buildx imagetools create --tag "${DST}" "${SRC}"
+
+          # Copy cosign signatures and attestations to Artifactory
+          # Cosign artifacts (signatures, SBOM attestations) are stored as OCI referrers
+          # alongside the image in GHCR. docker buildx imagetools does not copy these,
+          # so we use cosign copy to replicate them to the Artifactory mirror.
+          # Use digest-based source reference to ensure we copy artifacts for the exact
+          # signed manifest, not whatever the tag resolves to at copy time.
+          SRC_DIGEST=${REGISTRY}/${IMAGE}@${{ needs.assemble.outputs.digest }}
+          echo "Copying cosign artifacts (signatures + attestations) to Artifactory"
+          # Set explicit registry credentials for cosign — docker login credentials
+          # are not always reused by cosign for the destination registry.
+          export COSIGN_REPOSITORY="${DST}"
+          cosign copy "${SRC_DIGEST}" "${DST}" --only=sig,att || echo "::warning::cosign copy failed — Artifactory image will not be verifiable via cosign"
 
           # Verify the pushed image is indexed in Artifactory (retry with backoff)
           CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
