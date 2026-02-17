@@ -293,9 +293,6 @@ jobs:
           set -euo pipefail
           IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
 
-          # Display full manifest details for diagnostics
-          docker buildx imagetools inspect "${IMG}"
-
           # Extract the top-level digest from the manifest by hashing the raw
           # manifest JSON.  The --raw flag outputs the exact manifest bytes as
           # stored in the registry (no pretty-printing or trailing newline), so
@@ -310,11 +307,16 @@ jobs:
             exit 1
           fi
 
+          # Capture the human-readable inspect output once for diagnostics and
+          # cross-checking, avoiding an extra registry round-trip.
+          INSPECT_OUTPUT="$(docker buildx imagetools inspect "${IMG}")"
+          echo "${INSPECT_OUTPUT}"
+
           # Best-effort cross-check against the Digest line reported by
           # Buildx/registry.  This is warn-only because the human-readable
           # output format may change across Buildx versions and we do not want
           # a cosmetic parsing failure to block a release.
-          REGISTRY_DIGEST="$(docker buildx imagetools inspect "${IMG}" | awk '/^Digest:/ {print $2; exit}')" || true
+          REGISTRY_DIGEST="$(echo "${INSPECT_OUTPUT}" | awk '/^Digest:/ {print $2; exit}')" || true
           if [ -n "${REGISTRY_DIGEST}" ] && [ "${REGISTRY_DIGEST}" != "${RAW_MANIFEST_DIGEST}" ]; then
             echo "::warning::Digest cross-check mismatch: computed=${RAW_MANIFEST_DIGEST} registry=${REGISTRY_DIGEST}"
           fi
