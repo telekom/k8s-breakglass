@@ -80,7 +80,7 @@ jobs:
       - name: Build image (local)
         run: docker build -t breakglass:scan .
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # 0.34.0
+        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
         with:
           image-ref: breakglass:scan
           format: 'table'

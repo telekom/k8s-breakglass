@@ -783,7 +783,7 @@ type DebugSessionConstraints struct {
 	// +optional
 	MaxRenewals *int32 `json:"maxRenewals,omitempty"`
 
-	// renewalLimit is deprecated, use maxRenewals instead.
+	// renewalLimit is deprecated, use maxRenewals instead. Removal target: v1beta1.
 	// +optional
 	RenewalLimit int32 `json:"renewalLimit,omitempty"`
 

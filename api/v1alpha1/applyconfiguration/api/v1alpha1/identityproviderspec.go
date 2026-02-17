@@ -35,7 +35,8 @@ type IdentityProviderSpecApplyConfiguration struct {
 	// Example: https://auth.example.com
 	Issuer *string `json:"issuer,omitempty"`
 	// Primary indicates if this is the primary identity provider (used by default)
-	// Deprecated: Primary is kept for backward compatibility. In multi-IDP mode, use ClusterConfig.IdentityProviderRefs instead.
+	// Deprecated: Primary is kept for backward compatibility. In multi-IDP mode,
+	// use ClusterConfig.IdentityProviderRefs instead. Removal target: v1beta1.
 	Primary *bool `json:"primary,omitempty"`
 	// DisplayName is a human-readable name for this provider (shown in UI/logs)
 	DisplayName *string `json:"displayName,omitempty"`

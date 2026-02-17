@@ -24,7 +24,7 @@ type DebugSessionConstraintsApplyConfiguration struct {
 	// When nil, defaults to 3. Set to 0 to disallow renewals.
 	// Ignored if allowRenewal is false.
 	MaxRenewals *int32 `json:"maxRenewals,omitempty"`
-	// renewalLimit is deprecated, use maxRenewals instead.
+	// renewalLimit is deprecated, use maxRenewals instead. Removal target: v1beta1.
 	RenewalLimit *int32 `json:"renewalLimit,omitempty"`
 	// maxConcurrentSessions limits concurrent debug sessions per cluster.
 	MaxConcurrentSessions *int32 `json:"maxConcurrentSessions,omitempty"`

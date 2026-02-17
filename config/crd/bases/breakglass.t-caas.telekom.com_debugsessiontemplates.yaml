@@ -1291,14 +1291,15 @@ spec:
                     optional:
                       description: |-
                         optional marks this resource as optional (same as failurePolicy=ignore).
-                        Deprecated: Use failurePolicy instead.
+                        Deprecated: Use failurePolicy instead. Removal target: v1beta1.
                       type: boolean
                     template:
                       description: |-
                         template is the embedded resource template.
                         Supports Go templating with session context variables using Sprout functions.
                         See documentation for available variables and functions.
-                        Mutually exclusive with templateString. Deprecated: Use templateString for new templates.
+                        Mutually exclusive with templateString.
+                        Deprecated: Use templateString for new templates. Removal target: v1beta1.
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                     templateString:
@@ -1343,7 +1344,8 @@ spec:
                     format: int32
                     type: integer
                   renewalLimit:
-                    description: renewalLimit is deprecated, use maxRenewals instead.
+                    description: 'renewalLimit is deprecated, use maxRenewals instead.
+                      Removal target: v1beta1.'
                     format: int32
                     type: integer
                 type: object

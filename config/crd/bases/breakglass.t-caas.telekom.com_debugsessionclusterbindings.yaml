@@ -325,7 +325,8 @@ spec:
                     format: int32
                     type: integer
                   renewalLimit:
-                    description: renewalLimit is deprecated, use maxRenewals instead.
+                    description: 'renewalLimit is deprecated, use maxRenewals instead.
+                      Removal target: v1beta1.'
                     format: int32
                     type: integer
                 type: object
