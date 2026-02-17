@@ -909,12 +909,12 @@ func TestLogSink_AllSeverities(t *testing.T) {
 func TestEvent_IDGeneration(t *testing.T) {
 	// Events without ID should get one assigned
 	logger := zaptest.NewLogger(t)
-	var capturedEvent *Event
+	eventCh := make(chan *Event, 1)
 
 	sink := &testSink{
 		name: "test",
 		writeFunc: func(event *Event) {
-			capturedEvent = event
+			eventCh <- event
 		},
 	}
 
@@ -925,11 +925,14 @@ func TestEvent_IDGeneration(t *testing.T) {
 		// No ID set
 	})
 
-	time.Sleep(100 * time.Millisecond)
-
-	require.NotNil(t, capturedEvent)
-	assert.NotEmpty(t, capturedEvent.ID, "Event ID should be auto-generated")
-	assert.False(t, capturedEvent.Timestamp.IsZero(), "Timestamp should be set")
+	select {
+	case capturedEvent := <-eventCh:
+		require.NotNil(t, capturedEvent)
+		assert.NotEmpty(t, capturedEvent.ID, "Event ID should be auto-generated")
+		assert.False(t, capturedEvent.Timestamp.IsZero(), "Timestamp should be set")
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event to be processed")
+	}
 
 	_ = manager.Close()
 }

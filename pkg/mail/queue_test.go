@@ -19,6 +19,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 
 // MockSender simulates a mail sender with configurable behavior
 type MockSender struct {
+	mu            sync.Mutex
 	successAfter  int
 	attempts      int
 	lastReceivers []string
@@ -38,15 +40,30 @@ type MockSender struct {
 }
 
 func (m *MockSender) Send(receivers []string, subject, body string) error {
+	m.mu.Lock()
 	m.attempts++
 	m.lastReceivers = receivers
 	m.lastSubject = subject
 	m.lastBody = body
+	shouldFail := m.attempts <= m.successAfter
+	m.mu.Unlock()
 
-	if m.attempts > m.successAfter {
-		return nil // Success
+	if shouldFail {
+		return errors.New("simulated send failure")
 	}
-	return errors.New("simulated send failure")
+	return nil
+}
+
+func (m *MockSender) Attempts() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.attempts
+}
+
+func (m *MockSender) LastSubject() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastSubject
 }
 
 func (m *MockSender) GetHost() string {
@@ -81,8 +98,8 @@ func TestQueue_Enqueue(t *testing.T) {
 	// Give worker time to process
 	time.Sleep(100 * time.Millisecond)
 
-	assert.Equal(t, 1, sender.attempts)
-	assert.Equal(t, "Test", sender.lastSubject)
+	assert.Equal(t, 1, sender.Attempts())
+	assert.Equal(t, "Test", sender.LastSubject())
 }
 
 func TestQueue_EnqueueMultiple(t *testing.T) {
@@ -110,7 +127,7 @@ func TestQueue_EnqueueMultiple(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	assert.Equal(t, 5, sender.attempts)
+	assert.Equal(t, 5, sender.Attempts())
 }
 
 func TestQueue_EnqueueFull(t *testing.T) {
@@ -194,7 +211,7 @@ func TestQueue_RetryWithBackoff(t *testing.T) {
 	time.Sleep(400 * time.Millisecond)
 
 	// Should have succeeded after retries
-	assert.Greater(t, sender.attempts, 1, "should have retried")
+	assert.Greater(t, sender.Attempts(), 1, "should have retried")
 }
 
 func TestQueue_Shutdown(t *testing.T) {
@@ -222,13 +239,16 @@ func TestQueue_Shutdown(t *testing.T) {
 
 // SlowSender simulates a slow mail sender
 type SlowSender struct {
+	mu       sync.Mutex
 	delay    time.Duration
 	attempts int
 	host     string
 }
 
 func (s *SlowSender) Send(receivers []string, subject, body string) error {
+	s.mu.Lock()
 	s.attempts++
+	s.mu.Unlock()
 	time.Sleep(s.delay)
 	return nil
 }
@@ -442,5 +462,5 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	assert.Equal(t, 10, sender.attempts)
+	assert.Equal(t, 10, sender.Attempts())
 }

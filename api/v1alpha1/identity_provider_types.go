@@ -195,7 +195,8 @@ type IdentityProviderSpec struct {
 	Issuer string `json:"issuer,omitempty"`
 
 	// Primary indicates if this is the primary identity provider (used by default)
-	// Deprecated: Primary is kept for backward compatibility. In multi-IDP mode, use ClusterConfig.IdentityProviderRefs instead.
+	// Deprecated: Primary is kept for backward compatibility. In multi-IDP mode,
+	// use ClusterConfig.IdentityProviderRefs instead. Removal target: v1beta1.
 	// +optional
 	Primary bool `json:"primary,omitempty"`
 

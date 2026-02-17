@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Upgraded JWT dependencies**: Migrated from `keyfunc/v1` to `keyfunc/v3` and `jwt/v4` to `jwt/v5` for improved security and maintainability. keyfunc/v3 uses context-based lifecycle management instead of manual `EndBackground()` calls, and automatically refreshes on unknown kid
 - **Removed unused frontend devDependencies**: Removed `jest`, `jest-environment-jsdom`, `ts-jest`, `@types/jest`, `happy-dom`, and `@rushstack/eslint-patch` (project uses Vitest)
+- **Added removal target (v1beta1) to deprecated API fields**: Added explicit deprecation removal timeline comments to deprecated API fields (`AuxiliaryResource.Template`, `AuxiliaryResource.Optional`, `DebugSessionConstraints.RenewalLimit`, `IdentityProviderSpec.Primary`) for clearer migration planning. Updated image SHA pin comment in `.github/workflows/security.yml` from `# 0.34.0` to `# v0.34.0` for consistent version prefix formatting
 
 ### Fixed
 
@@ -33,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **extraDeployValues number/boolean type coercion**: String-encoded numbers (e.g., `"5"` instead of `5`) from HTML form inputs or YAML defaults caused `must be a number` validation errors and invalid template rendering. Added `CoerceExtraDeployValues` to normalize types before validation and storage, tolerant validation for string-encoded numbers, and frontend type coercion in `VariableForm`.
 - **REUSE compliance**: Added `precedence = "aggregate"` to all REUSE.toml annotation blocks to resolve path pattern ambiguity, added missing `codecov.yml` and `versions.env` to CI files coverage, fixed copyright year typo (2026→2025) in `.golangci.yml`, `.yamllint.yml`, and `.github/PULL_REQUEST_TEMPLATE.md`
 - **Release pipeline digest extraction**: `docker buildx imagetools inspect --format '{{.Manifest.Digest}}'` returns full human-readable output on newer Buildx versions, corrupting `$GITHUB_OUTPUT` with multi-line content. Switched to computing the manifest digest from raw JSON via `sha256sum`
+- **CI provenance attestation re-enabled**: Added missing `id-token: write` and `attestations: write` permissions to build-image job, allowing SLSA provenance attestation to run (was disabled with `if: false` due to missing OIDC token access). Made `push-to-registry` conditional to avoid failures on fork PRs
 
 ### Added
 
