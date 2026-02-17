@@ -208,7 +208,7 @@ jobs:
   assemble:
     needs: [build-image]
     permissions:
-      contents: read
+      contents: write  # Required for anchore/sbom-action to upload release assets
       packages: write
       id-token: write
       attestations: write
