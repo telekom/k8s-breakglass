@@ -471,6 +471,7 @@ jobs:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           format: spdx-json
           artifact-name: sbom-${{ github.ref_name }}.json
+          upload-release-assets: false
       - name: Upload SBOM to Release (if GH_PUBLISH_TOKEN)
         run: |
           SBOM_FILE=sbom-${{ github.ref_name }}.json
