@@ -64,19 +64,21 @@ func TestEscalationStatusUpdater_StartsImmediatelyWithoutSignal(t *testing.T) {
 	}
 
 	// Verify that with nil LeaderElected, the routine doesn't block on startup
-	signalReceived := false
+	done := make(chan struct{})
 	go func() {
 		// This simulates what Start() does - checks if LeaderElected != nil before blocking
 		if updater.LeaderElected != nil {
 			<-updater.LeaderElected
 		}
 		// Should reach here immediately since LeaderElected is nil
-		signalReceived = true
+		close(done)
 	}()
 
 	// Should not block
-	time.Sleep(10 * time.Millisecond)
-	if !signalReceived {
+	select {
+	case <-done:
+		// Expected: completed immediately
+	case <-time.After(time.Second):
 		t.Error("EscalationStatusUpdater with nil LeaderElected should not block")
 	}
 }
@@ -172,19 +174,21 @@ func TestClusterConfigChecker_StartsImmediatelyWithoutSignal(t *testing.T) {
 	}
 
 	// Verify that with nil LeaderElected, the routine doesn't block on startup
-	signalReceived := false
+	done := make(chan struct{})
 	go func() {
 		// This simulates what Start() does - checks if LeaderElected != nil before blocking
 		if checker.LeaderElected != nil {
 			<-checker.LeaderElected
 		}
 		// Should reach here immediately since LeaderElected is nil
-		signalReceived = true
+		close(done)
 	}()
 
 	// Should not block
-	time.Sleep(10 * time.Millisecond)
-	if !signalReceived {
+	select {
+	case <-done:
+		// Expected: completed immediately
+	case <-time.After(time.Second):
 		t.Error("ClusterConfigChecker with nil LeaderElected should not block")
 	}
 }
