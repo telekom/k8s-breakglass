@@ -5,21 +5,27 @@ updates:
     schedule:
       interval: "daily"
     groups:
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
       go-major:
         patterns:
           - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
         update-types:
           - "major"
       go-minor-patch:
         patterns:
           - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
         update-types:
           - "minor"
           - "patch"
-      kubernetes:
-        patterns:
-          - "k8s.io/*"
-          - "sigs.k8s.io/*"
     commit-message:
       prefix: "deps(go)"
     open-pull-requests-limit: 10
@@ -29,23 +35,33 @@ updates:
     schedule:
       interval: "daily"
     groups:
-      npm-major:
-        patterns:
-          - "*"
-        update-types:
-          - "major"
-      npm-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
       vue-ecosystem:
         patterns:
           - "vue*"
           - "@vue/*"
           - "vite*"
           - "@vitejs/*"
+      npm-major:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "vue*"
+          - "@vue/*"
+          - "vite*"
+          - "@vitejs/*"
+        update-types:
+          - "major"
+      npm-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "vue*"
+          - "@vue/*"
+          - "vite*"
+          - "@vitejs/*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps(npm)"
     open-pull-requests-limit: 10
