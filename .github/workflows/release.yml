@@ -211,6 +211,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.inspect.outputs.digest }}
@@ -306,6 +307,7 @@ jobs:
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
       - name: Sign container image (keyless)
         run: |
+          set -euo pipefail
           cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
       - name: Generate SBOM for attestation
         uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
@@ -323,8 +325,10 @@ jobs:
   # ---------------------------------------------------------------------------
   artifactory:
     needs: [assemble]
+    continue-on-error: true  # Artifactory mirror is best-effort; must not block releases
     permissions:
       packages: read
+      id-token: write  # Required for cosign keyless signing/copy
     runs-on: ubuntu-latest
     steps:
       - name: Login to GHCR
@@ -376,6 +380,9 @@ jobs:
           # signed manifest, not whatever the tag resolves to at copy time.
           SRC_DIGEST=${REGISTRY}/${IMAGE}@${{ needs.assemble.outputs.digest }}
           echo "Copying cosign artifacts (signatures + attestations) to Artifactory"
+          # Set explicit registry credentials for cosign — docker login credentials
+          # are not always reused by cosign for the destination registry.
+          export COSIGN_REPOSITORY="${DST}"
           cosign copy "${SRC_DIGEST}" "${DST}" --only=sig,att || echo "::warning::cosign copy failed — Artifactory image will not be verifiable via cosign"
 
           # Verify the pushed image is indexed in Artifactory (retry with backoff)

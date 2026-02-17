@@ -67,3 +67,11 @@ Consumers should be able to:
 - Verify provenance attestation via `gh attestation verify` or the GitHub attestation API.
 - Verify SBOM contents match the release image.
 - Verify Cosign signature: `cosign verify ghcr.io/telekom/k8s-breakglass@<digest> --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'`
+- Verify SBOM attestation:
+  ```bash
+  cosign verify-attestation ghcr.io/telekom/k8s-breakglass@<digest> \
+    --type spdxjson \
+    --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' \
+    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+    | jq -r '.payload' | base64 -d | jq
+  ```
