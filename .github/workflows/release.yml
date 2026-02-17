@@ -344,6 +344,7 @@ jobs:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
+          upload-release-assets: false
       - name: Attest SBOM (keyless)
         run: |
           cosign attest --yes --type spdxjson --predicate sbom.spdx.json \
