@@ -348,6 +348,14 @@ jobs:
             echo "push_to_registry=true" >> $GITHUB_OUTPUT
             echo "Not a PR, will push to registry"
           fi
+      - name: Determine registry push eligibility
+        id: push_check
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ] || [ "${{ steps.fork_check.outputs.push_to_registry }}" == "true" ]; then
+            echo "can_push=true" >> $GITHUB_OUTPUT
+          else
+            echo "can_push=false" >> $GITHUB_OUTPUT
+          fi
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
@@ -377,7 +385,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
+          push: ${{ steps.push_check.outputs.can_push == 'true' }}
           load: true  # Also load into local Docker for E2E artifact
           # CI builds amd64 only for speed; arm64 is validated in the release
           # workflow via native runners (no QEMU emulation overhead).
@@ -424,29 +432,29 @@ jobs:
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
         id: sbom
-        if: ${{ (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
+        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
         with:
           # Use local image (loaded via buildx load: true) to avoid registry timing issues
           image: breakglass:e2e
           format: spdx-json
           output-file: sbom.json
       - name: Attest provenance
-        if: ${{ (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
+        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
+          push-to-registry: ${{ steps.push_check.outputs.can_push == 'true' }}
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        if: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
+        if: ${{ steps.push_check.outputs.can_push == 'true' }}
         with:
           name: sbom
           path: sbom.json
 
       - name: Push image to Artifactory (OCI)
         # Skip for Dependabot PRs (no access to secrets) and fork PRs
-        if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
+        if: ${{ github.actor != 'dependabot[bot]' && steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
           ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas
