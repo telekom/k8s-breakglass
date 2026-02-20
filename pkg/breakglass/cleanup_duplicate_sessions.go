@@ -81,7 +81,6 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 		)
 
 		for _, dup := range sessions[1:] {
-			dup := dup // capture
 			log.Infow("Expiring duplicate session",
 				"session", dup.Name,
 				"namespace", dup.Namespace,
