@@ -247,6 +247,10 @@ spec:
             required:
             - oidc
             type: object
+            x-kubernetes-validations:
+            - message: keycloak configuration is required when groupSyncProvider is
+                'Keycloak'
+              rule: self.groupSyncProvider != 'Keycloak' || has(self.keycloak)
           status:
             description: IdentityProviderStatus defines the observed state of an IdentityProvider
             properties:

@@ -165,6 +165,8 @@ type SessionLimitGroupOverride struct {
 }
 
 // IdentityProviderSpec defines the desired state of an IdentityProvider
+//
+// +kubebuilder:validation:XValidation:rule="self.groupSyncProvider != 'Keycloak' || has(self.keycloak)",message="keycloak configuration is required when groupSyncProvider is 'Keycloak'"
 type IdentityProviderSpec struct {
 	// OIDC holds mandatory OIDC configuration for user authentication
 	// This is the base authentication mechanism for all identity providers

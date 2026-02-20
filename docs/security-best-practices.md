@@ -353,6 +353,34 @@ This enables a single template to serve multiple personas with different capabil
 2. **Prevent self-approval** - The system automatically prevents users from approving their own requests
 3. **Multi-person approval** - Consider requiring multiple approvers for sensitive escalations
 
+## CEL Validation Rules
+
+Breakglass CRDs include [CEL (Common Expression Language)](https://kubernetes.io/docs/reference/using-api/cel/)
+validation rules that the Kubernetes API server enforces at admission time
+(requires Kubernetes 1.25+). These rules complement the Go webhook
+validators and provide immediate feedback without webhook latency.
+
+### BreakglassEscalation
+
+| Rule | Effect |
+|------|--------|
+| `blockSelfApproval` requires approver groups | Prevents enabling self-approval blocking without any approver groups to approve |
+| `allowedIdentityProviders` mutual exclusivity | Cannot specify both `allowedIdentityProviders` and per-role IDP lists (`allowedIdentityProvidersForRequests`/`allowedIdentityProvidersForApprovers`) |
+| `sessionLimitsOverride.unlimited` conflicts | Cannot set `maxActiveSessionsPerUser`/`maxActiveSessionsTotal` when `unlimited` is true |
+| `podSecurityOverrides.requireApproval` requires approvers | Cannot enable `requireApproval` without specifying who can approve |
+
+### DenyPolicy
+
+| Rule | Effect |
+|------|--------|
+| At least one rule required | A DenyPolicy must have at least one `rules` entry or `podSecurityRules` |
+
+### IdentityProvider
+
+| Rule | Effect |
+|------|--------|
+| Keycloak config required | When `groupSyncProvider` is `Keycloak`, the `keycloak` configuration block must be present |
+
 ## Related Documentation
 
 - [Identity Provider Configuration](identity-provider.md)

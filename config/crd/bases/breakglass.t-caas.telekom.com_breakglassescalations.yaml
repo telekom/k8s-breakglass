@@ -355,6 +355,10 @@ spec:
                       This adds an extra check beyond the normal escalation approval.
                     type: boolean
                 type: object
+                x-kubernetes-validations:
+                - message: approvers must be specified when requireApproval is true
+                  rule: self.requireApproval == false || (has(self.approvers) && (size(self.approvers.groups)
+                    > 0 || size(self.approvers.users) > 0))
               requestReason:
                 description: |-
                   requestReason configures an optional free-text reason the requester must or may provide
@@ -404,9 +408,25 @@ spec:
                       Use with caution - this should only be granted to trusted platform teams.
                     type: boolean
                 type: object
+                x-kubernetes-validations:
+                - message: maxActiveSessionsPerUser and maxActiveSessionsTotal must
+                    not be set when unlimited is true
+                  rule: self.unlimited == false || (!has(self.maxActiveSessionsPerUser)
+                    && !has(self.maxActiveSessionsTotal))
             required:
             - allowed
             type: object
+            x-kubernetes-validations:
+            - message: blockSelfApproval requires at least one approver group
+              rule: '!has(self.blockSelfApproval) || self.blockSelfApproval == false
+                || (has(self.approvers) && has(self.approvers.groups) && size(self.approvers.groups)
+                > 0)'
+            - message: allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests
+                and allowedIdentityProvidersForApprovers
+              rule: '!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders)
+                == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests)
+                == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers)
+                == 0))'
           status:
             description: BreakglassEscalationStatus defines the observed state of
               BreakglassEscalation.

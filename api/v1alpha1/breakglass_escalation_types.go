@@ -49,6 +49,9 @@ const (
 )
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || self.blockSelfApproval == false || (has(self.approvers) && has(self.approvers.groups) && size(self.approvers.groups) > 0)",message="blockSelfApproval requires at least one approver group"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders) == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0))",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
@@ -163,6 +166,8 @@ type BreakglassEscalationSpec struct {
 
 // PodSecurityOverrides defines how an escalation can relax pod security rules.
 // These overrides apply when evaluating DenyPolicy.podSecurityRules for users with this escalation.
+//
+// +kubebuilder:validation:XValidation:rule="self.requireApproval == false || (has(self.approvers) && (size(self.approvers.groups) > 0 || size(self.approvers.users) > 0))",message="approvers must be specified when requireApproval is true"
 type PodSecurityOverrides struct {
 	// enabled activates pod security overrides for this escalation.
 	// If false, no overrides are applied regardless of other settings.
@@ -227,6 +232,8 @@ type NotificationExclusions struct {
 
 // SessionLimitsOverride allows an escalation to override the IdentityProvider's session limits.
 // This enables differentiated access for platform teams vs tenants.
+//
+// +kubebuilder:validation:XValidation:rule="self.unlimited == false || (!has(self.maxActiveSessionsPerUser) && !has(self.maxActiveSessionsTotal))",message="maxActiveSessionsPerUser and maxActiveSessionsTotal must not be set when unlimited is true"
 type SessionLimitsOverride struct {
 	// unlimited disables session limits entirely for this escalation.
 	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
