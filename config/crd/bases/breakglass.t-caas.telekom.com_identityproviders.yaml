@@ -250,7 +250,8 @@ spec:
             x-kubernetes-validations:
             - message: keycloak configuration is required when groupSyncProvider is
                 'Keycloak'
-              rule: self.groupSyncProvider != 'Keycloak' || has(self.keycloak)
+              rule: '!has(self.groupSyncProvider) || self.groupSyncProvider != ''Keycloak''
+                || has(self.keycloak)'
           status:
             description: IdentityProviderStatus defines the observed state of an IdentityProvider
             properties:

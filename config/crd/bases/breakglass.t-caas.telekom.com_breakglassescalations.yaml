@@ -357,8 +357,10 @@ spec:
                 type: object
                 x-kubernetes-validations:
                 - message: approvers must be specified when requireApproval is true
-                  rule: self.requireApproval == false || (has(self.approvers) && (size(self.approvers.groups)
-                    > 0 || size(self.approvers.users) > 0))
+                  rule: '!has(self.requireApproval) || self.requireApproval == false
+                    || (has(self.approvers) && ((has(self.approvers.groups) && size(self.approvers.groups)
+                    > 0) || (has(self.approvers.users) && size(self.approvers.users)
+                    > 0)))'
               requestReason:
                 description: |-
                   requestReason configures an optional free-text reason the requester must or may provide
@@ -411,8 +413,8 @@ spec:
                 x-kubernetes-validations:
                 - message: maxActiveSessionsPerUser and maxActiveSessionsTotal must
                     not be set when unlimited is true
-                  rule: self.unlimited == false || (!has(self.maxActiveSessionsPerUser)
-                    && !has(self.maxActiveSessionsTotal))
+                  rule: '!has(self.unlimited) || self.unlimited == false || (!has(self.maxActiveSessionsPerUser)
+                    && !has(self.maxActiveSessionsTotal))'
             required:
             - allowed
             type: object

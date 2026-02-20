@@ -398,7 +398,7 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: at least one deny rule or podSecurityRules must be specified
-              rule: size(self.rules) > 0 || has(self.podSecurityRules)
+              rule: (has(self.rules) && size(self.rules) > 0) || has(self.podSecurityRules)
           status:
             description: DenyPolicyStatus holds policy evaluation state tracked via
               conditions.

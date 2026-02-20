@@ -20,8 +20,8 @@ func TestCELValidationRulesPresent(t *testing.T) {
 	basePath := filepath.Join(filepath.Dir(thisFile), "..", "..", "config", "crd", "bases")
 
 	tests := []struct {
-		name     string
-		crdFile  string
+		name         string
+		crdFile      string
 		ruleSnippets []string
 	}{
 		{
