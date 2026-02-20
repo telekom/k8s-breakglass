@@ -7,7 +7,7 @@ import { reactive, watch } from "vue";
 
 /**
  * Filter state shape for the Session Browser view.
- * Kept in sync with the FilterState type in SessionBrowser.vue.
+ * This is the canonical definition — SessionBrowser.vue imports from this store.
  */
 export interface FilterState {
   mine: boolean;
@@ -58,13 +58,25 @@ function loadFromStorage(): FilterState {
       return defaultFilters();
     }
 
-    // Validate shape — ensure all expected keys are present
+    // Validate/coerce all fields to prevent runtime errors from corrupted storage
     const f = payload.filters;
-    if (typeof f.mine !== "boolean" || !Array.isArray(f.states)) {
-      return defaultFilters();
-    }
+    const defaults = defaultFilters();
 
-    return { ...defaultFilters(), ...f };
+    const safeStates = Array.isArray(f.states)
+      ? f.states.filter((s): s is string => typeof s === "string")
+      : defaults.states;
+
+    return {
+      mine: typeof f.mine === "boolean" ? f.mine : defaults.mine,
+      approver: typeof f.approver === "boolean" ? f.approver : defaults.approver,
+      onlyApprovedByMe:
+        typeof f.onlyApprovedByMe === "boolean" ? f.onlyApprovedByMe : defaults.onlyApprovedByMe,
+      states: safeStates.length > 0 ? safeStates : defaults.states,
+      cluster: typeof f.cluster === "string" ? f.cluster : defaults.cluster,
+      group: typeof f.group === "string" ? f.group : defaults.group,
+      user: typeof f.user === "string" ? f.user : defaults.user,
+      name: typeof f.name === "string" ? f.name : defaults.name,
+    };
   } catch {
     return defaultFilters();
   }

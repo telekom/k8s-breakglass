@@ -36,7 +36,7 @@ const currentUserEmail = computed(() => {
 type SessionActionKey = "reject" | "withdraw" | "drop" | "cancel";
 
 const filterStore = useSessionBrowserFilters();
-const { filters, resetFilters, DEFAULT_STATES: defaultStates } = filterStore;
+const { filters, resetFilters } = filterStore;
 
 const sessions = ref<SessionCR[]>([]);
 const loading = ref(false);
