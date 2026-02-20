@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Migrated `fake.NewSimpleClientset` to `fake.NewClientset`**: Replaced deprecated `fake.NewSimpleClientset()` calls with `fake.NewClientset()` in `pkg/breakglass/event_recorder_test.go` and removed associated `//nolint:staticcheck` suppressions (resolves #381)
+
 - **Multi-arch release builds on native runners**:
   - Release workflow now builds `linux/amd64` and `linux/arm64` images on separate native runners (no QEMU emulation)
   - Per-arch images assembled into a single multi-arch manifest via `docker buildx imagetools create`
