@@ -6,10 +6,25 @@ import { useUser } from "@/services/auth";
 import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { pushError, pushSuccess } from "@/services/toast";
-import { useDateFormatting } from "@/composables";
+import { useDateFormatting, useClipboard } from "@/composables";
 import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOperations } from "@/model/debugSession";
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
+const { copy: clipboardCopy } = useClipboard();
+const copiedPodName = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+function copyExecCommand(podName: string, command: string) {
+  clipboardCopy(command).then((ok) => {
+    if (ok) {
+      copiedPodName.value = podName;
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
+        copiedPodName.value = null;
+      }, 2000);
+    }
+  });
+}
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -619,7 +634,18 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                 </div>
               </div>
               <div v-if="pod.phase === 'Running'" class="pod-actions">
-                <code class="exec-command">kubectl exec -it {{ pod.name }} -n {{ pod.namespace }} -- /bin/sh</code>
+                <div class="exec-command-row">
+                  <code class="exec-command">kubectl exec -it {{ pod.name }} -n {{ pod.namespace }} -- /bin/sh</code>
+                  <scale-button
+                    size="small"
+                    variant="secondary"
+                    :title="copiedPodName === pod.name ? 'Copied!' : 'Copy to clipboard'"
+                    data-testid="copy-exec-btn"
+                    @click="copyExecCommand(pod.name, `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`)"
+                  >
+                    {{ copiedPodName === pod.name ? "Copied!" : "Copy" }}
+                  </scale-button>
+                </div>
               </div>
             </li>
           </ul>
@@ -1061,6 +1087,14 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
   overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+.exec-command-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
 }
 
 /* Allowed Pod Operations Section */
