@@ -62,6 +62,8 @@ type ActivityTracker struct {
 	stopCh chan struct{}
 	// done is closed when the background goroutine exits
 	done chan struct{}
+	// stopOnce ensures Stop() is idempotent and safe to call multiple times
+	stopOnce sync.Once
 }
 
 // ActivityTrackerOption configures an ActivityTracker.
@@ -137,12 +139,15 @@ func (at *ActivityTracker) Pending() int {
 }
 
 // Stop gracefully shuts down the background goroutine and flushes remaining entries.
+// Stop is idempotent and safe to call multiple times from concurrent shutdown paths.
 func (at *ActivityTracker) Stop(ctx context.Context) {
-	close(at.stopCh)
-	<-at.done
+	at.stopOnce.Do(func() {
+		close(at.stopCh)
+		<-at.done
 
-	// Final flush
-	at.flush(ctx)
+		// Final flush
+		at.flush(ctx)
+	})
 }
 
 // run is the background flush loop.
