@@ -140,6 +140,7 @@ watch(
 
 onUnmounted(() => {
   stopPolling();
+  clearTimeout(copiedTimer);
 });
 
 const stateVariant = computed(() => {

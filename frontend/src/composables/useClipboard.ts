@@ -47,7 +47,7 @@ export function useClipboard(resetDelay = 2000) {
     textarea.style.left = "-9999px";
     document.body.appendChild(textarea);
     textarea.select();
-    // eslint-disable-next-line deprecation/deprecation
+    // document.execCommand is deprecated but needed as fallback for older browsers
     const success = document.execCommand("copy");
     document.body.removeChild(textarea);
     if (!success) {
