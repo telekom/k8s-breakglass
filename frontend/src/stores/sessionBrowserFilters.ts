@@ -8,6 +8,8 @@ import { reactive, watch } from "vue";
 /**
  * Filter state shape for the Session Browser view.
  * This is the canonical definition — SessionBrowser.vue imports from this store.
+ *
+ * @see loadFromStorage for type coercion/validation of stored state
  */
 export interface FilterState {
   mine: boolean;

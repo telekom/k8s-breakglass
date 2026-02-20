@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
+import { createPinia } from "pinia";
 import { ref } from "vue";
 import SessionBrowser from "@/views/SessionBrowser.vue";
 import { AuthKey } from "@/keys";
@@ -110,9 +111,10 @@ describe("SessionBrowser", () => {
     await router.push("/sessions");
     await router.isReady();
 
+    const pinia = createPinia();
     const wrapper = mount(SessionBrowser, {
       global: {
-        plugins: [router],
+        plugins: [router, pinia],
         stubs: {
           EmptyState: true,
           ReasonPanel: true,
