@@ -40,12 +40,17 @@ Kubernetes evaluates authorizers in the order defined in
 1. **Node authorizer** — Handles kubelet requests.
 2. **RBAC** — Evaluates static `ClusterRole` / `Role` bindings generated
    by auth-operator (and any manual bindings).
-3. **Breakglass Webhook** — Consulted only when RBAC returns `NoOpinion`
-   (deny). An active, approved `BreakglassSession` that matches the
-   requesting user, cluster, and group grants temporary access.
+3. **Breakglass Webhook** — Evaluated only when the preceding authorizers
+   (including RBAC) return `NoOpinion` (no matching rule / no explicit
+   allow or deny). In that case, an active, approved `BreakglassSession`
+   that matches the requesting user, cluster, and group can grant
+   temporary access. If RBAC (or any earlier authorizer) explicitly
+   denies the request, the decision is terminal and the breakglass
+   webhook is not invoked.
 
 > **Important:** The webhook uses `failurePolicy: NoOpinion` so that
-> breakglass downtime never blocks the standard RBAC chain.
+> failures in the breakglass authorizer are treated as "no opinion" and
+> never block or override decisions made by the standard RBAC chain.
 
 ### Webhook Configuration
 
@@ -121,7 +126,7 @@ spec:
   escalatedGroup: "cluster-admin"
   allowed:
     clusters: ["prod-*"]
-    groups: ["tenant-developers"]        # Same group as BindDefinition subjects
+    groups: ["developers@example.com"]   # Same group as BindDefinition subjects
   approvers:
     groups: ["security-team", "platform-oncall"]
   maxValidFor: "1h"
@@ -171,15 +176,21 @@ T-CaaS naming convention is:
 {participant}-{scope}-{role}
 ```
 
+> **Note:** Some deployments use global/unprefixed group names (e.g.,
+> `developers@example.com`). The convention above applies to T-CaaS but
+> is not enforced by either system.
+
 | Group Example | Used By |
 |---------------|---------|
 | `tenant-cluster-admin` | `BindDefinition.spec.subjects`, `BreakglassEscalation.spec.escalatedGroup` |
 | `tenant-developers` | `BindDefinition.spec.subjects`, `BreakglassEscalation.spec.allowed.groups` |
 | `security-team` | `BreakglassEscalation.spec.approvers.groups` |
 
-**Key constraint:** The `oidcPrefixes` configuration in the breakglass
-`IdentityProvider` CR must match the group prefixes used in
-BindDefinition subjects. Otherwise, group lookups will fail silently.
+**Key constraint:** The `oidcPrefixes` configuration (set via the
+controller configuration key `kubernetes.oidcPrefixes`, see
+[configuration reference](./configuration-reference.md#oidcprefixes))
+must match the group prefixes used in BindDefinition subjects. Otherwise,
+group lookups will fail silently.
 
 ---
 
@@ -189,8 +200,9 @@ Both systems scope resources using namespace labels:
 
 - auth-operator uses `namespaceSelector` in `BindDefinition` for role
   binding scope.
-- k8s-breakglass uses `namespaceSelector` in `DenyPolicy` for access
-  restrictions.
+- k8s-breakglass scopes `DenyPolicy` via `spec.rules[].namespaces`
+  (a `NamespaceFilter` using `patterns` and/or `selectorTerms`) for
+  access restrictions.
 
 Apply a consistent labeling scheme:
 
@@ -223,8 +235,14 @@ metadata:
 ### DenyPolicy Interaction
 
 auth-operator-managed bindings and breakglass `DenyPolicy` resources can
-interact. A `DenyPolicy` evaluated by the breakglass webhook may block
-access even when RBAC grants it — be mindful of broad deny rules.
+interact. In the default setup described above, RBAC is evaluated before
+the breakglass webhook, so a `DenyPolicy` does **not** override an RBAC
+allow decision. Instead, `DenyPolicy` constrains what k8s-breakglass can
+grant when earlier authorizers (including RBAC) return `NoOpinion`. Be
+especially careful with broad deny rules if you configure the authorizer
+order differently (for example, placing the breakglass webhook before
+RBAC), as that can cause DenyPolicies to block requests that RBAC would
+otherwise allow.
 
 ---
 
@@ -288,7 +306,7 @@ Monitor both systems together for complete authorization visibility:
    ```
 4. Inspect the webhook decision log:
    ```bash
-   kubectl logs -l app.kubernetes.io/name=breakglass -c breakglass \
+   kubectl logs -l app=breakglass -c breakglass \
      | grep "authorize"
    ```
 
