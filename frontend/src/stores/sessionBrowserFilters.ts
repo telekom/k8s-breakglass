@@ -103,8 +103,8 @@ export const useSessionBrowserFilters = defineStore("sessionBrowserFilters", () 
 
   // Persist every change to sessionStorage
   watch(
-    () => ({ ...filters, states: [...filters.states] }),
-    (current) => saveToStorage(current as FilterState),
+    filters,
+    (current) => saveToStorage({ ...current, states: [...current.states] }),
     { deep: true },
   );
 

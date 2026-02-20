@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { setActivePinia, createPinia } from "pinia";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 
@@ -89,8 +90,8 @@ describe("useSessionBrowserFilters", () => {
     store.filters.mine = false;
     store.filters.cluster = "staging";
 
-    // Wait for the watcher to trigger
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Flush Vue's reactive watcher queue
+    await nextTick();
 
     const raw = sessionStorage.getItem(STORAGE_KEY);
     expect(raw).not.toBeNull();
