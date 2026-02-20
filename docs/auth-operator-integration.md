@@ -126,7 +126,7 @@ spec:
   escalatedGroup: "cluster-admin"
   allowed:
     clusters: ["prod-*"]
-    groups: ["developers@example.com"]   # Same group as BindDefinition subjects
+    groups: ["tenant-developers"]       # Same group as BindDefinition subjects
   approvers:
     groups: ["security-team", "platform-oncall"]
   maxValidFor: "1h"
@@ -148,7 +148,7 @@ spec:
   targetName: tenant
   subjects:
     - kind: Group
-      name: developers@example.com
+      name: tenant-developers
       apiGroup: rbac.authorization.k8s.io
   clusterRoleBindings:
     clusterRoleRefs:
