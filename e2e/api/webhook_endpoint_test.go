@@ -276,9 +276,12 @@ func TestWebhookExpiredSession(t *testing.T) {
 			}
 			lastSARResp = resp
 			lastStatusCode = code
-			t.Logf("SAR poll: allowed=%v, denied=%v, reason=%s",
-				resp.Status.Allowed, resp.Status.Denied, resp.Status.Reason)
-			return !resp.Status.Allowed, nil // done when webhook denies
+			t.Logf("SAR poll: allowed=%v, denied=%v, status=%d, reason=%s",
+				resp.Status.Allowed, resp.Status.Denied, code, resp.Status.Reason)
+			// Only trust the response when the webhook returned 200 OK;
+			// a non-200 status (e.g., 500 during cache sync) returns an empty
+			// SAR with Allowed=false which would prematurely satisfy the condition.
+			return code == http.StatusOK && !resp.Status.Allowed, nil // done when webhook denies
 		}, helpers.WaitForStateTimeout, helpers.DefaultInterval)
 		require.NoError(t, err, "Timeout waiting for webhook to deny expired session (last allowed=%v)",
 			lastSARResp != nil && lastSARResp.Status.Allowed)

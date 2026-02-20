@@ -472,7 +472,10 @@ jobs:
             FIRST_TAG=$(echo "$TAGS" | head -n1)
             if [ -n "$FIRST_TAG" ]; then
               # Compute the digest from the raw manifest to avoid buildx --format incompatibilities
-              PUSH_DIGEST=$(docker buildx imagetools inspect "$FIRST_TAG" --raw 2>/dev/null | sha256sum | awk '{print "sha256:" $1}' || true)
+              RAW_MANIFEST=$(docker buildx imagetools inspect "$FIRST_TAG" --raw 2>/dev/null) || true
+              if [ -n "$RAW_MANIFEST" ]; then
+                PUSH_DIGEST=$(echo "$RAW_MANIFEST" | sha256sum | awk '{print "sha256:" $1}')
+              fi
             fi
           fi
           echo "Registry digest: ${PUSH_DIGEST}"
