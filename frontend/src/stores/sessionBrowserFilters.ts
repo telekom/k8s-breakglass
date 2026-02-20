@@ -102,11 +102,7 @@ export const useSessionBrowserFilters = defineStore("sessionBrowserFilters", () 
   const filters = reactive<FilterState>(loadFromStorage());
 
   // Persist every change to sessionStorage
-  watch(
-    filters,
-    (current) => saveToStorage({ ...current, states: [...current.states] }),
-    { deep: true },
-  );
+  watch(filters, (current) => saveToStorage({ ...current, states: [...current.states] }), { deep: true });
 
   function resetFilters() {
     const defaults = defaultFilters();
