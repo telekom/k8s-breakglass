@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cosign keyless signing for release images**: Release workflow now signs container images and mirrors cosign signature/attestation OCI artifacts to the Artifactory registry using `cosign copy` on a best-effort basis, enabling supply-chain verification on both GHCR and Artifactory
 - **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release
 - **SLSA provenance attestation re-enabled**: Assemble job now generates and pushes SLSA Build L1 provenance via actions/attest-build-provenance
+- **Session activity tracking** (#314): Added `lastActivity` and `activityCount` fields to `BreakglassSessionStatus`. The authorization webhook records activity via a buffered `ActivityTracker` (30s flush interval) to avoid API server overhead. New Prometheus metrics: `breakglass_session_activity_requests_total`, `breakglass_session_activity_flushes_total`, `breakglass_session_activity_flush_errors_total`. This is foundational for idle timeout detection (#312).
 
 ### Changed
 
