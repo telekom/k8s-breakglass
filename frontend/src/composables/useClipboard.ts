@@ -55,5 +55,10 @@ export function useClipboard(resetDelay = 2000) {
     }
   }
 
-  return { copied, error, copy };
+  /** Cancel any pending reset timer. Call this on component unmount if needed. */
+  function cleanup() {
+    clearTimeout(timer);
+  }
+
+  return { copied, error, copy, cleanup };
 }

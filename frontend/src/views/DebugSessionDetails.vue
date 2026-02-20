@@ -10,14 +10,18 @@ import { useDateFormatting, useClipboard } from "@/composables";
 import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOperations } from "@/model/debugSession";
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
-const { copy: clipboardCopy } = useClipboard();
+const { copy: clipboardCopy, cleanup: clipboardCleanup } = useClipboard();
 const copiedPodName = ref<string | null>(null);
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
-function copyExecCommand(podName: string, command: string) {
-  clipboardCopy(command).then((ok) => {
+function getExecCommand(pod: DebugPodInfo): string {
+  return `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`;
+}
+
+function copyExecCommand(pod: DebugPodInfo) {
+  clipboardCopy(getExecCommand(pod)).then((ok) => {
     if (ok) {
-      copiedPodName.value = podName;
+      copiedPodName.value = pod.name;
       clearTimeout(copiedTimer);
       copiedTimer = setTimeout(() => {
         copiedPodName.value = null;
@@ -141,6 +145,7 @@ watch(
 onUnmounted(() => {
   stopPolling();
   clearTimeout(copiedTimer);
+  clipboardCleanup();
 });
 
 const stateVariant = computed(() => {
@@ -636,13 +641,14 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               </div>
               <div v-if="pod.phase === 'Running'" class="pod-actions">
                 <div class="exec-command-row">
-                  <code class="exec-command">kubectl exec -it {{ pod.name }} -n {{ pod.namespace }} -- /bin/sh</code>
+                  <code class="exec-command">{{ getExecCommand(pod) }}</code>
                   <scale-button
                     size="small"
                     variant="secondary"
                     :title="copiedPodName === pod.name ? 'Copied!' : 'Copy to clipboard'"
+                    :aria-label="copiedPodName === pod.name ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'"
                     data-testid="copy-exec-btn"
-                    @click="copyExecCommand(pod.name, `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`)"
+                    @click="copyExecCommand(pod)"
                   >
                     {{ copiedPodName === pod.name ? "Copied!" : "Copy" }}
                   </scale-button>
