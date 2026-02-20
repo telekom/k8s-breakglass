@@ -84,7 +84,7 @@ Activity tracking records when sessions are actively used by the authorization w
 
 ```promql
 # Active sessions in the last 5 minutes (sessions with recent activity)
-count(breakglass_session_activity_requests_total > 0)
+count(increase(breakglass_session_activity_requests_total[5m]) > 0)
 
 # Request rate per session
 sum by (session) (rate(breakglass_session_activity_requests_total[5m]))
@@ -93,7 +93,7 @@ sum by (session) (rate(breakglass_session_activity_requests_total[5m]))
 rate(breakglass_session_activity_flush_errors_total[5m])
 ```
 
-**Example Queries:**
+### Session-Based Authorization
 
 ```promql
 # Success rate of session grant checks
