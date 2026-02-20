@@ -96,26 +96,12 @@
     </section>
 
     <!-- Withdraw Confirmation Dialog -->
-    <scale-modal
+    <WithdrawConfirmDialog
       :opened="withdrawDialogOpen"
-      heading="Withdraw Request"
-      size="small"
-      data-testid="withdraw-confirm-modal"
-      @scaleClose="cancelWithdraw"
-    >
-      <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
-      <p v-if="withdrawTarget?.metadata?.name" class="withdraw-detail">
-        <strong>Request:</strong> {{ withdrawTarget.metadata.name }}
-      </p>
-      <div slot="action" class="dialog-actions">
-        <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="cancelWithdraw">
-          Cancel
-        </scale-button>
-        <scale-button variant="primary" data-testid="withdraw-confirm-btn" @click="confirmWithdraw">
-          Withdraw
-        </scale-button>
-      </div>
-    </scale-modal>
+      :session-name="withdrawTarget?.metadata?.name"
+      @confirm="confirmWithdraw"
+      @cancel="cancelWithdraw"
+    />
   </main>
 </template>
 
@@ -135,6 +121,7 @@ import {
 import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
+import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
 
 // Services
 import BreakglassService from "@/services/breakglass";
@@ -322,18 +309,5 @@ onMounted(() => {
     flex-direction: column;
     align-items: flex-start;
   }
-}
-
-.dialog-actions {
-  display: flex;
-  gap: var(--space-md);
-  justify-content: flex-end;
-  margin-top: var(--space-lg);
-}
-
-.withdraw-detail {
-  margin-top: var(--space-sm);
-  font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-additional);
 }
 </style>

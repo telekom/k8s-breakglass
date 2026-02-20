@@ -11,6 +11,7 @@ import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
 import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
+import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -576,26 +577,12 @@ onMounted(() => {
     </section>
 
     <!-- Withdraw Confirmation Dialog -->
-    <scale-modal
+    <WithdrawConfirmDialog
       :opened="withdrawDialogOpen"
-      heading="Withdraw Request"
-      size="small"
-      data-testid="withdraw-confirm-modal"
-      @scaleClose="cancelWithdraw"
-    >
-      <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
-      <p v-if="withdrawTarget?.metadata?.name" class="withdraw-detail">
-        <strong>Request:</strong> {{ withdrawTarget.metadata.name }}
-      </p>
-      <div slot="action" class="dialog-actions">
-        <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="cancelWithdraw">
-          Cancel
-        </scale-button>
-        <scale-button variant="primary" data-testid="withdraw-confirm-btn" @click="confirmWithdraw">
-          Withdraw
-        </scale-button>
-      </div>
-    </scale-modal>
+      :session-name="withdrawTarget ? sessionName(withdrawTarget) : undefined"
+      @confirm="confirmWithdraw"
+      @cancel="cancelWithdraw"
+    />
   </main>
 </template>
 
@@ -846,18 +833,5 @@ header p {
 
 .button-spinner {
   --scale-loading-spinner-size: 16px;
-}
-
-.dialog-actions {
-  display: flex;
-  gap: var(--space-md);
-  justify-content: flex-end;
-  margin-top: var(--space-lg);
-}
-
-.withdraw-detail {
-  margin-top: var(--space-sm);
-  font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-additional);
 }
 </style>
