@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI Build Image attestation 404 flake**: Separated Docker image build (local load) from registry push to eliminate digest mismatch between buildx `push`+`load` combination that caused `actions/attest-build-provenance` to fail with `OCIError: Error fetching manifest — expected 200, received 404`. The image is now built locally, pushed via `docker push`, and the actual registry digest is captured for reliable attestation
 - **UI E2E Keycloak timeout flake**: Increased Keycloak redirect timeouts from 30s to 60s in E2E auth helper and approve-via-email spec to prevent flaky failures when Keycloak JVM is cold-starting on CI runners. Increased Playwright retry count from 1 to 2 for additional resilience
 - **Replace GetConfigOrDie with GetConfig for graceful error handling**: Replaced panic-inducing `ctrl.GetConfigOrDie()` calls with `ctrl.GetConfig()` in webhook and certificate manager setup code, enabling graceful error handling instead of crashing the process on misconfiguration
 - **Debug Session Join button shown to owner/participants**: Join button was visible to the session creator and already-joined participants, resulting in 409 conflict errors. Added `isParticipant` field to `DebugSessionSummary` API response and updated both `DebugSessionCard` and `DebugSessionDetails` views to hide Join when the user is the owner or already a participant
