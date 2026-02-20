@@ -13,6 +13,8 @@ Breakglass system operators need:
 
 Currently `BreakglassSessionStatus` has no `LastUsedAt` or `IdleTimeout` fields. The webhook handler performs a single RBAC check across all granted groups and cannot attribute which specific group permitted the operation (see the NOTE at [pkg/webhook/controller.go lines 755–757](../pkg/webhook/controller.go#L755-L757)).
 
+> **Note:** Duration strings in this project use `api/v1alpha1.ParseDuration` (which supports day units like `"1d12h"`) rather than `time.ParseDuration`. All references below use the shared helper.
+
 ## 2. Prior Art in the Codebase
 
 - `DebugPodTemplateStatus.LastUsedAt` — records when the template was last used to create a debug session.
@@ -26,7 +28,8 @@ Currently `BreakglassSessionStatus` has no `LastUsedAt` or `IdleTimeout` fields.
 ```go
 // idleTimeout specifies the maximum duration a session can remain
 // unused (no webhook hits) before it is automatically expired.
-// Duration format, e.g. "4h", "30m".
+// Duration format, e.g. "4h", "30m", "1d".
+// Parsed via api/v1alpha1.ParseDuration (supports day units).
 // If not set, the session remains active for its full MaxValidFor window.
 // +optional
 IdleTimeout string `json:"idleTimeout,omitempty"`
@@ -37,6 +40,7 @@ IdleTimeout string `json:"idleTimeout,omitempty"`
 ```go
 // lastUsedAt records the most recent time this session's granted group
 // was exercised (successfully authorized) through the webhook.
+// Updated by the webhook handler after each successful RBAC check.
 // +optional
 LastUsedAt *metav1.Time `json:"lastUsedAt,omitempty"`
 ```
@@ -75,13 +79,13 @@ for _, session := range activeSessions {
 
 **Trade-offs:**
 
-| Approach | Accuracy | Cost |
-|----------|----------|------|
-| Skip attribution (update all active) | Low (over-counts) | O(1) write per session count |
-| Per-session RBAC re-check (proposed) | High (first match) | O(n) extra RBAC checks |
-| Async batch update | Medium | O(n) writes, deferred |
+| Approach | Accuracy | Extra SAR checks | Status writes |
+|----------|----------|------------------|---------------|
+| Skip attribution (update all active) | Low (over-counts) | O(1) combined check only | O(n) per request (one write per active session, debounced) |
+| Per-session RBAC re-check (proposed) | High (first match) | O(n) extra SAR checks | O(1) per request (update only the attributed session) |
+| Async batch update | Medium | O(1) combined check only | O(n) per batch, off the webhook critical path |
 
-**Recommendation:** Start with "update all active sessions for this user" (cheap, O(1) status patches per session). This is good enough for the idle timeout use case — a session is "used" if the user is active at all. Refine to per-group attribution later if operators need per-session granularity.
+**Recommendation:** Start with "update all active sessions for this user". This keeps the webhook path cheap in terms of authorization work (no extra SAR checks beyond the combined one), at the cost of O(n) status writes per request in the number of active sessions (mitigated by debouncing). This is good enough for the idle timeout use case — a session is "used" if the user is active at all. Refine to per-group attribution later if operators need per-session granularity and are willing to pay the extra SAR checks.
 
 ### 4.2 Write Concern
 
@@ -95,17 +99,27 @@ The webhook currently only reads `BreakglassSession` CRDs. Updating `LastUsedAt`
 func (wc *WebhookController) updateLastUsed(ctx context.Context, session *v1alpha1.BreakglassSession) {
     now := metav1.Now()
     if session.Status.LastUsedAt != nil &&
-       now.Sub(session.Status.LastUsedAt.Time) < 5*time.Minute {
+        now.Sub(session.Status.LastUsedAt.Time) < 5*time.Minute {
         return // debounce
     }
-    go func() {
-        // Update status field
-        session.Status.LastUsedAt = &now
-        // Use SSA helper
-        if err := ssa.ApplyBreakglassSessionStatus(ctx, wc.client, session); err != nil {
-            wc.log.Warnw("Failed to update LastUsedAt", "session", session.Name, "error", err)
+
+    // Avoid mutating the shared session from a goroutine; instead, pass the
+    // required values as arguments and build a minimal patch/apply object.
+    go func(name, namespace string, t metav1.Time) {
+        patch := &v1alpha1.BreakglassSession{
+            ObjectMeta: metav1.ObjectMeta{
+                Name:      name,
+                Namespace: namespace,
+            },
+            Status: v1alpha1.BreakglassSessionStatus{
+                LastUsedAt: &t,
+            },
         }
-    }()
+        // Use SSA helper (consistent with other status updates in the codebase)
+        if err := ssa.ApplyBreakglassSessionStatus(ctx, wc.client, patch); err != nil {
+            wc.log.Warnw("Failed to update LastUsedAt", "session", name, "error", err)
+        }
+    }(session.Name, session.Namespace, now)
 }
 ```
 
@@ -117,7 +131,7 @@ In the session controller's reconcile loop, after confirming a session is in `Ap
 
 ```go
 if spec.IdleTimeout != "" {
-    idleTimeout, err := time.ParseDuration(spec.IdleTimeout)
+    idleTimeout, err := v1alpha1.ParseDuration(spec.IdleTimeout)
     if err != nil {
         // Log and skip — malformed idle timeout should not crash reconciliation
         log.Warnw("Invalid idleTimeout", "session", session.Name, "value", spec.IdleTimeout)
@@ -145,15 +159,14 @@ Add a new state constant:
 const SessionStateIdleExpired BreakglassSessionState = "IdleExpired"
 ```
 
-Add a corresponding condition type:
+Reuse the existing idle condition type:
 
-```go
-const ConditionIdle = "Idle"
-```
+- Condition type: `SessionConditionTypeIdle` (already defined in `api/v1alpha1/breakglass_session_types.go`).
 
 When idle-expired:
-- Set condition `Idle` to `True` with reason `"IdleTimeoutExceeded"`.
+- Set condition `SessionConditionTypeIdle` to `True` with reason `"IdleTimeoutExceeded"`.
 - Transition session state to `IdleExpired`.
+- Update `isValidBreakglassSessionStateTransition` to allow `SessionStateApproved` → `SessionStateIdleExpired`.
 - Clean up RBAC bindings (same as normal expiry).
 
 ### 5.3 Frontend Display
@@ -164,7 +177,7 @@ Add `IdleExpired` to the status tag mapping and session state options in the fro
 
 ### 6.1 Admission Webhook
 
-- Validate `idleTimeout` is a parseable Go duration if set.
+- Validate `idleTimeout` is parseable via `v1alpha1.ParseDuration` if set.
 - Validate `idleTimeout` ≤ `maxValidFor` (idle timeout should not exceed session lifetime).
 
 ### 6.2 Unit Tests
