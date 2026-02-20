@@ -69,8 +69,7 @@ function loadFromStorage(): FilterState {
     return {
       mine: typeof f.mine === "boolean" ? f.mine : defaults.mine,
       approver: typeof f.approver === "boolean" ? f.approver : defaults.approver,
-      onlyApprovedByMe:
-        typeof f.onlyApprovedByMe === "boolean" ? f.onlyApprovedByMe : defaults.onlyApprovedByMe,
+      onlyApprovedByMe: typeof f.onlyApprovedByMe === "boolean" ? f.onlyApprovedByMe : defaults.onlyApprovedByMe,
       states: safeStates.length > 0 ? safeStates : defaults.states,
       cluster: typeof f.cluster === "string" ? f.cluster : defaults.cluster,
       group: typeof f.group === "string" ? f.group : defaults.group,
