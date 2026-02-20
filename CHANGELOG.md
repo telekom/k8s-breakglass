@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI Build Image attestation 404 flake**: Fixed intermittent `actions/attest-build-provenance` failures (`OCIError: Error fetching manifest — expected 200, received 404`) caused by manifest propagation delays in GHCR by: (1) separating Docker image build (local load) from registry push to eliminate digest mismatch, (2) capturing the actual registry digest from `docker push` output, and (3) adding a manifest-availability polling step (`docker buildx imagetools inspect`) that retries up to 30 times with 10 s intervals before attestation
 - **UI E2E Keycloak timeout flake**: Increased Keycloak redirect timeouts from 30s to 60s in E2E auth helper and approve-via-email spec to prevent flaky failures when Keycloak JVM is cold-starting on CI runners. Increased Playwright retry count from 1 to 2 for additional resilience
 - **Replace GetConfigOrDie with GetConfig for graceful error handling**: Replaced panic-inducing `ctrl.GetConfigOrDie()` calls with `ctrl.GetConfig()` in webhook and certificate manager setup code, enabling graceful error handling instead of crashing the process on misconfiguration
 - **Debug Session Join button shown to owner/participants**: Join button was visible to the session creator and already-joined participants, resulting in 409 conflict errors. Added `isParticipant` field to `DebugSessionSummary` API response and updated both `DebugSessionCard` and `DebugSessionDetails` views to hide Join when the user is the owner or already a participant
@@ -36,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **REUSE compliance**: Added `precedence = "aggregate"` to all REUSE.toml annotation blocks to resolve path pattern ambiguity, added missing `codecov.yml` and `versions.env` to CI files coverage, fixed copyright year typo (2026→2025) in `.golangci.yml`, `.yamllint.yml`, and `.github/PULL_REQUEST_TEMPLATE.md`
 - **Release pipeline digest extraction**: `docker buildx imagetools inspect --format '{{.Manifest.Digest}}'` returns full human-readable output on newer Buildx versions, corrupting `$GITHUB_OUTPUT` with multi-line content. Switched to computing the manifest digest from raw JSON via `sha256sum`
 - **CI provenance attestation re-enabled**: Added missing `id-token: write` and `attestations: write` permissions to build-image job, allowing SLSA provenance attestation to run (was disabled with `if: false` due to missing OIDC token access). Made `push-to-registry` conditional to avoid failures on fork PRs
+- **E2E webhook expired-session flake**: `TestWebhookExpiredSession` intermittently failed because the webhook's informer cache had not yet synced the `Expired` status set via a direct `Status().Update()` call. Replaced the single-shot SAR assertion with a polling loop (`WaitForCondition`) that retries until the webhook denies the request, matching the pattern used by other E2E wait helpers
 
 ### Added
 

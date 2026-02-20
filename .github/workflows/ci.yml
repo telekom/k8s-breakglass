@@ -386,13 +386,16 @@ jobs:
             com.github.repo.branch=${{ github.ref_name }}
             com.github.repo.owner=${{ github.repository_owner }}
             com.buildkit.build.ref=${{ github.ref }}
-      - name: Build & (optionally) Push multi-arch
+      - name: Build image locally
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: ${{ steps.push_check.outputs.can_push == 'true' }}
-          load: true  # Also load into local Docker for E2E artifact
+          # Never push during build — avoids digest mismatch between
+          # buildx load and registry manifest that causes attestation 404s.
+          # We push explicitly in a later step using `docker push`.
+          push: false
+          load: true
           # CI builds amd64 only for speed; arm64 is validated in the release
           # workflow via native runners (no QEMU emulation overhead).
           platforms: linux/amd64
@@ -438,19 +441,69 @@ jobs:
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
         id: sbom
-        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
+        if: ${{ steps.push_check.outputs.can_push == 'true' }}
         with:
           # Use local image (loaded via buildx load: true) to avoid registry timing issues
           image: breakglass:e2e
           format: spdx-json
           output-file: sbom.json
+      - name: Push image to GHCR
+        id: registry_push
+        if: ${{ steps.push_check.outputs.can_push == 'true' }}
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -e
+          PUSH_DIGEST=""
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "Pushing ${tag}..."
+            OUTPUT=$(docker push "$tag" 2>&1)
+            echo "$OUTPUT"
+            # Extract digest from push output (e.g. "digest: sha256:abc123 size: 1234")
+            LINE_DIGEST=$(echo "$OUTPUT" | grep -oP 'digest: \Ksha256:\S+' | tail -1 || true)
+            if [ -n "$LINE_DIGEST" ] && [ -z "$PUSH_DIGEST" ]; then
+              PUSH_DIGEST="$LINE_DIGEST"
+            fi
+          done <<< "$TAGS"
+          if [ -z "$PUSH_DIGEST" ]; then
+            echo "::warning::Could not extract digest from docker push output"
+            # Fallback: inspect the first tag via registry API using a stable, single-line digest computation
+            FIRST_TAG=$(echo "$TAGS" | head -n1)
+            if [ -n "$FIRST_TAG" ]; then
+              # Compute the digest from the raw manifest to avoid buildx --format incompatibilities
+              RAW_MANIFEST=$(docker buildx imagetools inspect "$FIRST_TAG" --raw 2>/dev/null) || true
+              if [ -n "$RAW_MANIFEST" ]; then
+                PUSH_DIGEST=$(echo "$RAW_MANIFEST" | sha256sum | awk '{print "sha256:" $1}')
+              fi
+            fi
+          fi
+          echo "Registry digest: ${PUSH_DIGEST}"
+          echo "digest=${PUSH_DIGEST}" >> $GITHUB_OUTPUT
+      - name: Wait for manifest availability
+        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -e
+          FIRST_TAG=$(echo "$TAGS" | head -n1)
+          echo "Polling for manifest availability of ${FIRST_TAG}..."
+          for i in $(seq 1 30); do
+            if docker buildx imagetools inspect "$FIRST_TAG" --raw > /dev/null 2>&1; then
+              echo "Manifest available after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: manifest not yet available, retrying in 10s..."
+            sleep 10
+          done
+          echo "::warning::Manifest still not available after 30 attempts (300s). Attestation may fail."
       - name: Attest provenance
-        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
+        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: ${{ steps.push_check.outputs.can_push == 'true' }}
+          subject-digest: ${{ steps.registry_push.outputs.digest }}
+          push-to-registry: true
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: ${{ steps.push_check.outputs.can_push == 'true' }}
@@ -460,7 +513,7 @@ jobs:
 
       - name: Push image to Artifactory (OCI)
         # Skip for Dependabot PRs (no access to secrets) and fork PRs
-        if: ${{ github.actor != 'dependabot[bot]' && steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
+        if: ${{ github.actor != 'dependabot[bot]' && steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
           ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas

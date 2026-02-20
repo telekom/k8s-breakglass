@@ -263,16 +263,31 @@ func TestWebhookExpiredSession(t *testing.T) {
 			},
 		}
 
-		sarResp, statusCode, err := helpers.SendSARToWebhook(t, ctx, sar, clusterName)
-		if err != nil {
-			t.Fatalf("Failed to reach webhook endpoint: %v\nMake sure to port-forward the breakglass API service", err)
-		}
+		// The webhook controller uses an informer cache that may not have
+		// synced the Expired status yet. Poll until the webhook recognizes
+		// the session as expired instead of asserting on the first attempt.
+		var lastSARResp *authorizationv1.SubjectAccessReview
+		var lastStatusCode int
+		err := helpers.WaitForCondition(ctx, func() (bool, error) {
+			resp, code, sendErr := helpers.SendSARToWebhook(t, ctx, sar, clusterName)
+			if sendErr != nil {
+				t.Logf("SAR request failed: %v", sendErr)
+				return false, sendErr
+			}
+			lastSARResp = resp
+			lastStatusCode = code
+			t.Logf("SAR poll: allowed=%v, denied=%v, status=%d, reason=%s",
+				resp.Status.Allowed, resp.Status.Denied, code, resp.Status.Reason)
+			// Only trust the response when the webhook returned 200 OK;
+			// a non-200 status (e.g., 500 during cache sync) returns an empty
+			// SAR with Allowed=false which would prematurely satisfy the condition.
+			return code == http.StatusOK && !resp.Status.Allowed, nil // done when webhook denies
+		}, helpers.WaitForStateTimeout, helpers.DefaultInterval)
+		require.NoError(t, err, "Timeout waiting for webhook to deny expired session (last allowed=%v)",
+			lastSARResp != nil && lastSARResp.Status.Allowed)
 
-		assert.Equal(t, http.StatusOK, statusCode, "Webhook should return 200 OK")
-		// Expired sessions should not be allowed
-		t.Logf("SAR allowed: %v, denied: %v, reason: %s",
-			sarResp.Status.Allowed, sarResp.Status.Denied, sarResp.Status.Reason)
-		assert.False(t, sarResp.Status.Allowed, "Expired session should not be allowed")
+		assert.Equal(t, http.StatusOK, lastStatusCode, "Webhook should return 200 OK")
+		assert.False(t, lastSARResp.Status.Allowed, "Expired session should not be allowed")
 	})
 }
 
