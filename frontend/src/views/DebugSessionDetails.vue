@@ -650,7 +650,11 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                     size="small"
                     variant="secondary"
                     :title="copiedPodName === podKey(pod) ? 'Copied!' : 'Copy to clipboard'"
-                    :aria-label="copiedPodName === podKey(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'"
+                    :aria-label="
+                      copiedPodName === podKey(pod)
+                        ? 'Command copied to clipboard'
+                        : 'Copy kubectl command to clipboard'
+                    "
                     data-testid="copy-exec-btn"
                     @click="copyExecCommand(pod)"
                   >
