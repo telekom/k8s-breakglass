@@ -72,7 +72,7 @@ function loadFromStorage(): FilterState {
       mine: typeof f.mine === "boolean" ? f.mine : defaults.mine,
       approver: typeof f.approver === "boolean" ? f.approver : defaults.approver,
       onlyApprovedByMe: typeof f.onlyApprovedByMe === "boolean" ? f.onlyApprovedByMe : defaults.onlyApprovedByMe,
-      states: safeStates.length > 0 ? safeStates : defaults.states,
+      states: safeStates,
       cluster: typeof f.cluster === "string" ? f.cluster : defaults.cluster,
       group: typeof f.group === "string" ? f.group : defaults.group,
       user: typeof f.user === "string" ? f.user : defaults.user,
@@ -113,5 +113,5 @@ export const useSessionBrowserFilters = defineStore("sessionBrowserFilters", () 
     Object.assign(filters, defaults);
   }
 
-  return { filters, resetFilters, DEFAULT_STATES };
+  return { filters, resetFilters };
 });
