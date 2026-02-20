@@ -10,6 +10,7 @@ import { pushError, pushSuccess } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
 import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
+import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -32,30 +33,10 @@ const currentUserEmail = computed(() => {
   return profile?.email || profile?.preferred_username || directEmail || directPreferred || "";
 });
 
-type FilterState = {
-  mine: boolean;
-  approver: boolean;
-  states: string[];
-  cluster: string;
-  group: string;
-  user: string;
-  name: string;
-  onlyApprovedByMe: boolean;
-};
-
 type SessionActionKey = "reject" | "withdraw" | "drop" | "cancel";
 
-const defaultStates = ["approved", "timeout", "withdrawn", "rejected"];
-const filters = reactive<FilterState>({
-  mine: true,
-  approver: false,
-  states: [...defaultStates],
-  cluster: "",
-  group: "",
-  user: "",
-  name: "",
-  onlyApprovedByMe: false,
-});
+const filterStore = useSessionBrowserFilters();
+const { filters, resetFilters, DEFAULT_STATES: defaultStates } = filterStore;
 
 const sessions = ref<SessionCR[]>([]);
 const loading = ref(false);
@@ -203,17 +184,6 @@ async function fetchSessions() {
   } finally {
     loading.value = false;
   }
-}
-
-function resetFilters() {
-  filters.mine = true;
-  filters.approver = false;
-  filters.states = [...defaultStates];
-  filters.cluster = "";
-  filters.group = "";
-  filters.user = "";
-  filters.name = "";
-  filters.onlyApprovedByMe = false;
 }
 
 function onStateToggle(state: string, event: Event | CustomEvent) {
