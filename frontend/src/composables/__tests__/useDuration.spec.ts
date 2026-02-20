@@ -6,6 +6,9 @@ import {
   parseDurationString,
   formatDuration,
   formatDurationFromSeconds,
+  formatDurationRounded,
+  formatDurationFromSecondsRounded,
+  roundSeconds,
   computeEndTime,
   formatEndTime,
 } from "@/composables/useDuration";
@@ -188,6 +191,71 @@ describe("useDuration", () => {
     it("returns 'Not available' for missing inputs", () => {
       expect(formatEndTime(null, "1h")).toBe("Not available");
       expect(formatEndTime("2025-12-01T10:00:00Z", null)).toBe("Not available");
+    });
+  });
+
+  describe("roundSeconds", () => {
+    it("returns 0s for zero or negative", () => {
+      expect(roundSeconds(0)).toBe("0s");
+      expect(roundSeconds(-10)).toBe("0s");
+    });
+
+    it("returns exact seconds for < 1 minute", () => {
+      expect(roundSeconds(45)).toBe("45s");
+      expect(roundSeconds(1)).toBe("1s");
+      expect(roundSeconds(59)).toBe("59s");
+    });
+
+    it("rounds to nearest minute for >= 1m and < 1h", () => {
+      expect(roundSeconds(60)).toBe("1m");
+      expect(roundSeconds(90)).toBe("2m"); // 1.5m rounds to 2m
+      expect(roundSeconds(1800)).toBe("30m");
+      expect(roundSeconds(3599)).toBe("1h"); // 59m 59s rounds to 60m, normalizes to 1h
+    });
+
+    it("rounds to nearest 5 minutes for >= 1h", () => {
+      expect(roundSeconds(3600)).toBe("1h"); // exactly 1h
+      expect(roundSeconds(5400)).toBe("1h 30m"); // 1h 30m — already clean
+      expect(roundSeconds(7140)).toBe("2h"); // 1h 59m → 2h
+      expect(roundSeconds(5580)).toBe("1h 35m"); // 1h 33m → 1h 35m
+      expect(roundSeconds(86100)).toBe("23h 55m"); // 23h 55m → 23h 55m
+      expect(roundSeconds(86340)).toBe("24h"); // 23h 59m → 24h
+    });
+  });
+
+  describe("formatDurationRounded", () => {
+    it("rounds near-boundary durations", () => {
+      expect(formatDurationRounded("1h59m0s")).toBe("2h");
+      expect(formatDurationRounded("1h33m0s")).toBe("1h 35m");
+    });
+
+    it("keeps clean durations unchanged", () => {
+      expect(formatDurationRounded("30m")).toBe("30m");
+      expect(formatDurationRounded("1h30m0s")).toBe("1h 30m");
+      expect(formatDurationRounded("2h")).toBe("2h");
+    });
+
+    it("returns Not specified for empty", () => {
+      expect(formatDurationRounded(undefined)).toBe("Not specified");
+      expect(formatDurationRounded(null)).toBe("Not specified");
+    });
+
+    it("returns original for unparseable", () => {
+      expect(formatDurationRounded("invalid")).toBe("invalid");
+    });
+  });
+
+  describe("formatDurationFromSecondsRounded", () => {
+    it("rounds seconds to nearest sensible unit", () => {
+      expect(formatDurationFromSecondsRounded(7140)).toBe("2h"); // 1h 59m
+      expect(formatDurationFromSecondsRounded(90)).toBe("2m"); // 1.5m
+      expect(formatDurationFromSecondsRounded(45)).toBe("45s");
+    });
+
+    it("handles zero and null", () => {
+      expect(formatDurationFromSecondsRounded(0)).toBe("0s");
+      expect(formatDurationFromSecondsRounded(null)).toBe("0s");
+      expect(formatDurationFromSecondsRounded(undefined)).toBe("0s");
     });
   });
 });

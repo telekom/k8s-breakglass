@@ -6,7 +6,7 @@
 
     <!-- Duration information -->
     <div v-if="sessionSpec?.maxValidFor" class="modal-info-block tone-info">
-      <p><strong>Duration:</strong> {{ formatDuration(String(sessionSpec.maxValidFor)) }}</p>
+      <p><strong>Duration:</strong> {{ formatDurationRounded(String(sessionSpec.maxValidFor)) }}</p>
     </div>
 
     <!-- Scheduling information -->
@@ -74,7 +74,7 @@
 
 <script setup lang="ts">
 import { computed, useId } from "vue";
-import { formatDateTime, formatDuration, formatEndTime } from "@/composables";
+import { formatDateTime, formatDurationRounded, formatEndTime } from "@/composables";
 import type { SessionCR } from "@/model/breakglass";
 
 const noteErrorId = `approval-note-error-${useId()}`;

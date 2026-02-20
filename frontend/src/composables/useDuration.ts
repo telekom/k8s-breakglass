@@ -80,6 +80,74 @@ export function formatDurationFromSeconds(seconds: number | undefined | null): s
 }
 
 /**
+ * Round total seconds to the nearest sensible display unit.
+ *
+ * Rounding rules (applied in order):
+ * - ≥ 1h  → round to nearest 5 min; if the remainder is 0 show hours only
+ * - ≥ 1m  → round to nearest minute (drop seconds)
+ * - < 1m  → show exact seconds
+ *
+ * The 5-minute threshold for hours means "1h 59m" becomes "2h" and
+ * "1h 32m" becomes "1h 30m".
+ *
+ * @param totalSeconds — total duration in seconds
+ * @returns human-readable rounded string
+ */
+export function roundSeconds(totalSeconds: number): string {
+  if (totalSeconds <= 0) return "0s";
+
+  if (totalSeconds >= 3600) {
+    // Round to nearest 5 minutes
+    const rounded = Math.round(totalSeconds / 300) * 300;
+    const hrs = Math.floor(rounded / 3600);
+    const mins = Math.floor((rounded % 3600) / 60);
+    const parts: string[] = [];
+    if (hrs > 0) parts.push(`${hrs}h`);
+    if (mins > 0) parts.push(`${mins}m`);
+    return parts.length > 0 ? parts.join(" ") : "0s";
+  }
+
+  if (totalSeconds >= 60) {
+    // Round to nearest minute
+    const mins = Math.round(totalSeconds / 60);
+    if (mins >= 60) {
+      // Overflows into hours — delegate to the hours-tier rounding
+      return roundSeconds(mins * 60);
+    }
+    return `${mins}m`;
+  }
+
+  // Less than 1 minute — exact seconds
+  return `${Math.floor(totalSeconds)}s`;
+}
+
+/**
+ * Format a Go duration string with cosmetic rounding for display.
+ * The original exact value is preserved for backend use — this function
+ * is purely for UI presentation.
+ *
+ * @see roundSeconds for rounding rules
+ */
+export function formatDurationRounded(durationStr: string | undefined | null): string {
+  if (!durationStr) return "Not specified";
+
+  const parsed = parseDurationString(durationStr);
+  if (!parsed) return durationStr;
+
+  return roundSeconds(parsed.totalSeconds);
+}
+
+/**
+ * Format duration from seconds with cosmetic rounding for display.
+ *
+ * @see roundSeconds for rounding rules
+ */
+export function formatDurationFromSecondsRounded(seconds: number | undefined | null): string {
+  if (!seconds || seconds <= 0) return "0s";
+  return roundSeconds(seconds);
+}
+
+/**
  * Compute end time from start time and duration
  */
 export function computeEndTime(
@@ -120,7 +188,10 @@ export function useDuration() {
   return {
     parseDurationString,
     formatDuration,
+    formatDurationRounded,
     formatDurationFromSeconds,
+    formatDurationFromSecondsRounded,
+    roundSeconds,
     computeEndTime,
     formatEndTime,
   };
