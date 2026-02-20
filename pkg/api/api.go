@@ -1191,8 +1191,15 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 
 	// Webhook controller is always registered but may not be exposed via webhooks
 	webhookCtrl := webhook.NewWebhookController(log, *cfg, sessionManager, escalationManager, ccProvider, denyEval).
-		WithAuditService(auditService).
-		WithActivityTracker(webhook.NewActivityTracker(sessionManager.Client))
+		WithAuditService(auditService)
+
+	// Only attach ActivityTracker when session activity tracking is enabled.
+	// When disabled (default), the webhook still increments Prometheus counters
+	// but skips buffered status updates to avoid unnecessary API server writes.
+	if cfg.Server.EnableActivityTracking {
+		webhookCtrl.WithActivityTracker(webhook.NewActivityTracker(sessionManager.Client))
+		log.Infow("Session activity tracking enabled")
+	}
 	apiControllers = append(apiControllers, webhookCtrl)
 	return apiControllers, webhookCtrl
 }
