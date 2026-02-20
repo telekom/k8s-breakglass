@@ -30,9 +30,7 @@ const emit = defineEmits<{
     @scaleClose="emit('cancel')"
   >
     <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
-    <p v-if="sessionName" class="withdraw-detail">
-      <strong>Request:</strong> {{ sessionName }}
-    </p>
+    <p v-if="sessionName" class="withdraw-detail"><strong>Request:</strong> {{ sessionName }}</p>
     <div slot="action" class="dialog-actions">
       <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="emit('cancel')">
         Cancel
