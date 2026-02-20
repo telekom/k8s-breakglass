@@ -21,7 +21,13 @@ export function useClipboard(resetDelay = 2000) {
     error.value = null;
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          // writeText can reject in insecure contexts or due to permission denial;
+          // fall back to textarea-based copy.
+          fallbackCopy(text);
+        }
       } else {
         fallbackCopy(text);
       }
@@ -46,12 +52,15 @@ export function useClipboard(resetDelay = 2000) {
     textarea.style.position = "absolute";
     textarea.style.left = "-9999px";
     document.body.appendChild(textarea);
-    textarea.select();
-    // document.execCommand is deprecated but needed as fallback for older browsers
-    const success = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    if (!success) {
-      throw new Error("execCommand copy failed");
+    try {
+      textarea.select();
+      // document.execCommand is deprecated but needed as fallback for older browsers
+      const success = document.execCommand("copy");
+      if (!success) {
+        throw new Error("execCommand copy failed");
+      }
+    } finally {
+      document.body.removeChild(textarea);
     }
   }
 

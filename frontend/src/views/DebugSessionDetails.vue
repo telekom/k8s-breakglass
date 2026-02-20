@@ -14,6 +14,10 @@ const { copy: clipboardCopy, cleanup: clipboardCleanup } = useClipboard();
 const copiedPodName = ref<string | null>(null);
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
+function podKey(pod: DebugPodInfo): string {
+  return `${pod.namespace}/${pod.name}`;
+}
+
 function getExecCommand(pod: DebugPodInfo): string {
   return `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`;
 }
@@ -21,7 +25,7 @@ function getExecCommand(pod: DebugPodInfo): string {
 function copyExecCommand(pod: DebugPodInfo) {
   clipboardCopy(getExecCommand(pod)).then((ok) => {
     if (ok) {
-      copiedPodName.value = pod.name;
+      copiedPodName.value = podKey(pod);
       clearTimeout(copiedTimer);
       copiedTimer = setTimeout(() => {
         copiedPodName.value = null;
@@ -645,12 +649,12 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                   <scale-button
                     size="small"
                     variant="secondary"
-                    :title="copiedPodName === pod.name ? 'Copied!' : 'Copy to clipboard'"
-                    :aria-label="copiedPodName === pod.name ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'"
+                    :title="copiedPodName === podKey(pod) ? 'Copied!' : 'Copy to clipboard'"
+                    :aria-label="copiedPodName === podKey(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'"
                     data-testid="copy-exec-btn"
                     @click="copyExecCommand(pod)"
                   >
-                    {{ copiedPodName === pod.name ? "Copied!" : "Copy" }}
+                    {{ copiedPodName === podKey(pod) ? "Copied!" : "Copy" }}
                   </scale-button>
                 </div>
               </div>

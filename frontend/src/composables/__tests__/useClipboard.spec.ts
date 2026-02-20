@@ -91,26 +91,28 @@ describe("useClipboard", () => {
     expect(error.value).toBe("execCommand copy failed");
   });
 
-  it("sets error on failure and returns false", async () => {
+  it("falls back to textarea when writeText rejects", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("Permission denied"));
     Object.assign(navigator, { clipboard: { writeText } });
 
     const { copy, copied, error } = useClipboard();
     const result = await copy("fail");
 
+    // writeText rejected, fallback tried, execCommand unavailable in jsdom
     expect(result).toBe(false);
     expect(copied.value).toBe(false);
-    expect(error.value).toBe("Permission denied");
+    expect(error.value).toBe("execCommand copy failed");
   });
 
-  it("handles non-Error rejection", async () => {
+  it("falls back to textarea on non-Error writeText rejection", async () => {
     const writeText = vi.fn().mockRejectedValue("string error");
     Object.assign(navigator, { clipboard: { writeText } });
 
     const { copy, error } = useClipboard();
     await copy("fail");
 
-    expect(error.value).toBe("string error");
+    // writeText rejected, fallback tried, execCommand unavailable in jsdom
+    expect(error.value).toBe("execCommand copy failed");
   });
 
   it("clears previous timer on rapid successive copies", async () => {
