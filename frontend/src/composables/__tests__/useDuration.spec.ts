@@ -8,7 +8,7 @@ import {
   formatDurationFromSeconds,
   formatDurationRounded,
   formatDurationFromSecondsRounded,
-  roundSeconds,
+  formatRoundedSeconds,
   computeEndTime,
   formatEndTime,
 } from "@/composables/useDuration";
@@ -194,32 +194,32 @@ describe("useDuration", () => {
     });
   });
 
-  describe("roundSeconds", () => {
+  describe("formatRoundedSeconds", () => {
     it("returns 0s for zero or negative", () => {
-      expect(roundSeconds(0)).toBe("0s");
-      expect(roundSeconds(-10)).toBe("0s");
+      expect(formatRoundedSeconds(0)).toBe("0s");
+      expect(formatRoundedSeconds(-10)).toBe("0s");
     });
 
     it("returns exact seconds for < 1 minute", () => {
-      expect(roundSeconds(45)).toBe("45s");
-      expect(roundSeconds(1)).toBe("1s");
-      expect(roundSeconds(59)).toBe("59s");
+      expect(formatRoundedSeconds(45)).toBe("45s");
+      expect(formatRoundedSeconds(1)).toBe("1s");
+      expect(formatRoundedSeconds(59)).toBe("59s");
     });
 
     it("rounds to nearest minute for >= 1m and < 1h", () => {
-      expect(roundSeconds(60)).toBe("1m");
-      expect(roundSeconds(90)).toBe("2m"); // 1.5m rounds to 2m
-      expect(roundSeconds(1800)).toBe("30m");
-      expect(roundSeconds(3599)).toBe("1h"); // 59m 59s rounds to 60m, normalizes to 1h
+      expect(formatRoundedSeconds(60)).toBe("1m");
+      expect(formatRoundedSeconds(90)).toBe("2m"); // 1.5m rounds to 2m
+      expect(formatRoundedSeconds(1800)).toBe("30m");
+      expect(formatRoundedSeconds(3599)).toBe("1h"); // 59m 59s rounds to 60m, normalizes to 1h
     });
 
     it("rounds to nearest 5 minutes for >= 1h", () => {
-      expect(roundSeconds(3600)).toBe("1h"); // exactly 1h
-      expect(roundSeconds(5400)).toBe("1h 30m"); // 1h 30m — already clean
-      expect(roundSeconds(7140)).toBe("2h"); // 1h 59m → 2h
-      expect(roundSeconds(5580)).toBe("1h 35m"); // 1h 33m → 1h 35m
-      expect(roundSeconds(86100)).toBe("23h 55m"); // 23h 55m → 23h 55m
-      expect(roundSeconds(86340)).toBe("24h"); // 23h 59m → 24h
+      expect(formatRoundedSeconds(3600)).toBe("1h"); // exactly 1h
+      expect(formatRoundedSeconds(5400)).toBe("1h 30m"); // 1h 30m — already clean
+      expect(formatRoundedSeconds(7140)).toBe("2h"); // 1h 59m → 2h
+      expect(formatRoundedSeconds(5580)).toBe("1h 35m"); // 1h 33m → 1h 35m
+      expect(formatRoundedSeconds(86100)).toBe("23h 55m"); // 23h 55m → 23h 55m
+      expect(formatRoundedSeconds(86340)).toBe("24h"); // 23h 59m → 24h
     });
   });
 

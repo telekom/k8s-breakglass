@@ -13,7 +13,7 @@ export {
   formatDurationRounded,
   formatDurationFromSeconds,
   formatDurationFromSecondsRounded,
-  roundSeconds,
+  formatRoundedSeconds,
   computeEndTime,
   formatEndTime,
   type ParsedDuration,

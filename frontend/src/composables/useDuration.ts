@@ -93,7 +93,7 @@ export function formatDurationFromSeconds(seconds: number | undefined | null): s
  * @param totalSeconds — total duration in seconds
  * @returns human-readable rounded string
  */
-export function roundSeconds(totalSeconds: number): string {
+export function formatRoundedSeconds(totalSeconds: number): string {
   if (totalSeconds <= 0) return "0s";
 
   if (totalSeconds >= 3600) {
@@ -112,7 +112,7 @@ export function roundSeconds(totalSeconds: number): string {
     const mins = Math.round(totalSeconds / 60);
     if (mins >= 60) {
       // Overflows into hours — delegate to the hours-tier rounding
-      return roundSeconds(mins * 60);
+      return formatRoundedSeconds(mins * 60);
     }
     return `${mins}m`;
   }
@@ -126,7 +126,7 @@ export function roundSeconds(totalSeconds: number): string {
  * The original exact value is preserved for backend use — this function
  * is purely for UI presentation.
  *
- * @see roundSeconds for rounding rules
+ * @see formatRoundedSeconds for rounding rules
  */
 export function formatDurationRounded(durationStr: string | undefined | null): string {
   if (!durationStr) return "Not specified";
@@ -134,17 +134,17 @@ export function formatDurationRounded(durationStr: string | undefined | null): s
   const parsed = parseDurationString(durationStr);
   if (!parsed) return durationStr;
 
-  return roundSeconds(parsed.totalSeconds);
+  return formatRoundedSeconds(parsed.totalSeconds);
 }
 
 /**
  * Format duration from seconds with cosmetic rounding for display.
  *
- * @see roundSeconds for rounding rules
+ * @see formatRoundedSeconds for rounding rules
  */
 export function formatDurationFromSecondsRounded(seconds: number | undefined | null): string {
   if (!seconds || seconds <= 0) return "0s";
-  return roundSeconds(seconds);
+  return formatRoundedSeconds(seconds);
 }
 
 /**
@@ -191,7 +191,7 @@ export function useDuration() {
     formatDurationRounded,
     formatDurationFromSeconds,
     formatDurationFromSecondsRounded,
-    roundSeconds,
+    formatRoundedSeconds,
     computeEndTime,
     formatEndTime,
   };
