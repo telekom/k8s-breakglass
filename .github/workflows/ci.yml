@@ -468,12 +468,32 @@ jobs:
           done <<< "$TAGS"
           if [ -z "$PUSH_DIGEST" ]; then
             echo "::warning::Could not extract digest from docker push output"
-            # Fallback: inspect the first tag via registry API
+            # Fallback: inspect the first tag via registry API using a stable, single-line digest computation
             FIRST_TAG=$(echo "$TAGS" | head -n1)
-            PUSH_DIGEST=$(docker buildx imagetools inspect "$FIRST_TAG" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
+            if [ -n "$FIRST_TAG" ]; then
+              # Compute the digest from the raw manifest to avoid buildx --format incompatibilities
+              PUSH_DIGEST=$(docker buildx imagetools inspect "$FIRST_TAG" --raw 2>/dev/null | sha256sum | awk '{print "sha256:" $1}' || true)
+            fi
           fi
           echo "Registry digest: ${PUSH_DIGEST}"
           echo "digest=${PUSH_DIGEST}" >> $GITHUB_OUTPUT
+      - name: Wait for manifest availability
+        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -e
+          FIRST_TAG=$(echo "$TAGS" | head -n1)
+          echo "Polling for manifest availability of ${FIRST_TAG}..."
+          for i in $(seq 1 30); do
+            if docker buildx imagetools inspect "$FIRST_TAG" --raw > /dev/null 2>&1; then
+              echo "Manifest available after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: manifest not yet available, retrying in 10s..."
+            sleep 10
+          done
+          echo "::warning::Manifest still not available after 30 attempts (300s). Attestation may fail."
       - name: Attest provenance
         if: ${{ steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0

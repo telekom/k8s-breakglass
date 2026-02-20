@@ -271,8 +271,8 @@ func TestWebhookExpiredSession(t *testing.T) {
 		err := helpers.WaitForCondition(ctx, func() (bool, error) {
 			resp, code, sendErr := helpers.SendSARToWebhook(t, ctx, sar, clusterName)
 			if sendErr != nil {
-				t.Logf("SAR request failed (will retry): %v", sendErr)
-				return false, nil // transient error, keep polling
+				t.Logf("SAR request failed: %v", sendErr)
+				return false, sendErr
 			}
 			lastSARResp = resp
 			lastStatusCode = code
