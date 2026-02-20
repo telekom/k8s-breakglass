@@ -125,6 +125,10 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		ctrl.ExpirePendingSessions()
 		// Expire approved sessions whose ExpiresAt has passed
 		ctrl.ExpireApprovedSessions()
+
+		// Remove duplicate active sessions (same cluster/user/grantedGroup triple).
+		// Duplicates can arise from TOCTOU races in multi-replica deployments.
+		CleanupDuplicateSessions(ctx, cr.Log, cr.Manager)
 	}
 
 	cleanupCtx := ctx
