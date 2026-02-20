@@ -444,6 +444,23 @@ jobs:
           image: breakglass:e2e
           format: spdx-json
           output-file: sbom.json
+      - name: Wait for registry manifest propagation
+        if: ${{ steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "Waiting for manifest ${DIGEST} to become available in ${REGISTRY}/${IMAGE_NAME}..."
+          for i in $(seq 1 30); do
+            if docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}@${DIGEST}" >/dev/null 2>&1; then
+              echo "Manifest available after attempt ${i}"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: manifest not yet available, waiting 10s..."
+            sleep 10
+          done
+          echo "::warning::Manifest not available after 5 minutes — attestation may fail"
       - name: Attest provenance
         if: ${{ steps.push_check.outputs.can_push == 'true' && steps.build.outputs.digest != '' }}
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0

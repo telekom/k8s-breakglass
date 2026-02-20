@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **REUSE compliance**: Added `precedence = "aggregate"` to all REUSE.toml annotation blocks to resolve path pattern ambiguity, added missing `codecov.yml` and `versions.env` to CI files coverage, fixed copyright year typo (2026→2025) in `.golangci.yml`, `.yamllint.yml`, and `.github/PULL_REQUEST_TEMPLATE.md`
 - **Release pipeline digest extraction**: `docker buildx imagetools inspect --format '{{.Manifest.Digest}}'` returns full human-readable output on newer Buildx versions, corrupting `$GITHUB_OUTPUT` with multi-line content. Switched to computing the manifest digest from raw JSON via `sha256sum`
 - **CI provenance attestation re-enabled**: Added missing `id-token: write` and `attestations: write` permissions to build-image job, allowing SLSA provenance attestation to run (was disabled with `if: false` due to missing OIDC token access). Made `push-to-registry` conditional to avoid failures on fork PRs
+- **E2E webhook expired-session flake**: `TestWebhookExpiredSession` intermittently failed because the webhook's informer cache had not yet synced the `Expired` status set via a direct `Status().Update()` call. Replaced the single-shot SAR assertion with a polling loop (`WaitForCondition`) that retries until the webhook denies the request, matching the pattern used by other E2E wait helpers
+- **Build Image attestation 404**: `actions/attest-build-provenance` occasionally failed with a 404 when fetching the image manifest from GHCR immediately after push, due to registry propagation delay. Added a manifest-availability polling step (`docker buildx imagetools inspect`) before attestation, retrying up to 30 times with 10 s intervals
 
 ### Added
 
