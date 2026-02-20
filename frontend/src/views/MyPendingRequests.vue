@@ -94,11 +94,33 @@
         </SessionSummaryCard>
       </div>
     </section>
+
+    <!-- Withdraw Confirmation Dialog -->
+    <scale-modal
+      :opened="withdrawDialogOpen"
+      heading="Withdraw Request"
+      size="small"
+      data-testid="withdraw-confirm-modal"
+      @scaleClose="cancelWithdraw"
+    >
+      <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
+      <p v-if="withdrawTarget?.metadata?.name" class="withdraw-detail">
+        <strong>Request:</strong> {{ withdrawTarget.metadata.name }}
+      </p>
+      <div slot="action" class="dialog-actions">
+        <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="cancelWithdraw">
+          Cancel
+        </scale-button>
+        <scale-button variant="primary" data-testid="withdraw-confirm-btn" @click="confirmWithdraw">
+          Withdraw
+        </scale-button>
+      </div>
+    </scale-modal>
   </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, inject } from "vue";
+import { onMounted, inject, ref } from "vue";
 
 // Common components
 import {
@@ -163,9 +185,26 @@ const actionHandlers: ActionHandlers = {
 
 const { isSessionBusy, isActionRunning, withdraw } = useSessionActions(actionHandlers);
 
-// Handlers
-async function handleWithdraw(req: SessionCR) {
-  await withdraw(req);
+// Withdraw confirmation dialog state
+const withdrawDialogOpen = ref(false);
+const withdrawTarget = ref<SessionCR | null>(null);
+
+function handleWithdraw(req: SessionCR) {
+  withdrawTarget.value = req;
+  withdrawDialogOpen.value = true;
+}
+
+async function confirmWithdraw() {
+  if (!withdrawTarget.value) return;
+  const session = withdrawTarget.value;
+  withdrawDialogOpen.value = false;
+  withdrawTarget.value = null;
+  await withdraw(session, { skipConfirm: true });
+}
+
+function cancelWithdraw() {
+  withdrawDialogOpen.value = false;
+  withdrawTarget.value = null;
 }
 
 // Helper functions
@@ -283,5 +322,18 @@ onMounted(() => {
     flex-direction: column;
     align-items: flex-start;
   }
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: flex-end;
+  margin-top: var(--space-lg);
+}
+
+.withdraw-detail {
+  margin-top: var(--space-sm);
+  font-size: 0.9rem;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 </style>

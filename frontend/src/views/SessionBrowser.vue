@@ -44,6 +44,10 @@ const error = ref("");
 const lastQuery = ref<string | null>(null);
 const actionBusy = reactive<Record<string, SessionActionKey | undefined>>({});
 
+// Withdraw confirmation dialog state
+const withdrawDialogOpen = ref(false);
+const withdrawTarget = ref<SessionCR | null>(null);
+
 const stateOptions = [
   { value: "approved", label: "Approved" },
   { value: "pending", label: "Pending" },
@@ -280,6 +284,29 @@ function setActionBusy(session: SessionCR, action?: SessionActionKey) {
 }
 
 async function runSessionAction(session: SessionCR, action: SessionActionKey) {
+  // Withdraw requires confirmation via modal
+  if (action === "withdraw") {
+    withdrawTarget.value = session;
+    withdrawDialogOpen.value = true;
+    return;
+  }
+  await executeSessionAction(session, action);
+}
+
+async function confirmWithdraw() {
+  if (!withdrawTarget.value) return;
+  const session = withdrawTarget.value;
+  withdrawDialogOpen.value = false;
+  withdrawTarget.value = null;
+  await executeSessionAction(session, "withdraw");
+}
+
+function cancelWithdraw() {
+  withdrawDialogOpen.value = false;
+  withdrawTarget.value = null;
+}
+
+async function executeSessionAction(session: SessionCR, action: SessionActionKey) {
   const name = sessionName(session);
   if (!name) {
     pushError("Unable to perform action: session name is missing.");
@@ -547,6 +574,28 @@ onMounted(() => {
         </scale-card>
       </div>
     </section>
+
+    <!-- Withdraw Confirmation Dialog -->
+    <scale-modal
+      :opened="withdrawDialogOpen"
+      heading="Withdraw Request"
+      size="small"
+      data-testid="withdraw-confirm-modal"
+      @scaleClose="cancelWithdraw"
+    >
+      <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
+      <p v-if="withdrawTarget?.metadata?.name" class="withdraw-detail">
+        <strong>Request:</strong> {{ withdrawTarget.metadata.name }}
+      </p>
+      <div slot="action" class="dialog-actions">
+        <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="cancelWithdraw">
+          Cancel
+        </scale-button>
+        <scale-button variant="primary" data-testid="withdraw-confirm-btn" @click="confirmWithdraw">
+          Withdraw
+        </scale-button>
+      </div>
+    </scale-modal>
   </main>
 </template>
 
@@ -797,5 +846,18 @@ header p {
 
 .button-spinner {
   --scale-loading-spinner-size: 16px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: flex-end;
+  margin-top: var(--space-lg);
+}
+
+.withdraw-detail {
+  margin-top: var(--space-sm);
+  font-size: 0.9rem;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 </style>
