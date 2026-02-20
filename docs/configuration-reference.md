@@ -274,6 +274,29 @@ server:
 
 ---
 
+#### `enableActivityTracking` (Optional)
+
+Enables buffered session activity tracking. When true, the webhook records per-session `lastActivity` timestamps and request counts via a background flush goroutine. When false (default), only Prometheus counters are incremented — no status writes occur.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Example** | `true` |
+
+```yaml
+server:
+  enableActivityTracking: true
+```
+
+**Notes:**
+
+- Enabling this introduces periodic status subresource writes to the API server for each active session.
+- Useful for idle timeout detection and usage analytics dashboards.
+- When disabled, activity metrics are still available via Prometheus counters (`breakglass_session_requests_total`).
+
+---
+
 ### `frontend`
 
 Frontend UI configuration.

@@ -174,7 +174,7 @@ type Server struct {
 	ShutdownTimeout string `yaml:"shutdownTimeout,omitempty"`
 
 	// EnableActivityTracking enables buffered session activity tracking.
-	// When true, the webhook records per-session LastUsedAt timestamps and
+	// When true, the webhook records per-session LastActivity timestamps and
 	// request counts via a background flush goroutine. When false (default),
 	// only Prometheus counters are incremented — no status writes occur.
 	// +optional
