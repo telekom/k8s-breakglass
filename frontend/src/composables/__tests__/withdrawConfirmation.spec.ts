@@ -4,14 +4,19 @@
 
 /**
  * Tests for the withdraw confirmation dialog behaviour
- * in MyPendingRequests and SessionBrowser views.
+ * at the composable level used by the MyPendingRequests view.
  *
  * Since the dialog state is inline (ref-based) inside the views,
  * these tests validate the composable-level contract:
  * - `withdraw(session, { skipConfirm: true })` should NOT call window.confirm
  * - `withdraw(session)` (without skipConfirm) should call window.confirm
  *
- * The views open a scale-modal first, then call withdraw with skipConfirm: true.
+ * In MyPendingRequests, the view opens a scale-modal first,
+ * then calls withdraw with skipConfirm: true.
+ *
+ * Note: SessionBrowser currently has its own implementation that calls
+ * `executeSessionAction` directly after showing the modal and is not
+ * covered by this test suite.
  *
  * @vitest-environment jsdom
  */
@@ -41,7 +46,7 @@ function makeSession(name: string): SessionCR {
 }
 
 describe("Withdraw confirmation integration", () => {
-  let withdrawHandler: ReturnType<typeof vi.fn>;
+  let withdrawHandler: ReturnType<typeof vi.fn<(session: SessionCR) => Promise<void>>>;
   let handlers: ActionHandlers;
   let confirmSpy: ReturnType<typeof vi.spyOn>;
 
