@@ -208,6 +208,17 @@ type BreakglassSessionStatus struct {
 	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
 	// +optional
 	ReasonEnded string `json:"reasonEnded,omitempty"`
+
+	// lastActivity is the time of the most recent authorization request associated with this session.
+	// Updated by the authorization webhook when a SubjectAccessReview matches this session.
+	// Used by idle timeout detection (#312) and usage analytics.
+	// +optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// activityCount is the total number of authorization requests that matched this session.
+	// Incremented by the authorization webhook on each matching SubjectAccessReview.
+	// +optional
+	ActivityCount int64 `json:"activityCount,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Namespaced,shortName=bgs

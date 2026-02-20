@@ -542,6 +542,22 @@ var (
 		Name: "breakglass_audit_sink_last_success_timestamp",
 		Help: "Unix timestamp of the last successful write to the sink",
 	}, []string{"sink"})
+
+	// Session activity tracking metrics
+	SessionActivityRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_activity_requests_total",
+		Help: "Total number of authorization requests that matched a breakglass session",
+	}, []string{"cluster", "session", "allowed"})
+
+	SessionActivityFlushes = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "breakglass_session_activity_flushes_total",
+		Help: "Total number of activity tracker flush cycles",
+	})
+
+	SessionActivityFlushErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "breakglass_session_activity_flush_errors_total",
+		Help: "Total number of failed activity status updates during flush",
+	})
 )
 
 func init() {
@@ -693,6 +709,11 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(AuditSinkHealthy)
 	ctrlmetrics.Registry.MustRegister(AuditSinkConsecutiveFailures)
 	ctrlmetrics.Registry.MustRegister(AuditSinkLastSuccessTime)
+
+	// Register session activity tracking metrics
+	ctrlmetrics.Registry.MustRegister(SessionActivityRequests)
+	ctrlmetrics.Registry.MustRegister(SessionActivityFlushes)
+	ctrlmetrics.Registry.MustRegister(SessionActivityFlushErrors)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.

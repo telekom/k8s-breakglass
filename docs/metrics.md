@@ -70,6 +70,29 @@ sum(rate(breakglass_webhook_sar_decisions_by_action_total{decision="denied"}[5m]
 | `breakglass_webhook_session_sar_errors_total` | Counter | `cluster`, `session`, `group` | Errors checking session grants |
 | `breakglass_webhook_session_sars_skipped_total` | Counter | `cluster` | Session checks skipped (e.g., due to config errors) |
 
+### Session Activity Tracking
+
+Activity tracking records when sessions are actively used by the authorization webhook. Activity data is buffered and flushed periodically (default 30s) to reduce API server load. The `lastActivity` and `activityCount` fields on `BreakglassSessionStatus` are updated on each flush cycle.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_session_activity_requests_total` | Counter | `cluster`, `session`, `allowed` | Authorization requests that matched a breakglass session |
+| `breakglass_session_activity_flushes_total` | Counter | — | Activity tracker flush cycles completed |
+| `breakglass_session_activity_flush_errors_total` | Counter | — | Failed activity status updates during flush |
+
+**Example Queries:**
+
+```promql
+# Active sessions in the last 5 minutes (sessions with recent activity)
+count(breakglass_session_activity_requests_total > 0)
+
+# Request rate per session
+sum by (session) (rate(breakglass_session_activity_requests_total[5m]))
+
+# Flush error rate
+rate(breakglass_session_activity_flush_errors_total[5m])
+```
+
 **Example Queries:**
 
 ```promql

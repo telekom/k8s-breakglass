@@ -258,6 +258,7 @@ type WebhookController struct {
 	namespaceLabelsFetchFn NamespaceLabelsFetchFunction // optional override for testing
 	auditService           *audit.Service               // optional audit service for access decision events
 	rateLimiter            *ratelimit.IPRateLimiter     // per-IP rate limiter for SAR requests
+	activityTracker        *ActivityTracker             // optional buffered session activity tracker (#314)
 }
 
 // checkDebugSessionAccess checks if a pod operation is allowed by an active debug session.
@@ -835,6 +836,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				allowDetail = fmt.Sprintf("group=%s session=%s impersonated=%s", grp, sesName, impersonated)
 				// Emit a single correlated info log showing the final accepted impersonated group for observability
 				reqLog.Infow("Final accepted impersonated group", "username", username, "cluster", clusterName, "grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
+
+				// Record session activity for idle timeout detection and usage analytics (#314)
+				wc.recordSessionActivity(sessions, sesName, clusterName, true)
 			}
 		}
 		phaseTracker.EndPhase(PhaseSessionSARs) // End session_sars phase
@@ -1316,6 +1320,13 @@ func (wc *WebhookController) WithAuditService(svc *audit.Service) *WebhookContro
 	return wc
 }
 
+// WithActivityTracker sets the activity tracker for buffered session activity updates.
+// When set, the webhook records activity for each session-authorized request.
+func (wc *WebhookController) WithActivityTracker(at *ActivityTracker) *WebhookController {
+	wc.activityTracker = at
+	return wc
+}
+
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
 func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string, clusterCfg *v1alpha1.ClusterConfig) ([]string, []v1alpha1.BreakglassSession, string, error) {
@@ -1625,4 +1636,27 @@ func (wc *WebhookController) fetchNamespaceLabels(ctx context.Context, clusterNa
 		return nil, fmt.Errorf("failed to get namespace %s from cluster %s: %w", namespace, clusterName, err)
 	}
 	return ns.Labels, nil
+}
+
+// recordSessionActivity records activity for the named session using the buffered activity tracker.
+// It looks up the session's namespace from the provided sessions list and records the current time.
+// This is a non-blocking operation: activity is buffered and flushed periodically.
+func (wc *WebhookController) recordSessionActivity(sessions []v1alpha1.BreakglassSession, sessionName, clusterName string, allowed bool) {
+	allowedStr := "true"
+	if !allowed {
+		allowedStr = "false"
+	}
+	metrics.SessionActivityRequests.WithLabelValues(clusterName, sessionName, allowedStr).Inc()
+
+	if wc.activityTracker == nil {
+		return
+	}
+
+	// Find the session namespace
+	for i := range sessions {
+		if sessions[i].Name == sessionName {
+			wc.activityTracker.RecordActivity(sessions[i].Namespace, sessions[i].Name, time.Now())
+			return
+		}
+	}
 }
