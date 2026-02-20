@@ -11,7 +11,7 @@ Breakglass system operators need:
 1. **Visibility** into when a specific session (granted group) was last exercised.
 2. **Automatic revocation** of approved sessions that remain unused for a configurable period (idle timeout), forcing a fresh approval cycle.
 
-Currently `BreakglassSessionStatus` has no `LastUsedAt` or `IdleTimeout` fields. The webhook handler performs a single RBAC check across all granted groups and cannot attribute which specific group permitted the operation (see the TODO at [pkg/webhook/controller.go line 756](../pkg/webhook/controller.go#L756)).
+Currently `BreakglassSessionStatus` has no `LastUsedAt` or `IdleTimeout` fields. The webhook handler performs a single RBAC check across all granted groups and cannot attribute which specific group permitted the operation (see the NOTE at [pkg/webhook/controller.go lines 755–757](../pkg/webhook/controller.go#L755-L757)).
 
 ## 2. Prior Art in the Codebase
 
@@ -26,7 +26,7 @@ Currently `BreakglassSessionStatus` has no `LastUsedAt` or `IdleTimeout` fields.
 ```go
 // idleTimeout specifies the maximum duration a session can remain
 // unused (no webhook hits) before it is automatically expired.
-// Uses Go duration format (e.g. "4h", "30m").
+// Duration format, e.g. "4h", "30m".
 // If not set, the session remains active for its full MaxValidFor window.
 // +optional
 IdleTimeout string `json:"idleTimeout,omitempty"`
@@ -37,7 +37,6 @@ IdleTimeout string `json:"idleTimeout,omitempty"`
 ```go
 // lastUsedAt records the most recent time this session's granted group
 // was exercised (successfully authorized) through the webhook.
-// Updated by the webhook handler after each successful RBAC check.
 // +optional
 LastUsedAt *metav1.Time `json:"lastUsedAt,omitempty"`
 ```
@@ -100,10 +99,10 @@ func (wc *WebhookController) updateLastUsed(ctx context.Context, session *v1alph
         return // debounce
     }
     go func() {
-        // SSA status patch with field manager "breakglass-webhook"
-        applyConfig := ssa.BreakglassSessionStatusApply(session).
-            WithLastUsedAt(now)
-        if err := wc.client.Status().Patch(ctx, session, applyConfig); err != nil {
+        // Update status field
+        session.Status.LastUsedAt = &now
+        // Use SSA helper
+        if err := ssa.ApplyBreakglassSessionStatus(ctx, wc.client, session); err != nil {
             wc.log.Warnw("Failed to update LastUsedAt", "session", session.Name, "error", err)
         }
     }()
