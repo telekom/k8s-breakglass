@@ -1327,6 +1327,14 @@ func (wc *WebhookController) WithActivityTracker(at *ActivityTracker) *WebhookCo
 	return wc
 }
 
+// StopActivityTracker stops the background activity tracker goroutine and flushes remaining entries.
+// Safe to call even if no tracker is set.
+func (wc *WebhookController) StopActivityTracker(ctx context.Context) {
+	if wc.activityTracker != nil {
+		wc.activityTracker.Stop(ctx)
+	}
+}
+
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
 func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string, clusterCfg *v1alpha1.ClusterConfig) ([]string, []v1alpha1.BreakglassSession, string, error) {

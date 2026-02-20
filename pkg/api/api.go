@@ -1162,7 +1162,7 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	sessionManager *breakglass.SessionManager, enableFrontend, enableAPI bool, configPath string,
 	auth *AuthHandler, ccProvider *cluster.ClientProvider, denyEval *policy.Evaluator,
 	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *breakglass.DebugSessionAPIController,
-	auditService *audit.Service) []APIController {
+	auditService *audit.Service) ([]APIController, *webhook.WebhookController) {
 	// Register API controllers based on component flags
 	apiControllers := []APIController{}
 
@@ -1191,7 +1191,8 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 
 	// Webhook controller is always registered but may not be exposed via webhooks
 	webhookCtrl := webhook.NewWebhookController(log, *cfg, sessionManager, escalationManager, ccProvider, denyEval).
-		WithAuditService(auditService)
+		WithAuditService(auditService).
+		WithActivityTracker(webhook.NewActivityTracker(sessionManager.Client))
 	apiControllers = append(apiControllers, webhookCtrl)
-	return apiControllers
+	return apiControllers, webhookCtrl
 }
