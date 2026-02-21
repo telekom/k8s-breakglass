@@ -419,10 +419,11 @@ spec:
             - allowed
             type: object
             x-kubernetes-validations:
-            - message: blockSelfApproval requires at least one approver group
+            - message: blockSelfApproval requires at least one approver group or user
               rule: '!has(self.blockSelfApproval) || self.blockSelfApproval == false
-                || (has(self.approvers) && has(self.approvers.groups) && size(self.approvers.groups)
-                > 0)'
+                || (has(self.approvers) && ((has(self.approvers.groups) && size(self.approvers.groups)
+                > 0) || (has(self.approvers.users) && size(self.approvers.users) >
+                0)))'
             - message: allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests
                 and allowedIdentityProvidersForApprovers
               rule: '!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders)

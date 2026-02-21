@@ -26,11 +26,12 @@ func TestCELValidationRulesPresent(t *testing.T) {
 		ruleSnippets []string // Each snippet must appear within a CEL rule expression in the CRD
 	}{
 		{
-			name:    "BreakglassEscalation/blockSelfApproval requires approver groups",
+			name:    "BreakglassEscalation/blockSelfApproval requires approver groups or users",
 			crdFile: "breakglass.t-caas.telekom.com_breakglassescalations.yaml",
 			ruleSnippets: []string{
 				"blockSelfApproval",
 				"approvers.groups",
+				"approvers.users",
 			},
 		},
 		{

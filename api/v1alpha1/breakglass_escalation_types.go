@@ -50,7 +50,7 @@ const (
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
 //
-// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || self.blockSelfApproval == false || (has(self.approvers) && has(self.approvers.groups) && size(self.approvers.groups) > 0)",message="blockSelfApproval requires at least one approver group"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || self.blockSelfApproval == false || (has(self.approvers) && ((has(self.approvers.groups) && size(self.approvers.groups) > 0) || (has(self.approvers.users) && size(self.approvers.users) > 0)))",message="blockSelfApproval requires at least one approver group or user"
 // +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders) == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0))",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
