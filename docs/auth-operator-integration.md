@@ -66,7 +66,7 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
-      failurePolicy: NoOpinion
+      failurePolicy: Deny  # Deny on webhook failure (recommended for security)
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-webhook.kubeconfig
@@ -79,19 +79,23 @@ See [Webhook Setup](webhook-setup.md) for the full setup procedure.
 ## Role Generation Flow
 
 auth-operator generates `ClusterRole` objects from `RoleDefinition` CRs.
-k8s-breakglass can reference these generated roles in
-`BreakglassEscalation` resources.
+k8s-breakglass complements this by granting group membership via
+`BreakglassEscalation` resources — the escalated user is placed into the
+group whose permissions are defined by the auth-operator-generated
+`ClusterRole` + `ClusterRoleBinding`.
 
 ```
 RoleDefinition (auth-operator)
      │ generates
      ▼
-ClusterRole: tenant-developer
-     │ referenced by
+ClusterRole + ClusterRoleBinding (bound to group)
+     │
+     │  BreakglassEscalation (k8s-breakglass)
+     │    spec.escalatedGroup → group added to the session's RBAC identity
+     │    spec.allowed.groups → groups allowed to request escalation
+     │
      ▼
-BreakglassEscalation (k8s-breakglass)
-  spec.escalatedGroup → group that gains the elevated role
-  spec.allowed.groups → groups allowed to request escalation
+User gains group membership → ClusterRoleBinding grants access
 ```
 
 ### Example
@@ -235,14 +239,14 @@ metadata:
 ### DenyPolicy Interaction
 
 auth-operator-managed bindings and breakglass `DenyPolicy` resources can
-interact. In the default setup described above, RBAC is evaluated before
-the breakglass webhook, so a `DenyPolicy` does **not** override an RBAC
-allow decision. Instead, `DenyPolicy` constrains what k8s-breakglass can
-grant when earlier authorizers (including RBAC) return `NoOpinion`. Be
-especially careful with broad deny rules if you configure the authorizer
-order differently (for example, placing the breakglass webhook before
-RBAC), as that can cause DenyPolicies to block requests that RBAC would
-otherwise allow.
+interact. The breakglass webhook evaluation order is:
+`DebugSession` → `DenyPolicy` → `BreakglassSession` → `RBAC`.
+
+A matching `DenyPolicy` causes the webhook to return an explicit **Deny**
+for the request, regardless of whether a `BreakglassSession` or RBAC
+would otherwise allow it. This means broad deny rules can block access
+even when RBAC grants it. See [DenyPolicy documentation](deny-policy.md)
+for the full evaluation semantics.
 
 ---
 
