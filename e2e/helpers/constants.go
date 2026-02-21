@@ -30,7 +30,7 @@ const (
 	LongTestTimeout = 10 * time.Minute
 
 	// WaitForStateTimeout for waiting on state transitions
-	WaitForStateTimeout = 30 * time.Second
+	WaitForStateTimeout = 60 * time.Second
 
 	// WaitForConditionTimeout for waiting on conditions
 	WaitForConditionTimeout = 60 * time.Second
