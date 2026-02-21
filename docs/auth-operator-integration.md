@@ -99,7 +99,7 @@ BreakglassEscalation (k8s-breakglass)
 auth-operator creates the base role:
 
 ```yaml
-apiVersion: authorization.2-caas.2telekom.com/v1
+apiVersion: authorization.t-caas.telekom.com/v1
 kind: RoleDefinition
 metadata:
   name: tenant-developer
@@ -140,7 +140,7 @@ spec:
 auth-operator binds developers to their static role:
 
 ```yaml
-apiVersion: authorization.2-caas.2telekom.com/v1
+apiVersion: authorization.t-caas.telekom.com/v1
 kind: BindDefinition
 metadata:
   name: tenant-developers
