@@ -94,7 +94,7 @@ export function formatDurationFromSeconds(seconds: number | undefined | null): s
  * @returns human-readable rounded string
  */
 export function formatRoundedSeconds(totalSeconds: number): string {
-  if (totalSeconds <= 0) return "0s";
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return "0s";
 
   if (totalSeconds >= 3600) {
     // Round to nearest 5 minutes

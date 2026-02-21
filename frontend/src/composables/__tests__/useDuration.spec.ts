@@ -200,6 +200,12 @@ describe("useDuration", () => {
       expect(formatRoundedSeconds(-10)).toBe("0s");
     });
 
+    it("returns 0s for non-finite inputs", () => {
+      expect(formatRoundedSeconds(NaN)).toBe("0s");
+      expect(formatRoundedSeconds(Infinity)).toBe("0s");
+      expect(formatRoundedSeconds(-Infinity)).toBe("0s");
+    });
+
     it("returns exact seconds for < 1 minute", () => {
       expect(formatRoundedSeconds(45)).toBe("45s");
       expect(formatRoundedSeconds(1)).toBe("1s");
