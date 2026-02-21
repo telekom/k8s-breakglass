@@ -41,7 +41,7 @@ spec:
     groups: ["team-leads"]
     users: ["oncall@example.com"]
   maxValidFor: "2h"
-  # idleTimeout: "30m"  # NOT YET IMPLEMENTED
+  idleTimeout: "30m"
   requestReason:
     mandatory: true
     description: "Ticket ID and purpose for pod access"
@@ -133,7 +133,7 @@ spec:
   # For quick pod restarts, consider shorter approval timeout
   approvalTimeout: "15m"
   maxValidFor: "1h"
-  # idleTimeout: "30m"  # NOT YET IMPLEMENTED
+  idleTimeout: "30m"
 ```
 
 ### Required RBAC (on target cluster)
@@ -659,7 +659,7 @@ spec:
   blockSelfApproval: false
   # Longer validity for automation
   maxValidFor: "336h"  # 14 days
-  # idleTimeout: "168h"  # NOT YET IMPLEMENTED   # 7 days
+  idleTimeout: "168h"   # 7 days
   # Disable email notifications for automation
   disableNotifications: true
 ```
@@ -747,7 +747,7 @@ spec:
   blockSelfApproval: false
   # Longer session for ongoing debugging
   maxValidFor: "8h"
-  # idleTimeout: "2h"  # NOT YET IMPLEMENTED
+  idleTimeout: "2h"
   # Still require a ticket reference for audit
   requestReason:
     mandatory: true
@@ -804,7 +804,7 @@ spec:
   approvers:
     groups: ["platform-leads"]
   maxValidFor: "1h"
-  # idleTimeout: "30m"  # NOT YET IMPLEMENTED
+  idleTimeout: "30m"
 ```
 
 ### Required RBAC (on target cluster)
