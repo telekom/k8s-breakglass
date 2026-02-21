@@ -6,18 +6,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useClipboard } from "@/composables/useClipboard";
 
 describe("useClipboard", () => {
+  let originalClipboard: Clipboard;
+
   beforeEach(() => {
     vi.useFakeTimers();
+    originalClipboard = navigator.clipboard;
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    Object.defineProperty(navigator, "clipboard", {
+      value: originalClipboard,
+      writable: true,
+      configurable: true,
+    });
   });
 
   it("copies text using the Clipboard API", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
 
     const { copy, copied, error } = useClipboard();
     const result = await copy("hello");
@@ -30,7 +38,7 @@ describe("useClipboard", () => {
 
   it("resets copied after the default delay", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
 
     const { copy, copied } = useClipboard();
     await copy("hello");
@@ -43,7 +51,7 @@ describe("useClipboard", () => {
 
   it("respects custom reset delay", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
 
     const { copy, copied } = useClipboard(500);
     await copy("hello");
@@ -59,7 +67,7 @@ describe("useClipboard", () => {
 
   it("falls back to textarea copy when Clipboard API is unavailable", async () => {
     // Remove Clipboard API
-    Object.assign(navigator, { clipboard: undefined });
+    Object.defineProperty(navigator, "clipboard", { value: undefined, writable: true, configurable: true });
 
     const execCommand = vi.fn().mockReturnValue(true);
     document.execCommand = execCommand;
@@ -78,7 +86,7 @@ describe("useClipboard", () => {
   });
 
   it("reports error when fallback execCommand fails", async () => {
-    Object.assign(navigator, { clipboard: undefined });
+    Object.defineProperty(navigator, "clipboard", { value: undefined, writable: true, configurable: true });
 
     const execCommand = vi.fn().mockReturnValue(false);
     document.execCommand = execCommand;
@@ -93,7 +101,7 @@ describe("useClipboard", () => {
 
   it("falls back to textarea when writeText rejects", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("Permission denied"));
-    Object.assign(navigator, { clipboard: { writeText } });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
 
     const { copy, copied, error } = useClipboard();
     const result = await copy("fail");
@@ -106,7 +114,7 @@ describe("useClipboard", () => {
 
   it("falls back to textarea on non-Error writeText rejection", async () => {
     const writeText = vi.fn().mockRejectedValue("string error");
-    Object.assign(navigator, { clipboard: { writeText } });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
 
     const { copy, error } = useClipboard();
     await copy("fail");
@@ -117,7 +125,7 @@ describe("useClipboard", () => {
 
   it("clears previous timer on rapid successive copies", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
 
     const { copy, copied } = useClipboard(1000);
 

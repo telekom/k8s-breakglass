@@ -11,7 +11,7 @@ import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOpe
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
 const { copy: clipboardCopy, cleanup: clipboardCleanup } = useClipboard();
-const copiedPodName = ref<string | null>(null);
+const copiedPodKey = ref<string | null>(null);
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
 function podKey(pod: DebugPodInfo): string {
@@ -25,11 +25,13 @@ function getExecCommand(pod: DebugPodInfo): string {
 function copyExecCommand(pod: DebugPodInfo) {
   clipboardCopy(getExecCommand(pod)).then((ok) => {
     if (ok) {
-      copiedPodName.value = podKey(pod);
+      copiedPodKey.value = podKey(pod);
       clearTimeout(copiedTimer);
       copiedTimer = setTimeout(() => {
-        copiedPodName.value = null;
+        copiedPodKey.value = null;
       }, 2000);
+    } else {
+      pushError("Failed to copy command to clipboard");
     }
   });
 }
@@ -611,7 +613,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
           <ul v-else class="pod-list" data-testid="pod-list">
             <li
               v-for="pod in allowedPods"
-              :key="pod.name"
+              :key="podKey(pod)"
               class="pod-item"
               :class="{ 'pod-has-issues': hasPodIssues(pod) }"
             >
@@ -649,16 +651,16 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                   <scale-button
                     size="small"
                     variant="secondary"
-                    :title="copiedPodName === podKey(pod) ? 'Copied!' : 'Copy to clipboard'"
+                    :title="copiedPodKey === podKey(pod) ? 'Copied!' : 'Copy to clipboard'"
                     :aria-label="
-                      copiedPodName === podKey(pod)
+                      copiedPodKey === podKey(pod)
                         ? 'Command copied to clipboard'
                         : 'Copy kubectl command to clipboard'
                     "
                     data-testid="copy-exec-btn"
                     @click="copyExecCommand(pod)"
                   >
-                    {{ copiedPodName === podKey(pod) ? "Copied!" : "Copy" }}
+                    {{ copiedPodKey === podKey(pod) ? "Copied!" : "Copy" }}
                   </scale-button>
                 </div>
               </div>
