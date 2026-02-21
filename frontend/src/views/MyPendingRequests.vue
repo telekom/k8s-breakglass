@@ -106,7 +106,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, inject, ref } from "vue";
+import { onMounted, inject } from "vue";
 
 // Common components
 import {
@@ -131,6 +131,7 @@ import { AuthKey } from "@/keys";
 import {
   usePendingRequests,
   useSessionActions,
+  useWithdrawConfirmation,
   getSessionKey,
   getSessionState,
   getSessionUser,
@@ -172,27 +173,9 @@ const actionHandlers: ActionHandlers = {
 
 const { isSessionBusy, isActionRunning, withdraw } = useSessionActions(actionHandlers);
 
-// Withdraw confirmation dialog state
-const withdrawDialogOpen = ref(false);
-const withdrawTarget = ref<SessionCR | null>(null);
-
-function handleWithdraw(req: SessionCR) {
-  withdrawTarget.value = req;
-  withdrawDialogOpen.value = true;
-}
-
-async function confirmWithdraw() {
-  if (!withdrawTarget.value) return;
-  const session = withdrawTarget.value;
-  withdrawDialogOpen.value = false;
-  withdrawTarget.value = null;
-  await withdraw(session, { skipConfirm: true });
-}
-
-function cancelWithdraw() {
-  withdrawDialogOpen.value = false;
-  withdrawTarget.value = null;
-}
+// Withdraw confirmation dialog (shared composable)
+const { withdrawDialogOpen, withdrawTarget, requestWithdraw: handleWithdraw, confirmWithdraw, cancelWithdraw } =
+  useWithdrawConfirmation((session) => withdraw(session, { skipConfirm: true }));
 
 // Helper functions
 function getRequestReason(req: SessionCR): string {
