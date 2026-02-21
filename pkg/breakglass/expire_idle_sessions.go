@@ -1,0 +1,169 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package breakglass
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// ExpireIdleSessions sets state to IdleExpired for approved sessions that have been idle
+// longer than their configured spec.idleTimeout. A session is idle when no authorization
+// request has been recorded since the session was approved (or since the last activity if any).
+//
+// Sessions without spec.idleTimeout are skipped. The idle baseline is:
+//   - status.lastActivity if set (most recent webhook request)
+//   - status.actualStartTime otherwise (session activation time)
+func (wc *BreakglassSessionController) ExpireIdleSessions() {
+	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), telekomv1alpha1.SessionStateApproved)
+	if err != nil {
+		wc.log.Error("error listing breakglass sessions for idle expiry", err)
+		return
+	}
+
+	for _, ses := range sessions {
+		if ses.Spec.IdleTimeout == "" {
+			continue
+		}
+
+		idleTimeout, err := telekomv1alpha1.ParseDuration(ses.Spec.IdleTimeout)
+		if err != nil {
+			wc.log.Warnw("invalid idleTimeout on session, skipping",
+				"session", ses.Name,
+				"idleTimeout", ses.Spec.IdleTimeout,
+				"error", err)
+			continue
+		}
+
+		// Determine the idle baseline: last activity, or session activation time
+		var baseline time.Time
+		if ses.Status.LastActivity != nil && !ses.Status.LastActivity.IsZero() {
+			baseline = ses.Status.LastActivity.Time
+		} else if !ses.Status.ActualStartTime.IsZero() {
+			baseline = ses.Status.ActualStartTime.Time
+		} else if !ses.Status.ApprovedAt.IsZero() {
+			baseline = ses.Status.ApprovedAt.Time
+		} else {
+			// Fallback to creation time if no approval time is set
+			baseline = ses.CreationTimestamp.Time
+		}
+
+		idleSince := time.Since(baseline)
+		if idleSince < idleTimeout {
+			continue
+		}
+
+		wc.log.Infow("Expiring session due to idle timeout",
+			"session", ses.Name,
+			"idleTimeout", ses.Spec.IdleTimeout,
+			"idleSince", idleSince.Round(time.Second),
+			"lastActivity", baseline)
+
+		// Prepare status transition
+		ses.Status.State = telekomv1alpha1.SessionStateIdleExpired
+		ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
+			Type:               string(telekomv1alpha1.SessionConditionTypeIdle),
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "IdleTimeout",
+			Message:            fmt.Sprintf("Session expired after %s of inactivity (idle timeout: %s).", idleSince.Round(time.Second), ses.Spec.IdleTimeout),
+		})
+		ses.Status.ReasonEnded = "idleTimeout"
+
+		// Ensure we have correct metadata for the API update
+		if stored, gerr := wc.sessionManager.GetBreakglassSessionByName(context.Background(), ses.Name); gerr == nil {
+			ses.Namespace = stored.Namespace
+			ses.ResourceVersion = stored.ResourceVersion
+		} else {
+			wc.log.Debugw("could not refetch session before idle status update; will attempt update anyway",
+				"session", ses.Name, "error", gerr)
+		}
+
+		// Persist the status change with retry on conflict (following ExpireApprovedSessions pattern)
+		var lastErr error
+		for attempt := range 3 {
+			if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
+				lastErr = nil
+				metrics.SessionIdleExpired.WithLabelValues(ses.Spec.Cluster).Inc()
+				wc.emitSessionExpiredAuditEvent(context.Background(), &ses, "idleTimeout")
+				break
+			} else {
+				lastErr = fmt.Errorf("status update attempt %d failed: %w", attempt+1, err)
+				wc.log.Warnw("failed to update idle-expired session status (will retry)",
+					"session", ses.Name, "attempt", attempt+1, "error", err)
+
+				if updated, gerr := wc.sessionManager.GetBreakglassSessionByName(context.Background(), ses.Name); gerr == nil {
+					updated.Status.State = ses.Status.State
+					updated.Status.Conditions = ses.Status.Conditions
+					updated.Status.ReasonEnded = ses.Status.ReasonEnded
+					ses = updated
+				} else {
+					wc.log.Errorw("failed to refetch session after failed idle status update",
+						"session", ses.Name, "error", gerr)
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+		if lastErr != nil {
+			wc.log.Errorw("failed to update idle-expired session after retries",
+				"session", ses.Name, "error", lastErr)
+		} else {
+			wc.sendSessionIdleExpiredEmail(ses)
+		}
+	}
+}
+
+// sendSessionIdleExpiredEmail sends a notification when a session is expired due to idle timeout.
+func (wc *BreakglassSessionController) sendSessionIdleExpiredEmail(session telekomv1alpha1.BreakglassSession) {
+	if wc.disableEmail || wc.mailService == nil || !wc.mailService.IsEnabled() {
+		return
+	}
+
+	params := mail.SessionExpiredMailParams{
+		SubjectEmail:     session.Spec.User,
+		RequestedRole:    session.Spec.GrantedGroup,
+		Cluster:          session.Spec.Cluster,
+		Username:         session.Spec.User,
+		SessionID:        session.Name,
+		StartedAt:        session.Status.ActualStartTime.Time.Format("2006-01-02 15:04:05 UTC"),
+		ExpiredAt:        time.Now().Format("2006-01-02 15:04:05 UTC"),
+		ExpirationReason: fmt.Sprintf("Session was idle for longer than %s", session.Spec.IdleTimeout),
+		BrandingName:     wc.config.Frontend.BrandingName,
+	}
+
+	body, err := mail.RenderSessionExpired(params)
+	if err != nil {
+		wc.log.Errorw("failed to render idle-expired session email",
+			"session", session.Name,
+			"error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Session Idle Expired: %s", wc.config.Frontend.BrandingName, session.Name)
+	if err := wc.mailService.Enqueue(session.Name, []string{session.Spec.User}, subject, body); err != nil {
+		wc.log.Errorw("failed to enqueue idle-expired session email",
+			"session", session.Name,
+			"error", err)
+	}
+}

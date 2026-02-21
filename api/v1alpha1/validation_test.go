@@ -271,6 +271,53 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.Contains(t, msg, "user")
 		assert.Contains(t, msg, "grantedGroup")
 	})
+
+	t.Run("valid idleTimeout", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "10m"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("invalid idleTimeout format", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "not-a-duration"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "idleTimeout")
+	})
+
+	t.Run("idleTimeout exceeds maxValidFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "2h"
+		s.Spec.MaxValidFor = "1h"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "idleTimeout")
+		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
+	})
+
+	t.Run("idleTimeout within maxValidFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "30m"
+		s.Spec.MaxValidFor = "1h"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("idleTimeout with day unit", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "1d"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("empty idleTimeout is valid", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = ""
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
 }
 
 // ==================== IdentityProvider Validation Tests ====================

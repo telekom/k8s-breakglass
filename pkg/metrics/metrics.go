@@ -132,6 +132,10 @@ var (
 		Name: "breakglass_session_expired_total",
 		Help: "Total number of Breakglass sessions that expired",
 	}, []string{"cluster"})
+	SessionIdleExpired = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_idle_expired_total",
+		Help: "Total number of Breakglass sessions that expired due to idle timeout",
+	}, []string{"cluster"})
 	SessionScheduled = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_session_scheduled_total",
 		Help: "Total number of Breakglass sessions created with scheduled start time",
@@ -547,7 +551,7 @@ var (
 	SessionActivityRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_session_activity_requests_total",
 		Help: "Total number of authorization requests that matched a breakglass session",
-	}, []string{"cluster", "session", "allowed"})
+	}, []string{"cluster", "granted_group", "allowed"})
 
 	SessionActivityFlushes = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "breakglass_session_activity_flushes_total",
@@ -594,6 +598,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(SessionUpdated)
 	ctrlmetrics.Registry.MustRegister(SessionDeleted)
 	ctrlmetrics.Registry.MustRegister(SessionExpired)
+	ctrlmetrics.Registry.MustRegister(SessionIdleExpired)
 	ctrlmetrics.Registry.MustRegister(SessionScheduled)
 	ctrlmetrics.Registry.MustRegister(SessionActivated)
 	ctrlmetrics.Registry.MustRegister(SessionApproved)

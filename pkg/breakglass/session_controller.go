@@ -671,6 +671,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		// copy relevant duration-related fields from escalation spec to session spec
 		spec.MaxValidFor = matchedEsc.Spec.MaxValidFor
 		spec.RetainFor = matchedEsc.Spec.RetainFor
+		spec.IdleTimeout = matchedEsc.Spec.IdleTimeout
 
 		// Copy reason configurations as snapshots so session is self-contained
 		// This avoids needing to look up the escalation later

@@ -9,6 +9,7 @@ import { describeApprover, wasApprovedBy } from "@/utils/sessionFilters";
 import { pushError, pushSuccess } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
+import { formatRelativeTime } from "@/composables/useDateFormatting";
 import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 
 const auth = inject(AuthKey);
@@ -71,6 +72,7 @@ const stateOptions = [
   { value: "timeout", label: "Approval Timeout" },
   { value: "active", label: "Active" },
   { value: "expired", label: "Expired" },
+  { value: "idleexpired", label: "Idle Expired" },
 ];
 
 function startedFor(session: SessionCR): string | null {
@@ -109,6 +111,8 @@ function reasonEndedLabel(session: SessionCR): string {
         return "Rejected";
       case "expired":
         return "Session expired";
+      case "idleexpired":
+        return "Session idle expired";
       case "approved":
         return "Active";
       case "pending":
@@ -556,6 +560,16 @@ onMounted(() => {
             :ended="endedFor(session)"
           />
 
+          <div v-if="session.status?.lastActivity || session.spec?.idleTimeout" class="activity-info">
+            <span v-if="session.status?.lastActivity">
+              <strong>Last Activity:</strong> {{ formatRelativeTime(session.status.lastActivity) }}
+              <span v-if="session.status?.activityCount"> ({{ session.status.activityCount }} requests)</span>
+            </span>
+            <span v-if="session.spec?.idleTimeout">
+              <strong>Idle Timeout:</strong> {{ session.spec.idleTimeout }}
+            </span>
+          </div>
+
           <div v-if="session.spec?.requestReason || session.status?.approvalReason" class="reasons">
             <ReasonPanel
               v-if="session.spec?.requestReason"
@@ -809,6 +823,15 @@ header p {
 .reasons {
   display: grid;
   gap: var(--space-sm);
+}
+
+.activity-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  font-size: 0.85rem;
+  color: var(--session-muted);
+  margin-bottom: var(--space-sm);
 }
 
 .end-reason {

@@ -210,6 +210,22 @@ func ValidateBreakglassSession(session *BreakglassSession) *ValidationResult {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("grantedGroup"), "grantedGroup is required"))
 	}
 
+	// Validate idleTimeout if set
+	if session.Spec.IdleTimeout != "" {
+		idleTimeout, err := ParseDuration(session.Spec.IdleTimeout)
+		if err != nil {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, fmt.Sprintf("invalid duration: %v", err)))
+		} else if idleTimeout <= 0 {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, "idleTimeout must be positive"))
+		} else if session.Spec.MaxValidFor != "" {
+			maxValid, mvErr := ParseDuration(session.Spec.MaxValidFor)
+			if mvErr == nil && idleTimeout > maxValid {
+				result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout,
+					fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", session.Spec.IdleTimeout, session.Spec.MaxValidFor)))
+			}
+		}
+	}
+
 	return result
 }
 

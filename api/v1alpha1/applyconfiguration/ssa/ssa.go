@@ -216,6 +216,14 @@ func BreakglassSessionStatusFrom(status *telekomv1alpha1.BreakglassSessionStatus
 		result.WithReasonEnded(status.ReasonEnded)
 	}
 
+	// Set activity tracking fields
+	if status.LastActivity != nil {
+		result.WithLastActivity(*status.LastActivity)
+	}
+	if status.ActivityCount > 0 {
+		result.WithActivityCount(status.ActivityCount)
+	}
+
 	return result
 }
 

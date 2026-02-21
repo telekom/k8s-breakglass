@@ -27,11 +27,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 // DefaultFlushInterval is the default interval between buffered status updates.
 const DefaultFlushInterval = 30 * time.Second
+
+// maxFlushRetries is the maximum number of consecutive flush failures before an entry is discarded.
+// This prevents unbounded memory growth from permanently failing updates.
+const maxFlushRetries = 5
+
+// FieldOwnerActivityTracker is the SSA field manager for activity-only status updates.
+// A dedicated field manager avoids ownership conflicts with the main controller.
+const FieldOwnerActivityTracker = "activity-tracker"
 
 // activityEntry holds buffered activity data for a single session.
 type activityEntry struct {
@@ -42,6 +52,8 @@ type activityEntry struct {
 	lastSeen time.Time
 	// count is the number of requests since last flush
 	count int64
+	// retries tracks how many consecutive flush failures this entry has had
+	retries int
 }
 
 // ActivityTracker buffers session activity updates and flushes them periodically
@@ -160,7 +172,10 @@ func (at *ActivityTracker) run() {
 	for {
 		select {
 		case <-ticker.C:
-			at.flush(context.Background())
+			// Use a bounded context for ticker-driven flushes to prevent hangs.
+			ctx, cancel := context.WithTimeout(context.Background(), at.flushInterval/2)
+			at.flush(ctx)
+			cancel()
 		case <-at.stopCh:
 			return
 		}
@@ -168,6 +183,8 @@ func (at *ActivityTracker) run() {
 }
 
 // flush drains all buffered entries and applies status updates.
+// Failed entries are re-queued with merged counts for the next flush cycle,
+// up to maxFlushRetries to prevent unbounded memory growth.
 func (at *ActivityTracker) flush(ctx context.Context) {
 	at.mu.Lock()
 	if len(at.entries) == 0 {
@@ -179,22 +196,58 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 	at.entries = make(map[types.NamespacedName]*activityEntry)
 	at.mu.Unlock()
 
+	var failed []*activityEntry
 	for key, entry := range entries {
 		if err := at.updateSessionActivity(ctx, key, entry); err != nil {
 			at.log.Warnw("Failed to update session activity",
 				"session", key.String(),
-				"error", err)
+				"error", err,
+				"retries", entry.retries)
 			metrics.SessionActivityFlushErrors.Inc()
+
+			entry.retries++
+			if entry.retries < maxFlushRetries {
+				failed = append(failed, entry)
+			} else {
+				at.log.Errorw("Discarding activity entry after max retries",
+					"session", key.String(),
+					"count", entry.count,
+					"retries", entry.retries)
+			}
 		}
 	}
 
-	at.log.Debugw("Flushed session activity", "sessions", len(entries))
+	// Re-queue failed entries, merging with any new activity that arrived during flush
+	if len(failed) > 0 {
+		at.mu.Lock()
+		for _, entry := range failed {
+			key := types.NamespacedName{Namespace: entry.namespace, Name: entry.name}
+			if existing, ok := at.entries[key]; ok {
+				// Merge: keep the latest lastSeen and sum counts
+				if entry.lastSeen.After(existing.lastSeen) {
+					existing.lastSeen = entry.lastSeen
+				}
+				existing.count += entry.count
+				// Keep the higher retry count
+				if entry.retries > existing.retries {
+					existing.retries = entry.retries
+				}
+			} else {
+				at.entries[key] = entry
+			}
+		}
+		at.mu.Unlock()
+	}
+
+	at.log.Debugw("Flushed session activity", "sessions", len(entries), "requeued", len(failed))
 	metrics.SessionActivityFlushes.Inc()
 }
 
-// updateSessionActivity applies the buffered activity data to a session's status.
+// updateSessionActivity applies the buffered activity data to a session's status using SSA.
+// Uses a dedicated field manager ("activity-tracker") to avoid ownership conflicts
+// with the main controller's status updates.
 func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.NamespacedName, entry *activityEntry) error {
-	// Read current session
+	// Read current session to check state and get current counts
 	var session v1alpha1.BreakglassSession
 	if err := at.client.Get(ctx, key, &session); err != nil {
 		return err
@@ -205,10 +258,13 @@ func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.
 		return nil
 	}
 
-	// Apply cumulative update
-	patch := client.MergeFrom(session.DeepCopy())
-	session.Status.LastActivity = &metav1.Time{Time: entry.lastSeen}
-	session.Status.ActivityCount += entry.count
+	// Build apply configuration with only the activity fields
+	statusApply := ac.BreakglassSessionStatus().
+		WithLastActivity(metav1.Time{Time: entry.lastSeen}).
+		WithActivityCount(session.Status.ActivityCount + entry.count)
 
-	return at.client.Status().Patch(ctx, &session, patch)
+	applyConfig := ac.BreakglassSession(key.Name, key.Namespace).
+		WithStatus(statusApply)
+
+	return ssa.ApplyViaUnstructured(ctx, at.client, applyConfig)
 }

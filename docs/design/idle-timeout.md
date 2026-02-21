@@ -1,7 +1,7 @@
 # Design: BreakglassSession Idle Timeout & Last Used Fields
 
-> **Issue:** [#8](https://github.com/telekom/k8s-breakglass/issues/8)
-> **Status:** Draft / Plan Only
+> **Issues:** [#8](https://github.com/telekom/k8s-breakglass/issues/8), [#312](https://github.com/telekom/k8s-breakglass/issues/312), [#314](https://github.com/telekom/k8s-breakglass/issues/314)
+> **Status:** Implemented
 > **Label:** `nicetohave`
 
 ## 1. Problem Statement
@@ -194,10 +194,20 @@ Add `IdleExpired` to the status tag mapping and session state options in the fro
 - `LastUsedAt` starts as `nil` for existing sessions. The idle check falls back to `ApprovedAt`.
 - No breaking CRD version change needed (`v1alpha1` remains).
 
-## 8. Open Questions
+## 8. Resolved Questions
 
-1. **Should `IdleExpired` sessions be re-approvable,** or must the user create a new request?
-2. **Should idle timeout be configurable per-escalation** (in `EscalationPolicy`), per-session (in `BreakglassSessionSpec`), or both?
+1. **Should `IdleExpired` sessions be re-approvable?** No — `IdleExpired` is a terminal state. The user must create a new request.
+2. **Should idle timeout be configurable per-escalation or per-session?** Both. `idleTimeout` is set on `BreakglassEscalation` and automatically copied to `BreakglassSessionSpec` when a session is approved. This allows operators to configure idle timeouts per escalation policy while still allowing per-session inspection.
+
+## 9. Implementation Notes
+
+The implementation differs from the original proposal in the following ways:
+
+- **Field naming:** `lastUsedAt` was renamed to `lastActivity` (with `activityCount`) to better reflect the buffered activity tracking model.
+- **Attribution approach:** Activity is tracked per-session (all active sessions for a user are updated) via a buffered `ActivityTracker` with 30s flush interval, not per-group attribution.
+- **SSA field manager:** Status updates use a dedicated `activity-tracker` field manager to avoid conflicts with the main session controller.
+- **Re-queue on failure:** Failed flushes are re-queued with merge logic (latest timestamp, summed counts) up to 5 retries instead of simple fire-and-forget.
+- **Idle baseline:** The idle expiry controller uses a fallback chain: `lastActivity` > `actualStartTime` > `approvedAt` > `creationTimestamp` (the design proposed only `lastUsedAt` > `approvedAt`).
 3. **Debounce interval** — 5 minutes is a starting point. Should this be configurable?
 4. **Audit implications** — should idle expiry emit a Kubernetes event or audit log entry?
 

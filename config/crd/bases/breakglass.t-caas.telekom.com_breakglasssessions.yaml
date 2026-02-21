@@ -127,6 +127,13 @@ spec:
                   Set during session creation based on the JWT issuer claim.
                   Used for auditing which IDP authenticated the user and for webhook authorization validation.
                 type: string
+              idleTimeout:
+                description: |-
+                  idleTimeout is the duration of inactivity (no authorization requests) after which the session
+                  is automatically expired with state IdleExpired. If not set, idle timeout is not enforced.
+                  Parsed by ParseDuration; supports day units (e.g., "15m", "1h", "1d").
+                  Must be less than or equal to maxValidFor when both are set.
+                type: string
               maxValidFor:
                 default: 1h
                 description: maxValidFor is the maximum amount of time the session
