@@ -72,7 +72,6 @@ const stateOptions = [
   { value: "timeout", label: "Approval Timeout" },
   { value: "active", label: "Active" },
   { value: "expired", label: "Expired" },
-  { value: "idleexpired", label: "Idle Expired" },
 ];
 
 function startedFor(session: SessionCR): string | null {

@@ -57,7 +57,8 @@ Timestamps are preserved across state transitions to maintain audit history:
 | `withdrawnAt` | When session was withdrawn | Transition to Withdrawn ONLY | Never |
 | `expiresAt` | When session expires or expired | Approval and after each drop | Never |
 | `timeoutAt` | When pending session timed out | After timeout threshold | Never |
-| `retainedUntil` | When session object will be deleted | Terminal state entry | Never |\n| `lastActivity` | Most recent authorized webhook request | Each activity flush cycle (SSA) | Never |
+| `retainedUntil` | When session object will be deleted | Terminal state entry | Never |
+| `lastActivity` | Most recent authorized webhook request | Each activity flush cycle (SSA) | Never |
 
 **Example timestamp preservation:**
 ```
@@ -403,7 +404,7 @@ Supported query parameters:
 - `mine` - Show only own sessions (default: `false`; set `true` to include requester-owned sessions)
 - `approver` - Show sessions the user can approve (default: `true`)
 - `approvedByMe` - Sessions already approved by the user (works with any state)
-- `state` - Filter by state. Accepts single values, comma-separated lists, or repeated parameters. Tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`.
+- `state` - Filter by state. Accepts single values, comma-separated lists, or repeated parameters. Tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`.
 
 ### Approve/Reject Sessions
 

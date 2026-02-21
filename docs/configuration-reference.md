@@ -293,7 +293,7 @@ server:
 
 - Enabling this introduces periodic status subresource writes to the API server for each active session.
 - Useful for idle timeout detection and usage analytics dashboards.
-- When disabled, activity metrics are still available via Prometheus counters (`breakglass_session_requests_total`).
+- When disabled, activity metrics are still available via Prometheus counters (`breakglass_session_activity_requests_total`).
 
 ---
 

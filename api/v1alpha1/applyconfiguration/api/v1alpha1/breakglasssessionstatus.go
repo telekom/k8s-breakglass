@@ -57,7 +57,7 @@ type BreakglassSessionStatusApplyConfiguration struct {
 	// approvalReason stores the free-text reason supplied by the approver when approving/rejecting the session.
 	ApprovalReason *string `json:"approvalReason,omitempty"`
 	// reasonEnded stores a short reason for why the session ended or entered a terminal state.
-	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
+	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected", "idleTimeout"
 	ReasonEnded *string `json:"reasonEnded,omitempty"`
 	// lastActivity is the time of the most recent authorization request associated with this session.
 	// Updated by the authorization webhook when a SubjectAccessReview matches this session.
