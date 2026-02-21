@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Round displayed request durations** ([#399](https://github.com/telekom/k8s-breakglass/issues/399)): Added `formatDurationRounded()`, `formatDurationFromSecondsRounded()`, and `formatRoundedSeconds()` to the `useDuration` composable. Durations >= 1h are rounded to the nearest 5 minutes, durations >= 1m are rounded to the nearest minute, and durations < 1m show exact seconds. Applied to the Approval Modal and Pending Approvals views.
 - **Persist Session Browser filters across tab switches** ([#400](https://github.com/telekom/k8s-breakglass/issues/400)): Filter settings in the Session Browser are now backed by a Pinia store with `sessionStorage` persistence. Filters survive tab/view navigation and page reloads within the same browser tab. Includes schema versioning for graceful migration and 8 unit tests.
 - **Cosign keyless signing for release images**: Release workflow now signs container images and mirrors cosign signature/attestation OCI artifacts to the Artifactory registry using `cosign copy` on a best-effort basis, enabling supply-chain verification on both GHCR and Artifactory
 - **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release

@@ -229,7 +229,7 @@ import { pushError, pushSuccess } from "@/services/toast";
 import { statusToneFor } from "@/utils/statusStyles";
 import {
   formatDateTime,
-  formatDuration,
+  formatDurationRounded,
   formatEndTime,
   getUrgency,
   getTimeRemaining,
@@ -347,7 +347,7 @@ function getApprovalMetaItems(session: SessionCR) {
     {
       id: "duration",
       label: "Duration",
-      value: spec?.maxValidFor ? formatDuration(String(spec.maxValidFor)) : "Not specified",
+      value: spec?.maxValidFor ? formatDurationRounded(String(spec.maxValidFor)) : "Not specified",
       hint: "Maximum requested runtime",
     },
     {
