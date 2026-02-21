@@ -13,7 +13,7 @@ import type { SessionCR } from "@/model/breakglass";
  *   user confirms the withdrawal.
  */
 export function useWithdrawConfirmation(
-  onConfirm: (session: SessionCR) => void | Promise<void>,
+  onConfirm: (session: SessionCR) => void | Promise<unknown>,
 ) {
   const withdrawDialogOpen = ref(false);
   const withdrawTarget = ref<SessionCR | null>(null);
