@@ -220,7 +220,7 @@ func ValidateBreakglassSession(session *BreakglassSession) *ValidationResult {
 		} else if idleTimeout < time.Minute {
 			// Minimum 1 minute to avoid premature expiry from the 30s activity flush buffer.
 			// Activity is flushed to status every ~30s; shorter idle timeouts would race with the buffer.
-			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, "idleTimeout must be at least 1m to avoid premature expiry from the activity flush buffer"))
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, "idleTimeout must be at least 1m"))
 		} else if session.Spec.MaxValidFor != "" {
 			maxValid, mvErr := ParseDuration(session.Spec.MaxValidFor)
 			if mvErr == nil && idleTimeout > maxValid {

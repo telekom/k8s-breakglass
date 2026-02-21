@@ -100,8 +100,9 @@ func (wc *BreakglassSessionController) ExpireIdleSessions() {
 		}
 
 		// Persist the status change with retry on conflict (following ExpireApprovedSessions pattern)
+		const maxStatusUpdateRetries = 3
 		var lastErr error
-		for attempt := range 3 {
+		for attempt := range maxStatusUpdateRetries {
 			if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
 				lastErr = nil
 				metrics.SessionIdleExpired.WithLabelValues(ses.Spec.Cluster).Inc()
@@ -113,6 +114,14 @@ func (wc *BreakglassSessionController) ExpireIdleSessions() {
 					"session", ses.Name, "attempt", attempt+1, "error", err)
 
 				if updated, gerr := wc.sessionManager.GetBreakglassSessionByName(context.Background(), ses.Name); gerr == nil {
+					// If the session was already transitioned to a terminal state by another process,
+					// do not overwrite it — just stop retrying.
+					if updated.Status.State != telekomv1alpha1.SessionStateApproved {
+						wc.log.Infow("Session already transitioned by another process; skipping idle expiry",
+							"session", ses.Name, "currentState", updated.Status.State)
+						lastErr = nil
+						break
+					}
 					updated.Status.State = ses.Status.State
 					updated.Status.Conditions = ses.Status.Conditions
 					updated.Status.ReasonEnded = ses.Status.ReasonEnded

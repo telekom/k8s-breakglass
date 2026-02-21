@@ -153,10 +153,20 @@ func (at *ActivityTracker) Pending() int {
 
 // Stop gracefully shuts down the background goroutine and flushes remaining entries.
 // Stop is idempotent and safe to call multiple times from concurrent shutdown paths.
+// Respects the caller's context deadline: if the context expires while waiting for
+// the background goroutine to finish, Stop returns without performing the final flush.
 func (at *ActivityTracker) Stop(ctx context.Context) {
 	at.stopOnce.Do(func() {
 		close(at.stopCh)
-		<-at.done
+
+		// Wait for the background goroutine, but respect the caller's context.
+		select {
+		case <-at.done:
+			// Background goroutine exited normally — perform final flush.
+		case <-ctx.Done():
+			at.log.Warnw("Shutdown context expired waiting for flush goroutine", "error", ctx.Err())
+			return
+		}
 
 		// Final flush
 		at.flush(ctx)
