@@ -12,9 +12,7 @@ import type { SessionCR } from "@/model/breakglass";
  * @param onConfirm - Callback invoked with the target session when the
  *   user confirms the withdrawal.
  */
-export function useWithdrawConfirmation(
-  onConfirm: (session: SessionCR) => void | Promise<unknown>,
-) {
+export function useWithdrawConfirmation(onConfirm: (session: SessionCR) => void | Promise<unknown>) {
   const withdrawDialogOpen = ref(false);
   const withdrawTarget = ref<SessionCR | null>(null);
 

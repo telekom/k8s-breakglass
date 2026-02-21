@@ -28,8 +28,7 @@ describe("useWithdrawConfirmation", () => {
   });
 
   it("requestWithdraw opens dialog and sets target", () => {
-    const { withdrawDialogOpen, withdrawTarget, requestWithdraw } =
-      useWithdrawConfirmation(vi.fn());
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw } = useWithdrawConfirmation(vi.fn());
     const session = makeSession("req-1");
 
     requestWithdraw(session);
@@ -40,8 +39,7 @@ describe("useWithdrawConfirmation", () => {
 
   it("confirmWithdraw calls onConfirm and resets state", async () => {
     const onConfirm = vi.fn();
-    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } =
-      useWithdrawConfirmation(onConfirm);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } = useWithdrawConfirmation(onConfirm);
     const session = makeSession("req-2");
 
     requestWithdraw(session);
@@ -63,8 +61,7 @@ describe("useWithdrawConfirmation", () => {
 
   it("cancelWithdraw resets state without calling onConfirm", () => {
     const onConfirm = vi.fn();
-    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, cancelWithdraw } =
-      useWithdrawConfirmation(onConfirm);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, cancelWithdraw } = useWithdrawConfirmation(onConfirm);
 
     requestWithdraw(makeSession("req-3"));
     cancelWithdraw();

@@ -174,8 +174,13 @@ const actionHandlers: ActionHandlers = {
 const { isSessionBusy, isActionRunning, withdraw } = useSessionActions(actionHandlers);
 
 // Withdraw confirmation dialog (shared composable)
-const { withdrawDialogOpen, withdrawTarget, requestWithdraw: handleWithdraw, confirmWithdraw, cancelWithdraw } =
-  useWithdrawConfirmation((session) => withdraw(session, { skipConfirm: true }));
+const {
+  withdrawDialogOpen,
+  withdrawTarget,
+  requestWithdraw: handleWithdraw,
+  confirmWithdraw,
+  cancelWithdraw,
+} = useWithdrawConfirmation((session) => withdraw(session, { skipConfirm: true }));
 
 // Helper functions
 function getRequestReason(req: SessionCR): string {
