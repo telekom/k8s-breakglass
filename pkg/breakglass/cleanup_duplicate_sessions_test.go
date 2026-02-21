@@ -105,7 +105,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		assert.Equal(t, v1alpha1.SessionStateApproved, got2.Status.State)
 	})
 
-	t.Run("duplicate pending sessions — oldest kept, newest expired", func(t *testing.T) {
+	t.Run("duplicate pending sessions — oldest kept, newest withdrawn", func(t *testing.T) {
 		now := time.Now()
 		oldest := &v1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
@@ -135,17 +135,17 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(newest), &gotNew))
 
 		assert.Equal(t, v1alpha1.SessionStatePending, gotOld.Status.State, "oldest must be kept")
-		assert.Equal(t, v1alpha1.SessionStateExpired, gotNew.Status.State, "newest must be expired")
+		assert.Equal(t, v1alpha1.SessionStateWithdrawn, gotNew.Status.State, "newest must be withdrawn (Pending→Withdrawn)")
 		assert.Equal(t, "duplicateCleanup", gotNew.Status.ReasonEnded)
 
 		// Verify condition was added
 		require.NotEmpty(t, gotNew.Status.Conditions)
 		cond := gotNew.Status.Conditions[len(gotNew.Status.Conditions)-1]
-		assert.Equal(t, string(v1alpha1.SessionConditionTypeExpired), cond.Type)
-		assert.Equal(t, "DuplicateSessionTerminated", cond.Reason)
+		assert.Equal(t, string(v1alpha1.SessionConditionTypeCanceled), cond.Type)
+		assert.Equal(t, "DuplicateSessionWithdrawn", cond.Reason)
 	})
 
-	t.Run("three duplicates — only oldest survives", func(t *testing.T) {
+	t.Run("three duplicates — approved kept over older pending", func(t *testing.T) {
 		now := time.Now()
 		s1 := &v1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
@@ -184,9 +184,9 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s2), &got2))
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s3), &got3))
 
-		assert.Equal(t, v1alpha1.SessionStateApproved, got1.Status.State, "oldest kept")
-		assert.Equal(t, v1alpha1.SessionStateExpired, got2.Status.State, "middle expired")
-		assert.Equal(t, v1alpha1.SessionStateExpired, got3.Status.State, "newest expired")
+		assert.Equal(t, v1alpha1.SessionStateApproved, got1.Status.State, "approved session kept (highest priority)")
+		assert.Equal(t, v1alpha1.SessionStateWithdrawn, got2.Status.State, "pending withdrawn")
+		assert.Equal(t, v1alpha1.SessionStateWithdrawn, got3.Status.State, "waiting withdrawn")
 	})
 
 	t.Run("mixed active and terminal sessions — terminal ignored", func(t *testing.T) {
@@ -253,5 +253,72 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 
 		assert.Equal(t, v1alpha1.SessionStatePending, got1.Status.State)
 		assert.Equal(t, v1alpha1.SessionStatePending, got2.Status.State)
+	})
+
+	t.Run("newer approved kept over older pending — state priority wins", func(t *testing.T) {
+		now := time.Now()
+		olderPending := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "older-pending",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-30 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		}
+		newerApproved := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "newer-approved",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved},
+		}
+		fc := newFakeClientWithSessions(olderPending, newerApproved)
+		mgr := NewSessionManagerWithClient(fc)
+
+		CleanupDuplicateSessions(ctx, logger, &mgr)
+
+		var gotPending, gotApproved v1alpha1.BreakglassSession
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(olderPending), &gotPending))
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(newerApproved), &gotApproved))
+
+		assert.Equal(t, v1alpha1.SessionStateWithdrawn, gotPending.Status.State, "older pending withdrawn")
+		assert.Equal(t, v1alpha1.SessionStateApproved, gotApproved.Status.State, "newer approved kept")
+	})
+
+	t.Run("nil logger — does not panic", func(t *testing.T) {
+		now := time.Now()
+		s1 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "dup1",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-10 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		}
+		s2 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "dup2",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		}
+		fc := newFakeClientWithSessions(s1, s2)
+		mgr := NewSessionManagerWithClient(fc)
+
+		// Should not panic with nil logger
+		CleanupDuplicateSessions(ctx, nil, &mgr)
+
+		var got1, got2 v1alpha1.BreakglassSession
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s1), &got1))
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s2), &got2))
+
+		assert.Equal(t, v1alpha1.SessionStatePending, got1.Status.State, "oldest kept")
+		assert.Equal(t, v1alpha1.SessionStateWithdrawn, got2.Status.State, "newest withdrawn")
 	})
 }

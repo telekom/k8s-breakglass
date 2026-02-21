@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release
 - **SLSA provenance attestation re-enabled**: Assemble job now generates and pushes SLSA Build L1 provenance via actions/attest-build-provenance
 - **Design decision: Keep Create() for DebugSession creation** (#382): Documented the rationale for using `Create()` instead of SSA with pre-check `Get()` for debug session creation. Added conflict detection tests verifying `AlreadyExists` behavior and immutability guarantees.
+- **Duplicate session cleanup**: Periodic cleanup now detects and terminates duplicate active BreakglassSession resources sharing the same (cluster, user, grantedGroup) triple. Keeps the best candidate (by state priority: Approved > WaitingForScheduledTime > Pending, then by age) and withdraws or expires the rest. Prevents split-brain grant accumulation in multi-replica deployments.
 
 ### Changed
 
