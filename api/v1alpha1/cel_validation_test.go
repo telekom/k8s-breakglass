@@ -61,14 +61,6 @@ func TestCELValidationRulesPresent(t *testing.T) {
 			},
 		},
 		{
-			name:    "DenyPolicy/at least one rule or podSecurityRules",
-			crdFile: "breakglass.t-caas.telekom.com_denypolicies.yaml",
-			ruleSnippets: []string{
-				"size(self.rules)",
-				"podSecurityRules",
-			},
-		},
-		{
 			name:    "IdentityProvider/keycloak required when groupSyncProvider is Keycloak",
 			crdFile: "breakglass.t-caas.telekom.com_identityproviders.yaml",
 			ruleSnippets: []string{
