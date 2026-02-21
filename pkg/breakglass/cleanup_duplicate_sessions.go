@@ -118,6 +118,18 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 		)
 
 		for _, dup := range sessions[1:] {
+			// Check if the context has been cancelled (e.g., leader election loss, shutdown).
+			select {
+			case <-ctx.Done():
+				log.Infow("Duplicate cleanup interrupted by context cancellation",
+					"cluster", key.Cluster,
+					"user", key.User,
+					"grantedGroup", key.Group,
+				)
+				return
+			default:
+			}
+
 			log.Infow("Handling duplicate session",
 				"session", dup.Name,
 				"namespace", dup.Namespace,
@@ -158,7 +170,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 
 			dup.Status.State = targetState
 			dup.Status.ReasonEnded = "duplicateCleanup"
-			dup.Status.Conditions = append(dup.Status.Conditions, metav1.Condition{
+			dup.SetCondition(metav1.Condition{
 				Type:               string(conditionType),
 				Status:             metav1.ConditionTrue,
 				LastTransitionTime: metav1.Now(),
