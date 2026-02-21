@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -250,6 +251,10 @@ func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.
 	// Read current session to check state and get current counts
 	var session v1alpha1.BreakglassSession
 	if err := at.client.Get(ctx, key, &session); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Session was deleted — discard the entry, no point retrying
+			return nil
+		}
 		return err
 	}
 
@@ -266,5 +271,5 @@ func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.
 	applyConfig := ac.BreakglassSession(key.Name, key.Namespace).
 		WithStatus(statusApply)
 
-	return ssa.ApplyViaUnstructured(ctx, at.client, applyConfig)
+	return ssa.ApplyViaUnstructuredWithOwner(ctx, at.client, applyConfig, FieldOwnerActivityTracker)
 }

@@ -81,7 +81,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions() {
 
 		// Prepare status transition
 		ses.Status.State = telekomv1alpha1.SessionStateIdleExpired
-		ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
+		ses.SetCondition(metav1.Condition{
 			Type:               string(telekomv1alpha1.SessionConditionTypeIdle),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),

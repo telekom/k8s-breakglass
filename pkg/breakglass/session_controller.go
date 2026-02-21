@@ -3307,6 +3307,8 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 		message = "Session validity period has ended"
 	case "approvalTimeout":
 		message = "Session approval timed out before being approved"
+	case "idleTimeout":
+		message = "Session expired due to idle timeout (no recent activity)"
 	}
 
 	event := &audit.Event{

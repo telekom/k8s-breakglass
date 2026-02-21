@@ -563,7 +563,7 @@ onMounted(() => {
           <div v-if="session.status?.lastActivity || session.spec?.idleTimeout" class="activity-info">
             <span v-if="session.status?.lastActivity">
               <strong>Last Activity:</strong> {{ formatRelativeTime(session.status.lastActivity) }}
-              <span v-if="session.status?.activityCount"> ({{ session.status.activityCount }} requests)</span>
+              <span v-if="session.status?.activityCount != null"> ({{ session.status.activityCount }} requests)</span>
             </span>
             <span v-if="session.spec?.idleTimeout">
               <strong>Idle Timeout:</strong> {{ session.spec.idleTimeout }}

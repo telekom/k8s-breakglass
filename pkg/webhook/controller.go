@@ -1382,6 +1382,12 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 		if breakglass.IsSessionRetained(s) {
 			continue
 		}
+		// Only include sessions that are in Approved state with a valid time window.
+		// Terminal states (IdleExpired, Expired, Rejected, Withdrawn, etc.) must be excluded
+		// even if their ExpiresAt is still in the future.
+		if s.Status.State != v1alpha1.SessionStateApproved {
+			continue
+		}
 		if s.Status.RejectedAt.IsZero() && !s.Status.ExpiresAt.IsZero() && s.Status.ExpiresAt.After(now) {
 			// If issuer is provided and session does NOT allow IDP mismatch,
 			// only include sessions that match the issuer (multi-IDP mode)

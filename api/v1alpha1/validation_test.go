@@ -318,6 +318,29 @@ func TestValidateBreakglassSession(t *testing.T) {
 		result := ValidateBreakglassSession(s)
 		assert.True(t, result.IsValid())
 	})
+
+	t.Run("idleTimeout below minimum floor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "30s"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "at least 1m")
+	})
+
+	t.Run("idleTimeout exactly at minimum floor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "1m"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("zero idleTimeout is invalid", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "0s"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "positive")
+	})
 }
 
 // ==================== IdentityProvider Validation Tests ====================

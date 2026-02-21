@@ -213,7 +213,7 @@ type BreakglassSessionStatus struct {
 	// +optional
 	ApprovalReason string `json:"approvalReason,omitempty"`
 	// reasonEnded stores a short reason for why the session ended or entered a terminal state.
-	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
+	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected", "idleTimeout"
 	// +optional
 	ReasonEnded string `json:"reasonEnded,omitempty"`
 
