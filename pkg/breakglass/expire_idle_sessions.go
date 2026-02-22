@@ -31,9 +31,9 @@ import (
 // longer than their configured spec.idleTimeout. A session is idle when no authorization
 // request has been recorded since the session was approved (or since the last activity if any).
 //
-// Sessions without spec.idleTimeout are skipped. The idle baseline is:
-//   - status.lastActivity if set (most recent webhook request)
-//   - status.actualStartTime otherwise (session activation time)
+// Sessions without spec.idleTimeout are skipped. Sessions where
+// status.lastActivity has not been set (no webhook requests recorded yet)
+// are also skipped, since idleness cannot be reliably determined.
 func (wc *BreakglassSessionController) ExpireIdleSessions() {
 	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), telekomv1alpha1.SessionStateApproved)
 	if err != nil {

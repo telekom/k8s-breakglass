@@ -76,7 +76,7 @@ Activity tracking records when sessions are actively used by the authorization w
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-----------|
-| `breakglass_session_activity_requests_total` | Counter | `cluster`, `granted_group`, `allowed` | Authorization requests that matched a breakglass session (bounded by granted group, not session name) |
+| `breakglass_session_activity_requests_total` | Counter | `cluster`, `granted_group` | Authorization requests that matched a breakglass session (bounded by granted group, not session name) |
 | `breakglass_session_activity_flushes_total` | Counter | — | Activity tracker flush cycles completed |
 | `breakglass_session_activity_flush_errors_total` | Counter | — | Failed activity status updates during flush |
 | `breakglass_session_idle_expired_total` | Counter | `cluster` | Sessions automatically expired due to idle timeout |
@@ -87,8 +87,8 @@ Activity tracking records when sessions are actively used by the authorization w
 # Activity rate by granted group
 sum by (granted_group) (rate(breakglass_session_activity_requests_total[5m]))
 
-# Allowed vs denied activity
-sum by (allowed) (rate(breakglass_session_activity_requests_total[5m]))
+# Activity rate per cluster
+sum by (cluster) (rate(breakglass_session_activity_requests_total[5m]))
 
 # Flush error rate
 rate(breakglass_session_activity_flush_errors_total[5m])

@@ -207,7 +207,7 @@ The implementation differs from the original proposal in the following ways:
 - **Attribution approach:** Activity is tracked per-session (all active sessions for a user are updated) via a buffered `ActivityTracker` with 30s flush interval, not per-group attribution.
 - **SSA field manager:** Status updates use a dedicated `activity-tracker` field manager to avoid conflicts with the main session controller.
 - **Re-queue on failure:** Failed flushes are re-queued with merge logic (latest timestamp, summed counts) up to 5 retries instead of simple fire-and-forget.
-- **Idle baseline:** The idle expiry controller uses a fallback chain: `lastActivity` > `actualStartTime` > `approvedAt` > `creationTimestamp` (the design proposed only `lastUsedAt` > `approvedAt`).
+- **Idle baseline:** The idle expiry controller uses `lastActivity` only; sessions where `lastActivity` is nil (no activity recorded yet) are skipped to avoid false positives (the design proposed a fallback chain through `actualStartTime` > `approvedAt`).
 3. **Debounce interval** — 5 minutes is a starting point. Should this be configurable?
 4. **Audit implications** — should idle expiry emit a Kubernetes event or audit log entry?
 
