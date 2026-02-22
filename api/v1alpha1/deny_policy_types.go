@@ -22,6 +22,7 @@ const (
 )
 
 // DenyPolicySpec defines deny rules applicable to sessions / clusters / tenants.
+// +kubebuilder:validation:XValidation:rule="(has(self.rules) && size(self.rules) > 0) || has(self.podSecurityRules)",message="at least one of rules or podSecurityRules must be specified"
 type DenyPolicySpec struct {
 	// appliesTo scopes the policy. Empty means global.
 	// Any listed selector must match (logical AND within struct, lists are OR).

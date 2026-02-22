@@ -369,6 +369,12 @@ validators and provide immediate feedback without webhook latency.
 | `sessionLimitsOverride.unlimited` conflicts | Cannot set `maxActiveSessionsPerUser`/`maxActiveSessionsTotal` when `unlimited` is true |
 | `podSecurityOverrides.requireApproval` requires approvers | Cannot enable `requireApproval` without specifying who can approve |
 
+### DenyPolicy
+
+| Rule | Effect |
+|------|--------|
+| At least one rule required | A DenyPolicy must have at least one `rules` entry or `podSecurityRules` block |
+
 ### IdentityProvider
 
 | Rule | Effect |

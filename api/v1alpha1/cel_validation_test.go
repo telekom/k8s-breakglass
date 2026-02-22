@@ -69,6 +69,14 @@ func TestCELValidationRulesPresent(t *testing.T) {
 				"self.keycloak",
 			},
 		},
+		{
+			name:    "DenyPolicy/at least one rule required",
+			crdFile: "breakglass.t-caas.telekom.com_denypolicies.yaml",
+			ruleSnippets: []string{
+				"self.rules",
+				"self.podSecurityRules",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -89,18 +97,25 @@ func TestCELValidationRulesPresent(t *testing.T) {
 			// from matching field names or descriptions outside validation blocks.
 			celRules := extractCELRules(content)
 
-			// Verify each expected rule snippet appears within a CEL rule expression
-			for _, snippet := range tt.ruleSnippets {
-				found := false
-				for _, rule := range celRules {
-					if strings.Contains(rule, snippet) {
-						found = true
+			// Verify that ALL rule snippets appear together within a single CEL rule
+			// expression. This prevents false positives where snippets individually
+			// match different rules but no single rule contains all of them.
+			foundAllInOneRule := false
+			for _, rule := range celRules {
+				allPresent := true
+				for _, snippet := range tt.ruleSnippets {
+					if !strings.Contains(rule, snippet) {
+						allPresent = false
 						break
 					}
 				}
-				if !found {
-					t.Errorf("CRD %s: no CEL rule expression contains snippet %q", tt.crdFile, snippet)
+				if allPresent {
+					foundAllInOneRule = true
+					break
 				}
+			}
+			if !foundAllInOneRule {
+				t.Errorf("CRD %s: no single CEL rule expression contains all expected snippets %v", tt.crdFile, tt.ruleSnippets)
 			}
 		})
 	}
