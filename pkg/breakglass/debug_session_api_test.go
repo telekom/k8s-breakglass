@@ -31,6 +31,7 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -888,10 +889,78 @@ func TestDebugSessionAPIController_CreateSessionErrors(t *testing.T) {
 			WithObjects(existingSession).
 			Build()
 
-		// Try to create another session with same name
-		newSession := existingSession.DeepCopy()
+		// Create a new object with the same name (not DeepCopy, to avoid copying resourceVersion)
+		newSession := &telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "duplicate-session",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "other-user@example.com",
+			},
+		}
 		err := fakeClient.Create(context.Background(), newSession)
 		assert.Error(t, err, "Expected error when creating duplicate session")
+		assert.True(t, apierrors.IsAlreadyExists(err),
+			"Create() must return AlreadyExists for duplicates (design decision #382)")
+	})
+
+	// Design Decision (#382): Create() is used instead of SSA for debug session creation.
+	// This test documents that Create() provides native conflict detection without the
+	// overhead of a pre-check Get() + SSA Apply pattern. See the inline comment in
+	// debug_session_api.go for the full rationale.
+	t.Run("create_vs_ssa_conflict_detection", func(t *testing.T) {
+		existingSession := &telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "debug-alice-prod-20250101120000",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+				Reason:      "First session",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(existingSession).
+			Build()
+
+		// Verify that Create() provides AlreadyExists error as a single API call.
+		// This is simpler and more efficient than the alternative SSA pattern:
+		//   1. Get() to check existence (one round-trip)
+		//   2. Apply() to create (another round-trip)
+		// With Create(), we get existence-check + creation in a single call.
+		duplicate := &telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "debug-alice-prod-20250101120000",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+				Reason:      "Different reason — should still conflict",
+			},
+		}
+		err := fakeClient.Create(context.Background(), duplicate)
+		require.Error(t, err)
+		assert.True(t, apierrors.IsAlreadyExists(err),
+			"Create() natively detects duplicate session names without a pre-check Get()")
+
+		// Verify the original session is unchanged (Create does not silently update)
+		var fetched telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{
+			Name:      "debug-alice-prod-20250101120000",
+			Namespace: "breakglass",
+		}, &fetched)
+		require.NoError(t, err)
+		assert.Equal(t, "First session", fetched.Spec.Reason,
+			"Create() must not silently update an existing session (unlike SSA Apply)")
 	})
 }
 
