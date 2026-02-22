@@ -22,13 +22,18 @@ export function useWithdrawConfirmation(onConfirm: (session: SessionCR) => void 
     withdrawDialogOpen.value = true;
   }
 
-  /** User confirmed — clear state and fire the callback. */
+  /** User confirmed — wait for callback, then clear state. */
   async function confirmWithdraw() {
     if (!withdrawTarget.value) return;
     const session = withdrawTarget.value;
-    withdrawDialogOpen.value = false;
-    withdrawTarget.value = null;
-    await onConfirm(session);
+    try {
+      await onConfirm(session);
+      withdrawDialogOpen.value = false;
+      withdrawTarget.value = null;
+    } catch (error) {
+      // Keep dialog open so the user sees that the operation did not complete.
+      throw error;
+    }
   }
 
   /** User cancelled — just reset the dialog state. */

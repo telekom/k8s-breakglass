@@ -86,6 +86,20 @@ vi.mock("@/utils/statusStyles", () => ({
   statusToneFor: vi.fn().mockReturnValue("success"),
 }));
 
+vi.mock("@/composables", async (importOriginal) => {
+  const original = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...original,
+    useWithdrawConfirmation: (onConfirm: (...args: unknown[]) => unknown) => ({
+      withdrawDialogOpen: ref(false),
+      withdrawTarget: ref(null),
+      requestWithdraw: vi.fn(),
+      confirmWithdraw: vi.fn(),
+      cancelWithdraw: vi.fn(),
+    }),
+  };
+});
+
 describe("SessionBrowser", () => {
   let router: ReturnType<typeof createRouter>;
 

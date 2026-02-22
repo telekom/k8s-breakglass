@@ -23,6 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useSessionActions, type ActionHandlers } from "@/composables/useSessionActions";
+import { useWithdrawConfirmation } from "@/composables/useWithdrawConfirmation";
 import type { SessionCR } from "@/model/breakglass";
 
 // Mock toast service
@@ -110,5 +111,70 @@ describe("Withdraw confirmation integration", () => {
     const result = await withdraw(session, { skipConfirm: true });
 
     expect(result).toBe(false);
+  });
+});
+
+describe("useWithdrawConfirmation", () => {
+  it("opens dialog and sets target on requestWithdraw", () => {
+    const onConfirm = vi.fn();
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw } =
+      useWithdrawConfirmation(onConfirm);
+
+    const session = makeSession("req-10");
+    requestWithdraw(session);
+
+    expect(withdrawDialogOpen.value).toBe(true);
+    expect(withdrawTarget.value).toBe(session);
+  });
+
+  it("clears dialog state and calls callback on confirmWithdraw", async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } =
+      useWithdrawConfirmation(onConfirm);
+
+    const session = makeSession("req-11");
+    requestWithdraw(session);
+    await confirmWithdraw();
+
+    expect(onConfirm).toHaveBeenCalledWith(session);
+    expect(withdrawDialogOpen.value).toBe(false);
+    expect(withdrawTarget.value).toBeNull();
+  });
+
+  it("keeps dialog open when onConfirm throws (race-safe)", async () => {
+    const onConfirm = vi.fn().mockRejectedValue(new Error("network error"));
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } =
+      useWithdrawConfirmation(onConfirm);
+
+    const session = makeSession("req-12");
+    requestWithdraw(session);
+
+    await expect(confirmWithdraw()).rejects.toThrow("network error");
+
+    // Dialog should remain open so the user sees the operation failed
+    expect(withdrawDialogOpen.value).toBe(true);
+    expect(withdrawTarget.value).toBe(session);
+  });
+
+  it("resets dialog state on cancelWithdraw", () => {
+    const onConfirm = vi.fn();
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, cancelWithdraw } =
+      useWithdrawConfirmation(onConfirm);
+
+    requestWithdraw(makeSession("req-13"));
+    cancelWithdraw();
+
+    expect(withdrawDialogOpen.value).toBe(false);
+    expect(withdrawTarget.value).toBeNull();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when confirmWithdraw is called without a target", async () => {
+    const onConfirm = vi.fn();
+    const { confirmWithdraw } = useWithdrawConfirmation(onConfirm);
+
+    await confirmWithdraw();
+
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });
