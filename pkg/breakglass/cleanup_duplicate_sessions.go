@@ -153,14 +153,14 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 				conditionType = v1alpha1.SessionConditionTypeCanceled
 				conditionReason = "DuplicateSessionWithdrawn"
 				conditionMessage = "Withdrawn by cleanup routine: duplicate session for the same cluster/user/group triple."
-				reasonEnded = "canceled"
+				reasonEnded = "withdrawn"
 			case v1alpha1.SessionStateApproved:
 				// Approved sessions can be directly expired.
 				targetState = v1alpha1.SessionStateExpired
 				conditionType = v1alpha1.SessionConditionTypeExpired
 				conditionReason = "DuplicateSessionTerminated"
 				conditionMessage = "Terminated by cleanup routine: duplicate session for the same cluster/user/group triple."
-				reasonEnded = "timeExpired"
+				reasonEnded = "duplicateCleanup"
 			default:
 				// For any other state, skip to avoid invalid state transitions.
 				log.Infow("Skipping duplicate session with non-terminatable state",

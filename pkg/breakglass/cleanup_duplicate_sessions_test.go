@@ -136,7 +136,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 
 		assert.Equal(t, v1alpha1.SessionStatePending, gotOld.Status.State, "oldest must be kept")
 		assert.Equal(t, v1alpha1.SessionStateWithdrawn, gotNew.Status.State, "newest must be withdrawn (Pending→Withdrawn)")
-		assert.Equal(t, "duplicateCleanup", gotNew.Status.ReasonEnded)
+		assert.Equal(t, "withdrawn", gotNew.Status.ReasonEnded)
 
 		// Verify condition was added
 		require.NotEmpty(t, gotNew.Status.Conditions)
