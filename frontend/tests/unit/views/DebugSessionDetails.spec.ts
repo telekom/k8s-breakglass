@@ -157,7 +157,7 @@ describe("DebugSessionDetails", () => {
     expect(copyBtns.length).toBe(2);
 
     // Click first copy button and verify clipboard was called with correct command
-    await copyBtns[0].trigger("click");
+    await copyBtns[0]!.trigger("click");
     expect(mockCopy).toHaveBeenCalledWith("kubectl exec -it pod-1 -n ns-1 -- /bin/sh");
   });
 
