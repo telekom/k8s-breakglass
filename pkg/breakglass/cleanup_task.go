@@ -128,7 +128,11 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 
 		// Remove duplicate active sessions (same cluster/user/grantedGroup triple).
 		// Duplicates can arise from TOCTOU races in multi-replica deployments.
-		duplicateCtx, duplicateCancel := context.WithTimeout(ctx, DefaultCleanupOperationTimeout)
+		cleanupCtx := ctx
+		if cleanupCtx == nil {
+			cleanupCtx = context.Background()
+		}
+		duplicateCtx, duplicateCancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
 		CleanupDuplicateSessions(duplicateCtx, cr.Log, cr.Manager)
 		duplicateCancel()
 	}
