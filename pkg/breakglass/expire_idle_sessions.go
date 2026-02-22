@@ -102,7 +102,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions() {
 		// Persist the status change with retry on conflict (following ExpireApprovedSessions pattern)
 		const maxStatusUpdateRetries = 3
 		var lastErr error
-		for attempt := range maxStatusUpdateRetries {
+		for attempt := 0; attempt < maxStatusUpdateRetries; attempt++ {
 			if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
 				lastErr = nil
 				metrics.SessionIdleExpired.WithLabelValues(ses.Spec.Cluster).Inc()

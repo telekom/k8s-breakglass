@@ -1197,7 +1197,10 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	// When disabled (default), the webhook still increments Prometheus counters
 	// but skips buffered status updates to avoid unnecessary API server writes.
 	if cfg.Server.EnableActivityTracking {
-		webhookCtrl.WithActivityTracker(webhook.NewActivityTracker(sessionManager.Client))
+		webhookCtrl.WithActivityTracker(webhook.NewActivityTracker(
+			sessionManager.Client,
+			webhook.WithReader(sessionManager.Reader()),
+		))
 		log.Infow("Session activity tracking enabled")
 	}
 	apiControllers = append(apiControllers, webhookCtrl)

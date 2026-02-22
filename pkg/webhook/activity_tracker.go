@@ -65,6 +65,7 @@ type activityEntry struct {
 // at a configurable interval (default 30s) via a background goroutine.
 type ActivityTracker struct {
 	client        client.Client
+	reader        client.Reader
 	log           *zap.SugaredLogger
 	flushInterval time.Duration
 
@@ -96,6 +97,18 @@ func WithActivityLogger(log *zap.SugaredLogger) ActivityTrackerOption {
 	return func(at *ActivityTracker) {
 		if log != nil {
 			at.log = log
+		}
+	}
+}
+
+// WithReader sets an uncached client.Reader for session reads.
+// When set, the ActivityTracker uses this reader (typically the APIReader)
+// instead of the cached client for Get operations, ensuring it sees the
+// latest status values and avoiding stale-read races during flush.
+func WithReader(r client.Reader) ActivityTrackerOption {
+	return func(at *ActivityTracker) {
+		if r != nil {
+			at.reader = r
 		}
 	}
 }
@@ -258,9 +271,11 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 // Uses a dedicated field manager ("activity-tracker") to avoid ownership conflicts
 // with the main controller's status updates.
 func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.NamespacedName, entry *activityEntry) error {
-	// Read current session to check state and get current counts
+	// Read current session via the uncached reader (if set) to ensure we see
+	// the latest status values and avoid stale-read races between flushes.
+	reader := at.getReader()
 	var session v1alpha1.BreakglassSession
-	if err := at.client.Get(ctx, key, &session); err != nil {
+	if err := reader.Get(ctx, key, &session); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Session was deleted — discard the entry, no point retrying
 			return nil
@@ -273,13 +288,30 @@ func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.
 		return nil
 	}
 
+	// Monotonic merge: LastActivity only moves forward and ActivityCount
+	// never decreases. This makes concurrent flushes safe even when
+	// the informer cache is slightly behind.
+	newLastActivity := entry.lastSeen
+	if session.Status.LastActivity != nil && session.Status.LastActivity.Time.After(newLastActivity) {
+		newLastActivity = session.Status.LastActivity.Time
+	}
+	newCount := session.Status.ActivityCount + entry.count
+
 	// Build apply configuration with only the activity fields
 	statusApply := ac.BreakglassSessionStatus().
-		WithLastActivity(metav1.Time{Time: entry.lastSeen}).
-		WithActivityCount(session.Status.ActivityCount + entry.count)
+		WithLastActivity(metav1.Time{Time: newLastActivity}).
+		WithActivityCount(newCount)
 
 	applyConfig := ac.BreakglassSession(key.Name, key.Namespace).
 		WithStatus(statusApply)
 
 	return ssa.ApplyViaUnstructuredWithOwner(ctx, at.client, applyConfig, FieldOwnerActivityTracker)
+}
+
+// getReader returns the uncached reader if configured, otherwise falls back to the cached client.
+func (at *ActivityTracker) getReader() client.Reader {
+	if at.reader != nil {
+		return at.reader
+	}
+	return at.client
 }
