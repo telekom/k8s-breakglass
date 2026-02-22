@@ -821,16 +821,13 @@ func TestDenyPolicy_ValidateCreate_EmptyRules(t *testing.T) {
 			Name: "empty-rules-policy",
 		},
 		Spec: DenyPolicySpec{
-			Rules: []DenyRule{}, // empty rules is valid
+			Rules: []DenyRule{}, // empty rules with no podSecurityRules should be rejected
 		},
 	}
 
-	warnings, err := policy.ValidateCreate(ctx, policy)
-	if err != nil {
-		t.Errorf("ValidateCreate() unexpected error for empty rules: %v", err)
-	}
-	if len(warnings) > 0 {
-		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("ValidateCreate() expected error for empty rules and nil podSecurityRules")
 	}
 }
 
@@ -868,6 +865,41 @@ func TestValidateDenyPolicySpec_Nil(t *testing.T) {
 	errs := validateDenyPolicySpec(nil)
 	if errs != nil {
 		t.Errorf("validateDenyPolicySpec(nil) expected nil, got %v", errs)
+	}
+}
+
+func TestValidateDenyPolicySpec_EmptySpec(t *testing.T) {
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-spec"},
+		Spec:       DenyPolicySpec{}, // no rules, no podSecurityRules
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) == 0 {
+		t.Error("expected error for empty DenyPolicySpec (no rules or podSecurityRules)")
+	}
+	found := false
+	for _, e := range errs {
+		if e.Field == "spec" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected spec-level error, got: %v", errs)
+	}
+}
+
+func TestValidateDenyPolicySpec_OnlyPodSecurityRules(t *testing.T) {
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "only-psr"},
+		Spec: DenyPolicySpec{
+			PodSecurityRules: &PodSecurityRules{
+				Thresholds: []RiskThreshold{{MaxScore: 10, Action: "deny"}},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 0 {
+		t.Errorf("unexpected errors for DenyPolicy with only podSecurityRules: %v", errs)
 	}
 }
 
@@ -1095,6 +1127,9 @@ func TestValidateDenyPolicySpec_NegativePrecedence(t *testing.T) {
 	policy := &DenyPolicy{
 		Spec: DenyPolicySpec{
 			Precedence: &negPrec,
+			Rules: []DenyRule{
+				{Verbs: []string{"delete"}, APIGroups: []string{""}, Resources: []string{"pods"}},
+			},
 		},
 	}
 	errs := validateDenyPolicySpec(policy)

@@ -543,7 +543,7 @@ func TestValidateDenyPolicy(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "precedence")
 	})
 
-	t.Run("empty denyPolicy is valid", func(t *testing.T) {
+	t.Run("empty denyPolicy is rejected", func(t *testing.T) {
 		dp := &DenyPolicy{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-deny-policy",
@@ -552,8 +552,10 @@ func TestValidateDenyPolicy(t *testing.T) {
 			Spec: DenyPolicySpec{},
 		}
 		result := ValidateDenyPolicy(dp)
-		// Empty rules list is valid - just doesn't deny anything
-		assert.True(t, result.IsValid())
+		// Empty spec (no rules and no podSecurityRules) should be rejected
+		assert.False(t, result.IsValid())
+		assert.Len(t, result.Errors, 1)
+		assert.Contains(t, result.Errors[0].Detail, "rules")
 	})
 }
 
