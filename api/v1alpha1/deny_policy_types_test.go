@@ -871,6 +871,41 @@ func TestValidateDenyPolicySpec_Nil(t *testing.T) {
 	}
 }
 
+func TestValidateDenyPolicySpec_EmptySpec(t *testing.T) {
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-spec"},
+		Spec:       DenyPolicySpec{}, // no rules, no podSecurityRules
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) == 0 {
+		t.Error("expected error for empty DenyPolicySpec (no rules or podSecurityRules)")
+	}
+	found := false
+	for _, e := range errs {
+		if e.Field == "spec" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected spec-level error, got: %v", errs)
+	}
+}
+
+func TestValidateDenyPolicySpec_OnlyPodSecurityRules(t *testing.T) {
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "only-psr"},
+		Spec: DenyPolicySpec{
+			PodSecurityRules: &PodSecurityRules{
+				Thresholds: []RiskThreshold{{MaxScore: 10, Action: "deny"}},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 0 {
+		t.Errorf("unexpected errors for DenyPolicy with only podSecurityRules: %v", errs)
+	}
+}
+
 func TestDenyPolicy_ValidateCreate_EmptyAPIGroups(t *testing.T) {
 	ctx := context.Background()
 	policy := &DenyPolicy{
@@ -1095,6 +1130,9 @@ func TestValidateDenyPolicySpec_NegativePrecedence(t *testing.T) {
 	policy := &DenyPolicy{
 		Spec: DenyPolicySpec{
 			Precedence: &negPrec,
+			Rules: []DenyRule{
+				{Verbs: []string{"delete"}, APIGroups: []string{""}, Resources: []string{"pods"}},
+			},
 		},
 	}
 	errs := validateDenyPolicySpec(policy)

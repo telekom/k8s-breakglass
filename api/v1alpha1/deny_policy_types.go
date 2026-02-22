@@ -262,6 +262,11 @@ func validateDenyPolicySpec(policy *DenyPolicy) field.ErrorList {
 	specPath := field.NewPath("spec")
 	var allErrs field.ErrorList
 
+	// At least one of rules or podSecurityRules must be specified (defense-in-depth; also enforced by CEL).
+	if len(policy.Spec.Rules) == 0 && policy.Spec.PodSecurityRules == nil {
+		allErrs = append(allErrs, field.Required(specPath, "at least one of rules or podSecurityRules must be specified"))
+	}
+
 	// Validate rules
 	for i, rule := range policy.Spec.Rules {
 		rulePath := specPath.Child("rules").Index(i)
