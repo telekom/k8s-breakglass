@@ -85,6 +85,9 @@ export {
   type ActionPermissions,
 } from "./useSessionActions";
 
+// Clipboard utilities
+export { useClipboard } from "./useClipboard";
+
 // Multi-IDP management
 export { useMultiIDP, type UseMultiIDPOptions, type UseMultiIDPReturn } from "./useMultiIDP";
 

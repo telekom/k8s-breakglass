@@ -6,10 +6,35 @@ import { useUser } from "@/services/auth";
 import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { pushError, pushSuccess } from "@/services/toast";
-import { useDateFormatting } from "@/composables";
+import { useDateFormatting, useClipboard } from "@/composables";
 import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOperations } from "@/model/debugSession";
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
+const { copy: clipboardCopy, copied: clipboardCopied, cleanup: clipboardCleanup } = useClipboard();
+const copiedPodKey = ref<string | null>(null);
+
+function podKey(pod: DebugPodInfo): string {
+  return `${pod.namespace}/${pod.name}`;
+}
+
+function getExecCommand(pod: DebugPodInfo): string {
+  return `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`;
+}
+
+function copyExecCommand(pod: DebugPodInfo) {
+  clipboardCopy(getExecCommand(pod)).then((ok) => {
+    if (ok) {
+      copiedPodKey.value = podKey(pod);
+    } else {
+      pushError("Failed to copy command to clipboard");
+    }
+  });
+}
+
+/** Whether the given pod's command was just copied (resets automatically via useClipboard). */
+function isCopied(pod: DebugPodInfo): boolean {
+  return clipboardCopied.value && copiedPodKey.value === podKey(pod);
+}
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -125,6 +150,7 @@ watch(
 
 onUnmounted(() => {
   stopPolling();
+  clipboardCleanup();
 });
 
 const stateVariant = computed(() => {
@@ -586,7 +612,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
           <ul v-else class="pod-list" data-testid="pod-list">
             <li
               v-for="pod in allowedPods"
-              :key="pod.name"
+              :key="podKey(pod)"
               class="pod-item"
               :class="{ 'pod-has-issues': hasPodIssues(pod) }"
             >
@@ -619,7 +645,19 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                 </div>
               </div>
               <div v-if="pod.phase === 'Running'" class="pod-actions">
-                <code class="exec-command">kubectl exec -it {{ pod.name }} -n {{ pod.namespace }} -- /bin/sh</code>
+                <div class="exec-command-row">
+                  <code class="exec-command">{{ getExecCommand(pod) }}</code>
+                  <scale-button
+                    size="small"
+                    variant="secondary"
+                    :title="isCopied(pod) ? 'Copied!' : 'Copy to clipboard'"
+                    :aria-label="isCopied(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'"
+                    data-testid="copy-exec-btn"
+                    @click="copyExecCommand(pod)"
+                  >
+                    {{ isCopied(pod) ? "Copied!" : "Copy" }}
+                  </scale-button>
+                </div>
               </div>
             </li>
           </ul>
@@ -1061,6 +1099,14 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
   overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+.exec-command-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
 }
 
 /* Allowed Pod Operations Section */
