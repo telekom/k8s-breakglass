@@ -142,63 +142,63 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 				conditionType    v1alpha1.BreakglassSessionConditionType
 				conditionReason  string
 				conditionMessage string
-			reasonEnded      string
-		)
-
-		switch dup.Status.State {
-		case v1alpha1.SessionStatePending, v1alpha1.SessionStateWaitingForScheduledTime:
-			// Pending/Waiting sessions must be withdrawn, not expired,
-			// to satisfy the webhook state machine.
-			targetState = v1alpha1.SessionStateWithdrawn
-			conditionType = v1alpha1.SessionConditionTypeCanceled
-			conditionReason = "DuplicateSessionWithdrawn"
-			conditionMessage = "Withdrawn by cleanup routine: duplicate session for the same cluster/user/group triple."
-			reasonEnded = "canceled"
-		case v1alpha1.SessionStateApproved:
-			// Approved sessions can be directly expired.
-			targetState = v1alpha1.SessionStateExpired
-			conditionType = v1alpha1.SessionConditionTypeExpired
-			conditionReason = "DuplicateSessionTerminated"
-			conditionMessage = "Terminated by cleanup routine: duplicate session for the same cluster/user/group triple."
-			reasonEnded = "timeExpired"
-		default:
-			// For any other state, skip to avoid invalid state transitions.
-			log.Infow("Skipping duplicate session with non-terminatable state",
-				"session", dup.Name,
-				"namespace", dup.Namespace,
-				"state", dup.Status.State,
+				reasonEnded      string
 			)
-			continue
-		}
 
-		// Capture a single "now" for consistent terminal metadata and condition timestamps.
-		now := metav1.Now()
+			switch dup.Status.State {
+			case v1alpha1.SessionStatePending, v1alpha1.SessionStateWaitingForScheduledTime:
+				// Pending/Waiting sessions must be withdrawn, not expired,
+				// to satisfy the webhook state machine.
+				targetState = v1alpha1.SessionStateWithdrawn
+				conditionType = v1alpha1.SessionConditionTypeCanceled
+				conditionReason = "DuplicateSessionWithdrawn"
+				conditionMessage = "Withdrawn by cleanup routine: duplicate session for the same cluster/user/group triple."
+				reasonEnded = "canceled"
+			case v1alpha1.SessionStateApproved:
+				// Approved sessions can be directly expired.
+				targetState = v1alpha1.SessionStateExpired
+				conditionType = v1alpha1.SessionConditionTypeExpired
+				conditionReason = "DuplicateSessionTerminated"
+				conditionMessage = "Terminated by cleanup routine: duplicate session for the same cluster/user/group triple."
+				reasonEnded = "timeExpired"
+			default:
+				// For any other state, skip to avoid invalid state transitions.
+				log.Infow("Skipping duplicate session with non-terminatable state",
+					"session", dup.Name,
+					"namespace", dup.Namespace,
+					"state", dup.Status.State,
+				)
+				continue
+			}
 
-		// Populate terminal-state timestamps that the rest of the system expects.
-		if targetState == v1alpha1.SessionStateWithdrawn {
-			if dup.Status.WithdrawnAt.IsZero() {
-				dup.Status.WithdrawnAt = now
+			// Capture a single "now" for consistent terminal metadata and condition timestamps.
+			now := metav1.Now()
+
+			// Populate terminal-state timestamps that the rest of the system expects.
+			if targetState == v1alpha1.SessionStateWithdrawn {
+				if dup.Status.WithdrawnAt.IsZero() {
+					dup.Status.WithdrawnAt = now
+				}
+			}
+			// Set RetainedUntil so the cleanup routine can later garbage-collect the session.
+			if dup.Status.RetainedUntil.IsZero() {
+				retainFor := ParseRetainFor(dup.Spec, log)
+				dup.Status.RetainedUntil = metav1.NewTime(now.Time.Add(retainFor))
+			}
+
+			dup.Status.State = targetState
+			dup.Status.ReasonEnded = reasonEnded
+			dup.SetCondition(metav1.Condition{
+				Type:               string(conditionType),
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             conditionReason,
+				Message:            conditionMessage,
+			})
+
+			if err := mgr.UpdateBreakglassSessionStatus(ctx, dup); err != nil {
+				log.Warnw("Failed to update duplicate session status", "session", dup.Name, "error", err)
 			}
 		}
-		// Set RetainedUntil so the cleanup routine can later garbage-collect the session.
-		if dup.Status.RetainedUntil.IsZero() {
-			retainFor := ParseRetainFor(dup.Spec, log)
-			dup.Status.RetainedUntil = metav1.NewTime(now.Time.Add(retainFor))
-		}
-
-		dup.Status.State = targetState
-		dup.Status.ReasonEnded = reasonEnded
-		dup.SetCondition(metav1.Condition{
-			Type:               string(conditionType),
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             conditionReason,
-			Message:            conditionMessage,
-		})
-
-		if err := mgr.UpdateBreakglassSessionStatus(ctx, dup); err != nil {
-			log.Warnw("Failed to update duplicate session status", "session", dup.Name, "error", err)
-		}
 	}
-}
 }
