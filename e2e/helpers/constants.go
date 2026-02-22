@@ -32,7 +32,8 @@ const (
 	// WaitForStateTimeout for CLI poll loops waiting on session state transitions
 	// (e.g., Pending → Approved, Active → Terminated). Set high enough to account
 	// for controller reconciliation latency in resource-constrained CI environments.
-	WaitForStateTimeout = 60 * time.Second
+	// Uses DefaultTimeout from wait.go as the single source of truth.
+	WaitForStateTimeout = DefaultTimeout
 
 	// WaitForConditionTimeout for waiting on Kubernetes status conditions
 	// (e.g., ClusterConfig readiness, deployment availability).

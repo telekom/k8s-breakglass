@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release pipeline digest extraction**: `docker buildx imagetools inspect --format '{{.Manifest.Digest}}'` returns full human-readable output on newer Buildx versions, corrupting `$GITHUB_OUTPUT` with multi-line content. Switched to computing the manifest digest from raw JSON via `sha256sum`
 - **CI provenance attestation re-enabled**: Added missing `id-token: write` and `attestations: write` permissions to build-image job, allowing SLSA provenance attestation to run (was disabled with `if: false` due to missing OIDC token access). Made `push-to-registry` conditional to avoid failures on fork PRs
 - **E2E webhook expired-session flake**: `TestWebhookExpiredSession` intermittently failed because the webhook's informer cache had not yet synced the `Expired` status set via a direct `Status().Update()` call. Replaced the single-shot SAR assertion with a polling loop (`WaitForCondition`) that retries until the webhook denies the request, matching the pattern used by other E2E wait helpers
+- **CLI E2E test timeout flakes**: Consolidated and increased E2E timeout constants to prevent spurious failures on resource-constrained CI runners. `WaitForStateTimeout` now references `DefaultTimeout` as a single source of truth, and specialized timeouts (`ShortTestTimeout`, `MediumTestTimeout`, `LongTestTimeout`) are tuned for each test category
 
 ### Added
 
