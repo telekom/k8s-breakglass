@@ -2965,6 +2965,7 @@ func IsSessionValid(session v1alpha1.BreakglassSession) bool {
 	if session.Status.State == v1alpha1.SessionStateRejected ||
 		session.Status.State == v1alpha1.SessionStateWithdrawn ||
 		session.Status.State == v1alpha1.SessionStateExpired ||
+		session.Status.State == v1alpha1.SessionStateIdleExpired ||
 		session.Status.State == v1alpha1.SessionStateTimeout {
 		return false
 	}
@@ -2999,6 +3000,7 @@ func IsSessionActive(session v1alpha1.BreakglassSession) bool {
 	if session.Status.State == v1alpha1.SessionStateRejected ||
 		session.Status.State == v1alpha1.SessionStateWithdrawn ||
 		session.Status.State == v1alpha1.SessionStateExpired ||
+		session.Status.State == v1alpha1.SessionStateIdleExpired ||
 		session.Status.State == v1alpha1.SessionStateTimeout {
 		return false
 	}

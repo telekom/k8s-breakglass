@@ -838,7 +838,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				reqLog.Infow("Final accepted impersonated group", "username", username, "cluster", clusterName, "grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
 
 				// Record session activity for idle timeout detection and usage analytics (#314)
-				wc.recordSessionActivity(sessions, sesName, clusterName, grp, true)
+				wc.recordSessionActivity(sessions, sesName, clusterName, grp)
 			}
 		}
 		phaseTracker.EndPhase(PhaseSessionSARs) // End session_sars phase
@@ -1655,12 +1655,8 @@ func (wc *WebhookController) fetchNamespaceLabels(ctx context.Context, clusterNa
 // recordSessionActivity records activity for the named session using the buffered activity tracker.
 // It looks up the session's namespace from the provided sessions list and records the current time.
 // This is a non-blocking operation: activity is buffered and flushed periodically.
-func (wc *WebhookController) recordSessionActivity(sessions []v1alpha1.BreakglassSession, sessionName, clusterName, grantedGroup string, allowed bool) {
-	allowedStr := "true"
-	if !allowed {
-		allowedStr = "false"
-	}
-	metrics.SessionActivityRequests.WithLabelValues(clusterName, grantedGroup, allowedStr).Inc()
+func (wc *WebhookController) recordSessionActivity(sessions []v1alpha1.BreakglassSession, sessionName, clusterName, grantedGroup string) {
+	metrics.SessionActivityRequests.WithLabelValues(clusterName, grantedGroup).Inc()
 
 	if wc.activityTracker == nil {
 		return

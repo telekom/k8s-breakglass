@@ -124,7 +124,7 @@ func TestExpireIdleSessions(t *testing.T) {
 			"Session within idle timeout should not be expired")
 	})
 
-	t.Run("falls back to actualStartTime when no lastActivity", func(t *testing.T) {
+	t.Run("skips session without lastActivity", func(t *testing.T) {
 		startTime := metav1.NewTime(time.Now().Add(-15 * time.Minute))
 		ses := telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "no-activity-session", Namespace: "default"},
@@ -148,11 +148,11 @@ func TestExpireIdleSessions(t *testing.T) {
 
 		got, err := manager.GetBreakglassSessionByName(context.Background(), "no-activity-session")
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateIdleExpired, got.Status.State,
-			"Session without lastActivity should fall back to actualStartTime")
+		assert.Equal(t, telekomv1alpha1.SessionStateApproved, got.Status.State,
+			"Session without lastActivity should be skipped — idle timeout requires activity tracking data")
 	})
 
-	t.Run("falls back to approvedAt when no actualStartTime", func(t *testing.T) {
+	t.Run("skips session with approvedAt but no lastActivity", func(t *testing.T) {
 		approvedAt := metav1.NewTime(time.Now().Add(-15 * time.Minute))
 		ses := telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "approved-only-session", Namespace: "default"},
@@ -176,8 +176,8 @@ func TestExpireIdleSessions(t *testing.T) {
 
 		got, err := manager.GetBreakglassSessionByName(context.Background(), "approved-only-session")
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateIdleExpired, got.Status.State,
-			"Session without actualStartTime should fall back to approvedAt")
+		assert.Equal(t, telekomv1alpha1.SessionStateApproved, got.Status.State,
+			"Session without lastActivity should be skipped — idle timeout requires activity tracking data")
 	})
 
 	t.Run("skips sessions without idleTimeout", func(t *testing.T) {
@@ -485,7 +485,7 @@ func TestExpireIdleSessions_EdgeCases(t *testing.T) {
 		ctrl.ExpireIdleSessions()
 	})
 
-	t.Run("creationTimestamp fallback when all timestamps missing", func(t *testing.T) {
+	t.Run("skips session when all timestamps missing (no lastActivity)", func(t *testing.T) {
 		ses := telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "creation-fallback",
@@ -511,8 +511,8 @@ func TestExpireIdleSessions_EdgeCases(t *testing.T) {
 
 		got, err := manager.GetBreakglassSessionByName(context.Background(), "creation-fallback")
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateIdleExpired, got.Status.State,
-			"Should fall back to creationTimestamp and expire")
+		assert.Equal(t, telekomv1alpha1.SessionStateApproved, got.Status.State,
+			"Session without lastActivity should be skipped — idle timeout requires activity tracking data")
 	})
 
 	t.Run("uses day duration unit", func(t *testing.T) {

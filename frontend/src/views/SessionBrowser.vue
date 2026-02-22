@@ -96,7 +96,20 @@ function endedFor(session: SessionCR): string | null {
 
 function reasonEndedLabel(session: SessionCR): string {
   const status = session.status || {};
-  if ((status as any).reasonEnded) return (status as any).reasonEnded as string;
+  const rawReason = (status as any).reasonEnded as string | undefined;
+  if (rawReason) {
+    // Map known backend values to human-readable labels
+    const reasonLabels: Record<string, string> = {
+      withdrawn: "Withdrawn by user",
+      rejected: "Rejected",
+      canceled: "Canceled by approver",
+      timeExpired: "Session expired",
+      idleTimeout: "Idle timeout exceeded",
+      duplicateCleanup: "Duplicate session cleaned up",
+      dropped: "Dropped",
+    };
+    return reasonLabels[rawReason] ?? rawReason;
+  }
   if ((status as any).reason) return (status as any).reason as string;
   if ((session as any).terminationReason) return (session as any).terminationReason as string;
   if ((session as any).state) {

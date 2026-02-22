@@ -55,18 +55,14 @@ func (wc *BreakglassSessionController) ExpireIdleSessions() {
 			continue
 		}
 
-		// Determine the idle baseline: last activity, or session activation time
-		var baseline time.Time
-		if ses.Status.LastActivity != nil && !ses.Status.LastActivity.IsZero() {
-			baseline = ses.Status.LastActivity.Time
-		} else if !ses.Status.ActualStartTime.IsZero() {
-			baseline = ses.Status.ActualStartTime.Time
-		} else if !ses.Status.ApprovedAt.IsZero() {
-			baseline = ses.Status.ApprovedAt.Time
-		} else {
-			// Fallback to creation time if no approval time is set
-			baseline = ses.CreationTimestamp.Time
+		// Determine the idle baseline: last activity timestamp.
+		// If lastActivity has never been set (activity tracking is disabled or
+		// no requests have been recorded yet), we cannot reliably determine
+		// idleness, so skip this session.
+		if ses.Status.LastActivity == nil || ses.Status.LastActivity.IsZero() {
+			continue
 		}
+		baseline := ses.Status.LastActivity.Time
 
 		idleSince := time.Since(baseline)
 		if idleSince < idleTimeout {

@@ -334,19 +334,19 @@ func TestRecordSessionActivity(t *testing.T) {
 	}
 
 	t.Run("records activity for matching session", func(t *testing.T) {
-		wc.recordSessionActivity(sessions, "ses-1", "cluster-1", "group-1", true)
+		wc.recordSessionActivity(sessions, "ses-1", "cluster-1", "group-1")
 		assert.Equal(t, 1, tracker.Pending())
 	})
 
 	t.Run("no-op when session name not found", func(t *testing.T) {
 		initialPending := tracker.Pending()
-		wc.recordSessionActivity(sessions, "non-existent", "cluster-1", "group-1", true)
+		wc.recordSessionActivity(sessions, "non-existent", "cluster-1", "group-1")
 		assert.Equal(t, initialPending, tracker.Pending(), "Should not add entry for unknown session")
 	})
 
 	t.Run("no-op when tracker is nil", func(t *testing.T) {
 		wcNoTracker := &WebhookController{}
 		// Should not panic
-		wcNoTracker.recordSessionActivity(sessions, "ses-1", "cluster-1", "group-1", true)
+		wcNoTracker.recordSessionActivity(sessions, "ses-1", "cluster-1", "group-1")
 	})
 }

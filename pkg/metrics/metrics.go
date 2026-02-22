@@ -551,7 +551,7 @@ var (
 	SessionActivityRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_session_activity_requests_total",
 		Help: "Total number of authorization requests that matched a breakglass session",
-	}, []string{"cluster", "granted_group", "allowed"})
+	}, []string{"cluster", "granted_group"})
 
 	SessionActivityFlushes = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "breakglass_session_activity_flushes_total",
