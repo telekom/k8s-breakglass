@@ -1060,7 +1060,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			return
 		}
 	} else {
-		if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || currState == v1alpha1.SessionStateExpired || currState == v1alpha1.SessionStateTimeout {
+		if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || currState == v1alpha1.SessionStateExpired || currState == v1alpha1.SessionStateTimeout || currState == v1alpha1.SessionStateIdleExpired {
 			c.JSON(http.StatusBadRequest, struct {
 				Error   string                     `json:"error"`
 				Code    string                     `json:"code"`
@@ -1763,6 +1763,9 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 		return meta
 	case v1alpha1.SessionStateTimeout:
 		meta.StateMessage = "This session has timed out waiting for approval"
+		return meta
+	case v1alpha1.SessionStateIdleExpired:
+		meta.StateMessage = "This session was expired due to inactivity"
 		return meta
 	}
 
