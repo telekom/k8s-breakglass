@@ -145,6 +145,47 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		assert.Equal(t, "DuplicateSessionWithdrawn", cond.Reason)
 	})
 
+	t.Run("duplicate approved sessions — oldest kept, newest expired with metadata", func(t *testing.T) {
+		now := time.Now()
+		oldest := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "approved-old",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-20 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved},
+		}
+		newest := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "approved-new",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved},
+		}
+		fc := newFakeClientWithSessions(oldest, newest)
+		mgr := NewSessionManagerWithClient(fc)
+
+		CleanupDuplicateSessions(ctx, logger, &mgr)
+
+		var gotOld, gotNew v1alpha1.BreakglassSession
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(oldest), &gotOld))
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(newest), &gotNew))
+
+		assert.Equal(t, v1alpha1.SessionStateApproved, gotOld.Status.State, "oldest approved kept")
+		assert.Equal(t, v1alpha1.SessionStateExpired, gotNew.Status.State, "newest approved expired")
+		assert.Equal(t, "duplicateCleanup", gotNew.Status.ReasonEnded, "ReasonEnded must be documented value")
+		assert.False(t, gotNew.Status.ExpiresAt.IsZero(), "ExpiresAt must be set when forcing Expired")
+
+		// Verify condition was added
+		require.NotEmpty(t, gotNew.Status.Conditions)
+		cond := gotNew.Status.Conditions[len(gotNew.Status.Conditions)-1]
+		assert.Equal(t, string(v1alpha1.SessionConditionTypeExpired), cond.Type)
+		assert.Equal(t, "DuplicateSessionTerminated", cond.Reason)
+	})
+
 	t.Run("three duplicates — approved kept over older pending", func(t *testing.T) {
 		now := time.Now()
 		s1 := &v1alpha1.BreakglassSession{

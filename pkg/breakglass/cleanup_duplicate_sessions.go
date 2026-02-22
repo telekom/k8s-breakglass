@@ -180,6 +180,9 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 					dup.Status.WithdrawnAt = now
 				}
 			}
+			if targetState == v1alpha1.SessionStateExpired {
+				dup.Status.ExpiresAt = now
+			}
 			// Set RetainedUntil so the cleanup routine can later garbage-collect the session.
 			if dup.Status.RetainedUntil.IsZero() {
 				retainFor := ParseRetainFor(dup.Spec, log)
