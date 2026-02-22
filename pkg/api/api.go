@@ -1162,7 +1162,7 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	sessionManager *breakglass.SessionManager, enableFrontend, enableAPI bool, configPath string,
 	auth *AuthHandler, ccProvider *cluster.ClientProvider, denyEval *policy.Evaluator,
 	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *breakglass.DebugSessionAPIController,
-	auditService *audit.Service) []APIController {
+	auditService *audit.Service) ([]APIController, *webhook.WebhookController) {
 	// Register API controllers based on component flags
 	apiControllers := []APIController{}
 
@@ -1192,6 +1192,17 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	// Webhook controller is always registered but may not be exposed via webhooks
 	webhookCtrl := webhook.NewWebhookController(log, *cfg, sessionManager, escalationManager, ccProvider, denyEval).
 		WithAuditService(auditService)
+
+	// Only attach ActivityTracker when session activity tracking is enabled.
+	// When disabled (default), the webhook still increments Prometheus counters
+	// but skips buffered status updates to avoid unnecessary API server writes.
+	if cfg.Server.EnableActivityTracking {
+		webhookCtrl.WithActivityTracker(webhook.NewActivityTracker(
+			sessionManager.Client,
+			webhook.WithReader(sessionManager.Reader()),
+		))
+		log.Infow("Session activity tracking enabled")
+	}
 	apiControllers = append(apiControllers, webhookCtrl)
-	return apiControllers
+	return apiControllers, webhookCtrl
 }

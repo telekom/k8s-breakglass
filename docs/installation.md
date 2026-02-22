@@ -475,7 +475,7 @@ spec:
   approvers:
     groups: [security-team]
   maxValidFor: 2h
-  # idleTimeout: 1h  # NOT YET IMPLEMENTED
+  idleTimeout: 1h
 ```
 
 Deploy:

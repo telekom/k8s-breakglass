@@ -260,7 +260,7 @@ func main() {
 	// (GET /api/debugSessions/templates/:name/clusters) for a unified user experience.
 
 	// Register API controllers based on component flags
-	apiControllers := api.Setup(sessionController, escalationManager, &sessionManager, cliConfig.EnableFrontend,
+	apiControllers, webhookCtrl := api.Setup(sessionController, escalationManager, &sessionManager, cliConfig.EnableFrontend,
 		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService)
 
 	// Make IdentityProvider available to API server for frontend configuration
@@ -533,6 +533,9 @@ func main() {
 			log.Info("Audit service shut down successfully")
 		}
 	}
+
+	// Stop activity tracker (flushes remaining session activity entries)
+	webhookCtrl.StopActivityTracker(shutdownCtx)
 
 	cancel()
 	log.Info("Waiting for all goroutines to finish")

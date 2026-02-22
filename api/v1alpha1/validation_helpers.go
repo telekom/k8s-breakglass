@@ -465,6 +465,21 @@ func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *fiel
 		))
 	}
 
+	// Parse and validate idleTimeout
+	idleTimeout := spec.IdleTimeout
+	idleTimeoutDuration, idleTimeoutErr := parseDuration(idleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
+	if idleTimeoutErr != nil {
+		errs = append(errs, idleTimeoutErr)
+	} else if idleTimeout != "" {
+		if idleTimeoutDuration < time.Minute {
+			errs = append(errs, field.Invalid(specPath.Child("idleTimeout"), idleTimeout,
+				"idleTimeout must be at least 1m"))
+		} else if maxValidForDuration > 0 && idleTimeoutDuration > maxValidForDuration {
+			errs = append(errs, field.Invalid(specPath.Child("idleTimeout"), idleTimeout,
+				fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", idleTimeout, maxValidFor)))
+		}
+	}
+
 	return errs
 }
 

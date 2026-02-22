@@ -1,0 +1,222 @@
+# Design: BreakglassSession Idle Timeout & Last Used Fields
+
+> **Issues:** [#8](https://github.com/telekom/k8s-breakglass/issues/8), [#312](https://github.com/telekom/k8s-breakglass/issues/312), [#314](https://github.com/telekom/k8s-breakglass/issues/314)
+> **Status:** Implemented
+> **Label:** `nicetohave`
+
+## 1. Problem Statement
+
+Breakglass system operators need:
+
+1. **Visibility** into when a specific session (granted group) was last exercised.
+2. **Automatic revocation** of approved sessions that remain unused for a configurable period (idle timeout), forcing a fresh approval cycle.
+
+Before this PR, `BreakglassSessionStatus` had no `LastUsedAt` or `IdleTimeout` fields. The webhook handler performs a single RBAC check across all granted groups and cannot attribute which specific group permitted the operation (see the NOTE at [pkg/webhook/controller.go lines 755–757](../../pkg/webhook/controller.go#L755-L757)). This PR adds `idleTimeout` to spec and `lastActivity`/`activityCount` to status.
+
+> **Note:** Duration strings in this project use `api/v1alpha1.ParseDuration` (which supports day units like `"1d12h"`) rather than `time.ParseDuration`. All references below use the shared helper.
+
+## 2. Prior Art in the Codebase
+
+- `DebugPodTemplateStatus.LastUsedAt` — records when the template was last used to create a debug session.
+- `DebugSessionTemplateStatus.LastUsedAt` — records when the template was last used.
+- The pattern uses `*metav1.Time` with SSA-compatible apply configurations (`WithLastUsedAt`).
+
+## 3. Proposed CRD Changes
+
+### 3.1 `BreakglassSessionSpec`
+
+```go
+// idleTimeout specifies the maximum duration a session can remain
+// unused (no webhook hits) before it is automatically expired.
+// Duration format, e.g. "4h", "30m", "1d".
+// Parsed via api/v1alpha1.ParseDuration (supports day units).
+// If not set, the session remains active for its full MaxValidFor window.
+// +optional
+IdleTimeout string `json:"idleTimeout,omitempty"`
+```
+
+### 3.2 `BreakglassSessionStatus`
+
+```go
+// lastUsedAt records the most recent time this session's granted group
+// was exercised (successfully authorized) through the webhook.
+// Updated by the webhook handler after each successful RBAC check.
+// +optional
+LastUsedAt *metav1.Time `json:"lastUsedAt,omitempty"`
+```
+
+### 3.3 CRD Generation
+
+After modifying the types:
+
+```bash
+make generate && make manifests
+```
+
+This will update `zz_generated.deepcopy.go`, the CRD YAML, and the SSA apply configurations.
+
+## 4. Webhook Changes (Last Used Tracking)
+
+### 4.1 The Attribution Problem
+
+The current webhook grants access based on a merged RBAC check across all groups from all active sessions. This means we know the user **is** authorized but not **which session** granted the access.
+
+**Proposed approach — best-effort attribution:**
+
+After the combined RBAC check succeeds, iterate over the active sessions' groups individually:
+
+```go
+// After confirming can == true:
+for _, session := range activeSessions {
+    groups := []string{session.Spec.GrantedGroup}
+    if canSingle, _ := wc.canDoFn(ctx, rc, groups, sar, clusterName); canSingle {
+        // This session contributed — update LastUsedAt
+        wc.updateLastUsed(ctx, session)
+        break // attribute to first matching session
+    }
+}
+```
+
+**Trade-offs:**
+
+| Approach | Accuracy | Extra SAR checks | Status writes |
+|----------|----------|------------------|---------------|
+| Skip attribution (update all active) | Low (over-counts) | O(1) combined check only | O(n) per request (one write per active session, debounced) |
+| Per-session RBAC re-check (proposed) | High (first match) | O(n) extra SAR checks | O(1) per request (update only the attributed session) |
+| Async batch update | Medium | O(1) combined check only | O(n) per batch, off the webhook critical path |
+
+**Recommendation:** Start with "update all active sessions for this user". This keeps the webhook path cheap in terms of authorization work (no extra SAR checks beyond the combined one), at the cost of O(n) status writes per request in the number of active sessions (mitigated by debouncing). This is good enough for the idle timeout use case — a session is "used" if the user is active at all. Refine to per-group attribution later if operators need per-session granularity and are willing to pay the extra SAR checks.
+
+### 4.2 Write Concern
+
+The webhook currently only reads `BreakglassSession` CRDs. Updating `LastUsedAt` introduces a write on every authorized request. Mitigations:
+
+- **Debounce:** Only update if the current `LastUsedAt` is older than a threshold (e.g. 5 minutes). This reduces writes from potentially every API call to at most 1 per 5 min per session.
+- **Async fire-and-forget:** Update in a goroutine to avoid adding latency to the webhook response path.
+- **SSA patch:** Use Server-Side Apply to avoid conflicts with the session controller.
+
+```go
+func (wc *WebhookController) updateLastUsed(ctx context.Context, session *v1alpha1.BreakglassSession) {
+    now := metav1.Now()
+    if session.Status.LastUsedAt != nil &&
+        now.Sub(session.Status.LastUsedAt.Time) < 5*time.Minute {
+        return // debounce
+    }
+
+    // Avoid mutating the shared session from a goroutine; instead, pass the
+    // required values as arguments and build a minimal patch/apply object.
+    go func(name, namespace string, t metav1.Time) {
+        patch := &v1alpha1.BreakglassSession{
+            ObjectMeta: metav1.ObjectMeta{
+                Name:      name,
+                Namespace: namespace,
+            },
+            Status: v1alpha1.BreakglassSessionStatus{
+                LastUsedAt: &t,
+            },
+        }
+        // Use SSA helper (consistent with other status updates in the codebase)
+        if err := ssa.ApplyBreakglassSessionStatus(ctx, wc.client, patch); err != nil {
+            wc.log.Warnw("Failed to update LastUsedAt", "session", name, "error", err)
+        }
+    }(session.Name, session.Namespace, now)
+}
+```
+
+## 5. Controller Changes (Idle Expiry)
+
+### 5.1 Reconciliation Logic
+
+In the session controller's reconcile loop, after confirming a session is in `Approved` / `Active` state:
+
+```go
+if spec.IdleTimeout != "" {
+    idleTimeout, err := v1alpha1.ParseDuration(spec.IdleTimeout)
+    if err != nil {
+        // Log and skip — malformed idle timeout should not crash reconciliation
+        log.Warnw("Invalid idleTimeout", "session", session.Name, "value", spec.IdleTimeout)
+    } else {
+        lastUsed := session.Status.LastUsedAt
+        if lastUsed == nil {
+            lastUsed = &session.Status.ApprovedAt // fallback: treat approval as first "use"
+        }
+        if time.Since(lastUsed.Time) > idleTimeout {
+            // Transition to IdleExpired state
+            return r.transitionToIdleExpired(ctx, session)
+        }
+        // Requeue for next idle check
+        requeueAfter := idleTimeout - time.Since(lastUsed.Time)
+        return ctrl.Result{RequeueAfter: requeueAfter}, nil
+    }
+}
+```
+
+### 5.2 New Session State
+
+Add a new state constant:
+
+```go
+const SessionStateIdleExpired BreakglassSessionState = "IdleExpired"
+```
+
+Reuse the existing idle condition type:
+
+- Condition type: `SessionConditionTypeIdle` (already defined in `api/v1alpha1/breakglass_session_types.go`).
+
+When idle-expired:
+- Set condition `SessionConditionTypeIdle` to `True` with reason `"IdleTimeoutExceeded"`.
+- Transition session state to `IdleExpired`.
+- Update `isValidBreakglassSessionStateTransition` to allow `SessionStateApproved` → `SessionStateIdleExpired`.
+- Clean up RBAC bindings (same as normal expiry).
+
+### 5.3 Frontend Display
+
+Add `IdleExpired` to the status tag mapping and session state options in the frontend. Display `LastUsedAt` in the session detail view if available.
+
+## 6. Validation
+
+### 6.1 Admission Webhook
+
+- Validate `idleTimeout` is parseable via `v1alpha1.ParseDuration` if set.
+- Validate `idleTimeout` ≤ `maxValidFor` (idle timeout should not exceed session lifetime).
+
+### 6.2 Unit Tests
+
+- `TestIdleTimeoutParsing` — valid/invalid duration strings.
+- `TestLastUsedAtDebounce` — updates are skipped within the debounce window.
+- `TestIdleExpiryReconcile` — session transitions to `IdleExpired` when unused past timeout.
+- `TestIdleFallbackToApprovedAt` — when `LastUsedAt` is nil, `ApprovedAt` is used.
+- `TestNoIdleTimeout` — sessions without `idleTimeout` spec are unaffected.
+
+## 7. Migration & Backward Compatibility
+
+- Both new fields are optional (`omitempty`). Existing sessions are unaffected.
+- `LastUsedAt` starts as `nil` for existing sessions. The idle check falls back to `ApprovedAt`.
+- No breaking CRD version change needed (`v1alpha1` remains).
+
+## 8. Resolved Questions
+
+1. **Should `IdleExpired` sessions be re-approvable?** No — `IdleExpired` is a terminal state. The user must create a new request.
+2. **Should idle timeout be configurable per-escalation or per-session?** Both. `idleTimeout` is set on `BreakglassEscalation` and automatically copied to `BreakglassSessionSpec` when a session is approved. This allows operators to configure idle timeouts per escalation policy while still allowing per-session inspection.
+
+## 9. Implementation Notes
+
+The implementation differs from the original proposal in the following ways:
+
+- **Field naming:** `lastUsedAt` was renamed to `lastActivity` (with `activityCount`) to better reflect the buffered activity tracking model.
+- **Attribution approach:** Activity is tracked per-session (all active sessions for a user are updated) via a buffered `ActivityTracker` with 30s flush interval, not per-group attribution.
+- **SSA field manager:** Status updates use a dedicated `activity-tracker` field manager to avoid conflicts with the main session controller.
+- **Re-queue on failure:** Failed flushes are re-queued with merge logic (latest timestamp, summed counts) up to 5 retries instead of simple fire-and-forget.
+- **Idle baseline:** The idle expiry controller uses `lastActivity` only; sessions where `lastActivity` is nil (no activity recorded yet) are skipped to avoid false positives (the design proposed a fallback chain through `actualStartTime` > `approvedAt`).
+3. **Debounce interval** — 5 minutes is a starting point. Should this be configurable?
+4. **Audit implications** — should idle expiry emit a Kubernetes event or audit log entry?
+
+## 9. Implementation Order
+
+1. CRD changes (`api/v1alpha1/breakglass_session_types.go`) + codegen
+2. Webhook `LastUsedAt` tracking (with debounce)
+3. Controller idle expiry reconciliation
+4. Admission validation for `idleTimeout`
+5. Frontend status display
+6. Unit + integration tests
+7. Documentation update

@@ -127,6 +127,13 @@ spec:
                   Set during session creation based on the JWT issuer claim.
                   Used for auditing which IDP authenticated the user and for webhook authorization validation.
                 type: string
+              idleTimeout:
+                description: |-
+                  idleTimeout is the duration of inactivity (no authorization requests) after which the session
+                  is automatically expired with state IdleExpired. If not set, idle timeout is not enforced.
+                  Parsed by ParseDuration; supports day units (e.g., "15m", "1h", "1d").
+                  Must be less than or equal to maxValidFor when both are set.
+                type: string
               maxValidFor:
                 default: 1h
                 description: maxValidFor is the maximum amount of time the session
@@ -176,6 +183,12 @@ spec:
           status:
             description: BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
             properties:
+              activityCount:
+                description: |-
+                  activityCount is the total number of authorization requests that matched this session.
+                  Incremented by the authorization webhook on each matching SubjectAccessReview.
+                format: int64
+                type: integer
               actualStartTime:
                 description: |-
                   actualStartTime records when the session actually became active.
@@ -272,6 +285,13 @@ spec:
                   This value is set based on spec.MaxValidFor when the session is approved.
                 format: date-time
                 type: string
+              lastActivity:
+                description: |-
+                  lastActivity is the time of the most recent authorization request associated with this session.
+                  Updated by the authorization webhook when a SubjectAccessReview matches this session.
+                  Used by idle timeout detection (#312) and usage analytics.
+                format: date-time
+                type: string
               observedGeneration:
                 description: ObservedGeneration reflects the generation of the most
                   recently observed BreakglassSession.
@@ -280,7 +300,7 @@ spec:
               reasonEnded:
                 description: |-
                   reasonEnded stores a short reason for why the session ended or entered a terminal state.
-                  Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
+                  Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected", "idleTimeout"
                 type: string
               rejectedAt:
                 description: |-

@@ -106,6 +106,7 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 		{name: "waiting to approved", from: SessionStateWaitingForScheduledTime, to: SessionStateApproved, wantErr: false},
 		{name: "waiting to withdrawn", from: SessionStateWaitingForScheduledTime, to: SessionStateWithdrawn, wantErr: false},
 		{name: "approved to expired", from: SessionStateApproved, to: SessionStateExpired, wantErr: false},
+		{name: "approved to idleExpired", from: SessionStateApproved, to: SessionStateIdleExpired, wantErr: false},
 		// Same-state transitions (idempotent reconciliation)
 		{name: "pending to pending", from: SessionStatePending, to: SessionStatePending, wantErr: false},
 		{name: "approved to approved", from: SessionStateApproved, to: SessionStateApproved, wantErr: false},
@@ -113,6 +114,7 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 		{name: "expired to expired", from: SessionStateExpired, to: SessionStateExpired, wantErr: false},
 		{name: "withdrawn to withdrawn", from: SessionStateWithdrawn, to: SessionStateWithdrawn, wantErr: false},
 		{name: "timeout to timeout", from: SessionStateTimeout, to: SessionStateTimeout, wantErr: false},
+		{name: "idleExpired to idleExpired", from: SessionStateIdleExpired, to: SessionStateIdleExpired, wantErr: false},
 		// Invalid transitions
 		{name: "approved to pending", from: SessionStateApproved, to: SessionStatePending, wantErr: true},
 		{name: "rejected to approved", from: SessionStateRejected, to: SessionStateApproved, wantErr: true},
@@ -123,6 +125,12 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 		{name: "expired to pending", from: SessionStateExpired, to: SessionStatePending, wantErr: true},
 		{name: "timeout to approved", from: SessionStateTimeout, to: SessionStateApproved, wantErr: true},
 		{name: "timeout to pending", from: SessionStateTimeout, to: SessionStatePending, wantErr: true},
+		// IdleExpired is terminal
+		{name: "idleExpired to approved", from: SessionStateIdleExpired, to: SessionStateApproved, wantErr: true},
+		{name: "idleExpired to pending", from: SessionStateIdleExpired, to: SessionStatePending, wantErr: true},
+		// Cannot idle-expire from non-approved states
+		{name: "pending to idleExpired", from: SessionStatePending, to: SessionStateIdleExpired, wantErr: true},
+		{name: "rejected to idleExpired", from: SessionStateRejected, to: SessionStateIdleExpired, wantErr: true},
 		// Invalid transition from waiting (cannot go to rejected)
 		{name: "waiting to rejected", from: SessionStateWaitingForScheduledTime, to: SessionStateRejected, wantErr: true},
 		{name: "waiting to pending", from: SessionStateWaitingForScheduledTime, to: SessionStatePending, wantErr: true},

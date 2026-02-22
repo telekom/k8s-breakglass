@@ -53,6 +53,7 @@ const (
 	SessionStateApproved                BreakglassSessionState = "Approved"
 	SessionStateRejected                BreakglassSessionState = "Rejected"
 	SessionStateExpired                 BreakglassSessionState = "Expired"
+	SessionStateIdleExpired             BreakglassSessionState = "IdleExpired"
 	SessionStateWithdrawn               BreakglassSessionState = "Withdrawn"
 	SessionStateTimeout                 BreakglassSessionState = "ApprovalTimeout"
 	SessionStateWaitingForScheduledTime BreakglassSessionState = "WaitingForScheduledTime"
@@ -75,6 +76,13 @@ type BreakglassSessionSpec struct {
 	// maxValidFor is the maximum amount of time the session will be active for after it is approved.
 	// +default="1h"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
+
+	// idleTimeout is the duration of inactivity (no authorization requests) after which the session
+	// is automatically expired with state IdleExpired. If not set, idle timeout is not enforced.
+	// Parsed by ParseDuration; supports day units (e.g., "15m", "1h", "1d").
+	// Must be less than or equal to maxValidFor when both are set.
+	// +optional
+	IdleTimeout string `json:"idleTimeout,omitempty"`
 
 	// retainFor is the amount of time to wait before removing the session object after it was expired.
 	// +default="720h"
@@ -205,9 +213,20 @@ type BreakglassSessionStatus struct {
 	// +optional
 	ApprovalReason string `json:"approvalReason,omitempty"`
 	// reasonEnded stores a short reason for why the session ended or entered a terminal state.
-	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
+	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected", "idleTimeout"
 	// +optional
 	ReasonEnded string `json:"reasonEnded,omitempty"`
+
+	// lastActivity is the time of the most recent authorization request associated with this session.
+	// Updated by the authorization webhook when a SubjectAccessReview matches this session.
+	// Used by idle timeout detection (#312) and usage analytics.
+	// +optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// activityCount is the total number of authorization requests that matched this session.
+	// Incremented by the authorization webhook on each matching SubjectAccessReview.
+	// +optional
+	ActivityCount int64 `json:"activityCount,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Namespaced,shortName=bgs
@@ -295,6 +314,8 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 //
 //	(initial) --> Pending --> Approved --> Expired
 //	                  |          |
+//	                  |          +--> IdleExpired (terminal)
+//	                  |          |
 //	                  |          └--> (terminal)
 //	                  |
 //	                  +--> WaitingForScheduledTime --> Approved --> Expired
@@ -305,7 +326,7 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 //	                  +--> Withdrawn (terminal)
 //	                  +--> Timeout (terminal)
 //
-// Terminal states (Rejected, Withdrawn, Expired, Timeout) cannot transition to any other state.
+// Terminal states (Rejected, Withdrawn, Expired, IdleExpired, Timeout) cannot transition to any other state.
 // Same-state transitions are allowed for idempotent reconciliation.
 func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bool {
 	if from == to {
@@ -324,8 +345,8 @@ func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bo
 	case SessionStateWaitingForScheduledTime:
 		return to == SessionStateApproved || to == SessionStateWithdrawn
 	case SessionStateApproved:
-		return to == SessionStateExpired
-	case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateTimeout:
+		return to == SessionStateExpired || to == SessionStateIdleExpired
+	case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateIdleExpired, SessionStateTimeout:
 		return false
 	default:
 		return false

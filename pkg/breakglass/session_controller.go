@@ -671,6 +671,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		// copy relevant duration-related fields from escalation spec to session spec
 		spec.MaxValidFor = matchedEsc.Spec.MaxValidFor
 		spec.RetainFor = matchedEsc.Spec.RetainFor
+		spec.IdleTimeout = matchedEsc.Spec.IdleTimeout
 
 		// Copy reason configurations as snapshots so session is self-contained
 		// This avoids needing to look up the escalation later
@@ -1059,7 +1060,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			return
 		}
 	} else {
-		if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || currState == v1alpha1.SessionStateExpired || currState == v1alpha1.SessionStateTimeout {
+		if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || currState == v1alpha1.SessionStateExpired || currState == v1alpha1.SessionStateTimeout || currState == v1alpha1.SessionStateIdleExpired {
 			c.JSON(http.StatusBadRequest, struct {
 				Error   string                     `json:"error"`
 				Code    string                     `json:"code"`
@@ -1762,6 +1763,9 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 		return meta
 	case v1alpha1.SessionStateTimeout:
 		meta.StateMessage = "This session has timed out waiting for approval"
+		return meta
+	case v1alpha1.SessionStateIdleExpired:
+		meta.StateMessage = "This session was expired due to inactivity"
 		return meta
 	}
 
@@ -2964,6 +2968,7 @@ func IsSessionValid(session v1alpha1.BreakglassSession) bool {
 	if session.Status.State == v1alpha1.SessionStateRejected ||
 		session.Status.State == v1alpha1.SessionStateWithdrawn ||
 		session.Status.State == v1alpha1.SessionStateExpired ||
+		session.Status.State == v1alpha1.SessionStateIdleExpired ||
 		session.Status.State == v1alpha1.SessionStateTimeout {
 		return false
 	}
@@ -2998,6 +3003,7 @@ func IsSessionActive(session v1alpha1.BreakglassSession) bool {
 	if session.Status.State == v1alpha1.SessionStateRejected ||
 		session.Status.State == v1alpha1.SessionStateWithdrawn ||
 		session.Status.State == v1alpha1.SessionStateExpired ||
+		session.Status.State == v1alpha1.SessionStateIdleExpired ||
 		session.Status.State == v1alpha1.SessionStateTimeout {
 		return false
 	}
@@ -3306,6 +3312,8 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 		message = "Session validity period has ended"
 	case "approvalTimeout":
 		message = "Session approval timed out before being approved"
+	case "idleTimeout":
+		message = "Session expired due to idle timeout (no recent activity)"
 	}
 
 	event := &audit.Event{

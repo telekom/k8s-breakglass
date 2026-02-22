@@ -125,6 +125,8 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		ctrl.ExpirePendingSessions()
 		// Expire approved sessions whose ExpiresAt has passed
 		ctrl.ExpireApprovedSessions()
+		// Expire approved sessions that have been idle longer than their idleTimeout
+		ctrl.ExpireIdleSessions()
 	}
 
 	cleanupCtx := ctx

@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cosign keyless signing for release images**: Release workflow now signs container images and mirrors cosign signature/attestation OCI artifacts to the Artifactory registry using `cosign copy` on a best-effort basis, enabling supply-chain verification on both GHCR and Artifactory
 - **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release
 - **SLSA provenance attestation re-enabled**: Assemble job now generates and pushes SLSA Build L1 provenance via actions/attest-build-provenance
+- **Idle timeout design & session activity tracking** (#8, #312, #314): Added design document for idle timeout and last-used fields (`docs/design/idle-timeout.md`). Implemented full idle timeout and activity tracking feature:
+  - **Activity tracking**: Authorization webhook records session activity via a buffered `ActivityTracker` that flushes to Kubernetes status via Server-Side Apply (SSA) with a dedicated `activity-tracker` field manager. Failed flushes are re-queued with merge (up to 5 retries) and ticker-driven flushes use bounded contexts to prevent hangs.
+  - **Idle timeout expiration**: New `IdleExpired` terminal state for sessions that exceed their configured `spec.idleTimeout`. The idle baseline is determined from `status.lastActivity` > `status.actualStartTime` > `status.approvedAt` > `metadata.creationTimestamp`. Idle expiry runs alongside time-based expiry in the cleanup routine with retry, audit events, and email notifications.
+  - **CRD fields**: Added `spec.idleTimeout` to both `BreakglassSession` and `BreakglassEscalation` (with kubebuilder pattern validation). Added `status.lastActivity` and `status.activityCount` to session status. IdleTimeout is automatically copied from the matched escalation to the session.
+  - **Metrics**: `breakglass_session_activity_requests_total` (labels: `cluster`, `granted_group`, `allowed`), `breakglass_session_activity_flushes_total`, `breakglass_session_activity_flush_errors_total`, `breakglass_session_idle_expired_total` (label: `cluster`). Fixed activity request metric cardinality by replacing unbounded `session` label with bounded `granted_group`.
+  - **Validation**: `idleTimeout` is validated as a positive, parseable duration that does not exceed `maxValidFor`.
+  - **Frontend**: `IdleExpired` state displayed with danger tone in session browser, last activity and idle timeout shown in session details, idle-expired sessions included in state filter options.
 
 ### Changed
 

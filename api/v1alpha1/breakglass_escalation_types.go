@@ -63,6 +63,15 @@ type BreakglassEscalationSpec struct {
 	// +default="1h"
 	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
+
+	// idleTimeout is the duration of inactivity (no authorization requests) after which sessions
+	// for this escalation are automatically expired with state IdleExpired.
+	// If not set, idle timeout is not enforced for sessions created from this escalation.
+	// Must not exceed maxValidFor when both are set.
+	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+
 	// retainFor is the amount of time to wait before removing a session for this escalation after it expired
 	// +optional
 	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
