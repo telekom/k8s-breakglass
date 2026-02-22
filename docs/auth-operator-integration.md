@@ -48,9 +48,11 @@ Kubernetes evaluates authorizers in the order defined in
    denies the request, the decision is terminal and the breakglass
    webhook is not invoked.
 
-> **Important:** The webhook uses `failurePolicy: NoOpinion` so that
-> failures in the breakglass authorizer are treated as "no opinion" and
-> never block or override decisions made by the standard RBAC chain.
+> **Important:** The breakglass webhook is typically configured with
+> `failurePolicy: Deny` (as shown below). Earlier authorizers such as
+> RBAC are still evaluated first and remain authoritative where they
+> apply, but if a request reaches the breakglass webhook and the webhook
+> fails, the request will be denied for security reasons.
 
 ### Webhook Configuration
 
@@ -119,7 +121,8 @@ spec:
     - name: nodes
 ```
 
-k8s-breakglass references the generated `ClusterRole`:
+k8s-breakglass references the same group so that approved sessions
+grant membership to the auth-operator-managed role:
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -127,10 +130,10 @@ kind: BreakglassEscalation
 metadata:
   name: tenant-emergency-access
 spec:
-  escalatedGroup: "cluster-admin"
+  escalatedGroup: "tenant-cluster-admin"  # Group bound to tenant-developer ClusterRole
   allowed:
     clusters: ["prod-*"]
-    groups: ["tenant-developers"]       # Same group as BindDefinition subjects
+    groups: ["tenant-developers"]           # Same group as BindDefinition subjects
   approvers:
     groups: ["security-team", "platform-oncall"]
   maxValidFor: "1h"
@@ -138,6 +141,12 @@ spec:
     mandatory: true
     description: "Incident ticket number required"
 ```
+
+> **Note:** The `escalatedGroup` should reference a group that has a
+> `ClusterRoleBinding` to the role managed by auth-operator's
+> `RoleDefinition`. If you need to escalate to a higher privilege level
+> (e.g., `cluster-admin`), create a separate `BreakglassEscalation`
+> with appropriate approval requirements.
 
 ### Binding with Breakglass Fallback
 
@@ -258,18 +267,20 @@ Monitor both systems together for complete authorization visibility:
 |--------|--------|---------|
 | `auth_operator_reconcile_total` | auth-operator | RBAC generation health |
 | `auth_operator_role_refs_missing` | auth-operator | Missing role references |
-| `breakglass_sessions_total` | k8s-breakglass | Escalation usage |
-| `breakglass_webhook_requests_total` | k8s-breakglass | Authorization decisions |
+| `breakglass_session_created_total` | k8s-breakglass | Escalation/session creation rate |
+| `breakglass_webhook_sar_requests_total` | k8s-breakglass | All SubjectAccessReview webhook requests |
+| `breakglass_webhook_sar_allowed_total` | k8s-breakglass | SubjectAccessReview requests the webhook allowed |
+| `breakglass_webhook_sar_denied_total` | k8s-breakglass | SubjectAccessReview requests the webhook denied |
 
 ### Combined Alert Example
 
 ```yaml
-# Alert when static RBAC fails AND breakglass sessions spike
+# Alert when static RBAC fails AND breakglass session creation spikes
 - alert: PotentialAccessIssue
   expr: |
     (auth_operator_reconcile_errors_total > 0)
     AND
-    (rate(breakglass_sessions_total{state="Pending"}[10m]) > 0.5)
+    (rate(breakglass_session_created_total[10m]) > 0.5)
   annotations:
     summary: "RBAC generation issues with elevated breakglass requests"
 ```
