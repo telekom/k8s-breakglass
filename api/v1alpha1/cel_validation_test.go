@@ -1,3 +1,19 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1_test
 
 import (
@@ -14,6 +30,7 @@ import (
 // be unit-tested in Go. This test ensures that controller-gen has
 // successfully emitted them into the CRD YAML.
 func TestCELValidationRulesPresent(t *testing.T) {
+	t.Parallel()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot determine test file path")
@@ -132,8 +149,10 @@ func extractCELRules(content string) []string {
 	for i := 0; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if strings.HasPrefix(trimmed, "- rule:") || strings.HasPrefix(trimmed, "rule:") {
-			// Capture the key line plus any continuation lines
-			block := trimmed
+			// Capture the key line plus any continuation lines using strings.Builder
+			// to avoid repeated string concatenation.
+			var b strings.Builder
+			b.WriteString(trimmed)
 			indent := len(lines[i]) - len(strings.TrimLeft(lines[i], " "))
 			for i+1 < len(lines) {
 				nextIndent := len(lines[i+1]) - len(strings.TrimLeft(lines[i+1], " "))
@@ -145,10 +164,11 @@ func extractCELRules(content string) []string {
 					strings.HasPrefix(nextTrimmed, "message:") {
 					break
 				}
-				block += " " + nextTrimmed
+				b.WriteByte(' ')
+				b.WriteString(nextTrimmed)
 				i++
 			}
-			rules = append(rules, block)
+			rules = append(rules, b.String())
 		}
 	}
 	return rules
