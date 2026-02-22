@@ -3,20 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Tests for the withdraw confirmation dialog behaviour
- * at the composable level used by the MyPendingRequests view.
+ * Tests for the withdraw confirmation dialog behaviour.
  *
- * Since the dialog state is inline (ref-based) inside the views,
- * these tests validate the composable-level contract:
+ * Part 1 – useSessionActions integration:
  * - `withdraw(session, { skipConfirm: true })` should NOT call window.confirm
  * - `withdraw(session)` (without skipConfirm) should call window.confirm
  *
- * In MyPendingRequests, the view opens a scale-modal first,
- * then calls withdraw with skipConfirm: true.
- *
- * Note: SessionBrowser currently has its own implementation that calls
- * `executeSessionAction` directly after showing the modal and is not
- * covered by this test suite.
+ * Part 2 – useWithdrawConfirmation composable (shared by
+ * MyPendingRequests and SessionBrowser):
+ * - Dialog lifecycle (open / confirm / cancel)
+ * - Error handling (thrown errors, explicit `false` return)
  *
  * @vitest-environment jsdom
  */
@@ -115,6 +111,12 @@ describe("Withdraw confirmation integration", () => {
 });
 
 describe("useWithdrawConfirmation", () => {
+  it("starts with dialog closed and no target", () => {
+    const { withdrawDialogOpen, withdrawTarget } = useWithdrawConfirmation(vi.fn());
+    expect(withdrawDialogOpen.value).toBe(false);
+    expect(withdrawTarget.value).toBeNull();
+  });
+
   it("opens dialog and sets target on requestWithdraw", () => {
     const onConfirm = vi.fn();
     const { withdrawDialogOpen, withdrawTarget, requestWithdraw } = useWithdrawConfirmation(onConfirm);
@@ -123,7 +125,7 @@ describe("useWithdrawConfirmation", () => {
     requestWithdraw(session);
 
     expect(withdrawDialogOpen.value).toBe(true);
-    expect(withdrawTarget.value).toBe(session);
+    expect(withdrawTarget.value).toEqual(session);
   });
 
   it("clears dialog state and calls callback on confirmWithdraw", async () => {
@@ -146,11 +148,27 @@ describe("useWithdrawConfirmation", () => {
     const session = makeSession("req-12");
     requestWithdraw(session);
 
-    await expect(confirmWithdraw()).rejects.toThrow("network error");
+    // confirmWithdraw catches the error internally (no rethrow)
+    await confirmWithdraw();
 
     // Dialog should remain open so the user sees the operation failed
     expect(withdrawDialogOpen.value).toBe(true);
-    expect(withdrawTarget.value).toBe(session);
+    expect(withdrawTarget.value).toEqual(session);
+  });
+
+  it("keeps dialog open when onConfirm returns false", async () => {
+    const onConfirm = vi.fn().mockResolvedValue(false);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } = useWithdrawConfirmation(onConfirm);
+
+    const session = makeSession("req-12b");
+    requestWithdraw(session);
+
+    await confirmWithdraw();
+
+    expect(onConfirm).toHaveBeenCalledWith(session);
+    // Dialog stays open because onConfirm signalled failure
+    expect(withdrawDialogOpen.value).toBe(true);
+    expect(withdrawTarget.value).toEqual(session);
   });
 
   it("resets dialog state on cancelWithdraw", () => {

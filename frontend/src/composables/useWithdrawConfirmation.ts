@@ -22,17 +22,22 @@ export function useWithdrawConfirmation(onConfirm: (session: SessionCR) => void 
     withdrawDialogOpen.value = true;
   }
 
-  /** User confirmed — wait for callback, then clear state. */
+  /**
+   * User confirmed — invoke the callback and close only on success.
+   * The dialog stays open when the callback returns `false` (signalling
+   * failure without throwing) or throws, so the user can retry.
+   */
   async function confirmWithdraw() {
     if (!withdrawTarget.value) return;
     const session = withdrawTarget.value;
     try {
-      await onConfirm(session);
+      const result = await onConfirm(session);
+      // Treat an explicit `false` return as failure (some callers swallow errors).
+      if (result === false) return;
       withdrawDialogOpen.value = false;
       withdrawTarget.value = null;
-    } catch (error) {
+    } catch {
       // Keep dialog open so the user sees that the operation did not complete.
-      throw error;
     }
   }
 
