@@ -22,6 +22,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Ingress Configuration](./ingress-configuration.md)** - CORS, security headers, and reverse proxy setup
 - **[Scaling and Leader Election](./scaling-and-leader-election.md)** - Multi-replica deployments with leader election
 - **[Webhook Setup](./webhook-setup.md)** - Configure authorization webhooks
+- **[Auth-Operator Integration](./auth-operator-integration.md)** - Integration with auth-operator for complete RBAC management
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Rate Limiting](./rate-limiting.md)** - Multi-tier rate limiting architecture, tiers, and troubleshooting
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
