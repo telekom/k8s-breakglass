@@ -362,4 +362,96 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		assert.Equal(t, v1alpha1.SessionStatePending, got1.Status.State, "oldest kept")
 		assert.Equal(t, v1alpha1.SessionStateWithdrawn, got2.Status.State, "newest withdrawn")
 	})
+
+	t.Run("name tie-breaker — same state and timestamp", func(t *testing.T) {
+		// When two sessions have the same state priority and creation timestamp,
+		// the one with the lexicographically smaller name is kept.
+		ts := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+		sA := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "aaa-session",
+				Namespace:         "breakglass",
+				CreationTimestamp: ts,
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		}
+		sZ := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "zzz-session",
+				Namespace:         "breakglass",
+				CreationTimestamp: ts,
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		}
+		fc := newFakeClientWithSessions(sA, sZ)
+		mgr := NewSessionManagerWithClient(fc)
+
+		CleanupDuplicateSessions(ctx, logger, &mgr)
+
+		var gotA, gotZ v1alpha1.BreakglassSession
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(sA), &gotA))
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(sZ), &gotZ))
+
+		assert.Equal(t, v1alpha1.SessionStatePending, gotA.Status.State, "aaa-session (smaller name) must be kept")
+		assert.Equal(t, v1alpha1.SessionStateWithdrawn, gotZ.Status.State, "zzz-session (larger name) must be withdrawn")
+	})
+
+	t.Run("context cancellation — stops processing early", func(t *testing.T) {
+		now := time.Now()
+		cancelCtx, cancel := context.WithCancel(ctx)
+		cancel() // cancel immediately
+
+		s1 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "ctx-dup1",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-10 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		}
+		s2 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "ctx-dup2",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Minute)),
+			},
+			Spec:   v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		}
+		fc := newFakeClientWithSessions(s1, s2)
+		mgr := NewSessionManagerWithClient(fc)
+
+		// With cancelled context, the duplicate loop should exit early
+		CleanupDuplicateSessions(cancelCtx, logger, &mgr)
+
+		var got2 v1alpha1.BreakglassSession
+		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s2), &got2))
+		// Duplicate should NOT have been withdrawn because context was cancelled
+		assert.Equal(t, v1alpha1.SessionStatePending, got2.Status.State, "cancelled context prevents duplicate processing")
+	})
+}
+
+func TestSessionStatePriority(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		state    v1alpha1.BreakglassSessionState
+		expected int
+	}{
+		{v1alpha1.SessionStateApproved, 3},
+		{v1alpha1.SessionStateWaitingForScheduledTime, 2},
+		{v1alpha1.SessionStatePending, 1},
+		{v1alpha1.SessionStateExpired, 0},
+		{v1alpha1.SessionStateWithdrawn, 0},
+		{v1alpha1.SessionStateRejected, 0},
+		{v1alpha1.BreakglassSessionState("unknown"), 0},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, sessionStatePriority(tt.state))
+		})
+	}
 }
