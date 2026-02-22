@@ -821,16 +821,13 @@ func TestDenyPolicy_ValidateCreate_EmptyRules(t *testing.T) {
 			Name: "empty-rules-policy",
 		},
 		Spec: DenyPolicySpec{
-			Rules: []DenyRule{}, // empty rules is valid
+			Rules: []DenyRule{}, // empty rules with no podSecurityRules should be rejected
 		},
 	}
 
-	warnings, err := policy.ValidateCreate(ctx, policy)
-	if err != nil {
-		t.Errorf("ValidateCreate() unexpected error for empty rules: %v", err)
-	}
-	if len(warnings) > 0 {
-		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("ValidateCreate() expected error for empty rules and nil podSecurityRules")
 	}
 }
 
