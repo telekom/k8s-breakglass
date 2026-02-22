@@ -6,12 +6,15 @@
 
 import { ref } from "vue";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { shallowMount, flushPromises } from "@vue/test-utils";
+import { shallowMount, mount, flushPromises } from "@vue/test-utils";
 import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
 import { AuthKey } from "@/keys";
 
 const mockPush = vi.fn();
 const mockGetSession = vi.fn();
+const mockCopy = vi.fn().mockResolvedValue(true);
+const mockCleanup = vi.fn();
+const mockCopied = ref(false);
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({
@@ -52,6 +55,19 @@ vi.mock("@/services/auth", () => ({
     }),
   ),
 }));
+
+vi.mock("@/composables", async (importOriginal) => {
+  const original = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...original,
+    useClipboard: () => ({
+      copy: mockCopy,
+      copied: mockCopied,
+      error: ref(null),
+      cleanup: mockCleanup,
+    }),
+  };
+});
 
 describe("DebugSessionDetails", () => {
   let wrapper: ReturnType<typeof shallowMount> | null = null;
@@ -107,5 +123,67 @@ describe("DebugSessionDetails", () => {
     await flushPromises();
     expect(mockGetSession).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("renders copy button for each running pod and calls clipboard copy", async () => {
+    mockGetSession.mockResolvedValue({
+      status: {
+        state: "Active",
+        allowedPods: [
+          { name: "pod-1", namespace: "ns-1", phase: "Running" },
+          { name: "pod-2", namespace: "ns-2", phase: "Running" },
+        ],
+      },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster" },
+    });
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    const copyBtns = wrapper.findAll('[data-testid="copy-exec-btn"]');
+    expect(copyBtns.length).toBe(2);
+
+    // Click first copy button and verify clipboard was called with correct command
+    await copyBtns[0]!.trigger("click");
+    expect(mockCopy).toHaveBeenCalledWith("kubectl exec -it pod-1 -n ns-1 -- /bin/sh");
+  });
+
+  it("calls clipboardCleanup on unmount", async () => {
+    mockGetSession.mockResolvedValue({
+      status: { state: "Active" },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster" },
+    });
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    wrapper.unmount();
+    wrapper = null;
+    expect(mockCleanup).toHaveBeenCalled();
   });
 });
