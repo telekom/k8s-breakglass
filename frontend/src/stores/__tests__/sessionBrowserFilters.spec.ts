@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { nextTick } from "vue";
 import { setActivePinia, createPinia } from "pinia";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
@@ -84,7 +84,8 @@ describe("useSessionBrowserFilters", () => {
     expect(store.filters.states).toEqual(["approved", "timeout", "withdrawn", "rejected"]);
   });
 
-  it("persists filter changes to sessionStorage", async () => {
+  it("persists filter changes to sessionStorage after debounce", async () => {
+    vi.useFakeTimers();
     const store = useSessionBrowserFilters();
 
     store.filters.mine = false;
@@ -93,12 +94,20 @@ describe("useSessionBrowserFilters", () => {
     // Flush Vue's reactive watcher queue
     await nextTick();
 
+    // Before debounce fires, nothing should be written yet
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    // Advance past the 300ms debounce
+    vi.advanceTimersByTime(300);
+
     const raw = sessionStorage.getItem(STORAGE_KEY);
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw!);
     expect(parsed.version).toBe(1);
     expect(parsed.filters.mine).toBe(false);
     expect(parsed.filters.cluster).toBe("staging");
+
+    vi.useRealTimers();
   });
 
   it("resetFilters restores defaults", () => {

@@ -98,11 +98,21 @@ function saveToStorage(filters: FilterState): void {
  * Survives Vue Router navigation and persists across page reloads
  * within the same browser tab via sessionStorage.
  */
+/** Simple debounce helper — delays invocation until {@link ms} ms of inactivity. */
+function debounce<T extends (...args: Parameters<T>) => void>(fn: T, ms: number): (...args: Parameters<T>) => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
 export const useSessionBrowserFilters = defineStore("sessionBrowserFilters", () => {
   const filters = reactive<FilterState>(loadFromStorage());
 
-  // Persist every change to sessionStorage
-  watch(filters, (current) => saveToStorage({ ...current, states: [...current.states] }), { deep: true });
+  // Persist changes to sessionStorage, debounced to avoid excessive writes during rapid input
+  const debouncedSave = debounce((current: FilterState) => saveToStorage({ ...current, states: [...current.states] }), 300);
+  watch(filters, (current) => debouncedSave(current), { deep: true });
 
   function resetFilters() {
     const defaults = defaultFilters();
