@@ -117,8 +117,7 @@ describe("Withdraw confirmation integration", () => {
 describe("useWithdrawConfirmation", () => {
   it("opens dialog and sets target on requestWithdraw", () => {
     const onConfirm = vi.fn();
-    const { withdrawDialogOpen, withdrawTarget, requestWithdraw } =
-      useWithdrawConfirmation(onConfirm);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw } = useWithdrawConfirmation(onConfirm);
 
     const session = makeSession("req-10");
     requestWithdraw(session);
@@ -129,8 +128,7 @@ describe("useWithdrawConfirmation", () => {
 
   it("clears dialog state and calls callback on confirmWithdraw", async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
-    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } =
-      useWithdrawConfirmation(onConfirm);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } = useWithdrawConfirmation(onConfirm);
 
     const session = makeSession("req-11");
     requestWithdraw(session);
@@ -143,8 +141,7 @@ describe("useWithdrawConfirmation", () => {
 
   it("keeps dialog open when onConfirm throws (race-safe)", async () => {
     const onConfirm = vi.fn().mockRejectedValue(new Error("network error"));
-    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } =
-      useWithdrawConfirmation(onConfirm);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw } = useWithdrawConfirmation(onConfirm);
 
     const session = makeSession("req-12");
     requestWithdraw(session);
@@ -158,8 +155,7 @@ describe("useWithdrawConfirmation", () => {
 
   it("resets dialog state on cancelWithdraw", () => {
     const onConfirm = vi.fn();
-    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, cancelWithdraw } =
-      useWithdrawConfirmation(onConfirm);
+    const { withdrawDialogOpen, withdrawTarget, requestWithdraw, cancelWithdraw } = useWithdrawConfirmation(onConfirm);
 
     requestWithdraw(makeSession("req-13"));
     cancelWithdraw();

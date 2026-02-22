@@ -90,7 +90,7 @@ vi.mock("@/composables", async (importOriginal) => {
   const original = (await importOriginal()) as Record<string, unknown>;
   return {
     ...original,
-    useWithdrawConfirmation: (onConfirm: (...args: unknown[]) => unknown) => ({
+    useWithdrawConfirmation: () => ({
       withdrawDialogOpen: ref(false),
       withdrawTarget: ref(null),
       requestWithdraw: vi.fn(),
