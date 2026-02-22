@@ -111,7 +111,10 @@ export const useSessionBrowserFilters = defineStore("sessionBrowserFilters", () 
   const filters = reactive<FilterState>(loadFromStorage());
 
   // Persist changes to sessionStorage, debounced to avoid excessive writes during rapid input
-  const debouncedSave = debounce((current: FilterState) => saveToStorage({ ...current, states: [...current.states] }), 300);
+  const debouncedSave = debounce(
+    (current: FilterState) => saveToStorage({ ...current, states: [...current.states] }),
+    300,
+  );
   watch(filters, (current) => debouncedSave(current), { deep: true });
 
   function resetFilters() {
