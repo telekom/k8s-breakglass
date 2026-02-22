@@ -15,6 +15,10 @@ describe("useSessionBrowserFilters", () => {
     setActivePinia(createPinia());
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("initialises with default filters when nothing is stored", () => {
     const store = useSessionBrowserFilters();
 
@@ -106,6 +110,30 @@ describe("useSessionBrowserFilters", () => {
     expect(parsed.version).toBe(1);
     expect(parsed.filters.mine).toBe(false);
     expect(parsed.filters.cluster).toBe("staging");
+
+    vi.useRealTimers();
+  });
+
+  it("debounce resets on rapid changes, only persists final value", async () => {
+    vi.useFakeTimers();
+    const store = useSessionBrowserFilters();
+
+    store.filters.cluster = "first";
+    await nextTick();
+    vi.advanceTimersByTime(200); // 200ms — debounce not yet fired
+
+    store.filters.cluster = "second";
+    await nextTick();
+    vi.advanceTimersByTime(200); // 200ms from second change (400ms total)
+
+    // Still within debounce window of the second change
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    vi.advanceTimersByTime(100); // 300ms from second change — fires now
+
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!).filters.cluster).toBe("second");
 
     vi.useRealTimers();
   });
