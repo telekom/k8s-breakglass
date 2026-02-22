@@ -106,18 +106,17 @@ func TestCELValidationRulesPresent(t *testing.T) {
 	}
 }
 
-// extractCELRules extracts all multi-line CEL rule expressions and messages
-// from CRD YAML content. Rules and messages may span multiple YAML lines
-// (continuation lines are indented further than the key line).
-// This ensures test snippets are matched only within validation blocks,
-// preventing false positives from field names or descriptions.
+// extractCELRules extracts only CEL rule expressions (not message blocks)
+// from CRD YAML content. Rules may span multiple YAML lines (continuation
+// lines are indented further than the key line).
+// This ensures test snippets are matched only within actual rule expressions,
+// preventing false positives from message text or field descriptions.
 func extractCELRules(content string) []string {
 	var rules []string
 	lines := strings.Split(content, "\n")
 	for i := 0; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "- rule:") || strings.HasPrefix(trimmed, "rule:") ||
-			strings.HasPrefix(trimmed, "- message:") || strings.HasPrefix(trimmed, "message:") {
+		if strings.HasPrefix(trimmed, "- rule:") || strings.HasPrefix(trimmed, "rule:") {
 			// Capture the key line plus any continuation lines
 			block := trimmed
 			indent := len(lines[i]) - len(strings.TrimLeft(lines[i], " "))
