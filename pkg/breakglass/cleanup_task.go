@@ -125,29 +125,31 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		ctrl.ExpirePendingSessions()
 		// Expire approved sessions whose ExpiresAt has passed
 		ctrl.ExpireApprovedSessions()
-
-		// Remove duplicate active sessions (same cluster/user/grantedGroup triple).
-		// Duplicates can arise from TOCTOU races in multi-replica deployments.
-		cleanupCtx := ctx
-		if cleanupCtx == nil {
-			cleanupCtx = context.Background()
-		}
-		duplicateCtx, duplicateCancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
-		CleanupDuplicateSessions(duplicateCtx, cr.Log, cr.Manager)
-		duplicateCancel()
 	}
 
 	cleanupCtx := ctx
 	if cleanupCtx == nil {
 		cleanupCtx = context.Background()
 	}
-	// Bound cleanup operations so shutdown is predictable and we don't accumulate slow API calls.
+	// Bound all cleanup operations under a single timeout so shutdown is
+	// predictable and we don't accumulate slow API calls.
 	opCtx, cancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
 	defer cancel()
 
-	cr.markCleanupExpiredSession(opCtx)
-	// Cleanup expired debug sessions
-	cr.cleanupExpiredDebugSessions(opCtx)
+	if cr.Manager != nil {
+		// Remove duplicate active sessions (same cluster/user/grantedGroup triple).
+		// Duplicates can arise from TOCTOU races in multi-replica deployments.
+		CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager)
+	}
+
+	// markCleanupExpiredSession and cleanupExpiredDebugSessions dereference
+	// cr.Manager without a nil check; guard them to avoid a panic when the
+	// session manager has not been initialised (e.g. breakglass disabled).
+	if cr.Manager != nil {
+		cr.markCleanupExpiredSession(opCtx)
+		// Cleanup expired debug sessions
+		cr.cleanupExpiredDebugSessions(opCtx)
+	}
 	cr.Log.Info("Finished breakglass session cleanup task")
 }
 
