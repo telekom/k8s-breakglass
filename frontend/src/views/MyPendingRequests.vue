@@ -94,6 +94,14 @@
         </SessionSummaryCard>
       </div>
     </section>
+
+    <!-- Withdraw Confirmation Dialog -->
+    <WithdrawConfirmDialog
+      :opened="withdrawDialogOpen"
+      :session-name="withdrawTarget?.metadata?.name"
+      @confirm="confirmWithdraw"
+      @cancel="cancelWithdraw"
+    />
   </main>
 </template>
 
@@ -113,6 +121,7 @@ import {
 import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
+import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
 
 // Services
 import BreakglassService from "@/services/breakglass";
@@ -122,6 +131,7 @@ import { AuthKey } from "@/keys";
 import {
   usePendingRequests,
   useSessionActions,
+  useWithdrawConfirmation,
   getSessionKey,
   getSessionState,
   getSessionUser,
@@ -163,10 +173,14 @@ const actionHandlers: ActionHandlers = {
 
 const { isSessionBusy, isActionRunning, withdraw } = useSessionActions(actionHandlers);
 
-// Handlers
-async function handleWithdraw(req: SessionCR) {
-  await withdraw(req);
-}
+// Withdraw confirmation dialog (shared composable)
+const {
+  withdrawDialogOpen,
+  withdrawTarget,
+  requestWithdraw: handleWithdraw,
+  confirmWithdraw,
+  cancelWithdraw,
+} = useWithdrawConfirmation((session) => withdraw(session, { skipConfirm: true }));
 
 // Helper functions
 function getRequestReason(req: SessionCR): string {

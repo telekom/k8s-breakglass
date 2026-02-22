@@ -87,3 +87,6 @@ export {
 
 // Multi-IDP management
 export { useMultiIDP, type UseMultiIDPOptions, type UseMultiIDPReturn } from "./useMultiIDP";
+
+// Withdraw confirmation dialog
+export { useWithdrawConfirmation } from "./useWithdrawConfirmation";

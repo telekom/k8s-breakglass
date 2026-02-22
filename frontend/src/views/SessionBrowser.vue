@@ -11,6 +11,8 @@ import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
 import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
+import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
+import { useWithdrawConfirmation } from "@/composables";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -43,6 +45,10 @@ const loading = ref(false);
 const error = ref("");
 const lastQuery = ref<string | null>(null);
 const actionBusy = reactive<Record<string, SessionActionKey | undefined>>({});
+
+// Withdraw confirmation dialog (shared composable)
+const { withdrawDialogOpen, withdrawTarget, requestWithdraw, confirmWithdraw, cancelWithdraw } =
+  useWithdrawConfirmation((session) => executeSessionAction(session, "withdraw"));
 
 const stateOptions = [
   { value: "approved", label: "Approved" },
@@ -280,6 +286,15 @@ function setActionBusy(session: SessionCR, action?: SessionActionKey) {
 }
 
 async function runSessionAction(session: SessionCR, action: SessionActionKey) {
+  // Withdraw requires confirmation via modal
+  if (action === "withdraw") {
+    requestWithdraw(session);
+    return;
+  }
+  await executeSessionAction(session, action);
+}
+
+async function executeSessionAction(session: SessionCR, action: SessionActionKey) {
   const name = sessionName(session);
   if (!name) {
     pushError("Unable to perform action: session name is missing.");
@@ -547,6 +562,14 @@ onMounted(() => {
         </scale-card>
       </div>
     </section>
+
+    <!-- Withdraw Confirmation Dialog -->
+    <WithdrawConfirmDialog
+      :opened="withdrawDialogOpen"
+      :session-name="withdrawTarget ? sessionName(withdrawTarget) : undefined"
+      @confirm="confirmWithdraw"
+      @cancel="cancelWithdraw"
+    />
   </main>
 </template>
 
