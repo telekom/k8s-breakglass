@@ -12,6 +12,9 @@ import { AuthKey } from "@/keys";
 
 const mockPush = vi.fn();
 const mockGetSession = vi.fn();
+const mockCopy = vi.fn().mockResolvedValue(true);
+const mockCleanup = vi.fn();
+const mockCopied = ref(false);
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({
@@ -52,6 +55,19 @@ vi.mock("@/services/auth", () => ({
     }),
   ),
 }));
+
+vi.mock("@/composables", async (importOriginal) => {
+  const original = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...original,
+    useClipboard: () => ({
+      copy: mockCopy,
+      copied: mockCopied,
+      error: ref(null),
+      cleanup: mockCleanup,
+    }),
+  };
+});
 
 describe("DebugSessionDetails", () => {
   let wrapper: ReturnType<typeof shallowMount> | null = null;
@@ -107,5 +123,61 @@ describe("DebugSessionDetails", () => {
     await flushPromises();
     expect(mockGetSession).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("renders copy button for each pod and calls clipboard copy", async () => {
+    mockGetSession.mockResolvedValue({
+      status: { state: "Active" },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster" },
+      debugPods: [
+        { name: "pod-1", namespace: "ns-1" },
+        { name: "pod-2", namespace: "ns-2" },
+      ],
+    });
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    const copyBtns = wrapper.findAll('[data-testid="copy-exec-btn"]');
+    expect(copyBtns.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("calls clipboardCleanup on unmount", async () => {
+    mockGetSession.mockResolvedValue({
+      status: { state: "Active" },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster" },
+    });
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    wrapper.unmount();
+    wrapper = null;
+    expect(mockCleanup).toHaveBeenCalled();
   });
 });

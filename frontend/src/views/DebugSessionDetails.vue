@@ -10,9 +10,8 @@ import { useDateFormatting, useClipboard } from "@/composables";
 import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOperations } from "@/model/debugSession";
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
-const { copy: clipboardCopy, cleanup: clipboardCleanup } = useClipboard();
+const { copy: clipboardCopy, copied: clipboardCopied, cleanup: clipboardCleanup } = useClipboard();
 const copiedPodKey = ref<string | null>(null);
-let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
 function podKey(pod: DebugPodInfo): string {
   return `${pod.namespace}/${pod.name}`;
@@ -26,14 +25,15 @@ function copyExecCommand(pod: DebugPodInfo) {
   clipboardCopy(getExecCommand(pod)).then((ok) => {
     if (ok) {
       copiedPodKey.value = podKey(pod);
-      clearTimeout(copiedTimer);
-      copiedTimer = setTimeout(() => {
-        copiedPodKey.value = null;
-      }, 2000);
     } else {
       pushError("Failed to copy command to clipboard");
     }
   });
+}
+
+/** Whether the given pod's command was just copied (resets automatically via useClipboard). */
+function isCopied(pod: DebugPodInfo): boolean {
+  return clipboardCopied.value && copiedPodKey.value === podKey(pod);
 }
 
 const auth = inject(AuthKey);
@@ -150,7 +150,6 @@ watch(
 
 onUnmounted(() => {
   stopPolling();
-  clearTimeout(copiedTimer);
   clipboardCleanup();
 });
 
@@ -651,14 +650,14 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                   <scale-button
                     size="small"
                     variant="secondary"
-                    :title="copiedPodKey === podKey(pod) ? 'Copied!' : 'Copy to clipboard'"
+                    :title="isCopied(pod) ? 'Copied!' : 'Copy to clipboard'"
                     :aria-label="
-                      copiedPodKey === podKey(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'
+                      isCopied(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'
                     "
                     data-testid="copy-exec-btn"
                     @click="copyExecCommand(pod)"
                   >
-                    {{ copiedPodKey === podKey(pod) ? "Copied!" : "Copy" }}
+                    {{ isCopied(pod) ? "Copied!" : "Copy" }}
                   </scale-button>
                 </div>
               </div>
