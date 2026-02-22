@@ -1283,7 +1283,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
 		// Poll until pending state
-		deadline := time.Now().Add(30 * time.Second)
+		deadline := time.Now().Add(helpers.WaitForStateTimeout)
 		var lastState v1alpha1.BreakglassSessionState
 
 		for time.Now().Before(deadline) {
@@ -1300,7 +1300,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 				return
 			}
 			t.Logf("Session state: %s, waiting for Pending...", lastState)
-			time.Sleep(1 * time.Second)
+			time.Sleep(helpers.PollInterval)
 		}
 		t.Fatalf("Session %s did not reach Pending state in time, last state: %s", sessionName, lastState)
 	})
@@ -1319,7 +1319,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
 		// Poll until approved state
-		deadline := time.Now().Add(30 * time.Second)
+		deadline := time.Now().Add(helpers.WaitForStateTimeout)
 		var lastState v1alpha1.BreakglassSessionState
 
 		for time.Now().Before(deadline) {
@@ -1338,7 +1338,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 				return
 			}
 			t.Logf("Session state: %s, waiting for Approved...", lastState)
-			time.Sleep(1 * time.Second)
+			time.Sleep(helpers.PollInterval)
 		}
 		t.Fatalf("Session %s did not reach Approved state in time, last state: %s", sessionName, lastState)
 	})
@@ -1508,7 +1508,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	t.Run("Step3_WaitForPendingOrApprovedState", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
-		deadline := time.Now().Add(30 * time.Second)
+		deadline := time.Now().Add(helpers.WaitForStateTimeout)
 		var lastState v1alpha1.DebugSessionState
 
 		for time.Now().Before(deadline) {
@@ -1531,7 +1531,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 				return
 			}
 			t.Logf("Debug session state: %s, waiting for Pending or Approved...", lastState)
-			time.Sleep(1 * time.Second)
+			time.Sleep(helpers.PollInterval)
 		}
 		t.Fatalf("Debug session %s did not reach Pending or Approved state in time, last state: %s", sessionName, lastState)
 	})
@@ -1553,7 +1553,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	t.Run("Step5_VerifyApprovedState", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
-		deadline := time.Now().Add(30 * time.Second)
+		deadline := time.Now().Add(helpers.WaitForStateTimeout)
 		var lastState v1alpha1.DebugSessionState
 
 		for time.Now().Before(deadline) {
@@ -1570,7 +1570,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 				return
 			}
 			t.Logf("Debug session state: %s, waiting for Active...", lastState)
-			time.Sleep(1 * time.Second)
+			time.Sleep(helpers.PollInterval)
 		}
 		t.Fatalf("Debug session %s did not reach Approved/Running state in time, last state: %s", sessionName, lastState)
 	})
@@ -1591,7 +1591,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	t.Run("Step7_VerifyTerminatedState", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
-		deadline := time.Now().Add(30 * time.Second)
+		deadline := time.Now().Add(helpers.WaitForStateTimeout)
 		var lastState v1alpha1.DebugSessionState
 
 		for time.Now().Before(deadline) {
@@ -1608,7 +1608,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 				return
 			}
 			t.Logf("Debug session state: %s, waiting for terminal state...", lastState)
-			time.Sleep(1 * time.Second)
+			time.Sleep(helpers.PollInterval)
 		}
 		t.Fatalf("Debug session %s did not reach terminal state in time, last state: %s", sessionName, lastState)
 	})
@@ -1715,7 +1715,7 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 	t.Run("Step4_VerifyRejectedState", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
-		deadline := time.Now().Add(30 * time.Second)
+		deadline := time.Now().Add(helpers.WaitForStateTimeout)
 		var lastState v1alpha1.BreakglassSessionState
 
 		for time.Now().Before(deadline) {
@@ -1732,7 +1732,7 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 				return
 			}
 			t.Logf("Session state: %s, waiting for Rejected...", lastState)
-			time.Sleep(1 * time.Second)
+			time.Sleep(helpers.PollInterval)
 		}
 		t.Fatalf("Session %s did not reach Rejected state in time, last state: %s", sessionName, lastState)
 	})

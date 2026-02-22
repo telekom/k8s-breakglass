@@ -29,10 +29,14 @@ const (
 	// LongTestTimeout for complex tests with many API calls or wait cycles
 	LongTestTimeout = 10 * time.Minute
 
-	// WaitForStateTimeout for waiting on state transitions
-	WaitForStateTimeout = 30 * time.Second
+	// WaitForStateTimeout for CLI poll loops waiting on session state transitions
+	// (e.g., Pending → Approved, Active → Terminated). Set high enough to account
+	// for controller reconciliation latency in resource-constrained CI environments.
+	// Uses DefaultTimeout from wait.go as the single source of truth.
+	WaitForStateTimeout = DefaultTimeout
 
-	// WaitForConditionTimeout for waiting on conditions
+	// WaitForConditionTimeout for waiting on Kubernetes status conditions
+	// (e.g., ClusterConfig readiness, deployment availability).
 	WaitForConditionTimeout = 60 * time.Second
 
 	// APIReadyTimeout for waiting for API to be ready

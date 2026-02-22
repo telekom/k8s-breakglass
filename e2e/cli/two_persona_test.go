@@ -240,7 +240,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		t.Run("WaitForPendingState", func(t *testing.T) {
 			require.NotEmpty(t, sessionName, "Session must be created first")
 
-			deadline := time.Now().Add(30 * time.Second)
+			deadline := time.Now().Add(helpers.WaitForStateTimeout)
 			for time.Now().Before(deadline) {
 				output, err := runAsRequester("session", "get", sessionName, "-o", "json")
 				require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 					t.Logf("Session %s is Pending", sessionName)
 					return
 				}
-				time.Sleep(1 * time.Second)
+				time.Sleep(helpers.PollInterval)
 			}
 			t.Fatalf("Session did not reach Pending state")
 		})
@@ -286,7 +286,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		t.Run("WaitForApprovedState", func(t *testing.T) {
 			require.NotEmpty(t, sessionName, "Session must be created first")
 
-			deadline := time.Now().Add(30 * time.Second)
+			deadline := time.Now().Add(helpers.WaitForStateTimeout)
 			for time.Now().Before(deadline) {
 				output, err := runAsRequester("session", "get", sessionName, "-o", "json")
 				require.NoError(t, err)
@@ -300,7 +300,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 					assert.NotEmpty(t, session.Status.Approvers, "Approvers should be recorded")
 					return
 				}
-				time.Sleep(1 * time.Second)
+				time.Sleep(helpers.PollInterval)
 			}
 			t.Fatalf("Session did not reach Approved state")
 		})
@@ -390,7 +390,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		t.Run("WaitForPendingState", func(t *testing.T) {
 			require.NotEmpty(t, rejectedSessionName)
 
-			deadline := time.Now().Add(30 * time.Second)
+			deadline := time.Now().Add(helpers.WaitForStateTimeout)
 			for time.Now().Before(deadline) {
 				output, err := runAsRequester("session", "get", rejectedSessionName, "-o", "json")
 				require.NoError(t, err)
@@ -402,7 +402,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 				if session.Status.State == v1alpha1.SessionStatePending {
 					return
 				}
-				time.Sleep(1 * time.Second)
+				time.Sleep(helpers.PollInterval)
 			}
 			t.Fatalf("Session did not reach Pending state")
 		})
@@ -423,7 +423,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		t.Run("VerifyRejectedState", func(t *testing.T) {
 			require.NotEmpty(t, rejectedSessionName)
 
-			deadline := time.Now().Add(30 * time.Second)
+			deadline := time.Now().Add(helpers.WaitForStateTimeout)
 			for time.Now().Before(deadline) {
 				output, err := runAsRequester("session", "get", rejectedSessionName, "-o", "json")
 				require.NoError(t, err)
@@ -436,7 +436,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 					t.Logf("Session %s is Rejected", rejectedSessionName)
 					return
 				}
-				time.Sleep(1 * time.Second)
+				time.Sleep(helpers.PollInterval)
 			}
 			t.Fatalf("Session did not reach Rejected state")
 		})
