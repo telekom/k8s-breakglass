@@ -397,40 +397,8 @@ func ValidateDenyPolicy(dp *DenyPolicy) *ValidationResult {
 		return result
 	}
 
-	specPath := field.NewPath("spec")
-
-	// At least one of rules or podSecurityRules must be specified (defense-in-depth; also enforced by CEL).
-	if len(dp.Spec.Rules) == 0 && dp.Spec.PodSecurityRules == nil {
-		result.Errors = append(result.Errors, field.Required(specPath, "at least one of 'rules' or 'podSecurityRules' must be specified"))
-	}
-
-	// Validate rules
-	for i, rule := range dp.Spec.Rules {
-		rulePath := specPath.Child("rules").Index(i)
-		if len(rule.Verbs) == 0 {
-			result.Errors = append(result.Errors, field.Required(rulePath.Child("verbs"), "verbs are required"))
-		}
-		if len(rule.APIGroups) == 0 {
-			result.Errors = append(result.Errors, field.Required(rulePath.Child("apiGroups"), "apiGroups are required"))
-		}
-		if len(rule.Resources) == 0 {
-			result.Errors = append(result.Errors, field.Required(rulePath.Child("resources"), "resources are required"))
-		}
-	}
-
-	if dp.Spec.Precedence != nil && *dp.Spec.Precedence < 0 {
-		result.Errors = append(result.Errors, field.Invalid(specPath.Child("precedence"), *dp.Spec.Precedence, "precedence must be non-negative"))
-	}
-
-	// Validate podSecurityRules thresholds if specified
-	if dp.Spec.PodSecurityRules != nil {
-		for i, threshold := range dp.Spec.PodSecurityRules.Thresholds {
-			thresholdPath := specPath.Child("podSecurityRules").Child("thresholds").Index(i)
-			if threshold.MaxScore < 0 {
-				result.Errors = append(result.Errors, field.Invalid(thresholdPath.Child("maxScore"), threshold.MaxScore, "maxScore must be non-negative"))
-			}
-		}
-	}
+	// Delegate spec-level validation to the shared helper (also used in tests).
+	result.Errors = append(result.Errors, validateDenyPolicySpec(dp)...)
 
 	return result
 }
