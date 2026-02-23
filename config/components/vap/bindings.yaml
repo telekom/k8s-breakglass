@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# ValidatingAdmissionPolicyBindings — Phase 1 (Warn mode)
+#
+# All bindings use "Warn" action so that validation failures produce warnings
+# in API responses and audit logs, but do NOT block requests. This allows safe
+# rollout alongside existing webhook validation.
+#
+# To switch to enforcement (Phase 2), change validationActions to [Deny].
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: breakglass-session-validation-binding
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  policyName: breakglass-session-validation
+  validationActions:
+    - Warn
+    - Audit
+  matchResources: {}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: breakglass-escalation-validation-binding
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  policyName: breakglass-escalation-validation
+  validationActions:
+    - Warn
+    - Audit
+  matchResources: {}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: breakglass-clusterconfig-validation-binding
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  policyName: breakglass-clusterconfig-validation
+  validationActions:
+    - Warn
+    - Audit
+  matchResources: {}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: breakglass-identityprovider-validation-binding
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  policyName: breakglass-identityprovider-validation
+  validationActions:
+    - Warn
+    - Audit
+  matchResources: {}
