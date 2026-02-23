@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Consolidated scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Removed duplicate `pkg/config/scheme.go` (dead code). Standardized import alias from `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files. Added `importas` linter rule to enforce the alias. Added missing godoc comments to all exported types and functions in `api/v1alpha1/`.
+- **Standardized import alias** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Renamed `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files for consistency with the module path
+- **Added `importas` linter rule** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Configured `importas` in `.golangci.yml` with `no-unaliased: true` to enforce the canonical `breakglassv1alpha1` alias
+- **Removed duplicate scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Deleted dead-code `pkg/config/scheme.go`
 
 ### Added
 
+- **Package-level godoc** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Added missing godoc comments to all exported types and functions in `api/v1alpha1/`
 - **Round displayed request durations** ([#399](https://github.com/telekom/k8s-breakglass/issues/399)): Added `formatDurationRounded()`, `formatDurationFromSecondsRounded()`, and `formatRoundedSeconds()` to the `useDuration` composable. Durations >= 1h are rounded to the nearest 5 minutes, durations >= 1m are rounded to the nearest minute, and durations < 1m show exact seconds. Applied to the Approval Modal and Pending Approvals views.
 - **Persist Session Browser filters across tab switches** ([#400](https://github.com/telekom/k8s-breakglass/issues/400)): Filter settings in the Session Browser are now backed by a Pinia store with `sessionStorage` persistence. Filters survive tab/view navigation and page reloads within the same browser tab. Includes schema versioning for graceful migration and 8 unit tests.
 - **Auth-operator integration documentation**: Added `docs/auth-operator-integration.md` covering the authorization chain, role generation flow, shared group naming, deployment considerations, combined monitoring, and troubleshooting when using auth-operator alongside k8s-breakglass (resolves #311)
