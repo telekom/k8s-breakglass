@@ -3,6 +3,8 @@ include versions.env
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
 
+# ENVTEST_K8S_VERSION is set in versions.env
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -88,6 +90,14 @@ validate-samples: manifests ## Validate all YAML samples in config/samples again
 	@echo "Validating sample YAML files..."
 	go test ./api/v1alpha1/... -run TestSamplesAreValid -v
 	@echo "Sample validation passed"
+
+.PHONY: validate-crds
+validate-crds: manifests setup-envtest ## Validate CRD schemas offline and against a real envtest API server.
+	@echo "Validating CRD schemas (offline)..."
+	go test ./api/v1alpha1/... -run TestCRDSchemaValidation -v -count=1
+	@echo "Validating CRDs against envtest API server..."
+	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./api/v1alpha1/... -run TestCRDInstallation -v -count=1
+	@echo "CRD validation passed"
 
 .PHONY: verify
 verify: fmt vet lint-strict test vulncheck ## Run all verification checks (fmt, vet, lint, test, vulncheck).
@@ -222,6 +232,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 KUBECTL ?= kubectl
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+ENVTEST ?= $(LOCALBIN)/setup-envtest
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -237,6 +248,11 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: setup-envtest
+setup-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
+$(ENVTEST): $(LOCALBIN)
+	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: helm-validate
 helm-validate: ## Validate Helm chart syntax and templates for escalation-config

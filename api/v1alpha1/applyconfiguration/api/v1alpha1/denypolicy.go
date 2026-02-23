@@ -16,6 +16,8 @@ import (
 
 // DenyPolicyApplyConfiguration represents a declarative configuration of the DenyPolicy type for use
 // with apply.
+//
+// DenyPolicy is the Schema for the denypolicies API.
 type DenyPolicyApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`

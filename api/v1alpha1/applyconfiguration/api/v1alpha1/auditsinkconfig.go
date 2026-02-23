@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // AuditSinkConfigApplyConfiguration represents a declarative configuration of the AuditSinkConfig type for use
@@ -20,7 +20,7 @@ type AuditSinkConfigApplyConfiguration struct {
 	// Name is a unique identifier for this sink.
 	Name *string `json:"name,omitempty"`
 	// Type is the sink type.
-	Type *breakglassv1alpha1.AuditSinkType `json:"type,omitempty"`
+	Type *apiv1alpha1.AuditSinkType `json:"type,omitempty"`
 	// Kafka configuration (required when type=kafka).
 	Kafka *KafkaSinkSpecApplyConfiguration `json:"kafka,omitempty"`
 	// Webhook configuration (required when type=webhook).
@@ -54,7 +54,7 @@ func (b *AuditSinkConfigApplyConfiguration) WithName(value string) *AuditSinkCon
 // WithType sets the Type field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Type field is set to the value of the last call.
-func (b *AuditSinkConfigApplyConfiguration) WithType(value breakglassv1alpha1.AuditSinkType) *AuditSinkConfigApplyConfiguration {
+func (b *AuditSinkConfigApplyConfiguration) WithType(value apiv1alpha1.AuditSinkType) *AuditSinkConfigApplyConfiguration {
 	b.Type = &value
 	return b
 }

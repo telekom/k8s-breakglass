@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package applyconfiguration
 
 import (
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	runtime "k8s.io/apimachinery/pkg/runtime"
@@ -22,259 +22,259 @@ import (
 func ForKind(kind schema.GroupVersionKind) interface{} {
 	switch kind {
 	// Group=breakglass.t-caas.telekom.com, Version=v1alpha1
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AdditionalResourceRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AdditionalResourceRef"):
 		return &apiv1alpha1.AdditionalResourceRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AllowedPodOperations"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodOperations"):
 		return &apiv1alpha1.AllowedPodOperationsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AllowedPodRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodRef"):
 		return &apiv1alpha1.AllowedPodRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfig"):
 		return &apiv1alpha1.AuditConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditConfigSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfigSpec"):
 		return &apiv1alpha1.AuditConfigSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditConfigStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfigStatus"):
 		return &apiv1alpha1.AuditConfigStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditDestination"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditDestination"):
 		return &apiv1alpha1.AuditDestinationApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditFilterConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditFilterConfig"):
 		return &apiv1alpha1.AuditFilterConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditQueueConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditQueueConfig"):
 		return &apiv1alpha1.AuditQueueConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditSamplingConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditSamplingConfig"):
 		return &apiv1alpha1.AuditSamplingConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditSinkConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditSinkConfig"):
 		return &apiv1alpha1.AuditSinkConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuditSinkStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuditSinkStatus"):
 		return &apiv1alpha1.AuditSinkStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AutoApproveConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AutoApproveConfig"):
 		return &apiv1alpha1.AutoApproveConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuxiliaryResource"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuxiliaryResource"):
 		return &apiv1alpha1.AuxiliaryResourceApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("AuxiliaryResourceStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("AuxiliaryResourceStatus"):
 		return &apiv1alpha1.AuxiliaryResourceStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BindingReference"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BindingReference"):
 		return &apiv1alpha1.BindingReferenceApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalation"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalation"):
 		return &apiv1alpha1.BreakglassEscalationApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationAllowed"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationAllowed"):
 		return &apiv1alpha1.BreakglassEscalationAllowedApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationApprovers"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationApprovers"):
 		return &apiv1alpha1.BreakglassEscalationApproversApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationSpec"):
 		return &apiv1alpha1.BreakglassEscalationSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationStatus"):
 		return &apiv1alpha1.BreakglassEscalationStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassSession"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassSession"):
 		return &apiv1alpha1.BreakglassSessionApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassSessionSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassSessionSpec"):
 		return &apiv1alpha1.BreakglassSessionSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("BreakglassSessionStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassSessionStatus"):
 		return &apiv1alpha1.BreakglassSessionStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ClusterConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfig"):
 		return &apiv1alpha1.ClusterConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ClusterConfigSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfigSpec"):
 		return &apiv1alpha1.ClusterConfigSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ClusterConfigStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfigStatus"):
 		return &apiv1alpha1.ClusterConfigStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("CopiedPodRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("CopiedPodRef"):
 		return &apiv1alpha1.CopiedPodRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugApprovalReasonConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugApprovalReasonConfig"):
 		return &apiv1alpha1.DebugApprovalReasonConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugContainerOverride"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugContainerOverride"):
 		return &apiv1alpha1.DebugContainerOverrideApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPDBConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPDBConfig"):
 		return &apiv1alpha1.DebugPDBConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodMetadata"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodMetadata"):
 		return &apiv1alpha1.DebugPodMetadataApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodOverrides"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodOverrides"):
 		return &apiv1alpha1.DebugPodOverridesApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodSpec"):
 		return &apiv1alpha1.DebugPodSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodSpecInner"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodSpecInner"):
 		return &apiv1alpha1.DebugPodSpecInnerApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodSpecOverrides"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodSpecOverrides"):
 		return &apiv1alpha1.DebugPodSpecOverridesApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplate"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplate"):
 		return &apiv1alpha1.DebugPodTemplateApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplateReference"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplateReference"):
 		return &apiv1alpha1.DebugPodTemplateReferenceApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplateSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplateSpec"):
 		return &apiv1alpha1.DebugPodTemplateSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplateStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplateStatus"):
 		return &apiv1alpha1.DebugPodTemplateStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugRequestReasonConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugRequestReasonConfig"):
 		return &apiv1alpha1.DebugRequestReasonConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugResourceQuotaConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugResourceQuotaConfig"):
 		return &apiv1alpha1.DebugResourceQuotaConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSession"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSession"):
 		return &apiv1alpha1.DebugSessionApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionAllowed"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAllowed"):
 		return &apiv1alpha1.DebugSessionAllowedApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionApproval"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionApproval"):
 		return &apiv1alpha1.DebugSessionApprovalApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionApprovers"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionApprovers"):
 		return &apiv1alpha1.DebugSessionApproversApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionAuditConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAuditConfig"):
 		return &apiv1alpha1.DebugSessionAuditConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBinding"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBinding"):
 		return &apiv1alpha1.DebugSessionClusterBindingApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingSpec"):
 		return &apiv1alpha1.DebugSessionClusterBindingSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingStatus"):
 		return &apiv1alpha1.DebugSessionClusterBindingStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionConstraints"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionConstraints"):
 		return &apiv1alpha1.DebugSessionConstraintsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionNotificationConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionNotificationConfig"):
 		return &apiv1alpha1.DebugSessionNotificationConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionParticipant"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionParticipant"):
 		return &apiv1alpha1.DebugSessionParticipantApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionSpec"):
 		return &apiv1alpha1.DebugSessionSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionStatus"):
 		return &apiv1alpha1.DebugSessionStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionTemplate"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionTemplate"):
 		return &apiv1alpha1.DebugSessionTemplateApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionTemplateSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionTemplateSpec"):
 		return &apiv1alpha1.DebugSessionTemplateSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DebugSessionTemplateStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionTemplateStatus"):
 		return &apiv1alpha1.DebugSessionTemplateStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DenyPolicy"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicy"):
 		return &apiv1alpha1.DenyPolicyApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DenyPolicyScope"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicyScope"):
 		return &apiv1alpha1.DenyPolicyScopeApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DenyPolicySpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicySpec"):
 		return &apiv1alpha1.DenyPolicySpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DenyPolicyStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicyStatus"):
 		return &apiv1alpha1.DenyPolicyStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DenyRule"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DenyRule"):
 		return &apiv1alpha1.DenyRuleApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("DeployedResourceRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("DeployedResourceRef"):
 		return &apiv1alpha1.DeployedResourceRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("EphemeralContainerRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("EphemeralContainerRef"):
 		return &apiv1alpha1.EphemeralContainerRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("EphemeralContainersConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("EphemeralContainersConfig"):
 		return &apiv1alpha1.EphemeralContainersConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ExtraDeployVariable"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ExtraDeployVariable"):
 		return &apiv1alpha1.ExtraDeployVariableApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("HostNamespacesConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("HostNamespacesConfig"):
 		return &apiv1alpha1.HostNamespacesConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("IdentityProvider"):
+	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProvider"):
 		return &apiv1alpha1.IdentityProviderApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("IdentityProviderSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProviderSpec"):
 		return &apiv1alpha1.IdentityProviderSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("IdentityProviderStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProviderStatus"):
 		return &apiv1alpha1.IdentityProviderStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ImpersonationConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ImpersonationConfig"):
 		return &apiv1alpha1.ImpersonationConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("KafkaSASLSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("KafkaSASLSpec"):
 		return &apiv1alpha1.KafkaSASLSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("KafkaSinkSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("KafkaSinkSpec"):
 		return &apiv1alpha1.KafkaSinkSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("KafkaTLSSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("KafkaTLSSpec"):
 		return &apiv1alpha1.KafkaTLSSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("KeycloakGroupSync"):
+	case v1alpha1.SchemeGroupVersion.WithKind("KeycloakGroupSync"):
 		return &apiv1alpha1.KeycloakGroupSyncApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("KubectlDebugConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugConfig"):
 		return &apiv1alpha1.KubectlDebugConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("KubectlDebugStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugStatus"):
 		return &apiv1alpha1.KubectlDebugStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("KubernetesSinkSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("KubernetesSinkSpec"):
 		return &apiv1alpha1.KubernetesSinkSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("LogSinkSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("LogSinkSpec"):
 		return &apiv1alpha1.LogSinkSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("MailProvider"):
+	case v1alpha1.SchemeGroupVersion.WithKind("MailProvider"):
 		return &apiv1alpha1.MailProviderApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("MailProviderSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("MailProviderSpec"):
 		return &apiv1alpha1.MailProviderSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("MailProviderStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("MailProviderStatus"):
 		return &apiv1alpha1.MailProviderStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("NameCollision"):
+	case v1alpha1.SchemeGroupVersion.WithKind("NameCollision"):
 		return &apiv1alpha1.NameCollisionApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("NamespaceConstraints"):
+	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceConstraints"):
 		return &apiv1alpha1.NamespaceConstraintsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("NamespaceFilter"):
+	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceFilter"):
 		return &apiv1alpha1.NamespaceFilterApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("NamespaceSelectorRequirement"):
+	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceSelectorRequirement"):
 		return &apiv1alpha1.NamespaceSelectorRequirementApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("NamespaceSelectorTerm"):
+	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceSelectorTerm"):
 		return &apiv1alpha1.NamespaceSelectorTermApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("NodeDebugConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeDebugConfig"):
 		return &apiv1alpha1.NodeDebugConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("NotificationExclusions"):
+	case v1alpha1.SchemeGroupVersion.WithKind("NotificationExclusions"):
 		return &apiv1alpha1.NotificationExclusionsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("OIDCAuthConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("OIDCAuthConfig"):
 		return &apiv1alpha1.OIDCAuthConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("OIDCConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("OIDCConfig"):
 		return &apiv1alpha1.OIDCConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("OIDCFromIdentityProviderConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("OIDCFromIdentityProviderConfig"):
 		return &apiv1alpha1.OIDCFromIdentityProviderConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodContainerStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodContainerStatus"):
 		return &apiv1alpha1.PodContainerStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodCopyConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodCopyConfig"):
 		return &apiv1alpha1.PodCopyConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodSecurityApprovers"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodSecurityApprovers"):
 		return &apiv1alpha1.PodSecurityApproversApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodSecurityExemptions"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodSecurityExemptions"):
 		return &apiv1alpha1.PodSecurityExemptionsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodSecurityOverrides"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodSecurityOverrides"):
 		return &apiv1alpha1.PodSecurityOverridesApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodSecurityRules"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodSecurityRules"):
 		return &apiv1alpha1.PodSecurityRulesApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodSecurityScope"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodSecurityScope"):
 		return &apiv1alpha1.PodSecurityScopeApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("PodTemplateResourceStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("PodTemplateResourceStatus"):
 		return &apiv1alpha1.PodTemplateResourceStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ReasonConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ReasonConfig"):
 		return &apiv1alpha1.ReasonConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ResolvedBindingRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ResolvedBindingRef"):
 		return &apiv1alpha1.ResolvedBindingRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ResolvedClusterRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ResolvedClusterRef"):
 		return &apiv1alpha1.ResolvedClusterRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ResolvedTemplateRef"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ResolvedTemplateRef"):
 		return &apiv1alpha1.ResolvedTemplateRefApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("RetryConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("RetryConfig"):
 		return &apiv1alpha1.RetryConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("RiskFactors"):
+	case v1alpha1.SchemeGroupVersion.WithKind("RiskFactors"):
 		return &apiv1alpha1.RiskFactorsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("RiskThreshold"):
+	case v1alpha1.SchemeGroupVersion.WithKind("RiskThreshold"):
 		return &apiv1alpha1.RiskThresholdApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SchedulingConstraints"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingConstraints"):
 		return &apiv1alpha1.SchedulingConstraintsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SchedulingOption"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingOption"):
 		return &apiv1alpha1.SchedulingOptionApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SchedulingOptions"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingOptions"):
 		return &apiv1alpha1.SchedulingOptionsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SecretKeyReference"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeyReference"):
 		return &apiv1alpha1.SecretKeyReferenceApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SecretKeySelector"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeySelector"):
 		return &apiv1alpha1.SecretKeySelectorApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SelectOption"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SelectOption"):
 		return &apiv1alpha1.SelectOptionApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SenderConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SenderConfig"):
 		return &apiv1alpha1.SenderConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("ServiceAccountReference"):
+	case v1alpha1.SchemeGroupVersion.WithKind("ServiceAccountReference"):
 		return &apiv1alpha1.ServiceAccountReferenceApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SessionLimitGroupOverride"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SessionLimitGroupOverride"):
 		return &apiv1alpha1.SessionLimitGroupOverrideApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SessionLimits"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SessionLimits"):
 		return &apiv1alpha1.SessionLimitsApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SessionLimitsOverride"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SessionLimitsOverride"):
 		return &apiv1alpha1.SessionLimitsOverrideApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("SMTPConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("SMTPConfig"):
 		return &apiv1alpha1.SMTPConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("TemplateReference"):
+	case v1alpha1.SchemeGroupVersion.WithKind("TemplateReference"):
 		return &apiv1alpha1.TemplateReferenceApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("TerminalSharingConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingConfig"):
 		return &apiv1alpha1.TerminalSharingConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("TerminalSharingStatus"):
+	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingStatus"):
 		return &apiv1alpha1.TerminalSharingStatusApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("TokenExchangeConfig"):
+	case v1alpha1.SchemeGroupVersion.WithKind("TokenExchangeConfig"):
 		return &apiv1alpha1.TokenExchangeConfigApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("VariableValidation"):
+	case v1alpha1.SchemeGroupVersion.WithKind("VariableValidation"):
 		return &apiv1alpha1.VariableValidationApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("WebhookSinkSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("WebhookSinkSpec"):
 		return &apiv1alpha1.WebhookSinkSpecApplyConfiguration{}
-	case breakglassv1alpha1.SchemeGroupVersion.WithKind("WebhookTLSSpec"):
+	case v1alpha1.SchemeGroupVersion.WithKind("WebhookTLSSpec"):
 		return &apiv1alpha1.WebhookTLSSpecApplyConfiguration{}
 
 	}
