@@ -67,7 +67,7 @@ jobs:
         run: gosec -fmt sarif -out gosec-results.sarif ./...
 
       - name: Upload gosec results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
+        uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4.32.4
         if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         with:
@@ -127,7 +127,7 @@ jobs:
           output: 'trivy-fs-results.sarif'
 
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
+        uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4.32.4
         if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         with:
           sarif_file: 'trivy-fs-results.sarif'
