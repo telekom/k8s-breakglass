@@ -176,6 +176,12 @@ spec:
           status:
             description: BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
             properties:
+              accessCount:
+                description: |-
+                  accessCount is the total number of authorization requests that were allowed via this session.
+                  Incremented by the authorization webhook on each successful authorization.
+                format: int64
+                type: integer
               actualStartTime:
                 description: |-
                   actualStartTime records when the session actually became active.
@@ -270,6 +276,12 @@ spec:
                 description: |-
                   ExpiresAt is the time when the session will expire.
                   This value is set based on spec.MaxValidFor when the session is approved.
+                format: date-time
+                type: string
+              lastActivityAt:
+                description: |-
+                  lastActivityAt is the timestamp of the last authorization request that was allowed via this session.
+                  Updated by the authorization webhook when a SAR is authorized through this session's granted group.
                 format: date-time
                 type: string
               observedGeneration:

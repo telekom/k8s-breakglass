@@ -255,6 +255,34 @@ status:
   retainedUntil: "2024-02-14T10:30:00Z"
 ```
 
+### Activity Tracking Fields
+
+#### lastActivityAt
+
+Timestamp of the last authorization request that was allowed via this session.
+Updated asynchronously by the authorization webhook on each successful SAR.
+
+```yaml
+status:
+  lastActivityAt: "2024-01-15T10:45:00Z"
+```
+
+#### accessCount
+
+Total number of authorization requests allowed via this session.
+Incremented by the authorization webhook on each successful authorization.
+
+```yaml
+status:
+  accessCount: 42
+```
+
+These fields enable:
+
+- **Idle timeout detection**: Comparing `lastActivityAt` to the current time allows identifying sessions that have not been used recently.
+- **Usage auditing**: `accessCount` provides a quick summary of how actively a session was used.
+- **Observability**: Prometheus metrics `breakglass_session_activity_total` and `breakglass_session_last_activity_timestamp` provide real-time monitoring.
+
 ## Session Lifecycle
 
 Sessions are created via REST API and progress through states:

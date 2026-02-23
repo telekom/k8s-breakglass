@@ -835,6 +835,8 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				allowDetail = fmt.Sprintf("group=%s session=%s impersonated=%s", grp, sesName, impersonated)
 				// Emit a single correlated info log showing the final accepted impersonated group for observability
 				reqLog.Infow("Final accepted impersonated group", "username", username, "cluster", clusterName, "grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
+				// Record session activity (async status update + metrics)
+				defaultRecordSessionActivity(ctx, wc.sesManager, clusterName, sesName, reqLog)
 			}
 		}
 		phaseTracker.EndPhase(PhaseSessionSARs) // End session_sars phase

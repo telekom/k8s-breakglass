@@ -59,6 +59,12 @@ type BreakglassSessionStatusApplyConfiguration struct {
 	// reasonEnded stores a short reason for why the session ended or entered a terminal state.
 	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
 	ReasonEnded *string `json:"reasonEnded,omitempty"`
+	// lastActivityAt is the timestamp of the last authorization request that was allowed via this session.
+	// Updated by the authorization webhook when a SAR is authorized through this session's granted group.
+	LastActivityAt *metav1.Time `json:"lastActivityAt,omitempty"`
+	// accessCount is the total number of authorization requests that were allowed via this session.
+	// Incremented by the authorization webhook on each successful authorization.
+	AccessCount *int64 `json:"accessCount,omitempty"`
 }
 
 // BreakglassSessionStatusApplyConfiguration constructs a declarative configuration of the BreakglassSessionStatus type for use with
@@ -183,5 +189,21 @@ func (b *BreakglassSessionStatusApplyConfiguration) WithApprovalReason(value str
 // If called multiple times, the ReasonEnded field is set to the value of the last call.
 func (b *BreakglassSessionStatusApplyConfiguration) WithReasonEnded(value string) *BreakglassSessionStatusApplyConfiguration {
 	b.ReasonEnded = &value
+	return b
+}
+
+// WithLastActivityAt sets the LastActivityAt field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastActivityAt field is set to the value of the last call.
+func (b *BreakglassSessionStatusApplyConfiguration) WithLastActivityAt(value metav1.Time) *BreakglassSessionStatusApplyConfiguration {
+	b.LastActivityAt = &value
+	return b
+}
+
+// WithAccessCount sets the AccessCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AccessCount field is set to the value of the last call.
+func (b *BreakglassSessionStatusApplyConfiguration) WithAccessCount(value int64) *BreakglassSessionStatusApplyConfiguration {
+	b.AccessCount = &value
 	return b
 }

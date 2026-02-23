@@ -208,6 +208,16 @@ type BreakglassSessionStatus struct {
 	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
 	// +optional
 	ReasonEnded string `json:"reasonEnded,omitempty"`
+
+	// lastActivityAt is the timestamp of the last authorization request that was allowed via this session.
+	// Updated by the authorization webhook when a SAR is authorized through this session's granted group.
+	// +optional
+	LastActivityAt *metav1.Time `json:"lastActivityAt,omitempty"`
+
+	// accessCount is the total number of authorization requests that were allowed via this session.
+	// Incremented by the authorization webhook on each successful authorization.
+	// +optional
+	AccessCount int64 `json:"accessCount,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Namespaced,shortName=bgs
