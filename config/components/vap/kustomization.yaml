@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Kustomize Component: ValidatingAdmissionPolicy (Phase 1 — Warn mode)
+#
+# Deploys ValidatingAdmissionPolicy resources alongside existing webhook
+# validation. Phase 1 uses Warn+Audit mode — failures produce warnings in
+# API responses and audit log entries but do NOT block requests.
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
+#
+# Usage — add to any overlay's kustomization.yaml:
+#
+#   components:
+#     - ../../components/vap
+#
+# To switch to enforcement (Phase 2), patch the bindings:
+#
+#   patches:
+#     - target:
+#         kind: ValidatingAdmissionPolicyBinding
+#       patch: |
+#         - op: replace
+#           path: /spec/validationActions
+#           value: [Deny, Audit]
+#
+# See docs/validating-admission-policy.md for full documentation.
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - breakglass-session-policy.yaml
+  - breakglass-escalation-policy.yaml
+  - clusterconfig-policy.yaml
+  - identityprovider-policy.yaml
+  - bindings.yaml

@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# ValidatingAdmissionPolicy: IdentityProvider validations
+#
+# Supplements webhook-based validation with in-process CEL checks.
+# Phase 1 — deployed in Warn mode alongside existing webhooks.
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-identityprovider-validation
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["breakglass.t-caas.telekom.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["identityproviders"]
+
+  validations:
+    # OIDC authority is required and must be HTTPS
+    - expression: >-
+        has(object.spec.oidc) &&
+        has(object.spec.oidc.authority) &&
+        object.spec.oidc.authority.startsWith('https://')
+      message: "spec.oidc.authority is required and must be an HTTPS URL"
+      reason: Invalid
+
+    # OIDC clientID is required
+    - expression: >-
+        has(object.spec.oidc) &&
+        has(object.spec.oidc.clientID) &&
+        object.spec.oidc.clientID.size() > 0
+      message: "spec.oidc.clientID is required"
+      reason: Invalid
+
+    # JWKS endpoint must be HTTPS if specified
+    - expression: >-
+        !has(object.spec.oidc) ||
+        !has(object.spec.oidc.jwksEndpoint) ||
+        object.spec.oidc.jwksEndpoint.size() == 0 ||
+        object.spec.oidc.jwksEndpoint.startsWith('https://')
+      message: "spec.oidc.jwksEndpoint must be an HTTPS URL when specified"
+      reason: Invalid
+
+    # Issuer must be HTTPS if specified
+    - expression: >-
+        !has(object.spec.issuer) ||
+        object.spec.issuer.size() == 0 ||
+        object.spec.issuer.startsWith('https://')
+      message: "spec.issuer must be an HTTPS URL when specified"
+      reason: Invalid
+
+    # Keycloak config required when groupSyncProvider is Keycloak
+    - expression: >-
+        !has(object.spec.groupSyncProvider) ||
+        object.spec.groupSyncProvider != 'Keycloak' ||
+        (has(object.spec.keycloak) &&
+         has(object.spec.keycloak.baseURL) && object.spec.keycloak.baseURL.size() > 0 &&
+         has(object.spec.keycloak.realm) && object.spec.keycloak.realm.size() > 0 &&
+         has(object.spec.keycloak.clientID) && object.spec.keycloak.clientID.size() > 0)
+      message: "spec.keycloak (baseURL, realm, clientID) is required when groupSyncProvider is Keycloak"
+      reason: Invalid
+
+    # Keycloak config forbidden when groupSyncProvider is not Keycloak
+    - expression: >-
+        !has(object.spec.keycloak) ||
+        !has(object.spec.groupSyncProvider) ||
+        object.spec.groupSyncProvider == 'Keycloak'
+      message: "spec.keycloak must not be set when groupSyncProvider is not Keycloak"
+      reason: Invalid
