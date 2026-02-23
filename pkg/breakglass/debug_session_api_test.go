@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func init() {
@@ -62,19 +62,19 @@ func TestDebugSessionAPIController_ListSessions(t *testing.T) {
 	now := metav1.Now()
 	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
 
-	sessions := []telekomv1alpha1.DebugSession{
+	sessions := []breakglassv1alpha1.DebugSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "session-1",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:  &now,
 				ExpiresAt: &expiresAt,
 			},
@@ -84,13 +84,13 @@ func TestDebugSessionAPIController_ListSessions(t *testing.T) {
 				Name:      "session-2",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "staging",
 				TemplateRef: "standard-debug",
 				RequestedBy: "bob@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStatePending,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePending,
 			},
 		},
 	}
@@ -102,7 +102,7 @@ func TestDebugSessionAPIController_ListSessions(t *testing.T) {
 			WithStatusSubresource(&sessions[0], &sessions[1]).
 			Build()
 
-		var sessionList telekomv1alpha1.DebugSessionList
+		var sessionList breakglassv1alpha1.DebugSessionList
 		err := fakeClient.List(context.Background(), &sessionList)
 		require.NoError(t, err)
 		assert.Len(t, sessionList.Items, 2)
@@ -115,12 +115,12 @@ func TestDebugSessionAPIController_ListSessions(t *testing.T) {
 			WithStatusSubresource(&sessions[0], &sessions[1]).
 			Build()
 
-		var sessionList telekomv1alpha1.DebugSessionList
+		var sessionList breakglassv1alpha1.DebugSessionList
 		err := fakeClient.List(context.Background(), &sessionList)
 		require.NoError(t, err)
 
 		// Filter in memory (would use field selector in real implementation)
-		var filtered []telekomv1alpha1.DebugSession
+		var filtered []breakglassv1alpha1.DebugSession
 		for _, s := range sessionList.Items {
 			if s.Spec.Cluster == "production" {
 				filtered = append(filtered, s)
@@ -136,14 +136,14 @@ func TestDebugSessionAPIController_ListSessions(t *testing.T) {
 			WithStatusSubresource(&sessions[0], &sessions[1]).
 			Build()
 
-		var sessionList telekomv1alpha1.DebugSessionList
+		var sessionList breakglassv1alpha1.DebugSessionList
 		err := fakeClient.List(context.Background(), &sessionList)
 		require.NoError(t, err)
 
 		// Filter in memory
-		var active []telekomv1alpha1.DebugSession
+		var active []breakglassv1alpha1.DebugSession
 		for _, s := range sessionList.Items {
-			if s.Status.State == telekomv1alpha1.DebugSessionStateActive {
+			if s.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 				active = append(active, s)
 			}
 		}
@@ -156,24 +156,24 @@ func TestDebugSessionAPIController_GetSession(t *testing.T) {
 	scheme := newTestScheme()
 
 	now := metav1.Now()
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           "production",
 			TemplateRef:       "standard-debug",
 			RequestedBy:       "alice@example.com",
 			RequestedDuration: "2h",
 			Reason:            "Investigating issue #12345",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State: telekomv1alpha1.DebugSessionStateActive,
-			Participants: []telekomv1alpha1.DebugSessionParticipant{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{
 					User:     "alice@example.com",
-					Role:     telekomv1alpha1.ParticipantRoleOwner,
+					Role:     breakglassv1alpha1.ParticipantRoleOwner,
 					JoinedAt: now,
 				},
 			},
@@ -187,7 +187,7 @@ func TestDebugSessionAPIController_GetSession(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "test-session",
 			Namespace: "breakglass",
@@ -202,7 +202,7 @@ func TestDebugSessionAPIController_GetSession(t *testing.T) {
 			WithScheme(scheme).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "non-existent",
 			Namespace: "breakglass",
@@ -214,14 +214,14 @@ func TestDebugSessionAPIController_GetSession(t *testing.T) {
 func TestDebugSessionAPIController_CreateSession(t *testing.T) {
 	scheme := newTestScheme()
 
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "standard-debug",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
 			},
@@ -234,12 +234,12 @@ func TestDebugSessionAPIController_CreateSession(t *testing.T) {
 			WithObjects(template).
 			Build()
 
-		newSession := &telekomv1alpha1.DebugSession{
+		newSession := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "new-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:           "production",
 				TemplateRef:       "standard-debug",
 				RequestedBy:       "alice@example.com",
@@ -252,7 +252,7 @@ func TestDebugSessionAPIController_CreateSession(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify creation
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "new-session",
 			Namespace: "breakglass",
@@ -267,12 +267,12 @@ func TestDebugSessionAPIController_CreateSession(t *testing.T) {
 			WithObjects(template).
 			Build()
 
-		newSession := &telekomv1alpha1.DebugSession{
+		newSession := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "node-selector-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
@@ -285,7 +285,7 @@ func TestDebugSessionAPIController_CreateSession(t *testing.T) {
 		err := fakeClient.Create(context.Background(), newSession)
 		require.NoError(t, err)
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "node-selector-session",
 			Namespace: "breakglass",
@@ -300,12 +300,12 @@ func TestDebugSessionAPIController_CreateSession(t *testing.T) {
 			WithObjects(template).
 			Build()
 
-		newSession := &telekomv1alpha1.DebugSession{
+		newSession := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "invited-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
@@ -319,7 +319,7 @@ func TestDebugSessionAPIController_CreateSession(t *testing.T) {
 		err := fakeClient.Create(context.Background(), newSession)
 		require.NoError(t, err)
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "invited-session",
 			Namespace: "breakglass",
@@ -333,22 +333,22 @@ func TestDebugSessionAPIController_JoinSession(t *testing.T) {
 	scheme := newTestScheme()
 
 	now := metav1.Now()
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "join-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			TemplateRef: "standard-debug",
 			RequestedBy: "alice@example.com",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State: telekomv1alpha1.DebugSessionStateActive,
-			Participants: []telekomv1alpha1.DebugSessionParticipant{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{
 					User:     "alice@example.com",
-					Role:     telekomv1alpha1.ParticipantRoleOwner,
+					Role:     breakglassv1alpha1.ParticipantRoleOwner,
 					JoinedAt: now,
 				},
 			},
@@ -363,7 +363,7 @@ func TestDebugSessionAPIController_JoinSession(t *testing.T) {
 			Build()
 
 		// Fetch session
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "join-session",
 			Namespace: "breakglass",
@@ -372,9 +372,9 @@ func TestDebugSessionAPIController_JoinSession(t *testing.T) {
 
 		// Add participant
 		fetchedSession.Status.Participants = append(fetchedSession.Status.Participants,
-			telekomv1alpha1.DebugSessionParticipant{
+			breakglassv1alpha1.DebugSessionParticipant{
 				User:     "bob@example.com",
-				Role:     telekomv1alpha1.ParticipantRoleParticipant,
+				Role:     breakglassv1alpha1.ParticipantRoleParticipant,
 				JoinedAt: metav1.Now(),
 			})
 
@@ -392,7 +392,7 @@ func TestDebugSessionAPIController_JoinSession(t *testing.T) {
 
 	t.Run("cannot join non-active session", func(t *testing.T) {
 		pendingSession := session.DeepCopy()
-		pendingSession.Status.State = telekomv1alpha1.DebugSessionStatePending
+		pendingSession.Status.State = breakglassv1alpha1.DebugSessionStatePending
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -400,7 +400,7 @@ func TestDebugSessionAPIController_JoinSession(t *testing.T) {
 			WithStatusSubresource(pendingSession).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "join-session",
 			Namespace: "breakglass",
@@ -408,7 +408,7 @@ func TestDebugSessionAPIController_JoinSession(t *testing.T) {
 		require.NoError(t, err)
 
 		// Check state - in real API would return error
-		assert.NotEqual(t, telekomv1alpha1.DebugSessionStateActive, fetchedSession.Status.State)
+		assert.NotEqual(t, breakglassv1alpha1.DebugSessionStateActive, fetchedSession.Status.State)
 	})
 }
 
@@ -418,18 +418,18 @@ func TestDebugSessionAPIController_RenewSession(t *testing.T) {
 	now := metav1.Now()
 	expiresAt := metav1.NewTime(now.Add(30 * time.Minute))
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "renew-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			TemplateRef: "standard-debug",
 			RequestedBy: "alice@example.com",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State:        telekomv1alpha1.DebugSessionStateActive,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:        breakglassv1alpha1.DebugSessionStateActive,
 			StartsAt:     &now,
 			ExpiresAt:    &expiresAt,
 			RenewalCount: 0,
@@ -443,7 +443,7 @@ func TestDebugSessionAPIController_RenewSession(t *testing.T) {
 			WithStatusSubresource(session.DeepCopy()).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "renew-session",
 			Namespace: "breakglass",
@@ -477,7 +477,7 @@ func TestDebugSessionAPIController_RenewSession(t *testing.T) {
 			WithObjects(maxedSession).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "renew-session",
 			Namespace: "breakglass",
@@ -493,18 +493,18 @@ func TestDebugSessionAPIController_TerminateSession(t *testing.T) {
 	scheme := newTestScheme()
 
 	now := metav1.Now()
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "terminate-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			TemplateRef: "standard-debug",
 			RequestedBy: "alice@example.com",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State:    telekomv1alpha1.DebugSessionStateActive,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:    breakglassv1alpha1.DebugSessionStateActive,
 			StartsAt: &now,
 		},
 	}
@@ -516,7 +516,7 @@ func TestDebugSessionAPIController_TerminateSession(t *testing.T) {
 			WithStatusSubresource(session.DeepCopy()).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "terminate-session",
 			Namespace: "breakglass",
@@ -524,7 +524,7 @@ func TestDebugSessionAPIController_TerminateSession(t *testing.T) {
 		require.NoError(t, err)
 
 		// Terminate
-		fetchedSession.Status.State = telekomv1alpha1.DebugSessionStateTerminated
+		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 		fetchedSession.Status.Message = "Terminated by owner"
 
 		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
@@ -536,26 +536,26 @@ func TestDebugSessionAPIController_TerminateSession(t *testing.T) {
 			Namespace: "breakglass",
 		}, &fetchedSession)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, fetchedSession.Status.State)
 	})
 }
 
 func TestDebugSessionAPIController_ApproveSession(t *testing.T) {
 	scheme := newTestScheme()
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "approve-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			TemplateRef: "standard-debug",
 			RequestedBy: "alice@example.com",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State: telekomv1alpha1.DebugSessionStatePendingApproval,
-			Approval: &telekomv1alpha1.DebugSessionApproval{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			Approval: &breakglassv1alpha1.DebugSessionApproval{
 				Required: true,
 			},
 		},
@@ -568,7 +568,7 @@ func TestDebugSessionAPIController_ApproveSession(t *testing.T) {
 			WithStatusSubresource(session.DeepCopy()).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "approve-session",
 			Namespace: "breakglass",
@@ -598,19 +598,19 @@ func TestDebugSessionAPIController_ApproveSession(t *testing.T) {
 func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 	scheme := newTestScheme()
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "reject-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			TemplateRef: "standard-debug",
 			RequestedBy: "alice@example.com",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State: telekomv1alpha1.DebugSessionStatePendingApproval,
-			Approval: &telekomv1alpha1.DebugSessionApproval{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			Approval: &breakglassv1alpha1.DebugSessionApproval{
 				Required: true,
 			},
 		},
@@ -623,7 +623,7 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 			WithStatusSubresource(session.DeepCopy()).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "reject-session",
 			Namespace: "breakglass",
@@ -635,7 +635,7 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 		fetchedSession.Status.Approval.RejectedBy = "security@example.com"
 		fetchedSession.Status.Approval.RejectedAt = &now
 		fetchedSession.Status.Approval.Reason = "Insufficient justification"
-		fetchedSession.Status.State = telekomv1alpha1.DebugSessionStateFailed
+		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 		fetchedSession.Status.Message = "Session rejected"
 
 		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
@@ -648,39 +648,39 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 		}, &fetchedSession)
 		require.NoError(t, err)
 		assert.Equal(t, "security@example.com", fetchedSession.Status.Approval.RejectedBy)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
 	})
 }
 
 func TestDebugSessionAPIController_ListTemplates(t *testing.T) {
 	scheme := newTestScheme()
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "basic-debug",
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Basic Debug",
 		},
 	}
 
-	templates := []telekomv1alpha1.DebugSessionTemplate{
+	templates := []breakglassv1alpha1.DebugSessionTemplate{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "standard-debug",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Standard Debug",
-				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+				Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
 			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "kubectl-debug",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Kubectl Debug",
-				Mode:        telekomv1alpha1.DebugSessionModeKubectlDebug,
+				Mode:        breakglassv1alpha1.DebugSessionModeKubectlDebug,
 			},
 		},
 	}
@@ -691,7 +691,7 @@ func TestDebugSessionAPIController_ListTemplates(t *testing.T) {
 			WithObjects(podTemplate, &templates[0], &templates[1]).
 			Build()
 
-		var templateList telekomv1alpha1.DebugSessionTemplateList
+		var templateList breakglassv1alpha1.DebugSessionTemplateList
 		err := fakeClient.List(context.Background(), &templateList)
 		require.NoError(t, err)
 		assert.Len(t, templateList.Items, 2)
@@ -703,7 +703,7 @@ func TestDebugSessionAPIController_ListTemplates(t *testing.T) {
 			WithObjects(podTemplate, &templates[0], &templates[1]).
 			Build()
 
-		var podTemplateList telekomv1alpha1.DebugPodTemplateList
+		var podTemplateList breakglassv1alpha1.DebugPodTemplateList
 		err := fakeClient.List(context.Background(), &podTemplateList)
 		require.NoError(t, err)
 		assert.Len(t, podTemplateList.Items, 1)
@@ -770,17 +770,17 @@ func TestDebugSessionAPIController_RequestSerialization(t *testing.T) {
 func TestDebugSessionAPIController_PermissionChecks(t *testing.T) {
 	scheme := newTestScheme()
 
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "restricted-debug",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-			Mode: telekomv1alpha1.DebugSessionModeWorkload,
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups:   []string{"sre-team"},
 				Clusters: []string{"production-*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 				Groups: []string{"team-leads"},
 			},
 		},
@@ -792,7 +792,7 @@ func TestDebugSessionAPIController_PermissionChecks(t *testing.T) {
 			WithObjects(template).
 			Build()
 
-		var fetchedTemplate telekomv1alpha1.DebugSessionTemplate
+		var fetchedTemplate breakglassv1alpha1.DebugSessionTemplate
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name: "restricted-debug",
 		}, &fetchedTemplate)
@@ -809,7 +809,7 @@ func TestDebugSessionAPIController_PermissionChecks(t *testing.T) {
 			WithObjects(template).
 			Build()
 
-		var fetchedTemplate telekomv1alpha1.DebugSessionTemplate
+		var fetchedTemplate breakglassv1alpha1.DebugSessionTemplate
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name: "restricted-debug",
 		}, &fetchedTemplate)
@@ -833,7 +833,7 @@ func TestDebugSessionAPIController_CreateSessionErrors(t *testing.T) {
 			Build()
 
 		// Try to get a template that doesn't exist
-		var template telekomv1alpha1.DebugSessionTemplate
+		var template breakglassv1alpha1.DebugSessionTemplate
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name: "non-existent-template",
 		}, &template)
@@ -871,12 +871,12 @@ func TestDebugSessionAPIController_CreateSessionErrors(t *testing.T) {
 	})
 
 	t.Run("create duplicate session name", func(t *testing.T) {
-		existingSession := &telekomv1alpha1.DebugSession{
+		existingSession := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "duplicate-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "user@example.com",
@@ -903,7 +903,7 @@ func TestDebugSessionAPIController_JoinSessionErrors(t *testing.T) {
 			WithScheme(scheme).
 			Build()
 
-		var session telekomv1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "non-existent-session",
 			Namespace: "breakglass",
@@ -912,18 +912,18 @@ func TestDebugSessionAPIController_JoinSessionErrors(t *testing.T) {
 	})
 
 	t.Run("join pending session", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "pending-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStatePending,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePending,
 			},
 		}
 
@@ -933,7 +933,7 @@ func TestDebugSessionAPIController_JoinSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "pending-session",
 			Namespace: "breakglass",
@@ -941,22 +941,22 @@ func TestDebugSessionAPIController_JoinSessionErrors(t *testing.T) {
 		require.NoError(t, err)
 
 		// Cannot join pending session
-		assert.Equal(t, telekomv1alpha1.DebugSessionStatePending, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStatePending, fetchedSession.Status.State)
 	})
 
 	t.Run("join terminated session", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "terminated-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateTerminated,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateTerminated,
 			},
 		}
 
@@ -966,29 +966,29 @@ func TestDebugSessionAPIController_JoinSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "terminated-session",
 			Namespace: "breakglass",
 		}, &fetchedSession)
 		require.NoError(t, err)
 
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, fetchedSession.Status.State)
 	})
 
 	t.Run("join failed session", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "failed-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:   telekomv1alpha1.DebugSessionStateFailed,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:   breakglassv1alpha1.DebugSessionStateFailed,
 				Message: "Session failed",
 			},
 		}
@@ -999,14 +999,14 @@ func TestDebugSessionAPIController_JoinSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "failed-session",
 			Namespace: "breakglass",
 		}, &fetchedSession)
 		require.NoError(t, err)
 
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
 	})
 }
 
@@ -1018,7 +1018,7 @@ func TestDebugSessionAPIController_RenewSessionErrors(t *testing.T) {
 			WithScheme(scheme).
 			Build()
 
-		var session telekomv1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "non-existent-renew-session",
 			Namespace: "breakglass",
@@ -1027,18 +1027,18 @@ func TestDebugSessionAPIController_RenewSessionErrors(t *testing.T) {
 	})
 
 	t.Run("renew expired session", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "expired-api-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateExpired,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateExpired,
 			},
 		}
 
@@ -1048,7 +1048,7 @@ func TestDebugSessionAPIController_RenewSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "expired-api-session",
 			Namespace: "breakglass",
@@ -1056,7 +1056,7 @@ func TestDebugSessionAPIController_RenewSessionErrors(t *testing.T) {
 		require.NoError(t, err)
 
 		// Cannot renew expired session
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateExpired, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, fetchedSession.Status.State)
 	})
 
 	t.Run("renew with invalid duration", func(t *testing.T) {
@@ -1076,18 +1076,18 @@ func TestDebugSessionAPIController_RenewSessionErrors(t *testing.T) {
 	})
 
 	t.Run("renew when at max renewals", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "maxed-api-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:        telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:        breakglassv1alpha1.DebugSessionStateActive,
 				RenewalCount: 10, // At max
 			},
 		}
@@ -1098,7 +1098,7 @@ func TestDebugSessionAPIController_RenewSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "maxed-api-session",
 			Namespace: "breakglass",
@@ -1117,7 +1117,7 @@ func TestDebugSessionAPIController_TerminateSessionErrors(t *testing.T) {
 			WithScheme(scheme).
 			Build()
 
-		var session telekomv1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "non-existent-terminate-session",
 			Namespace: "breakglass",
@@ -1126,18 +1126,18 @@ func TestDebugSessionAPIController_TerminateSessionErrors(t *testing.T) {
 	})
 
 	t.Run("terminate already terminated session", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "already-terminated-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:   telekomv1alpha1.DebugSessionStateTerminated,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:   breakglassv1alpha1.DebugSessionStateTerminated,
 				Message: "Already terminated",
 			},
 		}
@@ -1148,14 +1148,14 @@ func TestDebugSessionAPIController_TerminateSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "already-terminated-session",
 			Namespace: "breakglass",
 		}, &fetchedSession)
 		require.NoError(t, err)
 
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, fetchedSession.Status.State)
 	})
 }
 
@@ -1167,7 +1167,7 @@ func TestDebugSessionAPIController_ApproveSessionErrors(t *testing.T) {
 			WithScheme(scheme).
 			Build()
 
-		var session telekomv1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "non-existent-approve-session",
 			Namespace: "breakglass",
@@ -1176,18 +1176,18 @@ func TestDebugSessionAPIController_ApproveSessionErrors(t *testing.T) {
 	})
 
 	t.Run("approve active session (no approval required)", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-no-approval-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
 			},
 		}
 
@@ -1197,7 +1197,7 @@ func TestDebugSessionAPIController_ApproveSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "active-no-approval-session",
 			Namespace: "breakglass",
@@ -1205,25 +1205,25 @@ func TestDebugSessionAPIController_ApproveSessionErrors(t *testing.T) {
 		require.NoError(t, err)
 
 		// Session is already active - no approval needed
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateActive, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, fetchedSession.Status.State)
 		assert.Nil(t, fetchedSession.Status.Approval)
 	})
 
 	t.Run("approve already approved session", func(t *testing.T) {
 		now := metav1.Now()
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "already-approved-api-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
-				Approval: &telekomv1alpha1.DebugSessionApproval{
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				Approval: &breakglassv1alpha1.DebugSessionApproval{
 					Required:   true,
 					ApprovedBy: "first-approver@example.com",
 					ApprovedAt: &now,
@@ -1237,7 +1237,7 @@ func TestDebugSessionAPIController_ApproveSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "already-approved-api-session",
 			Namespace: "breakglass",
@@ -1264,7 +1264,7 @@ func TestDebugSessionAPIController_RejectSessionErrors(t *testing.T) {
 			WithScheme(scheme).
 			Build()
 
-		var session telekomv1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "non-existent-reject-session",
 			Namespace: "breakglass",
@@ -1274,19 +1274,19 @@ func TestDebugSessionAPIController_RejectSessionErrors(t *testing.T) {
 
 	t.Run("reject already rejected session", func(t *testing.T) {
 		now := metav1.Now()
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "already-rejected-api-session",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "owner@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateFailed,
-				Approval: &telekomv1alpha1.DebugSessionApproval{
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateFailed,
+				Approval: &breakglassv1alpha1.DebugSessionApproval{
 					Required:   true,
 					RejectedBy: "security@example.com",
 					RejectedAt: &now,
@@ -1301,7 +1301,7 @@ func TestDebugSessionAPIController_RejectSessionErrors(t *testing.T) {
 			WithStatusSubresource(session).
 			Build()
 
-		var fetchedSession telekomv1alpha1.DebugSession
+		var fetchedSession breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name:      "already-rejected-api-session",
 			Namespace: "breakglass",
@@ -1324,13 +1324,13 @@ func TestDebugSessionAPIController_UnauthorizedAccess(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("template with restricted access", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "restricted-access-template",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Groups:   []string{"admin-team"},
 					Clusters: []string{"production-*"},
 				},
@@ -1342,7 +1342,7 @@ func TestDebugSessionAPIController_UnauthorizedAccess(t *testing.T) {
 			WithObjects(template).
 			Build()
 
-		var fetchedTemplate telekomv1alpha1.DebugSessionTemplate
+		var fetchedTemplate breakglassv1alpha1.DebugSessionTemplate
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name: "restricted-access-template",
 		}, &fetchedTemplate)
@@ -1353,13 +1353,13 @@ func TestDebugSessionAPIController_UnauthorizedAccess(t *testing.T) {
 	})
 
 	t.Run("session with cluster not in allowed list", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "cluster-restricted-template",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"staging-*", "dev-*"},
 				},
 			},
@@ -1370,7 +1370,7 @@ func TestDebugSessionAPIController_UnauthorizedAccess(t *testing.T) {
 			WithObjects(template).
 			Build()
 
-		var fetchedTemplate telekomv1alpha1.DebugSessionTemplate
+		var fetchedTemplate breakglassv1alpha1.DebugSessionTemplate
 		err := fakeClient.Get(context.Background(), client.ObjectKey{
 			Name: "cluster-restricted-template",
 		}, &fetchedTemplate)
@@ -1536,19 +1536,19 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 	now := metav1.Now()
 	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
 
-	sessions := []telekomv1alpha1.DebugSession{
+	sessions := []breakglassv1alpha1.DebugSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "session-1",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:  &now,
 				ExpiresAt: &expiresAt,
 			},
@@ -1558,13 +1558,13 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 				Name:      "session-2",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "staging",
 				TemplateRef: "standard-debug",
 				RequestedBy: "bob@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStatePending,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePending,
 			},
 		},
 	}
@@ -1710,21 +1710,21 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 
 	t.Run("isParticipant and activeParticipants computed correctly", func(t *testing.T) {
 		leftAt := metav1.NewTime(now.Add(-30 * time.Minute))
-		sessionWithParticipants := telekomv1alpha1.DebugSession{
+		sessionWithParticipants := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "session-with-participants",
 				Namespace: "breakglass",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:  &now,
 				ExpiresAt: &expiresAt,
-				Participants: []telekomv1alpha1.DebugSessionParticipant{
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
 					{User: "alice@example.com", Email: "alice@example.com", Role: "owner", JoinedAt: now},
 					{User: "bob@example.com", Email: "bob@example.com", Role: "participant", JoinedAt: now},
 					{User: "charlie@example.com", Email: "charlie@example.com", Role: "participant", JoinedAt: now, LeftAt: &leftAt},
@@ -1812,7 +1812,7 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 
 	// DebugSession is namespaced; the API handler uses getDebugSessionByName which
 	// falls back to "default" namespace if no label match is found
-	session := telekomv1alpha1.DebugSession{
+	session := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
@@ -1820,21 +1820,21 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 				DebugSessionLabelKey: "test-session",
 			},
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           "production",
 			TemplateRef:       "standard-debug",
 			RequestedBy:       "alice@example.com",
 			RequestedDuration: "2h",
 			Reason:            "Investigating issue #12345",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State:     telekomv1alpha1.DebugSessionStateActive,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
 			StartsAt:  &now,
 			ExpiresAt: &expiresAt,
-			Participants: []telekomv1alpha1.DebugSessionParticipant{
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{
 					User:     "alice@example.com",
-					Role:     telekomv1alpha1.ParticipantRoleOwner,
+					Role:     breakglassv1alpha1.ParticipantRoleOwner,
 					JoinedAt: now,
 				},
 			},
@@ -1894,15 +1894,15 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 	scheme := newTestScheme()
 	logger := zap.NewNop().Sugar()
 
-	templates := []telekomv1alpha1.DebugSessionTemplate{
+	templates := []breakglassv1alpha1.DebugSessionTemplate{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "standard-debug",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-				WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+				WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration:     "4h",
 					DefaultDuration: "1h",
 				},
@@ -1912,9 +1912,9 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "advanced-debug",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode:         telekomv1alpha1.DebugSessionModeKubectlDebug,
-				WorkloadType: telekomv1alpha1.DebugWorkloadDeployment,
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode:         breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			},
 		},
 	}
@@ -1953,7 +1953,7 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		// Add a template with group restriction
 		templateWithGroups := templates[0].DeepCopy()
 		templateWithGroups.Name = "restricted-template"
-		templateWithGroups.Spec.Allowed = &telekomv1alpha1.DebugSessionAllowed{
+		templateWithGroups.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
 			Groups: []string{"admins"},
 		}
 
@@ -1994,51 +1994,51 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 	t.Run("list templates resolves cluster patterns to actual cluster names", func(t *testing.T) {
 		// Create ClusterConfigs that will be used for pattern resolution
 		clusterConfigs := []client.Object{
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
 			},
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "prod-west"},
 			},
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "staging-east"},
 			},
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "ship-lab-1"},
 			},
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "ship-lab-2"},
 			},
 		}
 
 		// Template with wildcard pattern
-		wildcardTemplate := telekomv1alpha1.DebugSessionTemplate{
+		wildcardTemplate := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "all-clusters"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"*"},
 				},
 			},
 		}
 
 		// Template with prefix pattern
-		prefixTemplate := telekomv1alpha1.DebugSessionTemplate{
+		prefixTemplate := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "prod-only"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"prod-*"},
 				},
 			},
 		}
 
 		// Template with specific clusters
-		specificTemplate := telekomv1alpha1.DebugSessionTemplate{
+		specificTemplate := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "ship-labs"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"ship-lab-*"},
 				},
 			},
@@ -2097,11 +2097,11 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 
 	t.Run("list templates with no cluster configs returns empty clusters", func(t *testing.T) {
 		// Template with pattern but no ClusterConfigs exist
-		templateWithPattern := telekomv1alpha1.DebugSessionTemplate{
+		templateWithPattern := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "orphan-template"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"prod-*"},
 				},
 			},
@@ -2143,31 +2143,31 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 	t.Run("list templates includes cluster availability info", func(t *testing.T) {
 		// Create ClusterConfigs
 		clusterConfigs := []client.Object{
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
 			},
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "staging-east"},
 			},
 		}
 
 		// Template with matching clusters
-		templateWithClusters := telekomv1alpha1.DebugSessionTemplate{
+		templateWithClusters := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "with-clusters"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"prod-*"},
 				},
 			},
 		}
 
 		// Template without any clusters (no matches)
-		templateWithoutClusters := telekomv1alpha1.DebugSessionTemplate{
+		templateWithoutClusters := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "no-clusters"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"nonexistent-*"},
 				},
 			},
@@ -2209,28 +2209,28 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 	t.Run("list templates with includeUnavailable returns all templates", func(t *testing.T) {
 		// Create ClusterConfigs
 		clusterConfigs := []client.Object{
-			&telekomv1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
 			},
 		}
 
 		// Template with matching clusters
-		templateWithClusters := telekomv1alpha1.DebugSessionTemplate{
+		templateWithClusters := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "with-clusters"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"prod-*"},
 				},
 			},
 		}
 
 		// Template without any clusters
-		templateWithoutClusters := telekomv1alpha1.DebugSessionTemplate{
+		templateWithoutClusters := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "no-clusters"},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"nonexistent-*"},
 				},
 			},
@@ -2284,14 +2284,14 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 	scheme := newTestScheme()
 	logger := zap.NewNop().Sugar()
 
-	template := telekomv1alpha1.DebugSessionTemplate{
+	template := breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "standard-debug",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
 			},
@@ -2322,7 +2322,7 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, "standard-debug", response.Name)
-		assert.Equal(t, telekomv1alpha1.DebugSessionModeWorkload, response.Mode)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionModeWorkload, response.Mode)
 	})
 
 	t.Run("get non-existent template", func(t *testing.T) {
@@ -2350,16 +2350,16 @@ func TestDebugSessionAPIController_HandleListPodTemplates(t *testing.T) {
 	scheme := newTestScheme()
 	logger := zap.NewNop().Sugar()
 
-	podTemplates := []telekomv1alpha1.DebugPodTemplate{
+	podTemplates := []breakglassv1alpha1.DebugPodTemplate{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "ubuntu-debug",
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Ubuntu Debug",
 				Description: "Ubuntu-based debug pod",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{Name: "debug", Image: "ubuntu:22.04"},
 						},
@@ -2371,11 +2371,11 @@ func TestDebugSessionAPIController_HandleListPodTemplates(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "alpine-debug",
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Alpine Debug",
 				Description: "Alpine-based debug pod",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{Name: "debug", Image: "alpine:latest"},
 						},
@@ -2420,15 +2420,15 @@ func TestDebugSessionAPIController_HandleGetPodTemplate(t *testing.T) {
 	scheme := newTestScheme()
 	logger := zap.NewNop().Sugar()
 
-	podTemplate := telekomv1alpha1.DebugPodTemplate{
+	podTemplate := breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "ubuntu-debug",
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Ubuntu Debug",
 			Description: "Ubuntu-based debug pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "ubuntu:22.04"},
 					},
@@ -2489,32 +2489,32 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 	scheme := newTestScheme()
 	logger := zap.NewNop().Sugar()
 
-	template := telekomv1alpha1.DebugSessionTemplate{
+	template := breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "standard-debug",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
 			},
 			// Templates must have explicit cluster restrictions
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"production", "staging", "development"},
 			},
 		},
 	}
 
-	templateWithClusterRestriction := telekomv1alpha1.DebugSessionTemplate{
+	templateWithClusterRestriction := breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "restricted-debug",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"production", "staging"},
 			},
 		},
@@ -2656,17 +2656,17 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 	})
 
 	t.Run("create session returns warnings when namespace is defaulted", func(t *testing.T) {
-		templateWithNsDefaults := telekomv1alpha1.DebugSessionTemplate{
+		templateWithNsDefaults := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "template-with-ns",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
-				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					DefaultNamespace: "breakglass-ns",
 				},
 				// Templates must have explicit cluster restrictions
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"production", "staging"},
 				},
 			},
@@ -2709,23 +2709,23 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 	})
 
 	t.Run("create session returns warnings when scheduling option is defaulted", func(t *testing.T) {
-		templateWithScheduling := telekomv1alpha1.DebugSessionTemplate{
+		templateWithScheduling := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "template-with-scheduling",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
 				// Include namespace constraints to avoid namespace defaulting warning
-				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					DefaultNamespace: "test-ns",
 				},
 				// Templates must have explicit cluster restrictions
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"production", "staging"},
 				},
-				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
 					Required: true,
-					Options: []telekomv1alpha1.SchedulingOption{
+					Options: []breakglassv1alpha1.SchedulingOption{
 						{Name: "default-option", DisplayName: "Default Option", Default: true},
 						{Name: "other-option", DisplayName: "Other Option"},
 					},
@@ -2779,18 +2779,18 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 	t.Run("create session returns warning when scheduling option is ignored", func(t *testing.T) {
 		// Template without scheduling options
-		templateNoScheduling := telekomv1alpha1.DebugSessionTemplate{
+		templateNoScheduling := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "template-no-scheduling",
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
 				// Include namespace constraints to avoid namespace defaulting warning
-				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					DefaultNamespace: "test-ns",
 				},
 				// Templates must have explicit cluster restrictions
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"production", "staging"},
 				},
 			},
@@ -2848,7 +2848,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 	now := metav1.Now()
 
 	t.Run("terminate session successfully", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -2856,13 +2856,13 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:    telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:    breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt: &now,
 			},
 		}
@@ -2891,24 +2891,24 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		// Verify the session was terminated
-		var updatedSession telekomv1alpha1.DebugSession
+		var updatedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State)
 	})
 
 	t.Run("terminate session without authentication", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-session",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
 			},
 		}
 
@@ -2934,7 +2934,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 	})
 
 	t.Run("terminate session by non-owner", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -2942,13 +2942,13 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
 			},
 		}
 
@@ -2977,7 +2977,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 	})
 
 	t.Run("terminate already terminated session", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -2985,13 +2985,13 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateTerminated,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateTerminated,
 			},
 		}
 
@@ -3051,7 +3051,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 	now := metav1.Now()
 
 	t.Run("join session successfully", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -3059,16 +3059,16 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:    telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:    breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt: &now,
-				Participants: []telekomv1alpha1.DebugSessionParticipant{
-					{User: "alice@example.com", Role: telekomv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
 				},
 			},
 		}
@@ -3099,24 +3099,24 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		// Verify participant was added
-		var updatedSession telekomv1alpha1.DebugSession
+		var updatedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
 		require.NoError(t, err)
 		assert.Len(t, updatedSession.Status.Participants, 2)
 	})
 
 	t.Run("join session without authentication", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-session",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
 			},
 		}
 
@@ -3142,7 +3142,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 	})
 
 	t.Run("join non-active session", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -3150,13 +3150,13 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStatePending,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePending,
 			},
 		}
 
@@ -3185,7 +3185,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 	})
 
 	t.Run("join already joined session", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -3193,15 +3193,15 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
-				Participants: []telekomv1alpha1.DebugSessionParticipant{
-					{User: "bob@example.com", Role: telekomv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
 				},
 			},
 		}
@@ -3262,7 +3262,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	now := metav1.Now()
 
 	t.Run("leave session successfully", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -3270,17 +3270,17 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:    telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:    breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt: &now,
-				Participants: []telekomv1alpha1.DebugSessionParticipant{
-					{User: "alice@example.com", Role: telekomv1alpha1.ParticipantRoleOwner, JoinedAt: now},
-					{User: "bob@example.com", Role: telekomv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+					{User: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
 				},
 			},
 		}
@@ -3310,17 +3310,17 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	})
 
 	t.Run("leave session without authentication", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-session",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
 			},
 		}
 
@@ -3346,19 +3346,19 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	})
 
 	t.Run("leave when not participant", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-session",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStateActive,
-				Participants: []telekomv1alpha1.DebugSessionParticipant{
-					{User: "alice@example.com", Role: telekomv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
 				},
 			},
 		}
@@ -3398,7 +3398,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
 
 	t.Run("renew session successfully", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -3406,13 +3406,13 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:  &now,
 				ExpiresAt: &expiresAt,
 			},
@@ -3445,24 +3445,24 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		// Verify renewal count was incremented
-		var updatedSession telekomv1alpha1.DebugSession
+		var updatedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
 		require.NoError(t, err)
 		assert.Equal(t, int32(1), updatedSession.Status.RenewalCount)
 	})
 
 	t.Run("renew with invalid duration", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-session",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:  &now,
 				ExpiresAt: &expiresAt,
 			},
@@ -3496,7 +3496,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 	})
 
 	t.Run("renew non-active session", func(t *testing.T) {
-		session := telekomv1alpha1.DebugSession{
+		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
@@ -3504,13 +3504,13 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 					DebugSessionLabelKey: "test-session",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "production",
 				TemplateRef: "standard-debug",
 				RequestedBy: "alice@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStatePending,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStatePending,
 				StartsAt:  &now,
 				ExpiresAt: &expiresAt,
 			},
@@ -3573,7 +3573,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 func TestConvertSelectorTerms(t *testing.T) {
 	tests := []struct {
 		name     string
-		terms    []telekomv1alpha1.NamespaceSelectorTerm
+		terms    []breakglassv1alpha1.NamespaceSelectorTerm
 		expected []NamespaceSelectorTermResponse
 	}{
 		{
@@ -3583,12 +3583,12 @@ func TestConvertSelectorTerms(t *testing.T) {
 		},
 		{
 			name:     "empty input returns nil",
-			terms:    []telekomv1alpha1.NamespaceSelectorTerm{},
+			terms:    []breakglassv1alpha1.NamespaceSelectorTerm{},
 			expected: nil,
 		},
 		{
 			name: "matchLabels only",
-			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+			terms: []breakglassv1alpha1.NamespaceSelectorTerm{
 				{
 					MatchLabels: map[string]string{
 						"environment": "production",
@@ -3607,17 +3607,17 @@ func TestConvertSelectorTerms(t *testing.T) {
 		},
 		{
 			name: "matchExpressions only",
-			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+			terms: []breakglassv1alpha1.NamespaceSelectorTerm{
 				{
-					MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+					MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
 						{
 							Key:      "env",
-							Operator: telekomv1alpha1.NamespaceSelectorOpIn,
+							Operator: breakglassv1alpha1.NamespaceSelectorOpIn,
 							Values:   []string{"dev", "test", "staging"},
 						},
 						{
 							Key:      "restricted",
-							Operator: telekomv1alpha1.NamespaceSelectorOpDoesNotExist,
+							Operator: breakglassv1alpha1.NamespaceSelectorOpDoesNotExist,
 						},
 					},
 				},
@@ -3641,15 +3641,15 @@ func TestConvertSelectorTerms(t *testing.T) {
 		},
 		{
 			name: "matchLabels and matchExpressions combined",
-			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+			terms: []breakglassv1alpha1.NamespaceSelectorTerm{
 				{
 					MatchLabels: map[string]string{
 						"debug-allowed": "true",
 					},
-					MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+					MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
 						{
 							Key:      "tier",
-							Operator: telekomv1alpha1.NamespaceSelectorOpNotIn,
+							Operator: breakglassv1alpha1.NamespaceSelectorOpNotIn,
 							Values:   []string{"critical"},
 						},
 					},
@@ -3672,7 +3672,7 @@ func TestConvertSelectorTerms(t *testing.T) {
 		},
 		{
 			name: "multiple selector terms",
-			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+			terms: []breakglassv1alpha1.NamespaceSelectorTerm{
 				{
 					MatchLabels: map[string]string{"env": "dev"},
 				},
@@ -3680,10 +3680,10 @@ func TestConvertSelectorTerms(t *testing.T) {
 					MatchLabels: map[string]string{"env": "test"},
 				},
 				{
-					MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+					MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
 						{
 							Key:      "env",
-							Operator: telekomv1alpha1.NamespaceSelectorOpExists,
+							Operator: breakglassv1alpha1.NamespaceSelectorOpExists,
 						},
 					},
 				},
@@ -3721,17 +3721,17 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		binding          *telekomv1alpha1.DebugSessionClusterBinding
-		existingSessions []telekomv1alpha1.DebugSession
+		binding          *breakglassv1alpha1.DebugSessionClusterBinding
+		existingSessions []breakglassv1alpha1.DebugSession
 		userEmail        string
 		expectError      bool
 		expectedErrMsg   string
 	}{
 		{
 			name: "no limits set - should pass",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Clusters: []string{"cluster1"},
 				},
 			},
@@ -3741,24 +3741,24 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		},
 		{
 			name: "within per-user limit - should pass",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Clusters:                 []string{"cluster1"},
 					MaxActiveSessionsPerUser: ptrInt32(2),
 				},
 			},
-			existingSessions: []telekomv1alpha1.DebugSession{
+			existingSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user@example.com",
 						RequestedByEmail: "user@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
 				},
 			},
 			userEmail:   "user@example.com",
@@ -3766,24 +3766,24 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		},
 		{
 			name: "per-user limit exceeded - should fail",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Clusters:                 []string{"cluster1"},
 					MaxActiveSessionsPerUser: ptrInt32(1),
 				},
 			},
-			existingSessions: []telekomv1alpha1.DebugSession{
+			existingSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user@example.com",
 						RequestedByEmail: "user@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
 				},
 			},
 			userEmail:      "user@example.com",
@@ -3792,35 +3792,35 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		},
 		{
 			name: "within total limit - should pass",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Clusters:               []string{"cluster1"},
 					MaxActiveSessionsTotal: ptrInt32(3),
 				},
 			},
-			existingSessions: []telekomv1alpha1.DebugSession{
+			existingSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user1@example.com",
 						RequestedByEmail: "user1@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
 				},
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session2", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user2@example.com",
 						RequestedByEmail: "user2@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
 				},
 			},
 			userEmail:   "user3@example.com",
@@ -3828,35 +3828,35 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		},
 		{
 			name: "total limit exceeded - should fail",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Clusters:               []string{"cluster1"},
 					MaxActiveSessionsTotal: ptrInt32(2),
 				},
 			},
-			existingSessions: []telekomv1alpha1.DebugSession{
+			existingSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user1@example.com",
 						RequestedByEmail: "user1@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
 				},
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session2", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user2@example.com",
 						RequestedByEmail: "user2@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStatePending},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
 				},
 			},
 			userEmail:      "user3@example.com",
@@ -3865,24 +3865,24 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		},
 		{
 			name: "completed sessions don't count - should pass",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Clusters:                 []string{"cluster1"},
 					MaxActiveSessionsPerUser: ptrInt32(1),
 				},
 			},
-			existingSessions: []telekomv1alpha1.DebugSession{
+			existingSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user@example.com",
 						RequestedByEmail: "user@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateExpired},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateExpired},
 				},
 			},
 			userEmail:   "user@example.com",
@@ -3890,24 +3890,24 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		},
 		{
 			name: "failed sessions don't count - should pass",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Clusters:               []string{"cluster1"},
 					MaxActiveSessionsTotal: ptrInt32(1),
 				},
 			},
-			existingSessions: []telekomv1alpha1.DebugSession{
+			existingSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionSpec{
+					Spec: breakglassv1alpha1.DebugSessionSpec{
 						Cluster:          "cluster1",
 						TemplateRef:      "template1",
 						RequestedBy:      "user1@example.com",
 						RequestedByEmail: "user1@example.com",
-						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
 					},
-					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateFailed},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateFailed},
 				},
 			},
 			userEmail:   "user2@example.com",
@@ -4006,7 +4006,7 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	controller := NewDebugSessionAPIController(log, fakeClient, nil, nil)
 
-	clusterConfigs := map[string]*telekomv1alpha1.ClusterConfig{
+	clusterConfigs := map[string]*breakglassv1alpha1.ClusterConfig{
 		"prod-cluster": {
 			ObjectMeta: metav1.ObjectMeta{Name: "prod-cluster"},
 		},
@@ -4020,18 +4020,18 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		template      *telekomv1alpha1.DebugSessionTemplate
+		template      *breakglassv1alpha1.DebugSessionTemplate
 		clusterName   string
-		bindings      []telekomv1alpha1.DebugSessionClusterBinding
+		bindings      []breakglassv1alpha1.DebugSessionClusterBinding
 		expectAllowed bool
 		expectSource  string // "template" or "binding:*"
 	}{
 		{
 			name: "allowed by template pattern",
-			template: &telekomv1alpha1.DebugSessionTemplate{
+			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
-				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 						Clusters: []string{"prod-*"},
 					},
 				},
@@ -4043,10 +4043,10 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 		},
 		{
 			name: "not allowed by template, no bindings",
-			template: &telekomv1alpha1.DebugSessionTemplate{
+			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
-				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 						Clusters: []string{"prod-*"},
 					},
 				},
@@ -4058,20 +4058,20 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 		},
 		{
 			name: "not allowed by template, allowed by binding",
-			template: &telekomv1alpha1.DebugSessionTemplate{
+			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
-				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 						Clusters: []string{"prod-*"},
 					},
 				},
 			},
 			clusterName: "test-cluster",
-			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+			bindings: []breakglassv1alpha1.DebugSessionClusterBinding{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-						TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template1"},
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template1"},
 						Clusters:    []string{"test-cluster"},
 					},
 				},
@@ -4081,16 +4081,16 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 		},
 		{
 			name: "template has no allowed clusters, binding provides access",
-			template: &telekomv1alpha1.DebugSessionTemplate{
+			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "template2"},
-				Spec:       telekomv1alpha1.DebugSessionTemplateSpec{},
+				Spec:       breakglassv1alpha1.DebugSessionTemplateSpec{},
 			},
 			clusterName: "dev-cluster",
-			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+			bindings: []breakglassv1alpha1.DebugSessionClusterBinding{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "dev-binding", Namespace: "team-ns"},
-					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-						TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template2"},
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template2"},
 						Clusters:    []string{"dev-cluster"},
 					},
 				},
@@ -4100,20 +4100,20 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 		},
 		{
 			name: "binding references wrong template",
-			template: &telekomv1alpha1.DebugSessionTemplate{
+			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
-				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 						Clusters: []string{"prod-*"},
 					},
 				},
 			},
 			clusterName: "test-cluster",
-			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+			bindings: []breakglassv1alpha1.DebugSessionClusterBinding{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
-					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-						TemplateRef: &telekomv1alpha1.TemplateReference{Name: "other-template"}, // Wrong template!
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "other-template"}, // Wrong template!
 						Clusters:    []string{"test-cluster"},
 					},
 				},
@@ -4123,9 +4123,9 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 		},
 		{
 			name: "no restrictions and no bindings - denied (require explicit cluster allowlist or binding)",
-			template: &telekomv1alpha1.DebugSessionTemplate{
+			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "open-template"},
-				Spec:       telekomv1alpha1.DebugSessionTemplateSpec{}, // No Allowed field
+				Spec:       breakglassv1alpha1.DebugSessionTemplateSpec{}, // No Allowed field
 			},
 			clusterName:   "any-cluster",
 			bindings:      nil, // No bindings
@@ -4134,7 +4134,7 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 		},
 		{
 			name: "binding with templateSelector matches template labels - grants cluster access",
-			template: &telekomv1alpha1.DebugSessionTemplate{
+			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "developer-basic",
 					Labels: map[string]string{
@@ -4143,18 +4143,18 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 						"breakglass.t-caas.telekom.com/scope":      "pod",
 					},
 				},
-				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 						// Template patterns do NOT match "schiff-canary-1.tsttmdc.bn"
 						Clusters: []string{"dev-*", "staging-*", "test-*", "ref-*", "lab-*"},
 					},
 				},
 			},
 			clusterName: "schiff-canary-1.tsttmdc.bn", // Doesn't match template patterns!
-			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+			bindings: []breakglassv1alpha1.DebugSessionClusterBinding{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "schiff-canary-1.tsttmdc.bn-developer-workload", Namespace: "vsphere-tsttmdc-bn"},
-					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 						// Uses templateSelector instead of templateRef
 						TemplateSelector: &metav1.LabelSelector{
 							MatchLabels: map[string]string{
@@ -4178,7 +4178,7 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 	}
 
 	// Add cluster config that matches the binding's clusterSelector for the new test case
-	clusterConfigs["schiff-canary-1.tsttmdc.bn"] = &telekomv1alpha1.ClusterConfig{
+	clusterConfigs["schiff-canary-1.tsttmdc.bn"] = &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "schiff-canary-1.tsttmdc.bn",
 			Labels: map[string]string{
@@ -4204,33 +4204,33 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	// Template with extraDeployVariables
-	templateWithVariables := telekomv1alpha1.DebugSessionTemplate{
+	templateWithVariables := breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "template-with-vars",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"}, // Allow all clusters for this test
 				Groups:   []string{"*"},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
 			},
-			ExtraDeployVariables: []telekomv1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{
 					Name:        "enableDebug",
 					Description: "Enable debug logging",
-					InputType:   telekomv1alpha1.InputTypeBoolean,
+					InputType:   breakglassv1alpha1.InputTypeBoolean,
 					Default:     &apiextensionsv1.JSON{Raw: []byte(`false`)},
 				},
 				{
 					Name:        "logLevel",
 					Description: "Log level",
-					InputType:   telekomv1alpha1.InputTypeSelect,
-					Options: []telekomv1alpha1.SelectOption{
+					InputType:   breakglassv1alpha1.InputTypeSelect,
+					Options: []breakglassv1alpha1.SelectOption{
 						{Value: "debug", DisplayName: "Debug"},
 						{Value: "info", DisplayName: "Info"},
 						{Value: "warn", DisplayName: "Warning"},
@@ -4240,8 +4240,8 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 				{
 					Name:        "replicaCount",
 					Description: "Number of replicas",
-					InputType:   telekomv1alpha1.InputTypeNumber,
-					Validation: &telekomv1alpha1.VariableValidation{
+					InputType:   breakglassv1alpha1.InputTypeNumber,
+					Validation: &breakglassv1alpha1.VariableValidation{
 						Min: "1",
 						Max: "10",
 					},
@@ -4250,8 +4250,8 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 				{
 					Name:        "storageSize",
 					Description: "Storage size",
-					InputType:   telekomv1alpha1.InputTypeStorageSize,
-					Validation: &telekomv1alpha1.VariableValidation{
+					InputType:   breakglassv1alpha1.InputTypeStorageSize,
+					Validation: &breakglassv1alpha1.VariableValidation{
 						MinStorage: "1Gi",
 						MaxStorage: "100Gi",
 					},
@@ -4259,9 +4259,9 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 				{
 					Name:        "customName",
 					Description: "Custom name",
-					InputType:   telekomv1alpha1.InputTypeText,
+					InputType:   breakglassv1alpha1.InputTypeText,
 					Required:    true,
-					Validation: &telekomv1alpha1.VariableValidation{
+					Validation: &breakglassv1alpha1.VariableValidation{
 						MinLength: ptrInt(3),
 						MaxLength: ptrInt(50),
 						Pattern:   "^[a-z][a-z0-9-]*$",
@@ -4570,13 +4570,13 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	controller := &DebugSessionAPIController{log: logger}
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "prod-cluster-eu"},
 	}
 
 	t.Run("no approvers returns not required", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{},
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 		}
 		result := controller.resolveApproval(template, nil, cc, []string{"dev-team"})
 		assert.False(t, result.Required)
@@ -4584,9 +4584,9 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 	})
 
 	t.Run("template approvers required without auto-approve", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Groups: []string{"approver-group"},
 					Users:  []string{"admin@example.com"},
 				},
@@ -4600,11 +4600,11 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 	})
 
 	t.Run("auto-approve via group match", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Groups: []string{"approver-group"},
-					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 						Groups: []string{"sre-team", "dev-team"},
 					},
 				},
@@ -4616,11 +4616,11 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 	})
 
 	t.Run("auto-approve via cluster pattern match", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Groups: []string{"approver-group"},
-					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 						Clusters: []string{"prod-*"},
 					},
 				},
@@ -4632,11 +4632,11 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 	})
 
 	t.Run("auto-approve cluster pattern no match", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Groups: []string{"approver-group"},
-					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 						Clusters: []string{"staging-*"},
 					},
 				},
@@ -4648,18 +4648,18 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 	})
 
 	t.Run("binding approvers take precedence over template", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Groups: []string{"template-approvers"},
 				},
 			},
 		}
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Users: []string{"binding-approver@example.com"},
-					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 						Groups: []string{"privileged-team"},
 					},
 				},
@@ -4678,11 +4678,11 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 	})
 
 	t.Run("no auto-approve when approval not required", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					// No groups or users specified = approval not required
-					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 						Groups: []string{"dev-team"},
 					},
 				},
@@ -4700,21 +4700,21 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		config     *telekomv1alpha1.AutoApproveConfig
+		config     *breakglassv1alpha1.AutoApproveConfig
 		cluster    string
 		userGroups []string
 		wantResult bool
 	}{
 		{
 			name:       "empty config returns false",
-			config:     &telekomv1alpha1.AutoApproveConfig{},
+			config:     &breakglassv1alpha1.AutoApproveConfig{},
 			cluster:    "prod",
 			userGroups: []string{"team-a"},
 			wantResult: false,
 		},
 		{
 			name: "exact cluster match",
-			config: &telekomv1alpha1.AutoApproveConfig{
+			config: &breakglassv1alpha1.AutoApproveConfig{
 				Clusters: []string{"prod"},
 			},
 			cluster:    "prod",
@@ -4723,7 +4723,7 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 		},
 		{
 			name: "wildcard cluster match",
-			config: &telekomv1alpha1.AutoApproveConfig{
+			config: &breakglassv1alpha1.AutoApproveConfig{
 				Clusters: []string{"prod-*"},
 			},
 			cluster:    "prod-eu-west",
@@ -4732,7 +4732,7 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 		},
 		{
 			name: "cluster no match",
-			config: &telekomv1alpha1.AutoApproveConfig{
+			config: &breakglassv1alpha1.AutoApproveConfig{
 				Clusters: []string{"staging-*"},
 			},
 			cluster:    "prod-eu-west",
@@ -4741,7 +4741,7 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 		},
 		{
 			name: "group match",
-			config: &telekomv1alpha1.AutoApproveConfig{
+			config: &breakglassv1alpha1.AutoApproveConfig{
 				Groups: []string{"sre-team"},
 			},
 			cluster:    "prod",
@@ -4750,7 +4750,7 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 		},
 		{
 			name: "group no match",
-			config: &telekomv1alpha1.AutoApproveConfig{
+			config: &breakglassv1alpha1.AutoApproveConfig{
 				Groups: []string{"sre-team"},
 			},
 			cluster:    "prod",
@@ -4759,7 +4759,7 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 		},
 		{
 			name: "cluster match wins over group miss",
-			config: &telekomv1alpha1.AutoApproveConfig{
+			config: &breakglassv1alpha1.AutoApproveConfig{
 				Clusters: []string{"prod-*"},
 				Groups:   []string{"admin"},
 			},
@@ -4769,7 +4769,7 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 		},
 		{
 			name: "nil user groups with group config",
-			config: &telekomv1alpha1.AutoApproveConfig{
+			config: &breakglassv1alpha1.AutoApproveConfig{
 				Groups: []string{"team-a"},
 			},
 			cluster:    "prod",

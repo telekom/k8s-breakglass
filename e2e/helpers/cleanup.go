@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 )
 
@@ -110,7 +110,7 @@ func (c *Cleanup) Run() {
 
 // CleanupAllSessions deletes all BreakglassSessions in a namespace
 func CleanupAllSessions(ctx context.Context, cli client.Client, namespace string) error {
-	sessions := &telekomv1alpha1.BreakglassSessionList{}
+	sessions := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := cli.List(ctx, sessions, client.InNamespace(namespace)); err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func CleanupAllSessions(ctx context.Context, cli client.Client, namespace string
 // for a user that may already have an active session from a previous test.
 // Unlike deletion, expiring a session is cleaner and reflects natural lifecycle.
 func ExpireActiveSessionsForUser(ctx context.Context, cli client.Client, namespace, userEmail string) error {
-	sessions := &telekomv1alpha1.BreakglassSessionList{}
+	sessions := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := cli.List(ctx, sessions,
 		client.InNamespace(namespace),
 		client.MatchingLabels{"breakglass.t-caas.telekom.com/user": naming.ToRFC1123Label(userEmail)},
@@ -142,11 +142,11 @@ func ExpireActiveSessionsForUser(ctx context.Context, cli client.Client, namespa
 	for i := range sessions.Items {
 		session := &sessions.Items[i]
 		// Only expire active sessions (Pending or Approved)
-		if session.Status.State == telekomv1alpha1.SessionStatePending ||
-			session.Status.State == telekomv1alpha1.SessionStateApproved {
+		if session.Status.State == breakglassv1alpha1.SessionStatePending ||
+			session.Status.State == breakglassv1alpha1.SessionStateApproved {
 			// Mark as expired by setting expiresAt to the past
 			session.Status.ExpiresAt = now
-			session.Status.State = telekomv1alpha1.SessionStateExpired
+			session.Status.State = breakglassv1alpha1.SessionStateExpired
 			if err := ApplySessionStatus(ctx, cli, session); err != nil {
 				if client.IgnoreNotFound(err) != nil {
 					return err
@@ -169,7 +169,7 @@ func ExpireActiveSessionsForUserAndGroup(ctx context.Context, cli client.Client,
 		"breakglass.t-caas.telekom.com/group":   group,
 	}
 
-	sessions := &telekomv1alpha1.BreakglassSessionList{}
+	sessions := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := cli.List(ctx, sessions,
 		client.InNamespace(namespace),
 		matchingLabels,
@@ -181,8 +181,8 @@ func ExpireActiveSessionsForUserAndGroup(ctx context.Context, cli client.Client,
 	for i := range sessions.Items {
 		session := &sessions.Items[i]
 		// Delete active sessions (Pending or Approved)
-		if session.Status.State == telekomv1alpha1.SessionStatePending ||
-			session.Status.State == telekomv1alpha1.SessionStateApproved {
+		if session.Status.State == breakglassv1alpha1.SessionStatePending ||
+			session.Status.State == breakglassv1alpha1.SessionStateApproved {
 			if err := cli.Delete(ctx, session); err != nil {
 				if client.IgnoreNotFound(err) != nil {
 					return err
@@ -205,7 +205,7 @@ func waitForSessionsDeleted(ctx context.Context, cli client.Client, namespace st
 	pollInterval := 100 * time.Millisecond
 
 	for time.Now().Before(deadline) {
-		sessions := &telekomv1alpha1.BreakglassSessionList{}
+		sessions := &breakglassv1alpha1.BreakglassSessionList{}
 		if err := cli.List(ctx, sessions, client.InNamespace(namespace), labels); err != nil {
 			return err
 		}
@@ -213,8 +213,8 @@ func waitForSessionsDeleted(ctx context.Context, cli client.Client, namespace st
 		// Check if any active sessions remain
 		activeCount := 0
 		for i := range sessions.Items {
-			if sessions.Items[i].Status.State == telekomv1alpha1.SessionStatePending ||
-				sessions.Items[i].Status.State == telekomv1alpha1.SessionStateApproved {
+			if sessions.Items[i].Status.State == breakglassv1alpha1.SessionStatePending ||
+				sessions.Items[i].Status.State == breakglassv1alpha1.SessionStateApproved {
 				activeCount++
 			}
 		}
@@ -240,7 +240,7 @@ func waitForSessionsDeleted(ctx context.Context, cli client.Client, namespace st
 func DeleteActiveDebugSessionsForCluster(ctx context.Context, cli client.Client, namespace, cluster string) error {
 	matchingLabels := client.MatchingLabels{"breakglass.telekom.com/debug-cluster": cluster}
 
-	sessions := &telekomv1alpha1.DebugSessionList{}
+	sessions := &breakglassv1alpha1.DebugSessionList{}
 	if err := cli.List(ctx, sessions, client.InNamespace(namespace), matchingLabels); err != nil {
 		return err
 	}
@@ -249,8 +249,8 @@ func DeleteActiveDebugSessionsForCluster(ctx context.Context, cli client.Client,
 	for i := range sessions.Items {
 		session := &sessions.Items[i]
 		// Delete active sessions for this cluster
-		if session.Status.State == telekomv1alpha1.DebugSessionStateActive ||
-			session.Status.State == telekomv1alpha1.DebugSessionStatePending ||
+		if session.Status.State == breakglassv1alpha1.DebugSessionStateActive ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
 			session.Status.State == "" { // Also handle empty state (just created)
 			if err := cli.Delete(ctx, session); err != nil {
 				if client.IgnoreNotFound(err) != nil {
@@ -274,7 +274,7 @@ func waitForDebugSessionsDeleted(ctx context.Context, cli client.Client, namespa
 	pollInterval := 100 * time.Millisecond
 
 	for time.Now().Before(deadline) {
-		sessions := &telekomv1alpha1.DebugSessionList{}
+		sessions := &breakglassv1alpha1.DebugSessionList{}
 		if err := cli.List(ctx, sessions, client.InNamespace(namespace), labels); err != nil {
 			return err
 		}
@@ -283,8 +283,8 @@ func waitForDebugSessionsDeleted(ctx context.Context, cli client.Client, namespa
 		activeCount := 0
 		for i := range sessions.Items {
 			state := sessions.Items[i].Status.State
-			if state == telekomv1alpha1.DebugSessionStateActive ||
-				state == telekomv1alpha1.DebugSessionStatePending ||
+			if state == breakglassv1alpha1.DebugSessionStateActive ||
+				state == breakglassv1alpha1.DebugSessionStatePending ||
 				state == "" {
 				activeCount++
 			}
@@ -307,7 +307,7 @@ func waitForDebugSessionsDeleted(ctx context.Context, cli client.Client, namespa
 
 // CleanupAllEscalations deletes all BreakglassEscalations
 func CleanupAllEscalations(ctx context.Context, cli client.Client) error {
-	escalations := &telekomv1alpha1.BreakglassEscalationList{}
+	escalations := &breakglassv1alpha1.BreakglassEscalationList{}
 	if err := cli.List(ctx, escalations); err != nil {
 		return err
 	}
@@ -324,7 +324,7 @@ func CleanupAllEscalations(ctx context.Context, cli client.Client) error {
 
 // CleanupAllDenyPolicies deletes all DenyPolicies
 func CleanupAllDenyPolicies(ctx context.Context, cli client.Client) error {
-	policies := &telekomv1alpha1.DenyPolicyList{}
+	policies := &breakglassv1alpha1.DenyPolicyList{}
 	if err := cli.List(ctx, policies); err != nil {
 		return err
 	}
@@ -346,7 +346,7 @@ func CleanupTestResources(ctx context.Context, cli client.Client, labelKey, labe
 	}
 
 	// Clean sessions
-	sessions := &telekomv1alpha1.BreakglassSessionList{}
+	sessions := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := cli.List(ctx, sessions, listOpts...); err == nil {
 		for i := range sessions.Items {
 			_ = cli.Delete(ctx, &sessions.Items[i])
@@ -354,7 +354,7 @@ func CleanupTestResources(ctx context.Context, cli client.Client, labelKey, labe
 	}
 
 	// Clean escalations
-	escalations := &telekomv1alpha1.BreakglassEscalationList{}
+	escalations := &breakglassv1alpha1.BreakglassEscalationList{}
 	if err := cli.List(ctx, escalations, listOpts...); err == nil {
 		for i := range escalations.Items {
 			_ = cli.Delete(ctx, &escalations.Items[i])
@@ -362,7 +362,7 @@ func CleanupTestResources(ctx context.Context, cli client.Client, labelKey, labe
 	}
 
 	// Clean deny policies
-	policies := &telekomv1alpha1.DenyPolicyList{}
+	policies := &breakglassv1alpha1.DenyPolicyList{}
 	if err := cli.List(ctx, policies, listOpts...); err == nil {
 		for i := range policies.Items {
 			_ = cli.Delete(ctx, &policies.Items[i])

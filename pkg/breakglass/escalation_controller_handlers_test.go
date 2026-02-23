@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // TestHandleGetEscalations_ReturnsEscalationsForTokenGroups
@@ -34,17 +34,17 @@ import (
 //   - Call GET and assert only the matching escalation is returned.
 func TestHandleGetEscalations_ReturnsEscalationsForTokenGroups(t *testing.T) {
 	// Build a fake client with two escalations, one matching system:authenticated
-	esc1 := &telekomv1alpha1.BreakglassEscalation{
+	esc1 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-auth", Namespace: "default"},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed:        telekomv1alpha1.BreakglassEscalationAllowed{Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "escalated-1",
 		},
 	}
-	esc2 := &telekomv1alpha1.BreakglassEscalation{
+	esc2 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-other", Namespace: "default"},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed:        telekomv1alpha1.BreakglassEscalationAllowed{Groups: []string{"other-group"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"other-group"}},
 			EscalatedGroup: "escalated-2",
 		},
 	}
@@ -80,7 +80,7 @@ func TestHandleGetEscalations_ReturnsEscalationsForTokenGroups(t *testing.T) {
 		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
 	}
 
-	var out []telekomv1alpha1.BreakglassEscalation
+	var out []breakglassv1alpha1.BreakglassEscalation
 	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}

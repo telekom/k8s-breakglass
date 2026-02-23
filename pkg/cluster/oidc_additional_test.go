@@ -34,7 +34,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -144,7 +144,7 @@ func createTLSTestServer(t *testing.T, handler http.Handler) (*httptest.Server, 
 func TestOIDCTokenProvider_TokenExchangeFlow_Success(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	tokenResp := tokenResponse{
 		AccessToken: "exchanged-token-12345",
@@ -184,14 +184,14 @@ func TestOIDCTokenProvider_TokenExchangeFlow_Success(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled:          true,
 			SubjectTokenType: "urn:ietf:params:oauth:token-type:access_token",
 		},
@@ -213,7 +213,7 @@ func TestOIDCTokenProvider_TokenExchangeFlow_NotEnabled(t *testing.T) {
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
 	// TokenExchange not enabled
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: "https://auth.example.com",
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
@@ -227,7 +227,7 @@ func TestOIDCTokenProvider_TokenExchangeFlow_NotEnabled(t *testing.T) {
 func TestOIDCTokenProvider_TokenExchangeFlow_WithAudienceAndResource(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	var capturedAudience, capturedResource string
 
@@ -263,15 +263,15 @@ func TestOIDCTokenProvider_TokenExchangeFlow_WithAudienceAndResource(t *testing.
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
 		Audience:  "https://target-audience.example.com",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled:  true,
 			Resource: "https://api.example.com",
 		},
@@ -286,7 +286,7 @@ func TestOIDCTokenProvider_TokenExchangeFlow_WithAudienceAndResource(t *testing.
 func TestOIDCTokenProvider_TokenExchangeFlow_ServerError(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -313,14 +313,14 @@ func TestOIDCTokenProvider_TokenExchangeFlow_ServerError(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{Enabled: true},
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{Enabled: true},
 	}
 
 	_, err := provider.TokenExchangeFlow(context.Background(), oidcConfig, "subject-token")
@@ -335,7 +335,7 @@ func TestOIDCTokenProvider_TokenExchangeFlow_ServerError(t *testing.T) {
 func TestOIDCTokenProvider_TokenExchangeWithActorToken_Success(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	var capturedActorToken, capturedActorTokenType string
 
@@ -382,19 +382,19 @@ func TestOIDCTokenProvider_TokenExchangeWithActorToken_Success(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled: true,
-			SubjectTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "subject-token", Namespace: "default", Key: "token",
 			},
-			ActorTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			ActorTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "actor-token", Namespace: "default", Key: "token",
 			},
 			ActorTokenType: "urn:ietf:params:oauth:token-type:jwt",
@@ -412,7 +412,7 @@ func TestOIDCTokenProvider_TokenExchangeWithActorToken_Success(t *testing.T) {
 func TestOIDCTokenProvider_TokenExchangeWithActorToken_DefaultActorTokenType(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	var capturedActorTokenType string
 
@@ -455,19 +455,19 @@ func TestOIDCTokenProvider_TokenExchangeWithActorToken_DefaultActorTokenType(t *
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled: true,
-			SubjectTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "subject-token", Namespace: "default", Key: "token",
 			},
-			ActorTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			ActorTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "actor-token", Namespace: "default", Key: "token",
 			},
 			// ActorTokenType not set - should default to access_token
@@ -483,7 +483,7 @@ func TestOIDCTokenProvider_TokenExchangeWithActorToken_DefaultActorTokenType(t *
 func TestOIDCTokenProvider_TokenExchangeWithActorToken_ActorTokenSecretMissing(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -514,19 +514,19 @@ func TestOIDCTokenProvider_TokenExchangeWithActorToken_ActorTokenSecretMissing(t
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled: true,
-			SubjectTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "subject-token", Namespace: "default", Key: "token",
 			},
-			ActorTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			ActorTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "missing-actor-token", Namespace: "default", Key: "token",
 			},
 		},
@@ -549,7 +549,7 @@ func TestOIDCTokenProvider_PersistTOFUCA_CreateNewSecret(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name:      "tofu-ca-secret",
 		Namespace: "default",
 		Key:       "ca.crt",
@@ -590,7 +590,7 @@ func TestOIDCTokenProvider_PersistTOFUCA_UpdateExistingSecret(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name:      "existing-ca-secret",
 		Namespace: "default",
 		Key:       "ca.crt",
@@ -617,7 +617,7 @@ func TestOIDCTokenProvider_PersistTOFUCA_DefaultKey(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name:      "ca-secret",
 		Namespace: "default",
 		// Key not specified - should default to "ca.crt"
@@ -720,7 +720,7 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_InsecureSkipVerify(t *testing.T)
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL:             "https://auth.example.com",
 		InsecureSkipTLSVerify: true,
 	}
@@ -743,7 +743,7 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_WithCertificateAuthority(t *test
 
 	_, _, caPEM := generateTestCACert(t)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL:            "https://auth.example.com",
 		CertificateAuthority: string(caPEM),
 	}
@@ -765,7 +765,7 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_InvalidCertificateAuthority(t *t
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL:            "https://auth.example.com",
 		CertificateAuthority: "not-a-valid-pem-certificate",
 	}
@@ -791,7 +791,7 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_UsesCachedIssuerTOFU(t *testing.
 	provider.issuerTOFUCAs[issuerURL] = caPEM
 	provider.issuerTOFUMu.Unlock()
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: issuerURL,
 		AllowTOFU: true, // Must be true to use cached TOFU CA
 		// No InsecureSkipTLSVerify and no CertificateAuthority - should use cached TOFU
@@ -819,7 +819,7 @@ func TestOIDCTokenProvider_ConfigureTLS_InsecureSkipVerify(t *testing.T) {
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
 	cfg := &rest.Config{}
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		Server:                "https://api.example.com:6443",
 		InsecureSkipTLSVerify: true,
 	}
@@ -845,9 +845,9 @@ func TestOIDCTokenProvider_ConfigureTLS_FromCASecret(t *testing.T) {
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
 	cfg := &rest.Config{}
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		Server: "https://api.example.com:6443",
-		CASecretRef: &telekomv1alpha1.SecretKeyReference{
+		CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "cluster-ca", Namespace: "default", Key: "ca.crt",
 		},
 	}
@@ -873,9 +873,9 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretDefaultKey(t *testing.T) {
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
 	cfg := &rest.Config{}
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		Server: "https://api.example.com:6443",
-		CASecretRef: &telekomv1alpha1.SecretKeyReference{
+		CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "cluster-ca", Namespace: "default",
 			// Key not specified - should default to "value"
 		},
@@ -904,10 +904,10 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretNotFound_UsesTOFUCache(t *testin
 	provider.tofuMu.Unlock()
 
 	cfg := &rest.Config{}
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		Server:    serverURL,
 		AllowTOFU: true, // Must be true to use cached TOFU CA
-		CASecretRef: &telekomv1alpha1.SecretKeyReference{
+		CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "missing-ca", Namespace: "default",
 		},
 	}
@@ -940,10 +940,10 @@ func TestOIDCTokenProvider_ConfigureTLS_CAKeyMissing_UsesTOFUCache(t *testing.T)
 	provider.tofuMu.Unlock()
 
 	cfg := &rest.Config{}
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		Server:    serverURL,
 		AllowTOFU: true, // Must be true to use cached TOFU CA
-		CASecretRef: &telekomv1alpha1.SecretKeyReference{
+		CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "cluster-ca", Namespace: "default", Key: "ca.crt",
 		},
 	}
@@ -962,7 +962,7 @@ func TestOIDCTokenProvider_ConfigureTLS_NoCAAndNoTOFU(t *testing.T) {
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
 	cfg := &rest.Config{}
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		Server: "https://api.example.com:6443",
 		// No CASecretRef, no InsecureSkipTLSVerify, no cached TOFU
 		// This will attempt TOFU which will fail (no server to connect to)
@@ -991,7 +991,7 @@ func TestOIDCTokenProvider_GetTokenFromSecret_Success(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name: "token-secret", Namespace: "default", Key: "token",
 	}
 
@@ -1013,7 +1013,7 @@ func TestOIDCTokenProvider_GetTokenFromSecret_DefaultKey(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name: "token-secret", Namespace: "default",
 		// Key not specified - should default to "token"
 	}
@@ -1044,7 +1044,7 @@ func TestOIDCTokenProvider_GetTokenFromSecret_SecretNotFound(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name: "missing-secret", Namespace: "default", Key: "token",
 	}
 
@@ -1066,7 +1066,7 @@ func TestOIDCTokenProvider_GetTokenFromSecret_KeyNotFound(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name: "token-secret", Namespace: "default", Key: "missing-key",
 	}
 
@@ -1089,7 +1089,7 @@ func TestOIDCTokenProvider_GetTokenFromSecret_UsesSecretRefNamespace(t *testing.
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name: "token-secret", Namespace: "other-namespace", Key: "token",
 	}
 
@@ -1113,7 +1113,7 @@ func TestOIDCTokenProvider_GetTokenFromSecret_FallbackToPassedNamespace(t *testi
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	secretRef := &telekomv1alpha1.SecretKeyReference{
+	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name: "token-secret",
 		// Namespace not specified - should use passed namespace
 		Key: "token",
@@ -1148,7 +1148,7 @@ func TestOIDCTokenProvider_DiscoverTokenEndpoint_Success(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
 
 	endpoint, err := provider.discoverTokenEndpoint(context.Background(), oidc)
 	require.NoError(t, err)
@@ -1175,7 +1175,7 @@ func TestOIDCTokenProvider_DiscoverTokenEndpoint_MissingTokenEndpoint(t *testing
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
 
 	_, err := provider.discoverTokenEndpoint(context.Background(), oidc)
 	require.Error(t, err)
@@ -1198,7 +1198,7 @@ func TestOIDCTokenProvider_DiscoverTokenEndpoint_ServerError(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
 
 	_, err := provider.discoverTokenEndpoint(context.Background(), oidc)
 	require.Error(t, err)
@@ -1221,7 +1221,7 @@ func TestOIDCTokenProvider_DiscoverTokenEndpoint_InvalidJSON(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{IssuerURL: server.URL}
 
 	_, err := provider.discoverTokenEndpoint(context.Background(), oidc)
 	require.Error(t, err)
@@ -1263,7 +1263,7 @@ func TestOIDCTokenProvider_InvalidateIssuerTOFU(t *testing.T) {
 func TestOIDCTokenProvider_ClientCredentialsFlow_WithScopes(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	var capturedScopes string
 
@@ -1295,11 +1295,11 @@ func TestOIDCTokenProvider_ClientCredentialsFlow_WithScopes(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
 		Scopes: []string{"custom-scope", "another-scope"},
@@ -1317,7 +1317,7 @@ func TestOIDCTokenProvider_ClientCredentialsFlow_WithScopes(t *testing.T) {
 func TestOIDCTokenProvider_ClientCredentialsFlow_WithAudience(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	var capturedAudience string
 
@@ -1349,12 +1349,12 @@ func TestOIDCTokenProvider_ClientCredentialsFlow_WithAudience(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
 		Audience:  "https://target-api.example.com",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
 	}
@@ -1384,7 +1384,7 @@ func TestOIDCTokenProvider_ClientCredentialsFlow_MissingClientSecretRef(t *testi
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
@@ -1403,7 +1403,7 @@ func TestOIDCTokenProvider_ClientCredentialsFlow_MissingClientSecretRef(t *testi
 func TestOIDCTokenProvider_RefreshToken_PreservesOldRefreshTokenIfNotReturned(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -1435,11 +1435,11 @@ func TestOIDCTokenProvider_RefreshToken_PreservesOldRefreshTokenIfNotReturned(t 
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
 	}
@@ -1455,7 +1455,7 @@ func TestOIDCTokenProvider_RefreshToken_PreservesOldRefreshTokenIfNotReturned(t 
 func TestOIDCTokenProvider_RefreshToken_Failure(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -1482,11 +1482,11 @@ func TestOIDCTokenProvider_RefreshToken_Failure(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidc := &telekomv1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "client-secret", Namespace: "default", Key: "secret",
 		},
 	}
@@ -1503,20 +1503,20 @@ func TestOIDCTokenProvider_RefreshToken_Failure(t *testing.T) {
 func TestOIDCTokenProvider_ResolveOIDCFromIdentityProvider_WithKeycloak(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
-			OIDC: telekomv1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://keycloak.example.com/realms/master",
 				ClientID:  "frontend-client",
 			},
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL:  "https://keycloak.example.com",
 				Realm:    "master",
 				ClientID: "backend-client",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name: "keycloak-secret", Namespace: "auth", Key: "client-secret",
 				},
 			},
@@ -1530,10 +1530,10 @@ func TestOIDCTokenProvider_ResolveOIDCFromIdentityProvider_WithKeycloak(t *testi
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "keycloak-idp",
 				Server: "https://api.cluster.example.com:6443",
 				// No clientSecretRef - should use Keycloak credentials
@@ -1552,20 +1552,20 @@ func TestOIDCTokenProvider_ResolveOIDCFromIdentityProvider_WithKeycloak(t *testi
 func TestOIDCTokenProvider_ResolveOIDCFromIdentityProvider_OverrideClientID(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-idp"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
-			OIDC: telekomv1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "default-client",
 			},
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL:  "https://keycloak.example.com",
 				Realm:    "master",
 				ClientID: "keycloak-client",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name: "secret", Namespace: "default",
 				},
 			},
@@ -1579,15 +1579,15 @@ func TestOIDCTokenProvider_ResolveOIDCFromIdentityProvider_OverrideClientID(t *t
 	log := zap.NewNop().Sugar()
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:     "test-idp",
 				Server:   "https://api.cluster.example.com:6443",
 				ClientID: "override-client", // Override the default
 				// Provide ClientSecretRef to prevent Keycloak credentials from being used
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name: "my-secret", Namespace: "default",
 				},
 			},

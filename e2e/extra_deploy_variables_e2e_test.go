@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -42,14 +42,14 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 	sessionTemplateName := "e2e-extra-deploy-session-template"
 
 	// Create pod template first
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Extra Deploy Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -73,42 +73,42 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 	replicas := int32(1)
 	minLength := 3
 	maxLength := 50
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sessionTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Extra Deploy Variables Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplateName,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups:   []string{"*"},
 				Clusters: []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			ExtraDeployVariables: []telekomv1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{
 					Name:        "enableDebug",
 					DisplayName: "Enable Debug Mode",
 					Description: "Enable verbose debug logging",
-					InputType:   telekomv1alpha1.InputTypeBoolean,
+					InputType:   breakglassv1alpha1.InputTypeBoolean,
 					Default:     &apiextensionsv1.JSON{Raw: []byte(`false`)},
 				},
 				{
 					Name:        "logLevel",
 					DisplayName: "Log Level",
 					Description: "Logging verbosity level",
-					InputType:   telekomv1alpha1.InputTypeSelect,
-					Options: []telekomv1alpha1.SelectOption{
+					InputType:   breakglassv1alpha1.InputTypeSelect,
+					Options: []breakglassv1alpha1.SelectOption{
 						{Value: "debug", DisplayName: "Debug"},
 						{Value: "info", DisplayName: "Info"},
 						{Value: "warn", DisplayName: "Warning"},
@@ -120,8 +120,8 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 					Name:        "replicaCount",
 					DisplayName: "Replica Count",
 					Description: "Number of debug pod replicas",
-					InputType:   telekomv1alpha1.InputTypeNumber,
-					Validation: &telekomv1alpha1.VariableValidation{
+					InputType:   breakglassv1alpha1.InputTypeNumber,
+					Validation: &breakglassv1alpha1.VariableValidation{
 						Min: "1",
 						Max: "5",
 					},
@@ -131,9 +131,9 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 					Name:        "debugLabel",
 					DisplayName: "Debug Label",
 					Description: "Custom label for debug resources",
-					InputType:   telekomv1alpha1.InputTypeText,
+					InputType:   breakglassv1alpha1.InputTypeText,
 					Required:    true,
-					Validation: &telekomv1alpha1.VariableValidation{
+					Validation: &breakglassv1alpha1.VariableValidation{
 						MinLength:    &minLength,
 						MaxLength:    &maxLength,
 						Pattern:      "^[a-z][a-z0-9-]*$",
@@ -144,8 +144,8 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 					Name:        "storageSize",
 					DisplayName: "Storage Size",
 					Description: "Size of scratch storage",
-					InputType:   telekomv1alpha1.InputTypeStorageSize,
-					Validation: &telekomv1alpha1.VariableValidation{
+					InputType:   breakglassv1alpha1.InputTypeStorageSize,
+					Validation: &breakglassv1alpha1.VariableValidation{
 						MinStorage: "100Mi",
 						MaxStorage: "10Gi",
 					},
@@ -155,7 +155,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 					Name:        "advancedSetting",
 					DisplayName: "Advanced Setting",
 					Description: "An advanced configuration option",
-					InputType:   telekomv1alpha1.InputTypeText,
+					InputType:   breakglassv1alpha1.InputTypeText,
 					Advanced:    true,
 					Default:     &apiextensionsv1.JSON{Raw: []byte(`"default-value"`)},
 				},
@@ -170,14 +170,14 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 	require.NoError(t, err, "Failed to create session template with extraDeployVariables")
 
 	// Verify template has extraDeployVariables
-	var fetched telekomv1alpha1.DebugSessionTemplate
+	var fetched breakglassv1alpha1.DebugSessionTemplate
 	err = cli.Get(ctx, types.NamespacedName{Name: sessionTemplateName}, &fetched)
 	require.NoError(t, err)
 
 	assert.Len(t, fetched.Spec.ExtraDeployVariables, 6, "Expected 6 extraDeployVariables")
 
 	// Verify specific variables
-	varMap := make(map[string]telekomv1alpha1.ExtraDeployVariable)
+	varMap := make(map[string]breakglassv1alpha1.ExtraDeployVariable)
 	for _, v := range fetched.Spec.ExtraDeployVariables {
 		varMap[v.Name] = v
 	}
@@ -185,13 +185,13 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 	// Check boolean variable
 	enableDebug, ok := varMap["enableDebug"]
 	assert.True(t, ok, "enableDebug variable should exist")
-	assert.Equal(t, telekomv1alpha1.InputTypeBoolean, enableDebug.InputType)
+	assert.Equal(t, breakglassv1alpha1.InputTypeBoolean, enableDebug.InputType)
 	assert.NotNil(t, enableDebug.Default)
 
 	// Check select variable
 	logLevel, ok := varMap["logLevel"]
 	assert.True(t, ok, "logLevel variable should exist")
-	assert.Equal(t, telekomv1alpha1.InputTypeSelect, logLevel.InputType)
+	assert.Equal(t, breakglassv1alpha1.InputTypeSelect, logLevel.InputType)
 	assert.Len(t, logLevel.Options, 4, "Expected 4 log level options")
 
 	// Check required text variable with validation
@@ -221,14 +221,14 @@ func TestDebugSession_E2E_ExtraDeployVariables_SessionWithValues(t *testing.T) {
 	sessionName := "e2e-edv-test-session"
 
 	// Create pod template
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E EDV Session Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -249,38 +249,38 @@ func TestDebugSession_E2E_ExtraDeployVariables_SessionWithValues(t *testing.T) {
 
 	// Create session template with variables
 	replicas := int32(1)
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sessionTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E EDV Session Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplateName,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups:   []string{"*"},
 				Clusters: []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			ExtraDeployVariables: []telekomv1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{
 					Name:      "enableDebug",
-					InputType: telekomv1alpha1.InputTypeBoolean,
+					InputType: breakglassv1alpha1.InputTypeBoolean,
 					Default:   &apiextensionsv1.JSON{Raw: []byte(`false`)},
 				},
 				{
 					Name:      "logLevel",
-					InputType: telekomv1alpha1.InputTypeSelect,
-					Options: []telekomv1alpha1.SelectOption{
+					InputType: breakglassv1alpha1.InputTypeSelect,
+					Options: []breakglassv1alpha1.SelectOption{
 						{Value: "debug"},
 						{Value: "info"},
 						{Value: "warn"},
@@ -305,12 +305,12 @@ func TestDebugSession_E2E_ExtraDeployVariables_SessionWithValues(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create a debug session with extraDeployValues
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sessionName,
 			Namespace: testNamespace,
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: sessionTemplateName,
 			Cluster:     clusterName,
 			RequestedBy: "e2e-test@example.com",
@@ -330,7 +330,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_SessionWithValues(t *testing.T) {
 	require.NoError(t, err, "Failed to create debug session with extraDeployValues")
 
 	// Verify session was created with values
-	var fetched telekomv1alpha1.DebugSession
+	var fetched breakglassv1alpha1.DebugSession
 	err = cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: testNamespace}, &fetched)
 	require.NoError(t, err)
 
@@ -353,14 +353,14 @@ func TestDebugSession_E2E_ExtraDeployVariables_ValidationRejectsInvalid(t *testi
 	sessionTemplateName := "e2e-edv-validation-template"
 
 	// Create pod template
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E EDV Validation Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -382,41 +382,41 @@ func TestDebugSession_E2E_ExtraDeployVariables_ValidationRejectsInvalid(t *testi
 	// Create session template with validation rules
 	replicas := int32(1)
 	minLen := 5
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sessionTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E EDV Validation Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplateName,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups:   []string{"*"},
 				Clusters: []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			ExtraDeployVariables: []telekomv1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{
 					Name:      "requiredField",
 					Required:  true,
-					InputType: telekomv1alpha1.InputTypeText,
-					Validation: &telekomv1alpha1.VariableValidation{
+					InputType: breakglassv1alpha1.InputTypeText,
+					Validation: &breakglassv1alpha1.VariableValidation{
 						MinLength: &minLen,
 					},
 				},
 				{
 					Name:      "selectField",
-					InputType: telekomv1alpha1.InputTypeSelect,
-					Options: []telekomv1alpha1.SelectOption{
+					InputType: breakglassv1alpha1.InputTypeSelect,
+					Options: []breakglassv1alpha1.SelectOption{
 						{Value: "valid-option-1"},
 						{Value: "valid-option-2"},
 					},
@@ -435,12 +435,12 @@ func TestDebugSession_E2E_ExtraDeployVariables_ValidationRejectsInvalid(t *testi
 
 	// Test 1: Missing required field should fail webhook validation
 	t.Run("missing required field", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-edv-validation-missing-required",
 				Namespace: testNamespace,
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				TemplateRef: sessionTemplateName,
 				Cluster:     clusterName,
 				RequestedBy: "e2e-test@example.com",
@@ -464,12 +464,12 @@ func TestDebugSession_E2E_ExtraDeployVariables_ValidationRejectsInvalid(t *testi
 
 	// Test 2: Invalid select option should fail
 	t.Run("invalid select option", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-edv-validation-invalid-select",
 				Namespace: testNamespace,
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				TemplateRef: sessionTemplateName,
 				Cluster:     clusterName,
 				RequestedBy: "e2e-test@example.com",
@@ -494,12 +494,12 @@ func TestDebugSession_E2E_ExtraDeployVariables_ValidationRejectsInvalid(t *testi
 
 	// Test 3: Value too short should fail
 	t.Run("value too short", func(t *testing.T) {
-		session := &telekomv1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-edv-validation-too-short",
 				Namespace: testNamespace,
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				TemplateRef: sessionTemplateName,
 				Cluster:     clusterName,
 				RequestedBy: "e2e-test@example.com",
@@ -533,14 +533,14 @@ func TestDebugSession_E2E_ExtraDeployVariables_MultiSelect(t *testing.T) {
 	sessionTemplateName := "e2e-edv-multiselect-template"
 
 	// Create pod template
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E MultiSelect Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -563,41 +563,41 @@ func TestDebugSession_E2E_ExtraDeployVariables_MultiSelect(t *testing.T) {
 	replicas := int32(1)
 	minItems := 1
 	maxItems := 3
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sessionTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E MultiSelect Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplateName,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups:   []string{"*"},
 				Clusters: []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			ExtraDeployVariables: []telekomv1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{
 					Name:        "debugTools",
 					DisplayName: "Debug Tools",
 					Description: "Select debug tools to install",
-					InputType:   telekomv1alpha1.InputTypeMultiSelect,
-					Options: []telekomv1alpha1.SelectOption{
+					InputType:   breakglassv1alpha1.InputTypeMultiSelect,
+					Options: []breakglassv1alpha1.SelectOption{
 						{Value: "tcpdump", DisplayName: "TCPDump"},
 						{Value: "netcat", DisplayName: "Netcat"},
 						{Value: "curl", DisplayName: "cURL"},
 						{Value: "strace", DisplayName: "Strace"},
 					},
-					Validation: &telekomv1alpha1.VariableValidation{
+					Validation: &breakglassv1alpha1.VariableValidation{
 						MinItems: &minItems,
 						MaxItems: &maxItems,
 					},
@@ -613,13 +613,13 @@ func TestDebugSession_E2E_ExtraDeployVariables_MultiSelect(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify multiSelect variable is created
-	var fetched telekomv1alpha1.DebugSessionTemplate
+	var fetched breakglassv1alpha1.DebugSessionTemplate
 	err = cli.Get(ctx, types.NamespacedName{Name: sessionTemplateName}, &fetched)
 	require.NoError(t, err)
 
 	assert.Len(t, fetched.Spec.ExtraDeployVariables, 1)
 	multiSelect := fetched.Spec.ExtraDeployVariables[0]
-	assert.Equal(t, telekomv1alpha1.InputTypeMultiSelect, multiSelect.InputType)
+	assert.Equal(t, breakglassv1alpha1.InputTypeMultiSelect, multiSelect.InputType)
 	assert.Len(t, multiSelect.Options, 4)
 	assert.NotNil(t, multiSelect.Validation)
 	assert.Equal(t, 1, *multiSelect.Validation.MinItems)
@@ -627,12 +627,12 @@ func TestDebugSession_E2E_ExtraDeployVariables_MultiSelect(t *testing.T) {
 
 	// Create session with multiSelect value
 	clusterName := helpers.GetTestClusterName()
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-edv-multiselect-session",
 			Namespace: testNamespace,
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: sessionTemplateName,
 			Cluster:     clusterName,
 			RequestedBy: "e2e-test@example.com",
@@ -648,7 +648,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_MultiSelect(t *testing.T) {
 	err = cli.Create(ctx, session)
 	require.NoError(t, err, "Failed to create session with multiSelect value")
 
-	var fetchedSession telekomv1alpha1.DebugSession
+	var fetchedSession breakglassv1alpha1.DebugSession
 	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: testNamespace}, &fetchedSession)
 	require.NoError(t, err)
 
@@ -667,14 +667,14 @@ func TestDebugSession_E2E_ExtraDeployVariables_AllowedGroups(t *testing.T) {
 	sessionTemplateName := "e2e-edv-allowed-groups-template"
 
 	// Create pod template
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Allowed Groups Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -695,41 +695,41 @@ func TestDebugSession_E2E_ExtraDeployVariables_AllowedGroups(t *testing.T) {
 
 	// Create session template with allowedGroups on variables
 	replicas := int32(1)
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sessionTemplateName,
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Allowed Groups Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplateName,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups:   []string{"*"},
 				Clusters: []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			ExtraDeployVariables: []telekomv1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{
 					Name:        "publicSetting",
 					DisplayName: "Public Setting",
 					Description: "Available to all users",
-					InputType:   telekomv1alpha1.InputTypeText,
+					InputType:   breakglassv1alpha1.InputTypeText,
 					Default:     &apiextensionsv1.JSON{Raw: []byte(`"public-default"`)},
 				},
 				{
 					Name:          "adminSetting",
 					DisplayName:   "Admin Setting",
 					Description:   "Only available to admin users",
-					InputType:     telekomv1alpha1.InputTypeText,
+					InputType:     breakglassv1alpha1.InputTypeText,
 					AllowedGroups: []string{"cluster-admins", "platform-admins"},
 					Default:       &apiextensionsv1.JSON{Raw: []byte(`"admin-default"`)},
 				},
@@ -737,7 +737,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_AllowedGroups(t *testing.T) {
 					Name:          "operatorSetting",
 					DisplayName:   "Operator Setting",
 					Description:   "Available to operators and admins",
-					InputType:     telekomv1alpha1.InputTypeBoolean,
+					InputType:     breakglassv1alpha1.InputTypeBoolean,
 					AllowedGroups: []string{"operators", "cluster-admins"},
 					Default:       &apiextensionsv1.JSON{Raw: []byte(`false`)},
 				},
@@ -752,13 +752,13 @@ func TestDebugSession_E2E_ExtraDeployVariables_AllowedGroups(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify allowedGroups are persisted
-	var fetched telekomv1alpha1.DebugSessionTemplate
+	var fetched breakglassv1alpha1.DebugSessionTemplate
 	err = cli.Get(ctx, types.NamespacedName{Name: sessionTemplateName}, &fetched)
 	require.NoError(t, err)
 
 	assert.Len(t, fetched.Spec.ExtraDeployVariables, 3)
 
-	varMap := make(map[string]telekomv1alpha1.ExtraDeployVariable)
+	varMap := make(map[string]breakglassv1alpha1.ExtraDeployVariable)
 	for _, v := range fetched.Spec.ExtraDeployVariables {
 		varMap[v.Name] = v
 	}

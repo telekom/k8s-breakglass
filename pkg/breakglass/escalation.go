@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 
@@ -23,8 +23,8 @@ type EscalationFiltering struct {
 // FilterForUserPossibleEscalations filters provided escalations for those that are available based on user assigned
 // extractable groups.
 func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Context,
-	escalations []telekomv1alpha1.BreakglassEscalation,
-) ([]telekomv1alpha1.BreakglassEscalation, error) {
+	escalations []breakglassv1alpha1.BreakglassEscalation,
+) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	ef.Log.Debugw("Filtering for user possible escalations", "user", ef.FilterUserData.Username, "cluster", ef.FilterUserData.Clustername, "escalationCount", len(escalations))
 	userGroups, err := ef.UserGroupExtract(ctx, ef.FilterUserData)
 	if err != nil {
@@ -46,13 +46,13 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 		groups[group] = struct{}{}
 	}
 
-	isEscalationForUser := func(esc telekomv1alpha1.BreakglassEscalation) bool {
+	isEscalationForUser := func(esc breakglassv1alpha1.BreakglassEscalation) bool {
 		clusterMatch := clusterMatchesPatterns(ef.FilterUserData.Clustername, esc.Spec.Allowed.Clusters)
 		ef.Log.Debugw("Checking cluster match for escalation", "escalation", esc.Name, "requiredClusters", esc.Spec.Allowed.Clusters, "userCluster", ef.FilterUserData.Clustername, "clusterMatch", clusterMatch)
 		return clusterMatch
 	}
 
-	possible := make([]telekomv1alpha1.BreakglassEscalation, 0, len(escalations))
+	possible := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
 	for _, esc := range escalations {
 		// Normalize escalation allowed groups the same way as user groups for fair comparison
 		normalizedAllowedGroups := esc.Spec.Allowed.Groups
@@ -88,9 +88,9 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 // FilterSessionsForUserApprovable filters sessions for the ones that filter user
 // could approve, based on provided escalations joined with user extracted groups.
 func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Context,
-	sessions []telekomv1alpha1.BreakglassSession,
-	escalations []telekomv1alpha1.BreakglassEscalation,
-) ([]telekomv1alpha1.BreakglassSession, error) {
+	sessions []breakglassv1alpha1.BreakglassSession,
+	escalations []breakglassv1alpha1.BreakglassEscalation,
+) ([]breakglassv1alpha1.BreakglassSession, error) {
 	ef.Log.Debugw("Filtering sessions for user approvable", "user", ef.FilterUserData.Username, "cluster", ef.FilterUserData.Clustername, "sessionCount", len(sessions), "escalationCount", len(escalations))
 	userGroups, err := ef.UserGroupExtract(ctx, ef.FilterUserData)
 	if err != nil {
@@ -104,7 +104,7 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 		userCluserGroups[g] = struct{}{}
 	}
 
-	displayable := []telekomv1alpha1.BreakglassSession{}
+	displayable := []breakglassv1alpha1.BreakglassSession{}
 
 	for _, ses := range sessions {
 		ef.Log.Debugw("Processing session for approvability", "session", ses.Name, "requestedGroup", ses.Spec.GrantedGroup)

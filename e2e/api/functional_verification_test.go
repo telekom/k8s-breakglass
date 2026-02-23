@@ -33,7 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -62,18 +62,18 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 
 	// Step 1: Create AuditConfig with Kafka sink pointing to the e2e Kafka cluster
 	t.Run("SetupKafkaAuditConfig", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-functional-audit",
 				Labels: helpers.E2ELabelsWithFeature("functional-audit"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "kafka-functional-test",
-						Type: telekomv1alpha1.AuditSinkTypeKafka,
-						Kafka: &telekomv1alpha1.KafkaSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKafka,
+						Kafka: &breakglassv1alpha1.KafkaSinkSpec{
 							Brokers:     []string{"breakglass-kafka.breakglass-system.svc.cluster.local:9092"},
 							Topic:       "breakglass-audit-functional-test",
 							Compression: "snappy",
@@ -82,8 +82,8 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 					// Also enable Kubernetes events for secondary verification
 					{
 						Name: "k8s-events",
-						Type: telekomv1alpha1.AuditSinkTypeKubernetes,
-						Kubernetes: &telekomv1alpha1.KubernetesSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKubernetes,
+						Kubernetes: &breakglassv1alpha1.KubernetesSinkSpec{
 							EventTypes: []string{"session.requested", "session.approved"},
 						},
 					},
@@ -132,7 +132,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 
 		// Wait for approval
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Give time for audit events to be generated and delivered
 		time.Sleep(3 * time.Second)
@@ -218,15 +218,15 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 	})
 
 	// Step 2: Create DebugPodTemplate
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-workload-pod"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Workload Verification Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					RestartPolicy: corev1.RestartPolicyAlways, // Required for Deployment workloads
 					Containers: []corev1.Container{
 						{
@@ -258,23 +258,23 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 	t.Logf("Created DebugPodTemplate: %s", podTemplate.Name)
 
 	// Step 3: Create DebugSessionTemplate (auto-approve for simplicity)
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-workload-tmpl"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "E2E Workload Verification Template",
 			Description:     "Template for testing workload deployment",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
-			Mode:            telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment, // Deployment requires restartPolicy: Always
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
+			Mode:            breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment, // Deployment requires restartPolicy: Always
 			TargetNamespace: "breakglass-debug",
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "30m",
 				DefaultDuration: "10m",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName, "*"},
 				Groups:   helpers.TestUsers.Requester.Groups,
 			},
@@ -302,24 +302,24 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 		t.Logf("Created DebugSession via API: %s", debugSession.Name)
 
 		// Add to cleanup
-		var sessionToCleanup telekomv1alpha1.DebugSession
+		var sessionToCleanup breakglassv1alpha1.DebugSession
 		errGet := cli.Get(ctx, types.NamespacedName{Name: debugSession.Name, Namespace: debugSession.Namespace}, &sessionToCleanup)
 		require.NoError(t, errGet)
 		cleanup.Add(&sessionToCleanup)
 
 		// Wait for session to become active (auto-approved)
 		err = helpers.WaitForConditionSimple(ctx, func() bool {
-			var ds telekomv1alpha1.DebugSession
+			var ds breakglassv1alpha1.DebugSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: debugSession.Name, Namespace: debugSession.Namespace}, &ds); err != nil {
 				return false
 			}
 			t.Logf("DebugSession state: %s, message: %s", ds.Status.State, ds.Status.Message)
-			return ds.Status.State == telekomv1alpha1.DebugSessionStateActive
+			return ds.Status.State == breakglassv1alpha1.DebugSessionStateActive
 		}, helpers.WaitForConditionTimeout, 2*time.Second)
 		require.NoError(t, err, "DebugSession did not become active")
 
 		// Verify the session has DeployedResources populated
-		var activeSession telekomv1alpha1.DebugSession
+		var activeSession breakglassv1alpha1.DebugSession
 		err = cli.Get(ctx, types.NamespacedName{Name: debugSession.Name, Namespace: debugSession.Namespace}, &activeSession)
 		require.NoError(t, err)
 
@@ -367,18 +367,18 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 		require.NoError(t, err, "Failed to create cleanup test session via API")
 
 		// Add to cleanup
-		var sessionToCleanup telekomv1alpha1.DebugSession
+		var sessionToCleanup breakglassv1alpha1.DebugSession
 		errGet := cli.Get(ctx, types.NamespacedName{Name: cleanupSession.Name, Namespace: cleanupSession.Namespace}, &sessionToCleanup)
 		require.NoError(t, errGet)
 		cleanup.Add(&sessionToCleanup)
 
 		// Wait for active
 		err = helpers.WaitForConditionSimple(ctx, func() bool {
-			var ds telekomv1alpha1.DebugSession
+			var ds breakglassv1alpha1.DebugSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: cleanupSession.Name, Namespace: cleanupSession.Namespace}, &ds); err != nil {
 				return false
 			}
-			return ds.Status.State == telekomv1alpha1.DebugSessionStateActive
+			return ds.Status.State == breakglassv1alpha1.DebugSessionStateActive
 		}, helpers.WaitForConditionTimeout, 2*time.Second)
 		require.NoError(t, err, "Cleanup test session did not become active")
 
@@ -388,11 +388,11 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 
 		// Wait for session to be terminated and cleanup to occur
 		err = helpers.WaitForConditionSimple(ctx, func() bool {
-			var ds telekomv1alpha1.DebugSession
+			var ds breakglassv1alpha1.DebugSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: cleanupSession.Name, Namespace: cleanupSession.Namespace}, &ds); err != nil {
 				return false
 			}
-			return ds.Status.State == telekomv1alpha1.DebugSessionStateTerminated
+			return ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated
 		}, helpers.WaitForStateTimeout, 2*time.Second)
 		require.NoError(t, err, "Cleanup test session did not become terminated")
 
@@ -434,15 +434,15 @@ func TestDebugSessionPodSecurityContext(t *testing.T) {
 	runAsUser := int64(1000)
 	runAsGroup := int64(1000)
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-secure-pod"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Secure Debug Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: &runAsNonRoot,
 						RunAsUser:    &runAsUser,
@@ -467,17 +467,17 @@ func TestDebugSessionPodSecurityContext(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create session template
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-secure-tmpl"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Secure Template",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
-			Mode:            telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
+			Mode:            breakglassv1alpha1.DebugSessionModeWorkload,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName, "*"},
 				Groups:   helpers.TestUsers.Requester.Groups,
 			},
@@ -491,7 +491,7 @@ func TestDebugSessionPodSecurityContext(t *testing.T) {
 		podTemplate.Name, sessionTemplate.Name)
 
 	// Verify templates are created correctly
-	var fetchedPod telekomv1alpha1.DebugPodTemplate
+	var fetchedPod breakglassv1alpha1.DebugPodTemplate
 	err = cli.Get(ctx, types.NamespacedName{Name: podTemplate.Name}, &fetchedPod)
 	require.NoError(t, err)
 	require.NotNil(t, fetchedPod.Spec.Template.Spec.SecurityContext)
@@ -519,15 +519,15 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create minimal pod and session templates
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-collab-pod"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Collaborative Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -543,21 +543,21 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 	err := cli.Create(ctx, podTemplate)
 	require.NoError(t, err)
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-collab-tmpl"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Collaborative Session",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
 			TargetNamespace: "breakglass-debug",
-			TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+			TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 				Enabled:         true,
 				Provider:        "tmux",
 				MaxParticipants: 5,
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName, "*"},
 				Groups:   helpers.TestUsers.Requester.Groups,
 			},
@@ -581,25 +581,25 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 	require.NoError(t, err, "Failed to create debug session via API")
 
 	// Add to cleanup
-	var sessionToCleanup telekomv1alpha1.DebugSession
+	var sessionToCleanup breakglassv1alpha1.DebugSession
 	errGet := cli.Get(ctx, types.NamespacedName{Name: debugSession.Name, Namespace: debugSession.Namespace}, &sessionToCleanup)
 	require.NoError(t, errGet)
 	cleanup.Add(&sessionToCleanup)
 
 	// Wait for session to become active
 	err = helpers.WaitForConditionSimple(ctx, func() bool {
-		var ds telekomv1alpha1.DebugSession
+		var ds breakglassv1alpha1.DebugSession
 		if err := cli.Get(ctx, types.NamespacedName{Name: debugSession.Name, Namespace: debugSession.Namespace}, &ds); err != nil {
 			return false
 		}
-		return ds.Status.State == telekomv1alpha1.DebugSessionStateActive
+		return ds.Status.State == breakglassv1alpha1.DebugSessionStateActive
 	}, helpers.WaitForConditionTimeout, 2*time.Second)
 	require.NoError(t, err, "Session did not become active")
 
 	// Add a participant via API (use join)
 	// Note: The join API adds the current user as a participant
 	// For a different user, we'd need to invite them
-	var activeSession telekomv1alpha1.DebugSession
+	var activeSession breakglassv1alpha1.DebugSession
 	err = cli.Get(ctx, types.NamespacedName{Name: debugSession.Name, Namespace: debugSession.Namespace}, &activeSession)
 	require.NoError(t, err)
 

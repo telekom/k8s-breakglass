@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -78,7 +78,7 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 
 func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogger) {
 	lg.Debug("Running ClusterConfig validation check")
-	list := telekomv1alpha1.ClusterConfigList{}
+	list := breakglassv1alpha1.ClusterConfigList{}
 	if err := ccc.Client.List(ctx, &list); err != nil {
 		lg.With("error", err).Error("Failed to list ClusterConfig resources for validation")
 		return
@@ -91,11 +91,11 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 
 		// Perform structural validation using shared validation function.
 		// This catches malformed resources that somehow bypassed the admission webhook.
-		validationResult := telekomv1alpha1.ValidateClusterConfig(&cc)
+		validationResult := breakglassv1alpha1.ValidateClusterConfig(&cc)
 		if !validationResult.IsValid() {
 			msg := "ClusterConfig failed structural validation: " + validationResult.ErrorMessage()
 			lg.Warnw(msg, "cluster", cc.Name)
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -106,7 +106,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		authType := cc.Spec.AuthType
 		if authType == "" {
 			// Default to kubeconfig for backward compatibility
-			authType = telekomv1alpha1.ClusterAuthTypeKubeconfig
+			authType = breakglassv1alpha1.ClusterAuthTypeKubeconfig
 		}
 
 		var restCfg *rest.Config
@@ -114,7 +114,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		var successMsg string
 
 		switch authType {
-		case telekomv1alpha1.ClusterAuthTypeOIDC:
+		case breakglassv1alpha1.ClusterAuthTypeOIDC:
 			restCfg, authValidationErr = ccc.validateOIDCAuth(ctx, &cc, lg)
 			successMsg = "OIDC auth validated and cluster reachable"
 		default:
@@ -132,7 +132,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		if err := CheckClusterReachable(restCfg); err != nil {
 			msg := "cluster unreachable: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -140,7 +140,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		}
 
 		// Success: update status Ready and emit Normal event
-		if err2 := ccc.setStatusAndEvent(ctx, &cc, telekomv1alpha1.ConditionTypeReady, successMsg, corev1.EventTypeNormal, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, &cc, breakglassv1alpha1.ConditionTypeReady, successMsg, corev1.EventTypeNormal, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 	}
@@ -148,14 +148,14 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 }
 
 // validateKubeconfigAuth validates kubeconfig-based authentication and returns a rest.Config
-func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
 	ref := cc.Spec.KubeconfigSecretRef
 	if ref == nil || ref.Name == "" || ref.Namespace == "" {
 		msg := "ClusterConfig has no kubeconfigSecretRef configured"
 		lg.Warnw(msg,
 			"cluster", cc.Name,
 			"namespace", cc.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -171,7 +171,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 			"secretNamespace", ref.Namespace,
 			"error", err)
 		// update status and emit event
-		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -189,7 +189,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 			"secret", ref.Name,
 			"secretNamespace", ref.Namespace,
 			"secretCreation", sec.CreationTimestamp.Time.Format(time.RFC3339))
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -207,7 +207,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 	if err != nil {
 		msg := "kubeconfig parse failed: " + err.Error()
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -217,7 +217,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 
 // validateOIDCAuth validates OIDC-based authentication and returns a rest.Config.
 // It supports both direct oidcAuth configuration and oidcFromIdentityProvider references.
-func (ccc ClusterConfigChecker) validateOIDCAuth(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+func (ccc ClusterConfigChecker) validateOIDCAuth(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
 	// Check if we have either oidcAuth or oidcFromIdentityProvider
 	hasOIDCAuth := cc.Spec.OIDCAuth != nil
 	hasOIDCFromIDP := cc.Spec.OIDCFromIdentityProvider != nil
@@ -227,7 +227,7 @@ func (ccc ClusterConfigChecker) validateOIDCAuth(ctx context.Context, cc *teleko
 		lg.Warnw(msg,
 			"cluster", cc.Name,
 			"namespace", cc.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -242,7 +242,7 @@ func (ccc ClusterConfigChecker) validateOIDCAuth(ctx context.Context, cc *teleko
 }
 
 // validateOIDCFromIdentityProvider validates OIDC config that references an IdentityProvider
-func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
 	ref := cc.Spec.OIDCFromIdentityProvider
 
 	// Validate required fields
@@ -252,21 +252,21 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			"cluster", cc.Name,
 			"identityProviderRef", ref.Name,
 			"server", ref.Server)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
 	}
 
 	// Fetch and validate the referenced IdentityProvider
-	idp := &telekomv1alpha1.IdentityProvider{}
+	idp := &breakglassv1alpha1.IdentityProvider{}
 	if err := ccc.Client.Get(ctx, client.ObjectKey{Name: ref.Name}, idp); err != nil {
 		msg := fmt.Sprintf("Referenced IdentityProvider %q not found or unreadable", ref.Name)
 		lg.Warnw(msg,
 			"cluster", cc.Name,
 			"identityProvider", ref.Name,
 			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -276,7 +276,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	if idp.Spec.Disabled {
 		msg := fmt.Sprintf("Referenced IdentityProvider %q is disabled", ref.Name)
 		lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -291,7 +291,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	if secretRef == nil {
 		msg := "oidcFromIdentityProvider requires clientSecretRef or IdentityProvider must have Keycloak service account configured"
 		lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -307,7 +307,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace,
 			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -324,7 +324,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			"cluster", cc.Name,
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -344,7 +344,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 				"secret", ref.CASecretRef.Name,
 				"secretNamespace", ref.CASecretRef.Namespace,
 				"error", err)
-			if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			return nil, err
@@ -376,7 +376,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	if err != nil {
 		msg := "Failed to build OIDC rest config: " + err.Error()
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -386,7 +386,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 }
 
 // validateDirectOIDCAuth validates direct oidcAuth configuration
-func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
 	oidcConfig := cc.Spec.OIDCAuth
 
 	// Validate required fields
@@ -397,7 +397,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			"issuerURL", oidcConfig.IssuerURL,
 			"clientID", oidcConfig.ClientID,
 			"server", oidcConfig.Server)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -407,7 +407,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 	if oidcConfig.ClientSecretRef == nil {
 		msg := "OIDC config missing clientSecretRef (required for client credentials flow)"
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -423,7 +423,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace,
 			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -440,7 +440,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			"cluster", cc.Name,
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -460,7 +460,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 				"secret", oidcConfig.CASecretRef.Name,
 				"secretNamespace", oidcConfig.CASecretRef.Namespace,
 				"error", err)
-			if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			return nil, err
@@ -493,7 +493,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 	if err != nil {
 		msg := "Failed to build OIDC rest config: " + err.Error()
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -502,9 +502,9 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 	return restCfg, nil
 }
 
-func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
+func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
 	// Determine condition status and reason first for skip check
-	isSuccess := phase == telekomv1alpha1.ConditionTypeReady
+	isSuccess := phase == breakglassv1alpha1.ConditionTypeReady
 	failureType := ""
 	if !isSuccess {
 		failureType = determineClusterConfigFailureType(message)
@@ -512,51 +512,51 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 
 	// Determine if this is OIDC auth
 	authType := cc.Spec.AuthType
-	isOIDC := authType == telekomv1alpha1.ClusterAuthTypeOIDC
+	isOIDC := authType == breakglassv1alpha1.ClusterAuthTypeOIDC
 
 	// Determine condition status and reason
 	var conditionStatus metav1.ConditionStatus
-	var conditionReason telekomv1alpha1.ClusterConfigConditionReason
+	var conditionReason breakglassv1alpha1.ClusterConfigConditionReason
 
 	if isSuccess {
 		conditionStatus = metav1.ConditionTrue
 		if isOIDC {
-			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCValidated
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonOIDCValidated
 		} else {
-			conditionReason = telekomv1alpha1.ClusterConfigReasonKubeconfigValidated
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonKubeconfigValidated
 		}
 	} else {
 		conditionStatus = metav1.ConditionFalse
 		switch failureType {
 		// OIDC-specific reasons
 		case "oidc_discovery":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCDiscoveryFailed
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonOIDCDiscoveryFailed
 		case "oidc_token":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCTokenFailed
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonOIDCTokenFailed
 		case "oidc_refresh":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCRefreshFailed
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonOIDCRefreshFailed
 		case "oidc_config":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCConfigMissing
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonOIDCConfigMissing
 		case "oidc_ca_missing":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCCAMissing
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonOIDCCAMissing
 		case "tofu":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonTOFUFailed
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonTOFUFailed
 		// Kubeconfig-specific reasons
 		case "secret_missing":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonSecretMissing
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonSecretMissing
 		case "secret_key_missing":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonSecretKeyMissing
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonSecretKeyMissing
 		case "parse":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonKubeconfigInvalid
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonKubeconfigInvalid
 		case "connection":
-			conditionReason = telekomv1alpha1.ClusterConfigReasonClusterUnreachable
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonClusterUnreachable
 		default:
-			conditionReason = telekomv1alpha1.ClusterConfigReasonValidationFailed
+			conditionReason = breakglassv1alpha1.ClusterConfigReasonValidationFailed
 		}
 	}
 
 	// Re-fetch the object to get the latest version and check if we should skip
-	var latest telekomv1alpha1.ClusterConfig
+	var latest breakglassv1alpha1.ClusterConfig
 	if err := ccc.Client.Get(ctx, client.ObjectKeyFromObject(cc), &latest); err != nil {
 		if apierrors.IsNotFound(err) {
 			lg.Debugw("ClusterConfig deleted before status update, skipping", "cluster", cc.Name)
@@ -570,7 +570,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 	coordinator := utils.NewStatusCoordinator()
 	skipInfo := coordinator.ShouldSkipStatusUpdateDetailed(
 		latest.Status.Conditions,
-		string(telekomv1alpha1.ClusterConfigConditionReady),
+		string(breakglassv1alpha1.ClusterConfigConditionReady),
 		conditionStatus,
 		string(conditionReason),
 	)
@@ -592,7 +592,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 
 	// Update condition with typed constant
 	condition := metav1.Condition{
-		Type:               string(telekomv1alpha1.ClusterConfigConditionReady),
+		Type:               string(breakglassv1alpha1.ClusterConfigConditionReady),
 		Status:             conditionStatus,
 		ObservedGeneration: latest.Generation,
 		Reason:             string(conditionReason),
@@ -628,7 +628,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 	return nil
 }
 
-func (ccc *ClusterConfigChecker) applyStatus(ctx context.Context, config *telekomv1alpha1.ClusterConfig) error {
+func (ccc *ClusterConfigChecker) applyStatus(ctx context.Context, config *breakglassv1alpha1.ClusterConfig) error {
 	return ssa.ApplyClusterConfigStatus(ctx, ccc.Client, config)
 }
 

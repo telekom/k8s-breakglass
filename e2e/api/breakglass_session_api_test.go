@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -99,7 +99,7 @@ type SessionSummary struct {
 	Cluster   string                                 `json:"cluster"`
 	User      string                                 `json:"user"`
 	Group     string                                 `json:"group"`
-	State     telekomv1alpha1.BreakglassSessionState `json:"state"`
+	State     breakglassv1alpha1.BreakglassSessionState `json:"state"`
 	Reason    string                                 `json:"reason,omitempty"`
 	CreatedAt metav1.Time                            `json:"createdAt"`
 	ExpiresAt *metav1.Time                           `json:"expiresAt,omitempty"`
@@ -138,7 +138,7 @@ func (c *BreakglassSessionAPIClient) ListSessions(ctx context.Context, t *testin
 }
 
 // GetSession retrieves a specific breakglass session
-func (c *BreakglassSessionAPIClient) GetSession(ctx context.Context, t *testing.T, name, namespace string) (*telekomv1alpha1.BreakglassSession, int, error) {
+func (c *BreakglassSessionAPIClient) GetSession(ctx context.Context, t *testing.T, name, namespace string) (*breakglassv1alpha1.BreakglassSession, int, error) {
 	// Note: The API uses just :name, not :namespace/:name
 	path := fmt.Sprintf("%s/%s", sessionsAPIBasePath, name)
 
@@ -159,12 +159,12 @@ func (c *BreakglassSessionAPIClient) GetSession(ctx context.Context, t *testing.
 
 	// The API returns an envelope with session and approvalMeta
 	var envelope struct {
-		Session      telekomv1alpha1.BreakglassSession `json:"session"`
+		Session      breakglassv1alpha1.BreakglassSession `json:"session"`
 		ApprovalMeta interface{}                       `json:"approvalMeta"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		// Fallback: try parsing as bare session object
-		var session telekomv1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		if err2 := json.Unmarshal(body, &session); err2 != nil {
 			return nil, resp.StatusCode, fmt.Errorf("failed to parse session: %w", err)
 		}
@@ -175,7 +175,7 @@ func (c *BreakglassSessionAPIClient) GetSession(ctx context.Context, t *testing.
 }
 
 // CreateSession creates a new breakglass session
-func (c *BreakglassSessionAPIClient) CreateSession(ctx context.Context, t *testing.T, req BreakglassSessionRequest) (*telekomv1alpha1.BreakglassSession, int, error) {
+func (c *BreakglassSessionAPIClient) CreateSession(ctx context.Context, t *testing.T, req BreakglassSessionRequest) (*breakglassv1alpha1.BreakglassSession, int, error) {
 	resp, err := c.doRequest(ctx, http.MethodPost, sessionsAPIBasePath, req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create session: %w", err)
@@ -192,7 +192,7 @@ func (c *BreakglassSessionAPIClient) CreateSession(ctx context.Context, t *testi
 		return nil, resp.StatusCode, fmt.Errorf("failed to create session: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	var session telekomv1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	if err := json.Unmarshal(body, &session); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("failed to parse session: %w", err)
 	}
@@ -408,7 +408,7 @@ func TestBreakglassSessionAPICreateAndGet(t *testing.T) {
 		t.Logf("Created breakglass session: %s", createdSessionName)
 
 		// Add to cleanup
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: createdSessionName, Namespace: session.Namespace},
 		})
 	})
@@ -507,13 +507,13 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 		require.NoError(t, err, "CreateSession should succeed")
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: namespace},
 		})
 
 		// Wait for session to be pending
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
 
 		// Approver can approve
 		status, err := approverClient.ApproveSession(ctx, t, session.Name, namespace)
@@ -523,7 +523,7 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 		time.Sleep(time.Second)
 		updatedSession, _, err := requesterClient.GetSession(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateApproved, updatedSession.Status.State,
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updatedSession.Status.State,
 			"Session should be approved after approval")
 	})
 
@@ -552,13 +552,13 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 		require.NoError(t, err, "CreateSession should succeed")
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: namespace},
 		})
 
 		// Wait for session to be pending
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
 
 		// Approver can reject
 		status, err := approverClient.RejectSession(ctx, t, session.Name, namespace, "Insufficient justification")
@@ -568,8 +568,8 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 		time.Sleep(time.Second)
 		updatedSession, _, err := requesterClient.GetSession(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
-		assert.True(t, updatedSession.Status.State == telekomv1alpha1.SessionStateRejected ||
-			updatedSession.Status.State == telekomv1alpha1.SessionStateExpired,
+		assert.True(t, updatedSession.Status.State == breakglassv1alpha1.SessionStateRejected ||
+			updatedSession.Status.State == breakglassv1alpha1.SessionStateExpired,
 			"Session should be rejected/expired after rejection, got: %s", updatedSession.Status.State)
 	})
 
@@ -633,13 +633,13 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 		require.NoError(t, err, "CreateSession should succeed")
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: namespace},
 		})
 
 		// Wait for session to be pending
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
 
 		// Requester can withdraw their own pending session
 		status, err := requesterClient.WithdrawSession(ctx, t, session.Name, namespace)
@@ -662,20 +662,20 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 		require.NoError(t, err, "CreateSession should succeed")
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: namespace},
 		})
 
 		// Wait for pending and approve
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
 
 		_, err = approverClient.ApproveSession(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Approval should succeed")
 
 		// Wait for approved (active)
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForConditionTimeout)
 
 		// Owner can drop their active session
 		status, err := requesterClient.DropSession(ctx, t, session.Name, namespace)
@@ -697,20 +697,20 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 		require.NoError(t, err, "CreateSession should succeed")
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: namespace},
 		})
 
 		// Wait for pending and approve
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForConditionTimeout)
 
 		_, err = approverClient.ApproveSession(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Approval should succeed")
 
 		// Wait for approved (active)
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForConditionTimeout)
 
 		// Approver can cancel an active session
 		status, err := approverClient.CancelSession(ctx, t, session.Name, namespace)

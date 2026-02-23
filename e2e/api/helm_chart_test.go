@@ -30,7 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -118,7 +118,7 @@ users:
 	require.NoError(t, err, "kubectl apply failed: %s", string(applyOutput))
 
 	// Wait for ClusterConfig to be created
-	var clusterConfig telekomv1alpha1.ClusterConfig
+	var clusterConfig breakglassv1alpha1.ClusterConfig
 	require.Eventually(t, func() bool {
 		err := cli.Get(ctx, types.NamespacedName{
 			Name:      "helm-e2e-cluster",
@@ -203,7 +203,7 @@ func TestHelmChartOIDCDeployment(t *testing.T) {
 	require.NoError(t, err, "kubectl apply failed: %s", string(applyOutput))
 
 	// Wait for ClusterConfig to be created
-	var clusterConfig telekomv1alpha1.ClusterConfig
+	var clusterConfig breakglassv1alpha1.ClusterConfig
 	require.Eventually(t, func() bool {
 		err := cli.Get(ctx, types.NamespacedName{
 			Name:      "helm-oidc-cluster",
@@ -217,7 +217,7 @@ func TestHelmChartOIDCDeployment(t *testing.T) {
 
 	// Verify ClusterConfig OIDC fields
 	assert.Equal(t, "helm-oidc-cluster", clusterConfig.Spec.ClusterID)
-	assert.Equal(t, telekomv1alpha1.ClusterAuthTypeOIDC, clusterConfig.Spec.AuthType)
+	assert.Equal(t, breakglassv1alpha1.ClusterAuthTypeOIDC, clusterConfig.Spec.AuthType)
 	assert.NotNil(t, clusterConfig.Spec.OIDCAuth)
 	assert.NotEmpty(t, clusterConfig.Spec.OIDCAuth.IssuerURL)
 	assert.NotEmpty(t, clusterConfig.Spec.OIDCAuth.ClientID)
@@ -312,7 +312,7 @@ users:
 	require.NoError(t, err, "kubectl apply failed: %s", string(applyOutput))
 
 	// Wait for ClusterConfig to be created
-	var clusterConfig telekomv1alpha1.ClusterConfig
+	var clusterConfig breakglassv1alpha1.ClusterConfig
 	require.Eventually(t, func() bool {
 		err := cli.Get(ctx, types.NamespacedName{
 			Name:      "helm-binding-cluster",
@@ -323,7 +323,7 @@ users:
 	cleanup.Add(&clusterConfig)
 
 	t.Run("BasicBindingCreated", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "basic-debug-binding",
@@ -353,7 +353,7 @@ users:
 	})
 
 	t.Run("SchedulingConstraintsBinding", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "scheduled-debug-binding",
@@ -376,7 +376,7 @@ users:
 	})
 
 	t.Run("NamespaceConstraintsBinding", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "namespace-restricted-binding",
@@ -395,7 +395,7 @@ users:
 	})
 
 	t.Run("ImpersonationBinding", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "impersonated-binding",
@@ -417,7 +417,7 @@ users:
 	})
 
 	t.Run("TemplateSelectorBinding", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "dev-all-templates",
@@ -440,7 +440,7 @@ users:
 	})
 
 	t.Run("SchedulingOptionsBinding", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "multi-option-binding",
@@ -468,7 +468,7 @@ users:
 	})
 
 	t.Run("ClusterSelectorBinding", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "env-based-binding",
@@ -487,7 +487,7 @@ users:
 	})
 
 	t.Run("FullConfigBinding", func(t *testing.T) {
-		var binding telekomv1alpha1.DebugSessionClusterBinding
+		var binding breakglassv1alpha1.DebugSessionClusterBinding
 		require.Eventually(t, func() bool {
 			err := cli.Get(ctx, types.NamespacedName{
 				Name:      "full-config-binding",

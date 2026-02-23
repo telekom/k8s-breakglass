@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -109,7 +109,7 @@ func TestUserInMultipleGroupsMultipleEscalations(t *testing.T) {
 	// Test with specific groups that are in requester's group list
 	// Using "dev", "ops", "requester" as these are the core identity groups
 	groupsToTest := []string{"dev", "ops", "requester"}
-	escalations := make([]*telekomv1alpha1.BreakglassEscalation, len(groupsToTest))
+	escalations := make([]*breakglassv1alpha1.BreakglassEscalation, len(groupsToTest))
 
 	for i, group := range groupsToTest {
 		escalation := helpers.NewEscalationBuilder("e2e-mu002-escalation-"+group, namespace).
@@ -220,7 +220,7 @@ func TestGroupBasedApproverCanApprove(t *testing.T) {
 	require.NoError(t, err, "Approver in senior-ops group should be able to approve")
 
 	// Verify session is approved
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 }
 
 // TestMultipleApproversFirstWins tests MU-005: Multiple approvers from same group - first wins
@@ -268,15 +268,15 @@ func TestMultipleApproversFirstWins(t *testing.T) {
 	require.NoError(t, err, "First approver should succeed")
 
 	// Wait for approved state
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Second approver attempts to approve - should fail or be no-op
 	approver2Client := tc.ClientForUser(helpers.TestUsers.ApproverInternal)
 	_ = approver2Client.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	// This could either error or be a no-op - verify session is still approved
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
-	assert.Equal(t, telekomv1alpha1.SessionStateApproved, fetched.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, fetched.Status.State)
 }
 
 // TestBlockSelfApprovalEnabled tests MU-006: User in both requester and approver group - blockSelfApproval enforced
@@ -367,7 +367,7 @@ func TestBlockSelfApprovalDisabled(t *testing.T) {
 	require.NoError(t, err, "Self-approval should be allowed")
 
 	// Verify session is approved
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 }
 
 // TestCrossGroupEscalationChain tests MU-008: Cross-group escalation chain
@@ -469,11 +469,11 @@ func TestActiveSessionRemainsAfterGroupRemoval(t *testing.T) {
 
 	approverClient := tc.ClientForUser(helpers.TestUsers.Approver)
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Verify session is still approved (not revoked)
 	// In real scenario, group removal in IdP wouldn't affect already-approved sessions
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
-	assert.Equal(t, telekomv1alpha1.SessionStateApproved, fetched.Status.State, "Session should remain active after theoretical group removal")
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, fetched.Status.State, "Session should remain active after theoretical group removal")
 }

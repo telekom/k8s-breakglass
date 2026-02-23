@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -29,7 +29,7 @@ func TestFetchGroupMembersFromMultipleIDPs_EventEmission_SuccessfulSync(t *testi
 		IDPLoader: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-esc",
 			Namespace: "default",
@@ -68,7 +68,7 @@ func TestFetchGroupMembersFromMultipleIDPs_EventEmission_MultipleGroups(t *testi
 		IDPLoader: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-esc-multi-group",
 			Namespace: "default",
@@ -105,7 +105,7 @@ func TestFetchGroupMembersFromMultipleIDPs_EventEmission_NoResolverFallback(t *t
 		IDPLoader: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-esc-fallback",
 			Namespace: "default",

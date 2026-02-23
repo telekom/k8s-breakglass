@@ -31,7 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -106,7 +106,7 @@ func TestWebhookSubjectAccessReviewAllow(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err, "Failed to approve session via API")
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	t.Logf("Session approved via API: %s", session.Name)
 
 	// Session is now approved - the WaitForSessionState helper above ensures the state is persisted
@@ -234,13 +234,13 @@ func TestWebhookExpiredSession(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err, "Failed to approve session via API")
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Set session to expired state (simulating time passage)
-	var toExpire telekomv1alpha1.BreakglassSession
+	var toExpire breakglassv1alpha1.BreakglassSession
 	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 	require.NoError(t, err)
-	toExpire.Status.State = telekomv1alpha1.SessionStateExpired
+	toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 	toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Hour)) // Already expired
 	err = cli.Status().Update(ctx, &toExpire)
 	require.NoError(t, err)

@@ -41,7 +41,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -63,18 +63,18 @@ func TestAuditConfigLogSink(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("LogSinkConfiguration", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-log-sink",
 				Labels: helpers.E2ELabelsWithFeature("audit-log"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "stdout-logs",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Format: "json",
 							Level:  "info",
 						},
@@ -87,29 +87,29 @@ func TestAuditConfigLogSink(t *testing.T) {
 		require.NoError(t, err, "Failed to create AuditConfig with Log sink")
 
 		// Verify AuditConfig was created
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.True(t, fetched.Spec.Enabled, "AuditConfig should be enabled")
 		assert.Len(t, fetched.Spec.Sinks, 1, "Should have one sink")
-		assert.Equal(t, telekomv1alpha1.AuditSinkTypeLog, fetched.Spec.Sinks[0].Type)
+		assert.Equal(t, breakglassv1alpha1.AuditSinkTypeLog, fetched.Spec.Sinks[0].Type)
 
 		t.Logf("AU-001: AuditConfig with Log sink created successfully")
 	})
 
 	t.Run("LogSinkWithFormatOptions", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-log-json",
 				Labels: helpers.E2ELabelsWithFeature("audit-log-json"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "json-logs",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Format: "json",
 							Level:  "debug",
 						},
@@ -121,7 +121,7 @@ func TestAuditConfigLogSink(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with JSON log format")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "json", fetched.Spec.Sinks[0].Log.Format)
@@ -143,18 +143,18 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("KafkaSinkBasic", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-kafka-basic",
 				Labels: helpers.E2ELabelsWithFeature("audit-kafka"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "kafka-sink",
-						Type: telekomv1alpha1.AuditSinkTypeKafka,
-						Kafka: &telekomv1alpha1.KafkaSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKafka,
+						Kafka: &breakglassv1alpha1.KafkaSinkSpec{
 							Brokers:     []string{"breakglass-kafka.breakglass-system.svc.cluster.local:9092"},
 							Topic:       "breakglass-audit-events",
 							Compression: "snappy",
@@ -167,7 +167,7 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with Kafka sink")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-audit-events", fetched.Spec.Sinks[0].Kafka.Topic)
@@ -177,18 +177,18 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 	})
 
 	t.Run("KafkaSinkWithBatching", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-kafka-batch",
 				Labels: helpers.E2ELabelsWithFeature("audit-kafka-batch"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "kafka-batched",
-						Type: telekomv1alpha1.AuditSinkTypeKafka,
-						Kafka: &telekomv1alpha1.KafkaSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKafka,
+						Kafka: &breakglassv1alpha1.KafkaSinkSpec{
 							Brokers:             []string{"kafka:9092"},
 							Topic:               "audit-events-batched",
 							BatchSize:           50,
@@ -204,7 +204,7 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with batched Kafka sink")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, 50, fetched.Spec.Sinks[0].Kafka.BatchSize)
@@ -228,18 +228,18 @@ func TestAuditConfigWebhookSink(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("WebhookSinkConfiguration", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-webhook",
 				Labels: helpers.E2ELabelsWithFeature("audit-webhook"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "webhook-sink",
-						Type: telekomv1alpha1.AuditSinkTypeWebhook,
-						Webhook: &telekomv1alpha1.WebhookSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+						Webhook: &breakglassv1alpha1.WebhookSinkSpec{
 							URL:            "https://audit-receiver.example.com/events",
 							TimeoutSeconds: 30,
 						},
@@ -251,7 +251,7 @@ func TestAuditConfigWebhookSink(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with Webhook sink")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.NotNil(t, fetched.Spec.Sinks[0].Webhook)
@@ -276,18 +276,18 @@ func TestAuditConfigKubernetesSink(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("KubernetesEventSink", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-k8s-events",
 				Labels: helpers.E2ELabelsWithFeature("audit-k8s-events"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "k8s-events",
-						Type: telekomv1alpha1.AuditSinkTypeKubernetes,
-						Kubernetes: &telekomv1alpha1.KubernetesSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKubernetes,
+						Kubernetes: &breakglassv1alpha1.KubernetesSinkSpec{
 							EventTypes: []string{"session.created", "session.approved"},
 						},
 					},
@@ -298,7 +298,7 @@ func TestAuditConfigKubernetesSink(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with Kubernetes event sink")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.NotNil(t, fetched.Spec.Sinks[0].Kubernetes)
@@ -321,34 +321,34 @@ func TestAuditConfigMultiSink(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("MultipleSinks", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-multi-sink",
 				Labels: helpers.E2ELabelsWithFeature("audit-multi-sink"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "log-sink",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Format: "json",
 							Level:  "info",
 						},
 					},
 					{
 						Name: "kafka-sink",
-						Type: telekomv1alpha1.AuditSinkTypeKafka,
-						Kafka: &telekomv1alpha1.KafkaSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKafka,
+						Kafka: &breakglassv1alpha1.KafkaSinkSpec{
 							Brokers: []string{"kafka:9092"},
 							Topic:   "audit-multi-sink-events",
 						},
 					},
 					{
 						Name: "webhook-sink",
-						Type: telekomv1alpha1.AuditSinkTypeWebhook,
-						Webhook: &telekomv1alpha1.WebhookSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+						Webhook: &breakglassv1alpha1.WebhookSinkSpec{
 							URL:            "https://siem.example.com/ingest",
 							TimeoutSeconds: 10,
 						},
@@ -360,19 +360,19 @@ func TestAuditConfigMultiSink(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with multiple sinks")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.Sinks, 3, "Should have 3 sinks configured")
 
 		// Verify each sink type
-		sinkTypes := make(map[telekomv1alpha1.AuditSinkType]bool)
+		sinkTypes := make(map[breakglassv1alpha1.AuditSinkType]bool)
 		for _, sink := range fetched.Spec.Sinks {
 			sinkTypes[sink.Type] = true
 		}
-		assert.True(t, sinkTypes[telekomv1alpha1.AuditSinkTypeLog])
-		assert.True(t, sinkTypes[telekomv1alpha1.AuditSinkTypeKafka])
-		assert.True(t, sinkTypes[telekomv1alpha1.AuditSinkTypeWebhook])
+		assert.True(t, sinkTypes[breakglassv1alpha1.AuditSinkTypeLog])
+		assert.True(t, sinkTypes[breakglassv1alpha1.AuditSinkTypeKafka])
+		assert.True(t, sinkTypes[breakglassv1alpha1.AuditSinkTypeWebhook])
 
 		t.Logf("AU-005: AuditConfig with 3 sinks (log, kafka, webhook) created")
 	})
@@ -391,18 +391,18 @@ func TestAuditConfigEventFiltering(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("FilterByEventType", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-filter-type",
 				Labels: helpers.E2ELabelsWithFeature("audit-filter"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "filtered-log",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Format: "json",
 						},
 						// Filter to only capture session events
@@ -420,7 +420,7 @@ func TestAuditConfigEventFiltering(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with event type filter")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.Sinks[0].EventTypes, 4, "Should filter 4 event types")
@@ -443,18 +443,18 @@ func TestAuditConfigSeverityFiltering(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("FilterBySeverity", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-filter-severity",
 				Labels: helpers.E2ELabelsWithFeature("audit-severity"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "warning-only",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Format: "json",
 						},
 						MinSeverity: "warning",
@@ -466,7 +466,7 @@ func TestAuditConfigSeverityFiltering(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with severity filter")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "warning", fetched.Spec.Sinks[0].MinSeverity)
@@ -489,20 +489,20 @@ func TestAuditConfigQueue(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("QueueConfiguration", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-queue",
 				Labels: helpers.E2ELabelsWithFeature("audit-queue"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "queued-log",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
 					},
 				},
-				Queue: &telekomv1alpha1.AuditQueueConfig{
+				Queue: &breakglassv1alpha1.AuditQueueConfig{
 					Size:       10000,
 					Workers:    4,
 					DropOnFull: false,
@@ -513,7 +513,7 @@ func TestAuditConfigQueue(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with queue settings")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Queue)
@@ -542,17 +542,17 @@ func TestAuditConfigDisabled(t *testing.T) {
 		// When setting Enabled: false in Go, the JSON serialization omits the field
 		// (zero value with omitempty), and the K8s API server applies the default (true).
 		// This test verifies this expected defaulting behavior.
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-disabled",
 				Labels: helpers.E2ELabelsWithFeature("audit-disabled"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: false,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "disabled-sink",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
 					},
 				},
 			},
@@ -561,7 +561,7 @@ func TestAuditConfigDisabled(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create disabled AuditConfig")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		// Due to omitempty and default=true, the field defaults to true.
@@ -588,18 +588,18 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 
 	// First, ensure we have an AuditConfig with Kubernetes events sink
 	// so we can verify events are generated
-	auditConfig := &telekomv1alpha1.AuditConfig{
+	auditConfig := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "e2e-audit-event-test",
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.AuditConfigSpec{
+		Spec: breakglassv1alpha1.AuditConfigSpec{
 			Enabled: true,
-			Sinks: []telekomv1alpha1.AuditSinkConfig{
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
 				{
 					Name: "k8s-events",
-					Type: telekomv1alpha1.AuditSinkTypeKubernetes,
-					Kubernetes: &telekomv1alpha1.KubernetesSinkSpec{
+					Type: breakglassv1alpha1.AuditSinkTypeKubernetes,
+					Kubernetes: &breakglassv1alpha1.KubernetesSinkSpec{
 						EventTypes: []string{"session.created", "session.approved"},
 					},
 				},
@@ -643,7 +643,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 
 	// Wait for approval
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Give time for audit events to be generated
 	time.Sleep(2 * time.Second)
@@ -724,18 +724,18 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 
 	t.Run("CreateWebhookAuditConfig", func(t *testing.T) {
 		// Create AuditConfig pointing to the test webhook receiver
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-webhook-functional",
 				Labels: helpers.E2ELabelsWithFeature("audit-webhook-functional"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "test-webhook-receiver",
-						Type: telekomv1alpha1.AuditSinkTypeWebhook,
-						Webhook: &telekomv1alpha1.WebhookSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+						Webhook: &breakglassv1alpha1.WebhookSinkSpec{
 							URL:            webhookInternalURL + "/events",
 							TimeoutSeconds: 30,
 						},
@@ -785,7 +785,7 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session")
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Wait for audit events to be delivered
 		time.Sleep(3 * time.Second)

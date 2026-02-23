@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,7 +31,7 @@ import (
 func TestGetRESTConfigFromOIDC_Success(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create mock OIDC server
 	tokenResp := tokenResponse{
@@ -62,15 +62,15 @@ func TestGetRESTConfigFromOIDC_Success(t *testing.T) {
 	}
 
 	// Create ClusterConfig with OIDC auth
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: server.URL,
 				ClientID:  "test-client",
 				Server:    "https://api.oidc-cluster.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name: "oidc-secret", Namespace: "default", Key: "client-secret",
 				},
 			},
@@ -94,13 +94,13 @@ func TestGetRESTConfigFromOIDC_Success(t *testing.T) {
 func TestGetRESTConfigFromOIDC_NilOIDCProvider(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://auth.example.com",
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
@@ -123,7 +123,7 @@ func TestGetRESTConfigFromOIDC_NilOIDCProvider(t *testing.T) {
 func TestGetRESTConfig_OIDCWithCaching(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create mock OIDC server
 	tokenCallCount := 0
@@ -149,15 +149,15 @@ func TestGetRESTConfig_OIDCWithCaching(t *testing.T) {
 		Data:       map[string][]byte{"client-secret": []byte("secret")},
 	}
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cached-oidc-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: server.URL,
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name: "oidc-secret", Namespace: "default", Key: "client-secret",
 				},
 			},
@@ -187,7 +187,7 @@ func TestGetRESTConfig_OIDCWithCaching(t *testing.T) {
 func TestGetRESTConfig_InferOIDCAuthType(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -211,15 +211,15 @@ func TestGetRESTConfig_InferOIDCAuthType(t *testing.T) {
 	}
 
 	// ClusterConfig without explicit authType but with OIDCAuth - should infer OIDC
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "inferred-oidc-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			// No AuthType specified - should be inferred from OIDCAuth
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: server.URL,
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name: "oidc-secret", Namespace: "default", Key: "client-secret",
 				},
 			},
@@ -242,16 +242,16 @@ func TestGetRESTConfig_InferOIDCAuthType(t *testing.T) {
 func TestGetRESTConfig_InferKubeconfigAuthType(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
 	// ClusterConfig without explicit authType but with KubeconfigSecretRef - should infer Kubeconfig
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "inferred-kube-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			// No AuthType specified - should be inferred from KubeconfigSecretRef
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "kube-secret", Namespace: "default",
 			},
 		},
@@ -278,12 +278,12 @@ func TestGetRESTConfig_InferKubeconfigAuthType(t *testing.T) {
 func TestGetRESTConfig_NoAuthMethodConfigured(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// ClusterConfig without any auth configuration
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "no-auth-cluster", Namespace: "default"},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{
 			// No AuthType, no OIDCAuth, no KubeconfigSecretRef
 		},
 	}
@@ -303,12 +303,12 @@ func TestGetRESTConfig_NoAuthMethodConfigured(t *testing.T) {
 func TestGetRESTConfig_UnsupportedAuthType(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// ClusterConfig with unsupported auth type
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "unsupported-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			AuthType: "UnsupportedType",
 		},
 	}
@@ -328,7 +328,7 @@ func TestGetRESTConfig_UnsupportedAuthType(t *testing.T) {
 func TestGetRESTConfig_OIDCWithQPSAndBurst(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -354,17 +354,17 @@ func TestGetRESTConfig_OIDCWithQPSAndBurst(t *testing.T) {
 	qps := int32(100)
 	burst := int32(200)
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-qps-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
 			QPS:      &qps,
 			Burst:    &burst,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: server.URL,
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name: "oidc-secret", Namespace: "default", Key: "client-secret",
 				},
 			},
@@ -391,14 +391,14 @@ func TestGetRESTConfig_OIDCWithQPSAndBurst(t *testing.T) {
 func TestEvictClusterLocked_RemovesAllRelatedData(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "evict-test", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "kube-secret", Namespace: "default",
 			},
 		},
@@ -448,23 +448,23 @@ func TestEvictClusterLocked_RemovesAllRelatedData(t *testing.T) {
 func TestInvalidateSecret_RemovesMultipleClusters(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
 	// Two clusters using the same secret
-	cc1 := telekomv1alpha1.ClusterConfig{
+	cc1 := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-1", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "shared-secret", Namespace: "default",
 			},
 		},
 	}
-	cc2 := telekomv1alpha1.ClusterConfig{
+	cc2 := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-2", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "shared-secret", Namespace: "default",
 			},
 		},
@@ -513,14 +513,14 @@ func TestInvalidateSecret_RemovesMultipleClusters(t *testing.T) {
 func TestGetRESTConfigFromKubeconfig_CustomSecretKey(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "custom-key-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "kube-secret",
 				Namespace: "default",
 				Key:       "custom-kubeconfig-key",
@@ -548,19 +548,19 @@ func TestGetRESTConfigFromKubeconfig_CustomSecretKey(t *testing.T) {
 func TestGetRESTConfigFromKubeconfig_WithQPSAndBurst(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
 	qps := int32(50)
 	burst := int32(100)
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "qps-burst-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			QPS:   &qps,
 			Burst: &burst,
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "kube-secret", Namespace: "default",
 			},
 		},
@@ -587,12 +587,12 @@ func TestGetRESTConfigFromKubeconfig_WithQPSAndBurst(t *testing.T) {
 func TestGetRESTConfigFromKubeconfig_InvalidKubeconfig(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "invalid-kube-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "kube-secret", Namespace: "default",
 			},
 		},
@@ -618,12 +618,12 @@ func TestGetRESTConfigFromKubeconfig_InvalidKubeconfig(t *testing.T) {
 func TestGetRESTConfigFromKubeconfig_SecretNotFound(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "missing-secret-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "non-existent-secret", Namespace: "default",
 			},
 		},
@@ -644,12 +644,12 @@ func TestGetRESTConfigFromKubeconfig_SecretNotFound(t *testing.T) {
 func TestGetRESTConfigFromKubeconfig_MissingKubeconfigSecretRef(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "no-ref-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeKubeconfig,
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
 			// KubeconfigSecretRef is nil
 		},
 	}
@@ -676,12 +676,12 @@ func TestGetRESTConfigFromKubeconfig_MissingKubeconfigSecretRef(t *testing.T) {
 func TestGetAcrossAllNamespaces_CachesResult(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "any-ns-cluster", Namespace: "some-namespace"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "secret", Namespace: "some-namespace",
 			},
 		},
@@ -714,7 +714,7 @@ func TestGetAcrossAllNamespaces_CachesResult(t *testing.T) {
 func TestGetAcrossAllNamespaces_NotFound(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
@@ -733,14 +733,14 @@ func TestRESTConfigCacheTTL_Expiry(t *testing.T) {
 	// Test that cache entries have proper expiry times set
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "ttl-test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "kube-secret", Namespace: "default",
 			},
 		},
@@ -782,14 +782,14 @@ func TestRESTConfigCacheTTL_Expiry(t *testing.T) {
 func TestGetRESTConfig_ConcurrentAccess_SingleFetch(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "concurrent-test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "kube-secret", Namespace: "default",
 			},
 		},
@@ -876,14 +876,14 @@ func TestGetRESTConfig_ConcurrentAccess_ExpiredCache(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "expiry-test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name: "kube-secret", Namespace: "default",
 			},
 		},

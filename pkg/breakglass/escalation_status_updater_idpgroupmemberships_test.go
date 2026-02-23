@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -45,21 +45,21 @@ func TestIDPGroupMembershipsPopulation(t *testing.T) {
 	// Create fake K8s client with status subresource support
 	cli := fake.NewClientBuilder().
 		WithScheme(Scheme).
-		WithStatusSubresource(&telekomv1alpha1.BreakglassEscalation{}).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
 		Build()
 
 	// Create escalation with multi-IDP fields
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "admin-group",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"my-cluster"},
 			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Groups: []string{"admin", "ops"},
 			},
 			AllowedIdentityProvidersForApprovers: []string{"keycloak-prod"},
@@ -85,7 +85,7 @@ func TestIDPGroupMembershipsPopulation(t *testing.T) {
 	updater.runOnce(context.Background(), logger.Sugar())
 
 	// Fetch updated escalation
-	updated := &telekomv1alpha1.BreakglassEscalation{}
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
 	err = cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
 	assert.NoError(t, err, "should fetch updated escalation")
 
@@ -127,21 +127,21 @@ func TestIDPGroupMembershipsNotPopulatedInLegacyMode(t *testing.T) {
 
 	cli := fake.NewClientBuilder().
 		WithScheme(Scheme).
-		WithStatusSubresource(&telekomv1alpha1.BreakglassEscalation{}).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
 		Build()
 
 	// Create escalation WITHOUT multi-IDP fields
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-legacy",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "admin-group",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"my-cluster"},
 			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Groups: []string{"admin"},
 			},
 			// Empty/nil AllowedIdentityProvidersForApprovers = legacy mode
@@ -162,7 +162,7 @@ func TestIDPGroupMembershipsNotPopulatedInLegacyMode(t *testing.T) {
 
 	updater.runOnce(context.Background(), logger.Sugar())
 
-	updated := &telekomv1alpha1.BreakglassEscalation{}
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
 	err = cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
 	assert.NoError(t, err)
 
@@ -196,20 +196,20 @@ func TestLegacyModeWithMultipleGroups(t *testing.T) {
 
 	cli := fake.NewClientBuilder().
 		WithScheme(Scheme).
-		WithStatusSubresource(&telekomv1alpha1.BreakglassEscalation{}).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
 		Build()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "multi-group",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "admin-group",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"my-cluster"},
 			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Groups: []string{"admin", "operators", "auditors"},
 			},
 		},
@@ -229,7 +229,7 @@ func TestLegacyModeWithMultipleGroups(t *testing.T) {
 
 	updater.runOnce(context.Background(), logger.Sugar())
 
-	updated := &telekomv1alpha1.BreakglassEscalation{}
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
 	err = cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
 	assert.NoError(t, err)
 
@@ -261,20 +261,20 @@ func TestEmptyApproverGroups(t *testing.T) {
 
 	cli := fake.NewClientBuilder().
 		WithScheme(Scheme).
-		WithStatusSubresource(&telekomv1alpha1.BreakglassEscalation{}).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
 		Build()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "no-approvers",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "admin-group",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"my-cluster"},
 			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Groups: []string{}, // Empty - should be skipped
 			},
 		},
@@ -294,7 +294,7 @@ func TestEmptyApproverGroups(t *testing.T) {
 
 	updater.runOnce(context.Background(), logger.Sugar())
 
-	updated := &telekomv1alpha1.BreakglassEscalation{}
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
 	err = cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
 	assert.NoError(t, err)
 

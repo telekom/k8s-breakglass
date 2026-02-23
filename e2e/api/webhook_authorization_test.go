@@ -31,7 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -307,12 +307,12 @@ func TestSessionBasedAuthorization(t *testing.T) {
 		cleanup.Add(session)
 
 		// Verify session is in Pending state
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 
 		// A pending session should not authorize requests
-		require.NotEqual(t, telekomv1alpha1.SessionStateApproved, fetched.Status.State,
+		require.NotEqual(t, breakglassv1alpha1.SessionStateApproved, fetched.Status.State,
 			"Pending session should not be in Approved state")
 
 		// Withdraw session so subsequent tests can create new ones
@@ -320,7 +320,7 @@ func TestSessionBasedAuthorization(t *testing.T) {
 		require.NoError(t, err, "Failed to withdraw session")
 
 		// Wait for withdrawal to be fully persisted before next subtest runs
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateWithdrawn, 10*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateWithdrawn, 10*time.Second)
 	})
 
 	t.Run("ExpiredSessionShouldNotAuthorize", func(t *testing.T) {
@@ -354,20 +354,20 @@ func TestSessionBasedAuthorization(t *testing.T) {
 		// Approve first
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Failed to approve session via API")
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Set to expired state (simulating time passage)
-		var toExpire telekomv1alpha1.BreakglassSession
+		var toExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 		require.NoError(t, err)
 
-		toExpire.Status.State = telekomv1alpha1.SessionStateExpired
+		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 		toExpire.Status.ReasonEnded = "timeExpired"
 		err = cli.Status().Update(ctx, &toExpire)
 		require.NoError(t, err)
 
 		// Wait for expired state to be fully persisted before next subtest runs
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateExpired, 10*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateExpired, 10*time.Second)
 	})
 
 	t.Run("WithdrawnSessionShouldNotAuthorize", func(t *testing.T) {
@@ -402,10 +402,10 @@ func TestSessionBasedAuthorization(t *testing.T) {
 		require.NoError(t, err, "Failed to withdraw session via API")
 
 		// Verify session is withdrawn
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
-		require.Equal(t, telekomv1alpha1.SessionStateWithdrawn, fetched.Status.State,
+		require.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, fetched.Status.State,
 			"Session should be in Withdrawn state")
 	})
 }
@@ -452,13 +452,13 @@ func TestApprovedSessionAuthorization(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Failed to approve session via API")
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify approval details
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
-		require.Equal(t, telekomv1alpha1.SessionStateApproved, fetched.Status.State)
+		require.Equal(t, breakglassv1alpha1.SessionStateApproved, fetched.Status.State)
 		require.NotEmpty(t, fetched.Status.Approver, "Session should track approver")
 		require.NotEmpty(t, fetched.Status.Approvers, "Session should track approvers list")
 	})
@@ -490,15 +490,15 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-webhook-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-webhook-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Webhook Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -509,14 +509,14 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Webhook Test Session",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 			TargetNamespace: "default",
 		},
 	}
@@ -525,16 +525,16 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 
 	// Create binding to allow the template on this cluster
 	bindingName := helpers.GenerateUniqueName("e2e-webhook-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -551,7 +551,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	t.Logf("Created debug session %s via API", session.Name)
 
 	// Add session to cleanup (need to refetch to get proper resource version)
-	var sessionToCleanup telekomv1alpha1.DebugSession
+	var sessionToCleanup breakglassv1alpha1.DebugSession
 	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &sessionToCleanup)
 	require.NoError(t, err)
 	cleanup.Add(&sessionToCleanup)
@@ -559,14 +559,14 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	// Wait for session to become Active (reconciler handles state transitions)
 	t.Log("Waiting for debug session to become Active...")
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 	t.Logf("Debug session is now Active, AllowedPods count: %d", len(session.Status.AllowedPods))
 
 	// Wait for AllowedPods to be populated by the reconciler
 	var allowedPodName string
 	var allowedPodNamespace string
 	err = helpers.WaitForConditionSimple(ctx, func() bool {
-		var ds telekomv1alpha1.DebugSession
+		var ds breakglassv1alpha1.DebugSession
 		if err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &ds); err != nil {
 			return false
 		}
@@ -681,7 +681,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 
 		// Wait for the session to be terminated
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateTerminated, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.DebugSessionStateTerminated, helpers.WaitForStateTimeout)
 
 		// Create SAR for pods/exec to an allowed pod
 		// Use Username because debug sessions store RequestedBy as preferred_username claim

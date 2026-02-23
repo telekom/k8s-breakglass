@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -64,10 +64,10 @@ func TestApprovalSingleApprover(t *testing.T) {
 	cleanup.Add(session)
 
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Verify approver recorded
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
 	assert.Equal(t, helpers.TestUsers.Approver.Email, fetched.Status.Approver)
 }
@@ -114,9 +114,9 @@ func TestApprovalAnyFromList(t *testing.T) {
 
 	// Use a different approver than the first one
 	require.NoError(t, seniorApproverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
 	assert.Equal(t, helpers.TestUsers.SeniorApprover.Email, fetched.Status.Approver)
 }
@@ -199,7 +199,7 @@ func TestApprovalByGroup(t *testing.T) {
 	cleanup.Add(session)
 
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 }
 
 // TestRejectionWithReason tests AW-006: Rejection with reason is recorded
@@ -238,10 +238,10 @@ func TestRejectionWithReason(t *testing.T) {
 
 	rejectionReason := "Access not needed for this maintenance window"
 	require.NoError(t, approverClient.RejectSessionViaAPI(ctx, t, session.Name, namespace, rejectionReason))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
 
 	// Verify rejection details
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
 	assert.Equal(t, helpers.TestUsers.Approver.Email, fetched.Status.Approver)
 	assert.False(t, fetched.Status.RejectedAt.IsZero())
@@ -282,11 +282,11 @@ func TestApprovalTimeoutNoAutoApprove(t *testing.T) {
 
 	// Wait for timeout
 	t.Log("Waiting for approval timeout...")
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateTimeout, helpers.WaitForConditionTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateTimeout, helpers.WaitForConditionTimeout)
 
 	// Verify state is timeout, not approved
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
-	assert.Equal(t, telekomv1alpha1.SessionStateTimeout, fetched.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateTimeout, fetched.Status.State)
 	assert.True(t, fetched.Status.ApprovedAt.IsZero(), "ApprovedAt should not be set for timeout")
 }

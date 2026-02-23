@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,7 +18,7 @@ import (
 
 func newSSATestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
 	return scheme
@@ -33,16 +33,16 @@ func TestApplyObject_BreakglassSession(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	session := &telekomv1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: telekomv1alpha1.GroupVersion.String(),
+			APIVersion: breakglassv1alpha1.GroupVersion.String(),
 			Kind:       "BreakglassSession",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "test@example.com",
 			GrantedGroup: "test-group",
@@ -54,7 +54,7 @@ func TestApplyObject_BreakglassSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify object was created
-	var created telekomv1alpha1.BreakglassSession
+	var created breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &created)
 	require.NoError(t, err)
 	assert.Equal(t, "test-cluster", created.Spec.Cluster)
@@ -102,12 +102,12 @@ func TestApplyObject_Update(t *testing.T) {
 	scheme := newSSATestScheme()
 
 	// Pre-create an object
-	existing := &telekomv1alpha1.BreakglassSession{
+	existing := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "old-cluster",
 			User:         "old@example.com",
 			GrantedGroup: "old-group",
@@ -120,16 +120,16 @@ func TestApplyObject_Update(t *testing.T) {
 		Build()
 
 	// Apply with updated values
-	updated := &telekomv1alpha1.BreakglassSession{
+	updated := &breakglassv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: telekomv1alpha1.GroupVersion.String(),
+			APIVersion: breakglassv1alpha1.GroupVersion.String(),
 			Kind:       "BreakglassSession",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "new-cluster",
 			User:         "new@example.com",
 			GrantedGroup: "new-group",
@@ -139,7 +139,7 @@ func TestApplyObject_Update(t *testing.T) {
 	err := ApplyObject(ctx, fakeClient, updated)
 	require.NoError(t, err)
 
-	var result telekomv1alpha1.BreakglassSession
+	var result breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &result)
 	require.NoError(t, err)
 	assert.Equal(t, "new-cluster", result.Spec.Cluster)
@@ -151,42 +151,42 @@ func TestApplyStatus_BreakglassSession(t *testing.T) {
 	scheme := newSSATestScheme()
 
 	// Pre-create an object (status updates require existing object)
-	existing := &telekomv1alpha1.BreakglassSession{
+	existing := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "test@example.com",
 			GrantedGroup: "test-group",
 		},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
-			State: telekomv1alpha1.SessionStatePending,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
 		},
 	}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(existing).
-		WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 		Build()
 
 	// Update status
 	updated := existing.DeepCopy()
 	updated.TypeMeta = metav1.TypeMeta{
-		APIVersion: telekomv1alpha1.GroupVersion.String(),
+		APIVersion: breakglassv1alpha1.GroupVersion.String(),
 		Kind:       "BreakglassSession",
 	}
-	updated.Status.State = telekomv1alpha1.SessionStateApproved
+	updated.Status.State = breakglassv1alpha1.SessionStateApproved
 
 	err := ApplyStatus(ctx, fakeClient, updated)
 	require.NoError(t, err)
 
-	var result telekomv1alpha1.BreakglassSession
+	var result breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &result)
 	require.NoError(t, err)
-	assert.Equal(t, telekomv1alpha1.SessionStateApproved, result.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, result.Status.State)
 }
 
 func TestToApplyConfiguration_UnsupportedType(t *testing.T) {
@@ -225,25 +225,25 @@ func TestApplyObject_ClusterConfig(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	config := &telekomv1alpha1.ClusterConfig{
+	config := &breakglassv1alpha1.ClusterConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: telekomv1alpha1.GroupVersion.String(),
+			APIVersion: breakglassv1alpha1.GroupVersion.String(),
 			Kind:       "ClusterConfig",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			ClusterID: "cluster-123",
-			AuthType:  telekomv1alpha1.ClusterAuthTypeKubeconfig,
+			AuthType:  breakglassv1alpha1.ClusterAuthTypeKubeconfig,
 		},
 	}
 
 	err := ApplyObject(ctx, fakeClient, config)
 	require.NoError(t, err)
 
-	var created telekomv1alpha1.ClusterConfig
+	var created breakglassv1alpha1.ClusterConfig
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &created)
 	require.NoError(t, err)
 	assert.Equal(t, "cluster-123", created.Spec.ClusterID)
@@ -257,16 +257,16 @@ func TestApplyObject_DebugSession(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: telekomv1alpha1.GroupVersion.String(),
+			APIVersion: breakglassv1alpha1.GroupVersion.String(),
 			Kind:       "DebugSession",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-debug",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -274,7 +274,7 @@ func TestApplyObject_DebugSession(t *testing.T) {
 	err := ApplyObject(ctx, fakeClient, session)
 	require.NoError(t, err)
 
-	var created telekomv1alpha1.DebugSession
+	var created breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-debug", Namespace: "default"}, &created)
 	require.NoError(t, err)
 	assert.Equal(t, "test-cluster", created.Spec.Cluster)

@@ -19,7 +19,7 @@ package helpers
 import (
 	"context"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -31,18 +31,18 @@ const FieldOwnerE2E = "breakglass-e2e-test"
 // ApplySessionStatus applies a BreakglassSession status update using SSA.
 // This is the preferred method for updating session status in e2e tests as it
 // mirrors production behavior and avoids field manager conflicts.
-func ApplySessionStatus(ctx context.Context, c client.Client, session *telekomv1alpha1.BreakglassSession) error {
+func ApplySessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) error {
 	return ssa.ApplyBreakglassSessionStatus(ctx, c, session)
 }
 
 // ApplyDebugSessionStatus applies a DebugSession status update using SSA.
 // This is the preferred method for updating debug session status in e2e tests.
-func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *telekomv1alpha1.DebugSession) error {
+func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
 	return ssa.ApplyDebugSessionStatus(ctx, c, session)
 }
 
 // ApplyEscalationStatus applies a BreakglassEscalation status update using SSA.
 // This is the preferred method for updating escalation status in e2e tests.
-func ApplyEscalationStatus(ctx context.Context, c client.Client, escalation *telekomv1alpha1.BreakglassEscalation) error {
+func ApplyEscalationStatus(ctx context.Context, c client.Client, escalation *breakglassv1alpha1.BreakglassEscalation) error {
 	return ssa.ApplyBreakglassEscalationStatus(ctx, c, escalation)
 }

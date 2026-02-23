@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/Nerzal/gocloak/v13"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
@@ -69,7 +69,7 @@ func (c *kcCache) set(k string, v []string) {
 
 func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakRuntimeConfig) *KeycloakGroupMemberResolver {
 	ttl := 10 * time.Minute
-	if d, err := telekomv1alpha1.ParseDuration(cfg.CacheTTL); err == nil && d > 0 {
+	if d, err := breakglassv1alpha1.ParseDuration(cfg.CacheTTL); err == nil && d > 0 {
 		ttl = d
 	}
 	gc := gocloak.NewClient(cfg.BaseURL)
@@ -470,7 +470,7 @@ func (u EscalationStatusUpdater) Start(ctx context.Context) {
 
 func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLogger) {
 	log.Debugw("Starting escalation status update cycle", "resolver", fmt.Sprintf("%T", u.Resolver))
-	escList := telekomv1alpha1.BreakglassEscalationList{}
+	escList := breakglassv1alpha1.BreakglassEscalationList{}
 	if err := u.K8sClient.List(ctx, &escList); err != nil {
 		log.Errorw("Failed listing BreakglassEscalations for status update", "error", err)
 		return
@@ -611,7 +611,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 	log.Debugw("Completed escalation status update cycle")
 }
 
-func (u EscalationStatusUpdater) applyStatus(ctx context.Context, escalation *telekomv1alpha1.BreakglassEscalation) error {
+func (u EscalationStatusUpdater) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
 	return ssa.ApplyBreakglassEscalationStatus(ctx, u.K8sClient, escalation)
 }
 
@@ -619,7 +619,7 @@ func (u EscalationStatusUpdater) applyStatus(ctx context.Context, escalation *te
 // Returns: map[idpName]map[groupName][]memberList, syncStatus, and error list (never blocks escalation creation)
 func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 	ctx context.Context,
-	escalation *telekomv1alpha1.BreakglassEscalation,
+	escalation *breakglassv1alpha1.BreakglassEscalation,
 	idpNames []string,
 	groups []string,
 	log *zap.SugaredLogger,
@@ -664,7 +664,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 			// Emit event on IdentityProvider resource
 			if u.EventRecorder != nil {
-				idp := &telekomv1alpha1.IdentityProvider{}
+				idp := &breakglassv1alpha1.IdentityProvider{}
 				idp.SetName(idpName)
 				u.EventRecorder.Eventf(idp, nil, "Warning", "GroupSyncConfigLoadFailed", "GroupSyncConfigLoadFailed",
 					"Failed to load IDP config for escalation %s/%s: %v",
@@ -683,7 +683,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 			// Emit event on IdentityProvider resource
 			if u.EventRecorder != nil {
-				idp := &telekomv1alpha1.IdentityProvider{}
+				idp := &breakglassv1alpha1.IdentityProvider{}
 				idp.SetName(idpName)
 				u.EventRecorder.Eventf(idp, nil, "Warning", "GroupSyncResolverCreationFailed", "GroupSyncResolverCreationFailed",
 					"Failed to create group sync resolver for escalation %s/%s",
@@ -706,7 +706,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 				// Emit event on IdentityProvider resource
 				if u.EventRecorder != nil {
-					idp := &telekomv1alpha1.IdentityProvider{}
+					idp := &breakglassv1alpha1.IdentityProvider{}
 					idp.SetName(idpName)
 					u.EventRecorder.Eventf(idp, nil, "Warning", "GroupFetchFailed", "GroupFetchFailed",
 						"Failed to fetch group %s for escalation %s/%s: %v",

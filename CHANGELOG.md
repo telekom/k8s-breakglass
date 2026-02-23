@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Consolidated scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Removed duplicate `pkg/config/scheme.go` (dead code). Standardized import alias from `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files. Added `importas` linter rule to enforce the alias. Added missing godoc comments to all exported types and functions in `api/v1alpha1/`.
+
 ### Added
 
 - **Round displayed request durations** ([#399](https://github.com/telekom/k8s-breakglass/issues/399)): Added `formatDurationRounded()`, `formatDurationFromSecondsRounded()`, and `formatRoundedSeconds()` to the `useDuration` composable. Durations >= 1h are rounded to the nearest 5 minutes, durations >= 1m are rounded to the nearest minute, and durations < 1m show exact seconds. Applied to the Approval Modal and Pending Approvals views.

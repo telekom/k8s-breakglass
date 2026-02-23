@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -82,12 +82,12 @@ func (c *EscalationAPIClient) doRequest(ctx context.Context, method, path string
 }
 
 // ListEscalations lists all escalations
-func (c *EscalationAPIClient) ListEscalations(ctx context.Context, t *testing.T) ([]telekomv1alpha1.BreakglassEscalation, int, error) {
+func (c *EscalationAPIClient) ListEscalations(ctx context.Context, t *testing.T) ([]breakglassv1alpha1.BreakglassEscalation, int, error) {
 	return c.ListEscalationsWithOptions(ctx, t, "", false, false)
 }
 
 // ListEscalationsWithOptions lists escalations with filtering options
-func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t *testing.T, cluster string, includeHidden, activeOnly bool) ([]telekomv1alpha1.BreakglassEscalation, int, error) {
+func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t *testing.T, cluster string, includeHidden, activeOnly bool) ([]breakglassv1alpha1.BreakglassEscalation, int, error) {
 	path := escalationsBasePath
 	params := []string{}
 	if cluster != "" {
@@ -125,7 +125,7 @@ func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t 
 	}
 
 	// API returns array of BreakglassEscalation objects directly
-	var escalations []telekomv1alpha1.BreakglassEscalation
+	var escalations []breakglassv1alpha1.BreakglassEscalation
 	if err := json.Unmarshal(body, &escalations); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("failed to parse escalations: %w", err)
 	}
@@ -134,12 +134,12 @@ func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t 
 }
 
 // ListEscalationsForCluster lists all escalations for a specific cluster
-func (c *EscalationAPIClient) ListEscalationsForCluster(ctx context.Context, t *testing.T, cluster string) ([]telekomv1alpha1.BreakglassEscalation, int, error) {
+func (c *EscalationAPIClient) ListEscalationsForCluster(ctx context.Context, t *testing.T, cluster string) ([]breakglassv1alpha1.BreakglassEscalation, int, error) {
 	return c.ListEscalationsWithOptions(ctx, t, cluster, false, false)
 }
 
 // isEscalationActive returns true if the escalation has Ready=True condition (or no conditions)
-func isEscalationActive(e *telekomv1alpha1.BreakglassEscalation) bool {
+func isEscalationActive(e *breakglassv1alpha1.BreakglassEscalation) bool {
 	// Default to active if no Ready condition exists
 	cond := e.GetCondition("Ready")
 	if cond == nil {
@@ -321,7 +321,7 @@ func TestEscalationAPIEscalationProperties(t *testing.T) {
 		escalations, _, err := apiClient.ListEscalations(ctx, t)
 		require.NoError(t, err)
 
-		var found *telekomv1alpha1.BreakglassEscalation
+		var found *breakglassv1alpha1.BreakglassEscalation
 		for i := range escalations {
 			if escalations[i].Name == escName {
 				found = &escalations[i]
@@ -385,7 +385,7 @@ func TestEscalationAPIActiveStatus(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, status)
 
-		var found *telekomv1alpha1.BreakglassEscalation
+		var found *breakglassv1alpha1.BreakglassEscalation
 		for i := range escalations {
 			if escalations[i].Name == escName {
 				found = &escalations[i]
@@ -406,7 +406,7 @@ func TestEscalationAPIActiveStatus(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, status)
 
-		var found *telekomv1alpha1.BreakglassEscalation
+		var found *breakglassv1alpha1.BreakglassEscalation
 		for i := range escalations {
 			if escalations[i].Name == escName {
 				found = &escalations[i]

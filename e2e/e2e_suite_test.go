@@ -45,7 +45,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -65,15 +65,15 @@ func TestE2EPrerequisites(t *testing.T) {
 		cli := helpers.GetClient(t)
 
 		// Try to list BreakglassEscalations - if CRDs aren't installed, this will fail
-		escalations := &telekomv1alpha1.BreakglassEscalationList{}
+		escalations := &breakglassv1alpha1.BreakglassEscalationList{}
 		err := cli.List(ctx, escalations)
 		require.NoError(t, err, "BreakglassEscalation CRD should be installed")
 
-		sessions := &telekomv1alpha1.BreakglassSessionList{}
+		sessions := &breakglassv1alpha1.BreakglassSessionList{}
 		err = cli.List(ctx, sessions)
 		require.NoError(t, err, "BreakglassSession CRD should be installed")
 
-		policies := &telekomv1alpha1.DenyPolicyList{}
+		policies := &breakglassv1alpha1.DenyPolicyList{}
 		err = cli.List(ctx, policies)
 		require.NoError(t, err, "DenyPolicy CRD should be installed")
 	})

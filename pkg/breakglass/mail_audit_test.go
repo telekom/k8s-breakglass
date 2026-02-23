@@ -24,7 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
@@ -163,18 +163,18 @@ func TestSendSessionExpiredEmail_HappyPath(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 
 	startTime := metav1.NewTime(time.Now().Add(-2 * time.Hour))
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session-123",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "cluster-admin",
 			Cluster:      "production",
 		},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
-			State:           telekomv1alpha1.SessionStateExpired,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:           breakglassv1alpha1.SessionStateExpired,
 			ActualStartTime: startTime,
 		},
 	}
@@ -207,14 +207,14 @@ func TestSendSessionExpiredEmail_ApprovalTimeout(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 
 	startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "timeout-session"},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "developer",
 			Cluster:      "staging",
 		},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			ActualStartTime: startTime,
 		},
 	}
@@ -240,9 +240,9 @@ func TestSendSessionExpiredEmail_DisabledEmail(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(true)
 
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 	}
 
 	ctrl := &BreakglassSessionController{
@@ -265,9 +265,9 @@ func TestSendSessionExpiredEmail_NilMailService(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 	}
 
 	ctrl := &BreakglassSessionController{
@@ -288,9 +288,9 @@ func TestSendSessionExpiredEmail_MailServiceNotEnabled(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(false) // Not enabled
 
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 	}
 
 	ctrl := &BreakglassSessionController{
@@ -319,7 +319,7 @@ func TestSendSessionActivatedEmail_HappyPath(t *testing.T) {
 	//   an activation notification email when a scheduled session becomes active.
 
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
@@ -337,18 +337,18 @@ func TestSendSessionActivatedEmail_HappyPath(t *testing.T) {
 
 	startTime := metav1.NewTime(time.Now())
 	expiresAt := metav1.NewTime(time.Now().Add(2 * time.Hour))
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "scheduled-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "cluster-admin",
 			Cluster:      "production",
 		},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
-			State:           telekomv1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:           breakglassv1alpha1.SessionStateApproved,
 			ActualStartTime: startTime,
 			ExpiresAt:       expiresAt,
 		},
@@ -378,9 +378,9 @@ func TestSendSessionActivatedEmail_DisabledEmail(t *testing.T) {
 		disableEmail: true, // Email disabled
 	}
 
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 	}
 
 	activator.sendSessionActivatedEmail(session)
@@ -399,7 +399,7 @@ func TestSendSessionActivatedEmail_NilMailService(t *testing.T) {
 		mailService: nil,
 	}
 
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
 	}
 
@@ -414,7 +414,7 @@ func TestScheduledSessionActivator_WithMailService(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -445,19 +445,19 @@ func TestSendDebugSessionExpiredEmail_HappyPath(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 
 	startedAt := metav1.NewTime(time.Now().Add(-2 * time.Hour))
-	session := telekomv1alpha1.DebugSession{
+	session := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "debug-session-123",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           "production",
 			TemplateRef:       "standard-debug",
 			RequestedBy:       "developer@example.com",
 			RequestedDuration: "2h",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State:    telekomv1alpha1.DebugSessionStateExpired,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:    breakglassv1alpha1.DebugSessionStateExpired,
 			StartsAt: &startedAt,
 		},
 	}
@@ -485,9 +485,9 @@ func TestSendDebugSessionExpiredEmail_DisabledEmail(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(true)
 
-	session := telekomv1alpha1.DebugSession{
+	session := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
 	}
 
 	routine := &CleanupRoutine{
@@ -508,7 +508,7 @@ func TestSendDebugSessionExpiredEmail_NilMailService(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	session := telekomv1alpha1.DebugSession{
+	session := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
 	}
 
@@ -527,19 +527,19 @@ func TestSendDebugSessionExpiredEmail_NilStartsAt(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(true)
 
-	session := telekomv1alpha1.DebugSession{
+	session := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "debug-session",
 			Namespace:         "breakglass",
 			CreationTimestamp: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           "staging",
 			RequestedBy:       "user@example.com",
 			RequestedDuration: "1h",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			State:    telekomv1alpha1.DebugSessionStateExpired,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:    breakglassv1alpha1.DebugSessionStateExpired,
 			StartsAt: nil, // No start time set
 		},
 	}
@@ -567,7 +567,7 @@ func TestDebugSessionAPIController_WithAuditService(t *testing.T) {
 	mockAudit := NewMockAuditEmitter(true)
 
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -591,7 +591,7 @@ func TestEmitDebugSessionAuditEvent_HappyPath(t *testing.T) {
 	mockAudit := NewMockAuditEmitter(true)
 
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -599,12 +599,12 @@ func TestEmitDebugSessionAuditEvent_HappyPath(t *testing.T) {
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
 		WithAuditService(mockAudit)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-debug-session",
 			Namespace: "breakglass",
 		},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			RequestedBy: "developer@example.com",
 		},
@@ -629,7 +629,7 @@ func TestEmitDebugSessionAuditEvent_AuditNotEnabled(t *testing.T) {
 	mockAudit := NewMockAuditEmitter(false) // Not enabled
 
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -637,7 +637,7 @@ func TestEmitDebugSessionAuditEvent_AuditNotEnabled(t *testing.T) {
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
 		WithAuditService(mockAudit)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
 	}
 
@@ -654,7 +654,7 @@ func TestEmitDebugSessionAuditEvent_NilAuditService(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -662,7 +662,7 @@ func TestEmitDebugSessionAuditEvent_NilAuditService(t *testing.T) {
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 	// auditService is nil
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
 	}
 
@@ -686,7 +686,7 @@ func TestEmitDebugSessionAuditEvent_AllEventTypes(t *testing.T) {
 			mockAudit := NewMockAuditEmitter(true)
 
 			scheme := runtime.NewScheme()
-			err := telekomv1alpha1.AddToScheme(scheme)
+			err := breakglassv1alpha1.AddToScheme(scheme)
 			require.NoError(t, err)
 
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -694,12 +694,12 @@ func TestEmitDebugSessionAuditEvent_AllEventTypes(t *testing.T) {
 			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
 				WithAuditService(mockAudit)
 
-			session := &telekomv1alpha1.DebugSession{
+			session := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-session",
 					Namespace: "breakglass",
 				},
-				Spec: telekomv1alpha1.DebugSessionSpec{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					Cluster: "test-cluster",
 				},
 			}
@@ -726,10 +726,10 @@ func TestSendSessionExpiredEmail_EnqueueError(t *testing.T) {
 	mockMail.SetError(assert.AnError)
 
 	startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			ActualStartTime: startTime,
 		},
 	}
@@ -759,9 +759,9 @@ func TestSendSessionActivatedEmail_EnqueueError(t *testing.T) {
 		brandingName: "Breakglass",
 	}
 
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 	}
 
 	// Should not panic despite error
@@ -775,9 +775,9 @@ func TestSendDebugSessionExpiredEmail_EnqueueError(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 	mockMail.SetError(assert.AnError)
 
-	session := telekomv1alpha1.DebugSession{
+	session := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
 	}
 
 	routine := &CleanupRoutine{

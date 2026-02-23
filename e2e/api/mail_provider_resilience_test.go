@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -41,17 +41,17 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("ValidSMTPConfiguration", func(t *testing.T) {
-		provider := &telekomv1alpha1.MailProvider{
+		provider := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-valid"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "breakglass-mailhog.breakglass-system.svc.cluster.local",
 					Port: 1025,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "breakglass@example.com",
 				},
 			},
@@ -60,7 +60,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		err := cli.Create(ctx, provider)
 		require.NoError(t, err, "Failed to create valid MailProvider")
 
-		var fetched telekomv1alpha1.MailProvider
+		var fetched breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-mailhog.breakglass-system.svc.cluster.local", fetched.Spec.SMTP.Host)
@@ -69,17 +69,17 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 	})
 
 	t.Run("TLSConfiguration", func(t *testing.T) {
-		provider := &telekomv1alpha1.MailProvider{
+		provider := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-tls"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.example.com",
 					Port: 587,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "breakglass@example.com",
 				},
 			},
@@ -88,30 +88,30 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		err := cli.Create(ctx, provider)
 		require.NoError(t, err, "Failed to create TLS MailProvider")
 
-		var fetched telekomv1alpha1.MailProvider
+		var fetched breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
 		t.Logf("MAIL-002: TLS MailProvider created: host=%s, port=%d", fetched.Spec.SMTP.Host, fetched.Spec.SMTP.Port)
 	})
 
 	t.Run("AuthenticationConfiguration", func(t *testing.T) {
-		provider := &telekomv1alpha1.MailProvider{
+		provider := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-auth"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host:     "smtp.example.com",
 					Port:     587,
 					Username: "smtp-user",
-					PasswordRef: &telekomv1alpha1.SecretKeyReference{
+					PasswordRef: &breakglassv1alpha1.SecretKeyReference{
 						Name:      "smtp-credentials",
 						Namespace: "breakglass-system",
 						Key:       "password",
 					},
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "breakglass@example.com",
 				},
 			},
@@ -120,7 +120,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		err := cli.Create(ctx, provider)
 		require.NoError(t, err, "Failed to create authenticated MailProvider")
 
-		var fetched telekomv1alpha1.MailProvider
+		var fetched breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
 		assert.NotNil(t, fetched.Spec.SMTP.PasswordRef, "Password ref should be set")
@@ -142,7 +142,7 @@ func TestMailProviderStatusHealth(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("HealthyMailProviderHasReadyCondition", func(t *testing.T) {
-		var provider telekomv1alpha1.MailProvider
+		var provider breakglassv1alpha1.MailProvider
 		err := cli.Get(ctx, types.NamespacedName{Name: "breakglass-mailhog", Namespace: namespace}, &provider)
 		if err != nil {
 			err = cli.Get(ctx, types.NamespacedName{Name: "breakglass-mailhog"}, &provider)
@@ -158,17 +158,17 @@ func TestMailProviderStatusHealth(t *testing.T) {
 	})
 
 	t.Run("UnreachableSMTPReportsUnhealthy", func(t *testing.T) {
-		provider := &telekomv1alpha1.MailProvider{
+		provider := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-unreachable"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "definitely-not-a-real-smtp-server.invalid",
 					Port: 25,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "test@example.com",
 				},
 			},
@@ -179,7 +179,7 @@ func TestMailProviderStatusHealth(t *testing.T) {
 
 		time.Sleep(2 * time.Second)
 
-		var fetched telekomv1alpha1.MailProvider
+		var fetched breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
 
@@ -251,32 +251,32 @@ func TestMailProviderMultipleProviders(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("MultipleMailProvidersCanExist", func(t *testing.T) {
-		provider1 := &telekomv1alpha1.MailProvider{
+		provider1 := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-primary"),
 				Labels: helpers.E2ELabelsWithExtra(map[string]string{"purpose": "primary"}),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp1.example.com",
 					Port: 25,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "primary@example.com",
 				},
 			},
 		}
-		provider2 := &telekomv1alpha1.MailProvider{
+		provider2 := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-secondary"),
 				Labels: helpers.E2ELabelsWithExtra(map[string]string{"purpose": "secondary"}),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp2.example.com",
 					Port: 25,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "secondary@example.com",
 				},
 			},
@@ -290,7 +290,7 @@ func TestMailProviderMultipleProviders(t *testing.T) {
 		err = cli.Create(ctx, provider2)
 		require.NoError(t, err)
 
-		var list telekomv1alpha1.MailProviderList
+		var list breakglassv1alpha1.MailProviderList
 		err = cli.List(ctx, &list)
 		require.NoError(t, err)
 

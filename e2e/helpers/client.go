@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 var (
@@ -45,7 +45,7 @@ var (
 func init() {
 	// Initialize controller-runtime logger to suppress "log.SetLogger(...) was never called" warning
 	log.SetLogger(zap.New(zap.UseDevMode(true)))
-	_ = telekomv1alpha1.AddToScheme(scheme.Scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme.Scheme)
 }
 
 // GetKubeconfig returns the path to the kubeconfig file
@@ -147,7 +147,7 @@ func LogClusterConfigStatus(t *testing.T, ctx context.Context, cli client.Client
 	t.Helper()
 	t.Log("=== ClusterConfig Debug Information ===")
 
-	var list telekomv1alpha1.ClusterConfigList
+	var list breakglassv1alpha1.ClusterConfigList
 	if err := cli.List(ctx, &list); err != nil {
 		t.Logf("ERROR: Failed to list ClusterConfigs: %v", err)
 		return
@@ -189,7 +189,7 @@ func LogClusterConfigStatus(t *testing.T, ctx context.Context, cli client.Client
 // LogSessionStatus logs the status of a specific session for debugging
 func LogSessionStatus(t *testing.T, ctx context.Context, cli client.Client, name, namespace string) {
 	t.Helper()
-	var session telekomv1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	key := client.ObjectKey{Name: name, Namespace: namespace}
 	if err := cli.Get(ctx, key, &session); err != nil {
 		t.Logf("ERROR: Failed to get session %s/%s: %v", namespace, name, err)
@@ -212,12 +212,12 @@ func VerifyClusterConfigSecret(t *testing.T, ctx context.Context, cli client.Cli
 	t.Helper()
 
 	// Find the ClusterConfig
-	var ccList telekomv1alpha1.ClusterConfigList
+	var ccList breakglassv1alpha1.ClusterConfigList
 	if err := cli.List(ctx, &ccList); err != nil {
 		return fmt.Errorf("failed to list ClusterConfigs: %w", err)
 	}
 
-	var cc *telekomv1alpha1.ClusterConfig
+	var cc *breakglassv1alpha1.ClusterConfig
 	for _, item := range ccList.Items {
 		if item.Name == clusterName || item.Spec.Tenant == clusterName {
 			cc = &item

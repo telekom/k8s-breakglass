@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,12 +18,12 @@ import (
 func TestEvaluatorMatch(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{}
+	pol := &breakglassv1alpha1.DenyPolicy{}
 	pol.Name = "deny-secrets"
-	pol.Spec = telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{
-		Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+	pol.Spec = breakglassv1alpha1.DenyPolicySpec{Rules: []breakglassv1alpha1.DenyRule{{
+		Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 	}}}
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
@@ -53,13 +53,13 @@ func TestEvaluatorMatch(t *testing.T) {
 func TestEvaluatorWildcards(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 	// Build multiple policies exercising wildcard semantics.
 	pols := []runtime.Object{
-		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-verb-secret"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"*"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"ops-*"}}}}}},
-		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-configmap-specific-name"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{"prod-*"}}}}},
-		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-subresource-status"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"update"}, APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Subresources: []string{"status"}}}}},
-		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-resource"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"delete"}, APIGroups: []string{"*"}, Resources: []string{"*"}, Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}}}}}},
+		&breakglassv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-verb-secret"}, Spec: breakglassv1alpha1.DenyPolicySpec{Rules: []breakglassv1alpha1.DenyRule{{Verbs: []string{"*"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"ops-*"}}}}}},
+		&breakglassv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-configmap-specific-name"}, Spec: breakglassv1alpha1.DenyPolicySpec{Rules: []breakglassv1alpha1.DenyRule{{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{"prod-*"}}}}},
+		&breakglassv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-subresource-status"}, Spec: breakglassv1alpha1.DenyPolicySpec{Rules: []breakglassv1alpha1.DenyRule{{Verbs: []string{"update"}, APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Subresources: []string{"status"}}}}},
+		&breakglassv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-resource"}, Spec: breakglassv1alpha1.DenyPolicySpec{Rules: []breakglassv1alpha1.DenyRule{{Verbs: []string{"delete"}, APIGroups: []string{"*"}, Resources: []string{"*"}, Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}}}}}},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(pols...).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
@@ -95,12 +95,12 @@ func TestEvaluatorWildcards(t *testing.T) {
 func TestEvaluatorCalculateRiskScore(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
 
-	defaultRiskFactors := telekomv1alpha1.RiskFactors{
+	defaultRiskFactors := breakglassv1alpha1.RiskFactors{
 		HostNetwork:         10,
 		HostPID:             15,
 		HostIPC:             10,
@@ -114,7 +114,7 @@ func TestEvaluatorCalculateRiskScore(t *testing.T) {
 	tests := []struct {
 		name      string
 		pod       *corev1.Pod
-		rf        telekomv1alpha1.RiskFactors
+		rf        breakglassv1alpha1.RiskFactors
 		wantScore int
 	}{
 		{
@@ -301,14 +301,14 @@ func TestEvaluatorCalculateRiskScore(t *testing.T) {
 func TestEvaluatorShouldEvaluateSubresource(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
 
 	tests := []struct {
 		subresource string
-		scope       *telekomv1alpha1.PodSecurityScope
+		scope       *breakglassv1alpha1.PodSecurityScope
 		want        bool
 	}{
 		{"exec", nil, true},
@@ -319,8 +319,8 @@ func TestEvaluatorShouldEvaluateSubresource(t *testing.T) {
 		{"", nil, false},
 		{"proxy", nil, false},
 		// Custom scope
-		{"exec", &telekomv1alpha1.PodSecurityScope{Subresources: []string{"exec"}}, true},
-		{"attach", &telekomv1alpha1.PodSecurityScope{Subresources: []string{"exec"}}, false},
+		{"exec", &breakglassv1alpha1.PodSecurityScope{Subresources: []string{"exec"}}, true},
+		{"attach", &breakglassv1alpha1.PodSecurityScope{Subresources: []string{"exec"}}, false},
 	}
 
 	for _, tt := range tests {
@@ -339,19 +339,19 @@ func TestEvaluatorShouldEvaluateSubresource(t *testing.T) {
 func TestEvaluatorPodSecurityRules(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Policy with pod security rules
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-risky-exec"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 					HostNetwork:         10,
 					RunAsRoot:           20,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 30, Action: "warn"},
 					{MaxScore: 50, Action: "allow"},
 				},
@@ -421,20 +421,20 @@ func TestEvaluatorPodSecurityRules(t *testing.T) {
 func TestEvaluatorPodSecurityExemptions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-with-exemptions"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 					PodLabels:  map[string]string{"exempt": "true"},
 				},
 			},
@@ -536,16 +536,16 @@ func TestEvaluatorPodSecurityExemptions(t *testing.T) {
 func TestEvaluatorPodSecurityBlockFactors(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-with-blocks"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 10, // low score
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"}, // would normally allow
 				},
 				BlockFactors: []string{"privilegedContainer"}, // but this blocks
@@ -585,18 +585,18 @@ func TestEvaluatorPodSecurityBlockFactors(t *testing.T) {
 func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-high-risk"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 30,
 					HostNetwork:         20,
 					HostPID:             15,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 10, Action: "allow"},
 					{MaxScore: 50, Action: "deny", Reason: "risk too high"},
 				},
@@ -646,7 +646,7 @@ func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         privilegedPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(50),
 		},
@@ -665,10 +665,10 @@ func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         privilegedPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(50),
-			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}}, // not default
+			NamespaceScope:  &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}}, // not default
 		},
 	})
 	if err != nil {
@@ -699,10 +699,10 @@ func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "monitoring",
 		Pod:         monitoringPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(50),
-			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}},
+			NamespaceScope:  &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}},
 		},
 	})
 	if err != nil {
@@ -716,17 +716,17 @@ func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 func TestEvaluatorPodSecurityOverridesExemptFactors(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-host-access"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork: 30,
 					HostPID:     40,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"},
 				},
 				BlockFactors: []string{"hostNetwork", "hostPID"},
@@ -771,7 +771,7 @@ func TestEvaluatorPodSecurityOverridesExemptFactors(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         hostNetPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:       true,
 			ExemptFactors: []string{"hostNetwork"},
 		},
@@ -800,7 +800,7 @@ func TestEvaluatorPodSecurityOverridesExemptFactors(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         hostPIDPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:       true,
 			ExemptFactors: []string{"hostNetwork"}, // only exempts hostNetwork, not hostPID
 		},
@@ -816,16 +816,16 @@ func TestEvaluatorPodSecurityOverridesExemptFactors(t *testing.T) {
 func TestEvaluatorPodSecurityOverridesDisabled(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-risky"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 30,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 10, Action: "allow"},
 					{MaxScore: 50, Action: "deny"},
 				},
@@ -858,7 +858,7 @@ func TestEvaluatorPodSecurityOverridesDisabled(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         privilegedPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         false, // disabled
 			MaxAllowedScore: ptr.To(100),
 		},
@@ -878,16 +878,16 @@ func TestEvaluatorPodSecurityOverridesDisabled(t *testing.T) {
 func TestEvaluatorPodSecurityFailModeClosed(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-fail-closed"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"},
 				},
 				FailMode: "closed", // explicit fail-closed
@@ -920,16 +920,16 @@ func TestEvaluatorPodSecurityFailModeClosed(t *testing.T) {
 func TestEvaluatorPodSecurityFailModeOpen(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-fail-open"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 10, Action: "deny"}, // would deny if evaluated
 				},
 				FailMode: "open", // fail-open
@@ -959,16 +959,16 @@ func TestEvaluatorPodSecurityFailModeOpen(t *testing.T) {
 func TestEvaluatorPodSecurityFailModeDefault(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-fail-default"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"},
 				},
 				// FailMode not set - should default to "closed"
@@ -1002,16 +1002,16 @@ func TestEvaluatorPodSecurityFailModeDefault(t *testing.T) {
 func TestEvaluatorPodSecurityEmptyThresholds(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-no-thresholds"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{}, // empty thresholds
+				Thresholds: []breakglassv1alpha1.RiskThreshold{}, // empty thresholds
 			},
 		},
 	}
@@ -1050,16 +1050,16 @@ func TestEvaluatorPodSecurityEmptyThresholds(t *testing.T) {
 func TestEvaluatorPodSecurityZeroScorePod(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-zero-score"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 0, Action: "allow"}, // only score 0 allowed
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -1096,15 +1096,15 @@ func TestEvaluatorPodSecurityZeroScorePod(t *testing.T) {
 func TestEvaluatorPodSecurityNilRiskFactors(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-nil-factors"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
 				// RiskFactors with all zero values
-				RiskFactors: telekomv1alpha1.RiskFactors{},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				RiskFactors: breakglassv1alpha1.RiskFactors{},
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 0, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -1152,13 +1152,13 @@ func TestEvaluatorPodSecurityNilRiskFactors(t *testing.T) {
 func TestEvaluatorPodSecurityMultipleCapabilities(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-capabilities"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					Capabilities: map[string]int{
 						"NET_ADMIN":  10,
 						"SYS_ADMIN":  20,
@@ -1166,7 +1166,7 @@ func TestEvaluatorPodSecurityMultipleCapabilities(t *testing.T) {
 						"NET_RAW":    5,
 					},
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 20, Action: "allow"},
 					{MaxScore: 40, Action: "warn"},
 					{MaxScore: 100, Action: "deny"},
@@ -1212,17 +1212,17 @@ func TestEvaluatorPodSecurityMultipleCapabilities(t *testing.T) {
 func TestEvaluatorPodSecurityMultipleContainers(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-multi-container"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 30, // counted once per pod, not per container
 					RunAsRoot:           20, // counted once per pod
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 40, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -1282,19 +1282,19 @@ func TestEvaluatorPodSecurityMultipleContainers(t *testing.T) {
 func TestEvaluatorPodSecurityInitContainersCombined(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-init-containers"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 30,
 					Capabilities: map[string]int{
 						"NET_ADMIN": 15,
 					},
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 30, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -1345,17 +1345,17 @@ func TestEvaluatorPodSecurityInitContainersCombined(t *testing.T) {
 func TestEvaluatorPodSecurityMultipleHostPathVolumes(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-hostpath"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostPathWritable: 25,
 					HostPathReadOnly: 10,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 30, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -1405,13 +1405,13 @@ func TestEvaluatorPodSecurityMultipleHostPathVolumes(t *testing.T) {
 func TestEvaluatorPodSecurityAllFactorsCombined(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-all-factors"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         10,
 					HostPID:             15,
 					HostIPC:             10,
@@ -1422,7 +1422,7 @@ func TestEvaluatorPodSecurityAllFactorsCombined(t *testing.T) {
 						"NET_ADMIN": 30,
 					},
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 100, Action: "warn"},
 					{MaxScore: 200, Action: "deny"},
@@ -1486,19 +1486,19 @@ func TestEvaluatorPodSecurityAllFactorsCombined(t *testing.T) {
 func TestEvaluatorPodSecurityExemptionPartialLabelMatch(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-partial-labels"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
 					PodLabels: map[string]string{
 						"exempt": "true",
 						"team":   "platform",
@@ -1584,20 +1584,20 @@ func TestEvaluatorPodSecurityExemptionPartialLabelMatch(t *testing.T) {
 func TestEvaluatorPodSecurityExemptionMultipleNamespaces(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-multi-ns"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "kube-public", "monitoring"}},
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "kube-public", "monitoring"}},
 				},
 			},
 		},
@@ -1654,16 +1654,16 @@ func TestEvaluatorPodSecurityExemptionMultipleNamespaces(t *testing.T) {
 func TestEvaluatorPodSecurityExemptionNilExemptions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-no-exemptions"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
 				// Exemptions is nil
@@ -1709,19 +1709,19 @@ func TestEvaluatorPodSecurityExemptionNilExemptions(t *testing.T) {
 func TestEvaluatorPodSecurityExemptionEmptyLabels(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-empty-labels"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
 					PodLabels: map[string]string{}, // empty map
 				},
 			},
@@ -1766,18 +1766,18 @@ func TestEvaluatorPodSecurityExemptionEmptyLabels(t *testing.T) {
 func TestEvaluatorPodSecurityMultipleBlockFactors(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-multi-block"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         10,
 					HostPID:             10,
 					PrivilegedContainer: 10,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"}, // would allow all
 				},
 				BlockFactors: []string{"hostNetwork", "hostPID", "privilegedContainer"},
@@ -1864,18 +1864,18 @@ func TestEvaluatorPodSecurityMultipleBlockFactors(t *testing.T) {
 func TestEvaluatorPodSecurityBlockFactorWithOverride(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-block-override"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         10,
 					HostPID:             10,
 					PrivilegedContainer: 10,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"},
 				},
 				BlockFactors: []string{"hostNetwork", "hostPID", "privilegedContainer"},
@@ -1908,7 +1908,7 @@ func TestEvaluatorPodSecurityBlockFactorWithOverride(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         multiBlockPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:       true,
 			ExemptFactors: []string{"hostNetwork", "hostPID"},
 		},
@@ -1927,7 +1927,7 @@ func TestEvaluatorPodSecurityBlockFactorWithOverride(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         multiBlockPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:       true,
 			ExemptFactors: []string{"hostNetwork", "hostPID", "privilegedContainer"},
 		},
@@ -1943,17 +1943,17 @@ func TestEvaluatorPodSecurityBlockFactorWithOverride(t *testing.T) {
 func TestEvaluatorPodSecurityBlockFactorPrecedence(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Block factor should take precedence over threshold
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-block-precedence"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 5, // Very low score
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"}, // Would allow score 5
 				},
 				BlockFactors: []string{"privilegedContainer"}, // But blocks anyway
@@ -2001,16 +2001,16 @@ func TestEvaluatorPodSecurityBlockFactorPrecedence(t *testing.T) {
 func TestEvaluatorPodSecurityOverrideScoreExactBoundary(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-boundary"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 30, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -2040,7 +2040,7 @@ func TestEvaluatorPodSecurityOverrideScoreExactBoundary(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         pod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(50), // exactly equals score
 		},
@@ -2059,7 +2059,7 @@ func TestEvaluatorPodSecurityOverrideScoreExactBoundary(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         pod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(49), // one below score
 		},
@@ -2075,16 +2075,16 @@ func TestEvaluatorPodSecurityOverrideScoreExactBoundary(t *testing.T) {
 func TestEvaluatorPodSecurityOverrideNilMaxScore(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-nil-max"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 30, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -2114,7 +2114,7 @@ func TestEvaluatorPodSecurityOverrideNilMaxScore(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         pod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: nil, // no score override
 		},
@@ -2130,17 +2130,17 @@ func TestEvaluatorPodSecurityOverrideNilMaxScore(t *testing.T) {
 func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-combined"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         20,
 					PrivilegedContainer: 30,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 20, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -2173,11 +2173,11 @@ func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "monitoring",
 		Pod:         complexPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(60),                                                         // allows score 50 (20+30)
 			ExemptFactors:   []string{"hostNetwork"},                                            // bypasses block
-			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"monitoring"}}, // only in monitoring
+			NamespaceScope:  &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"monitoring"}}, // only in monitoring
 		},
 	})
 	if err != nil {
@@ -2207,11 +2207,11 @@ func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         differentNsPod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(60),
 			ExemptFactors:   []string{"hostNetwork"},
-			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"monitoring"}}, // doesn't include default
+			NamespaceScope:  &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"monitoring"}}, // doesn't include default
 		},
 	})
 	if err != nil {
@@ -2225,16 +2225,16 @@ func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 func TestEvaluatorPodSecurityOverrideZeroMaxScore(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-zero-override"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "deny"}, // denies everything
 				},
 			},
@@ -2259,7 +2259,7 @@ func TestEvaluatorPodSecurityOverrideZeroMaxScore(t *testing.T) {
 		Subresource: "exec",
 		Namespace:   "default",
 		Pod:         safePod,
-		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
+		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(0),
 		},
@@ -2279,16 +2279,16 @@ func TestEvaluatorPodSecurityOverrideZeroMaxScore(t *testing.T) {
 func TestEvaluatorMatchWithDetailsWarnAction(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-warn"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork: 25,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 10, Action: "allow"},
 					{MaxScore: 50, Action: "warn", Reason: "Elevated risk: {{.Factors}}"},
 					{MaxScore: 100, Action: "deny"},
@@ -2342,16 +2342,16 @@ func TestEvaluatorMatchWithDetailsWarnAction(t *testing.T) {
 func TestEvaluatorMatchWithDetailsDenyAction(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-detailed"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 60,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny", Reason: "Risk score {{.Score}} too high"},
 				},
 			},
@@ -2403,16 +2403,16 @@ func TestEvaluatorMatchWithDetailsDenyAction(t *testing.T) {
 func TestEvaluatorMatchWithDetailsAllowAction(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-allow"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork: 10,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -2456,7 +2456,7 @@ func TestEvaluatorMatchWithDetailsAllowAction(t *testing.T) {
 func TestEvaluatorMatchWithDetailsNoPolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// No policies at all
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -2504,17 +2504,17 @@ func TestEvaluatorMatchWithDetailsNoPolicy(t *testing.T) {
 func TestEvaluatorReasonTemplateRendering(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-template"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         20,
 					PrivilegedContainer: 30,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 10, Action: "allow"},
 					{MaxScore: 100, Action: "deny", Reason: "Pod {{.Pod}} in {{.Namespace}} denied (score={{.Score}}, factors={{.Factors}})"},
 				},
@@ -2570,16 +2570,16 @@ func TestEvaluatorReasonTemplateRendering(t *testing.T) {
 func TestEvaluatorReasonTemplateEmptyReason(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-no-reason"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 10, Action: "deny"}, // no reason specified
 				},
 			},
@@ -2623,16 +2623,16 @@ func TestEvaluatorReasonTemplateEmptyReason(t *testing.T) {
 func TestEvaluatorReasonTemplateInvalidTemplate(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-bad-template"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 10, Action: "deny", Reason: "Invalid template {{.Unknown}}"}, // invalid field
 				},
 			},
@@ -2677,19 +2677,19 @@ func TestEvaluatorReasonTemplateInvalidTemplate(t *testing.T) {
 func TestEvaluatorPodSecurityScopeCluster(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-prod-cluster"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			AppliesTo: &telekomv1alpha1.DenyPolicyScope{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			AppliesTo: &breakglassv1alpha1.DenyPolicyScope{
 				Clusters: []string{"prod-cluster-1", "prod-cluster-2"},
 			},
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
 			},
@@ -2745,19 +2745,19 @@ func TestEvaluatorPodSecurityScopeCluster(t *testing.T) {
 func TestEvaluatorPodSecurityScopeTenant(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-tenant-a"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			AppliesTo: &telekomv1alpha1.DenyPolicyScope{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			AppliesTo: &breakglassv1alpha1.DenyPolicyScope{
 				Tenants: []string{"tenant-a", "tenant-b"},
 			},
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
 			},
@@ -2812,19 +2812,19 @@ func TestEvaluatorPodSecurityScopeTenant(t *testing.T) {
 func TestEvaluatorPodSecurityScopeSession(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-specific-sessions"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			AppliesTo: &telekomv1alpha1.DenyPolicyScope{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			AppliesTo: &breakglassv1alpha1.DenyPolicyScope{
 				Sessions: []string{"emergency-session-1"},
 			},
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
 			},
@@ -2878,21 +2878,21 @@ func TestEvaluatorPodSecurityScopeSession(t *testing.T) {
 func TestEvaluatorPodSecurityScopeCombined(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Policy requires BOTH cluster AND tenant to match
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-combined-scope"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			AppliesTo: &telekomv1alpha1.DenyPolicyScope{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			AppliesTo: &breakglassv1alpha1.DenyPolicyScope{
 				Clusters: []string{"prod-cluster"},
 				Tenants:  []string{"tenant-a"},
 			},
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
 			},
@@ -2950,18 +2950,18 @@ func TestEvaluatorPodSecurityScopeCombined(t *testing.T) {
 func TestEvaluatorPodSecurityScopeNil(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Policy with no AppliesTo - should be global
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-global"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
 			// AppliesTo is nil - global scope
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "deny"},
 				},
 			},
@@ -3006,20 +3006,20 @@ func TestEvaluatorPodSecurityScopeNil(t *testing.T) {
 func TestEvaluatorNamespaceSelectorTerms(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create policies with different namespace selector configurations
 	policies := []runtime.Object{
 		// Policy with label selector only (no patterns)
-		&telekomv1alpha1.DenyPolicy{
+		&breakglassv1alpha1.DenyPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "deny-prod-env"},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{{
+			Spec: breakglassv1alpha1.DenyPolicySpec{
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:     []string{"delete"},
 					APIGroups: []string{""},
 					Resources: []string{"services"},
-					Namespaces: &telekomv1alpha1.NamespaceFilter{
-						SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
 							MatchLabels: map[string]string{"env": "production"},
 						}},
 					},
@@ -3027,18 +3027,18 @@ func TestEvaluatorNamespaceSelectorTerms(t *testing.T) {
 			},
 		},
 		// Policy with matchExpressions
-		&telekomv1alpha1.DenyPolicy{
+		&breakglassv1alpha1.DenyPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "deny-critical-tier"},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{{
+			Spec: breakglassv1alpha1.DenyPolicySpec{
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:     []string{"delete"},
 					APIGroups: []string{""},
 					Resources: []string{"configmaps"},
-					Namespaces: &telekomv1alpha1.NamespaceFilter{
-						SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
-							MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{{
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
+							MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{{
 								Key:      "tier",
-								Operator: telekomv1alpha1.NamespaceSelectorOpIn,
+								Operator: breakglassv1alpha1.NamespaceSelectorOpIn,
 								Values:   []string{"critical", "high"},
 							}},
 						}},
@@ -3047,16 +3047,16 @@ func TestEvaluatorNamespaceSelectorTerms(t *testing.T) {
 			},
 		},
 		// Policy with both patterns and selectors (OR semantics)
-		&telekomv1alpha1.DenyPolicy{
+		&breakglassv1alpha1.DenyPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "deny-mixed"},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{{
+			Spec: breakglassv1alpha1.DenyPolicySpec{
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:     []string{"delete"},
 					APIGroups: []string{""},
 					Resources: []string{"secrets"},
-					Namespaces: &telekomv1alpha1.NamespaceFilter{
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{
 						Patterns: []string{"kube-*"},
-						SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
 							MatchLabels: map[string]string{"restricted": "true"},
 						}},
 					},
@@ -3219,44 +3219,44 @@ func TestEvaluatorNamespaceSelectorTerms(t *testing.T) {
 func TestEvaluatorNamespaceSelectorMatchExpressionOperators(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	tests := []struct {
 		name     string
-		operator telekomv1alpha1.NamespaceSelectorOperator
+		operator breakglassv1alpha1.NamespaceSelectorOperator
 		key      string
 		values   []string
 		labels   map[string]string
 		want     bool
 	}{
 		// In operator
-		{"In - value present", telekomv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod", "staging"}, map[string]string{"env": "prod"}, true},
-		{"In - value not present", telekomv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod", "staging"}, map[string]string{"env": "dev"}, false},
-		{"In - key missing", telekomv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod"}, map[string]string{"tier": "critical"}, false},
+		{"In - value present", breakglassv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod", "staging"}, map[string]string{"env": "prod"}, true},
+		{"In - value not present", breakglassv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod", "staging"}, map[string]string{"env": "dev"}, false},
+		{"In - key missing", breakglassv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod"}, map[string]string{"tier": "critical"}, false},
 		// NotIn operator
-		{"NotIn - value not in list", telekomv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod", "staging"}, map[string]string{"env": "dev"}, true},
-		{"NotIn - value in list", telekomv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod", "staging"}, map[string]string{"env": "prod"}, false},
-		{"NotIn - key missing (passes)", telekomv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod"}, map[string]string{"tier": "critical"}, true},
+		{"NotIn - value not in list", breakglassv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod", "staging"}, map[string]string{"env": "dev"}, true},
+		{"NotIn - value in list", breakglassv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod", "staging"}, map[string]string{"env": "prod"}, false},
+		{"NotIn - key missing (passes)", breakglassv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod"}, map[string]string{"tier": "critical"}, true},
 		// Exists operator
-		{"Exists - key present", telekomv1alpha1.NamespaceSelectorOpExists, "env", nil, map[string]string{"env": "any"}, true},
-		{"Exists - key missing", telekomv1alpha1.NamespaceSelectorOpExists, "env", nil, map[string]string{"tier": "critical"}, false},
+		{"Exists - key present", breakglassv1alpha1.NamespaceSelectorOpExists, "env", nil, map[string]string{"env": "any"}, true},
+		{"Exists - key missing", breakglassv1alpha1.NamespaceSelectorOpExists, "env", nil, map[string]string{"tier": "critical"}, false},
 		// DoesNotExist operator
-		{"DoesNotExist - key missing", telekomv1alpha1.NamespaceSelectorOpDoesNotExist, "env", nil, map[string]string{"tier": "critical"}, true},
-		{"DoesNotExist - key present", telekomv1alpha1.NamespaceSelectorOpDoesNotExist, "env", nil, map[string]string{"env": "any"}, false},
+		{"DoesNotExist - key missing", breakglassv1alpha1.NamespaceSelectorOpDoesNotExist, "env", nil, map[string]string{"tier": "critical"}, true},
+		{"DoesNotExist - key present", breakglassv1alpha1.NamespaceSelectorOpDoesNotExist, "env", nil, map[string]string{"env": "any"}, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pol := &telekomv1alpha1.DenyPolicy{
+			pol := &breakglassv1alpha1.DenyPolicy{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-policy"},
-				Spec: telekomv1alpha1.DenyPolicySpec{
-					Rules: []telekomv1alpha1.DenyRule{{
+				Spec: breakglassv1alpha1.DenyPolicySpec{
+					Rules: []breakglassv1alpha1.DenyRule{{
 						Verbs:     []string{"get"},
 						APIGroups: []string{""},
 						Resources: []string{"pods"},
-						Namespaces: &telekomv1alpha1.NamespaceFilter{
-							SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
-								MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{{
+						Namespaces: &breakglassv1alpha1.NamespaceFilter{
+							SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
+								MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{{
 									Key:      tt.key,
 									Operator: tt.operator,
 									Values:   tt.values,
@@ -3291,17 +3291,17 @@ func TestEvaluatorNamespaceSelectorMatchExpressionOperators(t *testing.T) {
 func TestEvaluatorNamespaceSelectorMultipleTerms(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	pol := &telekomv1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "multi-term-policy"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Rules: []telekomv1alpha1.DenyRule{{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			Rules: []breakglassv1alpha1.DenyRule{{
 				Verbs:     []string{"delete"},
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
-				Namespaces: &telekomv1alpha1.NamespaceFilter{
-					SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{
+					SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 						// Term 1: env=prod
 						{MatchLabels: map[string]string{"env": "prod"}},
 						// Term 2: tier=critical (OR semantics)
@@ -3349,16 +3349,16 @@ func TestEvaluatorNamespaceSelectorMultipleTerms(t *testing.T) {
 func TestEvaluatorPodSecurityWarnActionReason(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	policy := &telekomv1alpha1.DenyPolicy{
+	policy := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "warn-test-policy"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 30, Action: "allow"},
 					{MaxScore: 70, Action: "warn", Reason: "Warning: Pod has risk score {{.Score}} due to {{.Factors}}"},
 					{MaxScore: 100, Action: "deny"},
@@ -3545,7 +3545,7 @@ func TestEvaluator_NoPolicies(t *testing.T) {
 	// Test when no policies exist - should allow all actions
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	logger := zap.NewNop().Sugar()
@@ -3574,17 +3574,17 @@ func TestEvaluator_EmptyAction(t *testing.T) {
 	// Empty action with wildcard policy
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	policy := &telekomv1alpha1.DenyPolicy{
+	policy := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-all-wildcard"},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Rules: []telekomv1alpha1.DenyRule{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			Rules: []breakglassv1alpha1.DenyRule{
 				{
 					Verbs:      []string{"*"},
 					APIGroups:  []string{"*"},
 					Resources:  []string{"*"},
-					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 				},
 			},
 		},
@@ -3615,17 +3615,17 @@ func TestEvaluator_EmptyAction(t *testing.T) {
 func TestEvaluatorMatchWithDetailsWarnThenDeny(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// First policy: warns at score > 5
-	warnPolicy := &telekomv1alpha1.DenyPolicy{
+	warnPolicy := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "aaa-warn-policy"}, // 'aaa' prefix ensures it's evaluated first alphabetically
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork: 10, // pod with hostNetwork gets score 10
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 5, Action: "allow"},
 					{MaxScore: 100, Action: "warn", Reason: "elevated risk"},
 				},
@@ -3634,14 +3634,14 @@ func TestEvaluatorMatchWithDetailsWarnThenDeny(t *testing.T) {
 	}
 
 	// Second policy: denies at score > 5
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
+	denyPolicy := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "zzz-deny-policy"}, // 'zzz' prefix ensures it's evaluated after the warn policy
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork: 10, // same scoring
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 5, Action: "allow"},
 					{MaxScore: 100, Action: "deny", Reason: "too risky"},
 				},

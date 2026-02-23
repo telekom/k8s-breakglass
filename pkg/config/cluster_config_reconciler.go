@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
@@ -65,7 +65,7 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log := r.Log.With("clusterconfig", req.NamespacedName)
 
 	// Fetch the ClusterConfig instance
-	clusterConfig := &telekomv1alpha1.ClusterConfig{}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
 	if err := r.Get(ctx, req.NamespacedName, clusterConfig); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Object not found, likely already deleted - nothing to do
@@ -99,7 +99,7 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 			// Remove the finalizer to allow deletion (retry on conflict)
 			if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				latest := &telekomv1alpha1.ClusterConfig{}
+				latest := &breakglassv1alpha1.ClusterConfig{}
 				if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
 					return err
 				}
@@ -107,9 +107,9 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					return nil
 				}
 				controllerutil.RemoveFinalizer(latest, ClusterConfigFinalizer)
-				patch := &telekomv1alpha1.ClusterConfig{
+				patch := &breakglassv1alpha1.ClusterConfig{
 					TypeMeta: metav1.TypeMeta{
-						APIVersion: telekomv1alpha1.GroupVersion.String(),
+						APIVersion: breakglassv1alpha1.GroupVersion.String(),
 						Kind:       "ClusterConfig",
 					},
 					ObjectMeta: metav1.ObjectMeta{
@@ -134,7 +134,7 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if !controllerutil.ContainsFinalizer(clusterConfig, ClusterConfigFinalizer) {
 		log.Debugw("Adding finalizer to ClusterConfig", "cluster", clusterName)
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			latest := &telekomv1alpha1.ClusterConfig{}
+			latest := &breakglassv1alpha1.ClusterConfig{}
 			if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
 				return err
 			}
@@ -142,9 +142,9 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				return nil
 			}
 			controllerutil.AddFinalizer(latest, ClusterConfigFinalizer)
-			patch := &telekomv1alpha1.ClusterConfig{
+			patch := &breakglassv1alpha1.ClusterConfig{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: telekomv1alpha1.GroupVersion.String(),
+					APIVersion: breakglassv1alpha1.GroupVersion.String(),
 					Kind:       "ClusterConfig",
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -168,7 +168,7 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // and terminates them by setting their state to Expired.
 func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx context.Context, clusterName string, log *zap.SugaredLogger) error {
 	// List all BreakglassSessions for this cluster using the spec.cluster index
-	sessionList := &telekomv1alpha1.BreakglassSessionList{}
+	sessionList := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := r.List(ctx, sessionList, client.MatchingFields{"spec.cluster": clusterName}); err != nil {
 		return fmt.Errorf("failed to list BreakglassSessions for cluster %s: %w", clusterName, err)
 	}
@@ -179,10 +179,10 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 		session := &sessionList.Items[i]
 
 		// Skip already terminal sessions
-		if session.Status.State == telekomv1alpha1.SessionStateExpired ||
-			session.Status.State == telekomv1alpha1.SessionStateRejected ||
-			session.Status.State == telekomv1alpha1.SessionStateWithdrawn ||
-			session.Status.State == telekomv1alpha1.SessionStateTimeout {
+		if session.Status.State == breakglassv1alpha1.SessionStateExpired ||
+			session.Status.State == breakglassv1alpha1.SessionStateRejected ||
+			session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
+			session.Status.State == breakglassv1alpha1.SessionStateTimeout {
 			continue
 		}
 
@@ -191,7 +191,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 			"previousState", session.Status.State)
 
 		// Update the session status to Expired
-		session.Status.State = telekomv1alpha1.SessionStateExpired
+		session.Status.State = breakglassv1alpha1.SessionStateExpired
 		session.Status.ExpiresAt = now
 
 		if err := ssa.ApplyBreakglassSessionStatus(ctx, r.Client, session); err != nil {
@@ -215,7 +215,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 // and terminates them by setting their state to Failed.
 func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.Context, clusterName string, log *zap.SugaredLogger) error {
 	// List all DebugSessions for this cluster using the spec.cluster index
-	sessionList := &telekomv1alpha1.DebugSessionList{}
+	sessionList := &breakglassv1alpha1.DebugSessionList{}
 	if err := r.List(ctx, sessionList, client.MatchingFields{"spec.cluster": clusterName}); err != nil {
 		return fmt.Errorf("failed to list DebugSessions for cluster %s: %w", clusterName, err)
 	}
@@ -225,9 +225,9 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 		session := &sessionList.Items[i]
 
 		// Skip already terminal sessions
-		if session.Status.State == telekomv1alpha1.DebugSessionStateFailed ||
-			session.Status.State == telekomv1alpha1.DebugSessionStateTerminated ||
-			session.Status.State == telekomv1alpha1.DebugSessionStateExpired {
+		if session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
 			continue
 		}
 
@@ -236,7 +236,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			"previousState", session.Status.State)
 
 		// Update the session status to Failed
-		session.Status.State = telekomv1alpha1.DebugSessionStateFailed
+		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 		session.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
 
 		if err := ssa.ApplyDebugSessionStatus(ctx, r.Client, session); err != nil {
@@ -259,7 +259,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&telekomv1alpha1.ClusterConfig{}).
+		For(&breakglassv1alpha1.ClusterConfig{}).
 		Named("clusterconfig").
 		Complete(r)
 }

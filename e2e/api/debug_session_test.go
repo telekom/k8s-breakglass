@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -50,18 +50,18 @@ func TestDebugSessionLifecycle(t *testing.T) {
 	var sessionTemplateName = "e2e-test-debug-session-template"
 
 	t.Run("CreateDebugPodTemplate", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugPodTemplate{
+		template := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: podTemplateName,
 				Labels: map[string]string{
 					"e2e-test": "true",
 				},
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "E2E Test Debug Pod",
 				Description: "Debug pod template for E2E testing",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{
 								Name:    "debug",
@@ -79,28 +79,28 @@ func TestDebugSessionLifecycle(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create DebugPodTemplate")
 
-		var fetched telekomv1alpha1.DebugPodTemplate
+		var fetched breakglassv1alpha1.DebugPodTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		require.Equal(t, "E2E Test Debug Pod", fetched.Spec.DisplayName)
 	})
 
 	t.Run("CreateDebugSessionTemplate", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: sessionTemplateName,
 				Labels: map[string]string{
 					"e2e-test": "true",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "E2E Test Debug Session",
 				Description: "Debug session template for E2E testing",
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: podTemplateName,
 				},
 				TargetNamespace: "default",
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{"*"},
 					Groups:   []string{"*"},
 				},
@@ -112,7 +112,7 @@ func TestDebugSessionLifecycle(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create DebugSessionTemplate")
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodTemplateRef)
@@ -121,14 +121,14 @@ func TestDebugSessionLifecycle(t *testing.T) {
 
 	t.Run("DebugPodTemplateValidation", func(t *testing.T) {
 		// Test validation: missing container spec
-		invalidTemplate := &telekomv1alpha1.DebugPodTemplate{
+		invalidTemplate := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "e2e-test-invalid-pod-template",
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Invalid Template",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{}, // Empty containers
 					},
 				},
@@ -156,18 +156,18 @@ func TestDebugPodTemplateVariants(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("TemplateWithNetworkTools", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugPodTemplate{
+		template := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "e2e-test-network-debug",
 				Labels: map[string]string{
 					"e2e-test": "true",
 				},
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Network Debug Tools",
 				Description: "Pod with network debugging tools",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{
 								Name:    "netshoot",
@@ -189,18 +189,18 @@ func TestDebugPodTemplateVariants(t *testing.T) {
 	t.Run("TemplateWithSecurityContext", func(t *testing.T) {
 		runAsNonRoot := true
 		runAsUser := int64(1000)
-		template := &telekomv1alpha1.DebugPodTemplate{
+		template := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "e2e-test-secure-debug",
 				Labels: map[string]string{
 					"e2e-test": "true",
 				},
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Secure Debug Pod",
 				Description: "Debug pod with security constraints",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						SecurityContext: &corev1.PodSecurityContext{
 							RunAsNonRoot: &runAsNonRoot,
 							RunAsUser:    &runAsUser,
@@ -222,7 +222,7 @@ func TestDebugPodTemplateVariants(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create secure debug template")
 
-		var fetched telekomv1alpha1.DebugPodTemplate
+		var fetched breakglassv1alpha1.DebugPodTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Template.Spec.SecurityContext)

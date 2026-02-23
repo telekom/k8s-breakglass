@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,7 +16,7 @@ import (
 )
 
 func TestExtractClusterConfigHandlesDeletedFinalState(t *testing.T) {
-	cfg := &telekomv1alpha1.ClusterConfig{}
+	cfg := &breakglassv1alpha1.ClusterConfig{}
 	wrapped := clientcache.DeletedFinalStateUnknown{Obj: cfg}
 
 	assert.Same(t, cfg, extractClusterConfig(wrapped))
@@ -38,7 +38,7 @@ func TestExtractSecretReturnsNilForUnknownTypes(t *testing.T) {
 }
 
 func TestExtractClusterConfig_DirectObject(t *testing.T) {
-	cfg := &telekomv1alpha1.ClusterConfig{
+	cfg := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: v1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "default",
@@ -71,7 +71,7 @@ func TestExtractSecret_DirectObject(t *testing.T) {
 
 func TestExtractSecret_DeletedFinalStateUnknown_WrongType(t *testing.T) {
 	// Test with DeletedFinalStateUnknown wrapping a non-Secret object
-	wrapped := clientcache.DeletedFinalStateUnknown{Obj: &telekomv1alpha1.ClusterConfig{}}
+	wrapped := clientcache.DeletedFinalStateUnknown{Obj: &breakglassv1alpha1.ClusterConfig{}}
 
 	result := extractSecret(wrapped)
 	assert.Nil(t, result)
@@ -89,7 +89,7 @@ func TestRegisterInvalidationHandlers_NilManager(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	scheme := runtime.NewScheme()
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
@@ -105,7 +105,7 @@ func TestRegisterInvalidationHandlers_NilManager(t *testing.T) {
 
 func newTestClientProviderScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	return scheme
 }

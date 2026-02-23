@@ -22,14 +22,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestEscalationBuilder_Build(t *testing.T) {
 	tests := []struct {
 		name     string
 		builder  func() *EscalationBuilder
-		validate func(t *testing.T, esc *telekomv1alpha1.BreakglassEscalation)
+		validate func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation)
 	}{
 		{
 			name: "minimal escalation with defaults",
@@ -38,7 +38,7 @@ func TestEscalationBuilder_Build(t *testing.T) {
 					WithEscalatedGroup("test-group").
 					WithAllowedClusters("local")
 			},
-			validate: func(t *testing.T, esc *telekomv1alpha1.BreakglassEscalation) {
+			validate: func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation) {
 				assert.Equal(t, "test-escalation", esc.Name)
 				assert.Equal(t, "default", esc.Namespace)
 				assert.Equal(t, "test-group", esc.Spec.EscalatedGroup)
@@ -60,7 +60,7 @@ func TestEscalationBuilder_Build(t *testing.T) {
 					WithApproverUsers("approver1@example.com", "approver2@example.com").
 					WithApproverGroups("senior-ops")
 			},
-			validate: func(t *testing.T, esc *telekomv1alpha1.BreakglassEscalation) {
+			validate: func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation) {
 				assert.Equal(t, "custom-approvers", esc.Name)
 				assert.ElementsMatch(t, []string{"approver1@example.com", "approver2@example.com"}, esc.Spec.Approvers.Users)
 				assert.ElementsMatch(t, []string{"senior-ops"}, esc.Spec.Approvers.Groups)
@@ -75,7 +75,7 @@ func TestEscalationBuilder_Build(t *testing.T) {
 					WithShortDurations().
 					WithAllowedClusters("local")
 			},
-			validate: func(t *testing.T, esc *telekomv1alpha1.BreakglassEscalation) {
+			validate: func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation) {
 				assert.Equal(t, ShortMaxValidFor, esc.Spec.MaxValidFor)
 				assert.Equal(t, ShortApprovalTimeout, esc.Spec.ApprovalTimeout)
 			},
@@ -88,7 +88,7 @@ func TestEscalationBuilder_Build(t *testing.T) {
 					WithAllowedClusters("local").
 					WithDenyPolicyRefs("no-secrets", "no-exec")
 			},
-			validate: func(t *testing.T, esc *telekomv1alpha1.BreakglassEscalation) {
+			validate: func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation) {
 				assert.ElementsMatch(t, []string{"no-secrets", "no-exec"}, esc.Spec.DenyPolicyRefs)
 			},
 		},
@@ -101,7 +101,7 @@ func TestEscalationBuilder_Build(t *testing.T) {
 					WithAllowedClusters("local").
 					WithBlockSelfApproval(blocked)
 			},
-			validate: func(t *testing.T, esc *telekomv1alpha1.BreakglassEscalation) {
+			validate: func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation) {
 				require.NotNil(t, esc.Spec.BlockSelfApproval)
 				assert.True(t, *esc.Spec.BlockSelfApproval)
 			},
@@ -114,7 +114,7 @@ func TestEscalationBuilder_Build(t *testing.T) {
 					WithAllowedClusters("local").
 					WithLabels(map[string]string{"team": "platform", "env": "test"})
 			},
-			validate: func(t *testing.T, esc *telekomv1alpha1.BreakglassEscalation) {
+			validate: func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation) {
 				// Should have both E2E test labels and custom labels
 				assert.Equal(t, "true", esc.Labels[E2ETestLabelKey])
 				assert.Equal(t, "platform", esc.Labels["team"])
@@ -135,7 +135,7 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 	tests := []struct {
 		name     string
 		builder  func() *DenyPolicyBuilder
-		validate func(t *testing.T, policy *telekomv1alpha1.DenyPolicy)
+		validate func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy)
 	}{
 		{
 			name: "deny secrets policy",
@@ -143,7 +143,7 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 				return NewDenyPolicyBuilder("no-secrets", "default").
 					DenySecrets()
 			},
-			validate: func(t *testing.T, policy *telekomv1alpha1.DenyPolicy) {
+			validate: func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy) {
 				assert.Equal(t, "no-secrets", policy.Name)
 				require.Len(t, policy.Spec.Rules, 1)
 				assert.Equal(t, []string{"secrets"}, policy.Spec.Rules[0].Resources)
@@ -157,7 +157,7 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 				return NewDenyPolicyBuilder("no-secrets-prod", "default").
 					DenySecrets("prod-*", "kube-system")
 			},
-			validate: func(t *testing.T, policy *telekomv1alpha1.DenyPolicy) {
+			validate: func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy) {
 				require.Len(t, policy.Spec.Rules, 1)
 				require.NotNil(t, policy.Spec.Rules[0].Namespaces)
 				assert.ElementsMatch(t, []string{"prod-*", "kube-system"}, policy.Spec.Rules[0].Namespaces.Patterns)
@@ -169,7 +169,7 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 				return NewDenyPolicyBuilder("no-exec", "default").
 					DenyPodsExec()
 			},
-			validate: func(t *testing.T, policy *telekomv1alpha1.DenyPolicy) {
+			validate: func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy) {
 				require.Len(t, policy.Spec.Rules, 1)
 				assert.Equal(t, []string{"pods/exec"}, policy.Spec.Rules[0].Resources)
 				assert.Equal(t, []string{"create"}, policy.Spec.Rules[0].Verbs)
@@ -182,7 +182,7 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 					WithPrecedence(10).
 					DenySecrets()
 			},
-			validate: func(t *testing.T, policy *telekomv1alpha1.DenyPolicy) {
+			validate: func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy) {
 				require.NotNil(t, policy.Spec.Precedence)
 				assert.Equal(t, int32(10), *policy.Spec.Precedence)
 			},
@@ -195,7 +195,7 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 					DenyPodsExec("default").
 					DenyAll([]string{""}, []string{"configmaps"}, "kube-system")
 			},
-			validate: func(t *testing.T, policy *telekomv1alpha1.DenyPolicy) {
+			validate: func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy) {
 				require.Len(t, policy.Spec.Rules, 3)
 				// First rule: deny secrets
 				assert.Equal(t, []string{"secrets"}, policy.Spec.Rules[0].Resources)
@@ -212,7 +212,7 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 				return NewDenyPolicyBuilder("with-labels", "test-ns").
 					DenySecrets()
 			},
-			validate: func(t *testing.T, policy *telekomv1alpha1.DenyPolicy) {
+			validate: func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy) {
 				assert.Equal(t, E2ETestLabelValue, policy.Labels[E2ETestLabelKey])
 			},
 		},

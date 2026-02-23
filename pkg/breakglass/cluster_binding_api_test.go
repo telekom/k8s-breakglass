@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func init() {
@@ -109,25 +109,25 @@ func TestClusterBindingAPIController_handleListClusterBindings(t *testing.T) {
 
 	now := metav1.Now()
 
-	bindings := []telekomv1alpha1.DebugSessionClusterBinding{
+	bindings := []breakglassv1alpha1.DebugSessionClusterBinding{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "binding-1",
 				Namespace:         "default",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Test Binding 1",
-				TemplateRef: &telekomv1alpha1.TemplateReference{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
 					Name: "template-1",
 				},
 				Clusters: []string{"cluster-a", "cluster-b"},
 			},
-			Status: telekomv1alpha1.DebugSessionClusterBindingStatus{
+			Status: breakglassv1alpha1.DebugSessionClusterBindingStatus{
 				ActiveSessionCount: 2,
 				Conditions: []metav1.Condition{
 					{
-						Type:   string(telekomv1alpha1.DebugSessionClusterBindingConditionReady),
+						Type:   string(breakglassv1alpha1.DebugSessionClusterBindingConditionReady),
 						Status: metav1.ConditionTrue,
 					},
 				},
@@ -139,7 +139,7 @@ func TestClusterBindingAPIController_handleListClusterBindings(t *testing.T) {
 				Namespace:         "system",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Test Binding 2",
 				TemplateSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"env": "prod"},
@@ -259,31 +259,31 @@ func TestClusterBindingAPIController_handleGetClusterBinding(t *testing.T) {
 
 	now := metav1.Now()
 
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "test-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Test Binding",
 			Description: "A test binding for unit tests",
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "template-1",
 			},
 			Clusters: []string{"cluster-a"},
 		},
-		Status: telekomv1alpha1.DebugSessionClusterBindingStatus{
+		Status: breakglassv1alpha1.DebugSessionClusterBindingStatus{
 			ActiveSessionCount: 1,
-			ResolvedTemplates: []telekomv1alpha1.ResolvedTemplateRef{
+			ResolvedTemplates: []breakglassv1alpha1.ResolvedTemplateRef{
 				{Name: "template-1", DisplayName: "Template 1", Ready: true},
 			},
-			ResolvedClusters: []telekomv1alpha1.ResolvedClusterRef{
+			ResolvedClusters: []breakglassv1alpha1.ResolvedClusterRef{
 				{Name: "cluster-a", Ready: true, MatchedBy: "explicit"},
 			},
 			Conditions: []metav1.Condition{
 				{
-					Type:   string(telekomv1alpha1.DebugSessionClusterBindingConditionReady),
+					Type:   string(breakglassv1alpha1.DebugSessionClusterBindingConditionReady),
 					Status: metav1.ConditionTrue,
 				},
 			},
@@ -392,7 +392,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster(t *testing.T) 
 
 	now := metav1.Now()
 
-	clusterConfig := &telekomv1alpha1.ClusterConfig{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "production-cluster",
 			Labels: map[string]string{
@@ -402,14 +402,14 @@ func TestClusterBindingAPIController_handleListBindingsForCluster(t *testing.T) 
 		},
 	}
 
-	bindings := []telekomv1alpha1.DebugSessionClusterBinding{
+	bindings := []breakglassv1alpha1.DebugSessionClusterBinding{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "explicit-binding",
 				Namespace:         "default",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{"production-cluster", "staging-cluster"},
 			},
 		},
@@ -419,7 +419,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster(t *testing.T) 
 				Namespace:         "default",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				ClusterSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"env": "production"},
 				},
@@ -431,7 +431,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster(t *testing.T) 
 				Namespace:         "default",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{"other-cluster"},
 			},
 		},
@@ -562,7 +562,7 @@ func TestClusterBindingAPIController_bindingMatchesCluster(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	ctrl := &ClusterBindingAPIController{log: log}
 
-	clusterConfig := &telekomv1alpha1.ClusterConfig{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-cluster",
 			Labels: map[string]string{
@@ -573,8 +573,8 @@ func TestClusterBindingAPIController_bindingMatchesCluster(t *testing.T) {
 	}
 
 	t.Run("matches explicit cluster list", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{"other-cluster", "test-cluster"},
 			},
 		}
@@ -583,8 +583,8 @@ func TestClusterBindingAPIController_bindingMatchesCluster(t *testing.T) {
 	})
 
 	t.Run("does not match when cluster not in list", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{"other-cluster", "another-cluster"},
 			},
 		}
@@ -593,8 +593,8 @@ func TestClusterBindingAPIController_bindingMatchesCluster(t *testing.T) {
 	})
 
 	t.Run("matches cluster selector", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				ClusterSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"env": "production"},
 				},
@@ -605,8 +605,8 @@ func TestClusterBindingAPIController_bindingMatchesCluster(t *testing.T) {
 	})
 
 	t.Run("does not match when selector does not match labels", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				ClusterSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"env": "staging"},
 				},
@@ -617,16 +617,16 @@ func TestClusterBindingAPIController_bindingMatchesCluster(t *testing.T) {
 	})
 
 	t.Run("returns false when no clusters or selector specified", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{},
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{},
 		}
 
 		assert.False(t, ctrl.bindingMatchesCluster(binding, "test-cluster", clusterConfig))
 	})
 
 	t.Run("prefers explicit cluster match over selector", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{"test-cluster"},
 				ClusterSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"env": "staging"}, // Would not match
@@ -643,17 +643,17 @@ func TestClusterBindingAPIController_bindingToResponse(t *testing.T) {
 	ctrl := &ClusterBindingAPIController{}
 
 	now := metav1.Now()
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "test-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Test Binding",
 			Description: "A binding for testing",
 			Disabled:    false,
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "test-template",
 			},
 			TemplateSelector: &metav1.LabelSelector{
@@ -664,18 +664,18 @@ func TestClusterBindingAPIController_bindingToResponse(t *testing.T) {
 				MatchLabels: map[string]string{"env": "prod"},
 			},
 		},
-		Status: telekomv1alpha1.DebugSessionClusterBindingStatus{
+		Status: breakglassv1alpha1.DebugSessionClusterBindingStatus{
 			ActiveSessionCount: 3,
-			ResolvedTemplates: []telekomv1alpha1.ResolvedTemplateRef{
+			ResolvedTemplates: []breakglassv1alpha1.ResolvedTemplateRef{
 				{Name: "template-1", DisplayName: "Template 1", Ready: true},
 				{Name: "template-2", DisplayName: "Template 2", Ready: false},
 			},
-			ResolvedClusters: []telekomv1alpha1.ResolvedClusterRef{
+			ResolvedClusters: []breakglassv1alpha1.ResolvedClusterRef{
 				{Name: "cluster-a", Ready: true, MatchedBy: "explicit"},
 				{Name: "cluster-b", Ready: true, MatchedBy: "selector"},
 			},
 			Conditions: []metav1.Condition{
-				{Type: string(telekomv1alpha1.DebugSessionClusterBindingConditionReady), Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionClusterBindingConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -721,7 +721,7 @@ func TestClusterBindingAPIController_GetBindingsForCluster(t *testing.T) {
 	scheme := newTestScheme()
 	log := zap.NewNop().Sugar()
 
-	clusterConfig := &telekomv1alpha1.ClusterConfig{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-cluster",
 			Labels: map[string]string{
@@ -730,13 +730,13 @@ func TestClusterBindingAPIController_GetBindingsForCluster(t *testing.T) {
 		},
 	}
 
-	bindings := []telekomv1alpha1.DebugSessionClusterBinding{
+	bindings := []breakglassv1alpha1.DebugSessionClusterBinding{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "matching-binding",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{"test-cluster"},
 			},
 		},
@@ -745,7 +745,7 @@ func TestClusterBindingAPIController_GetBindingsForCluster(t *testing.T) {
 				Name:      "non-matching-binding",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{"other-cluster"},
 			},
 		},
@@ -784,16 +784,16 @@ func TestClusterBindingAPIController_bindingToResponse_MinimalBinding(t *testing
 
 	// Test with a minimal binding (no optional fields set)
 	now := metav1.Now()
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "minimal-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			// No TemplateRef, TemplateSelector, Clusters, or ClusterSelector
 		},
-		Status: telekomv1alpha1.DebugSessionClusterBindingStatus{
+		Status: breakglassv1alpha1.DebugSessionClusterBindingStatus{
 			// Empty status
 		},
 	}
@@ -818,12 +818,12 @@ func TestClusterBindingAPIController_bindingToResponse_MinimalBinding(t *testing
 func TestClusterBindingAPIController_bindingToResponse_DisabledBinding(t *testing.T) {
 	ctrl := &ClusterBindingAPIController{}
 
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "disabled-binding",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			Disabled: true,
 		},
 	}
@@ -839,15 +839,15 @@ func TestClusterBindingAPIController_Integration(t *testing.T) {
 	log := zap.NewNop().Sugar()
 
 	now := metav1.Now()
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "integration-test-binding",
 			Namespace:         "test-ns",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Integration Test",
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "test-template"},
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "test-template"},
 			Clusters:    []string{"cluster-1"},
 		},
 	}
@@ -901,14 +901,14 @@ func BenchmarkClusterBindingAPIController_ListBindings(b *testing.B) {
 	log := zap.NewNop().Sugar()
 
 	// Create 100 bindings
-	bindings := make([]telekomv1alpha1.DebugSessionClusterBinding, 100)
+	bindings := make([]breakglassv1alpha1.DebugSessionClusterBinding, 100)
 	for i := 0; i < 100; i++ {
-		bindings[i] = telekomv1alpha1.DebugSessionClusterBinding{
+		bindings[i] = breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      fmt.Sprintf("binding-%d", i),
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Clusters: []string{fmt.Sprintf("cluster-%d", i)},
 			},
 		}
@@ -942,13 +942,13 @@ func TestIsBindingActive(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		binding  *telekomv1alpha1.DebugSessionClusterBinding
+		binding  *breakglassv1alpha1.DebugSessionClusterBinding
 		expected bool
 	}{
 		{
 			name: "active binding - no constraints",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled: false,
 				},
 			},
@@ -956,8 +956,8 @@ func TestIsBindingActive(t *testing.T) {
 		},
 		{
 			name: "disabled binding",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled: true,
 				},
 			},
@@ -965,8 +965,8 @@ func TestIsBindingActive(t *testing.T) {
 		},
 		{
 			name: "expired binding",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled:  false,
 					ExpiresAt: &pastTime,
 				},
@@ -975,8 +975,8 @@ func TestIsBindingActive(t *testing.T) {
 		},
 		{
 			name: "not yet effective binding",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled:      false,
 					EffectiveFrom: &futureTime,
 				},
@@ -985,8 +985,8 @@ func TestIsBindingActive(t *testing.T) {
 		},
 		{
 			name: "future expiry - still active",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled:  false,
 					ExpiresAt: &futureTime,
 				},
@@ -995,8 +995,8 @@ func TestIsBindingActive(t *testing.T) {
 		},
 		{
 			name: "past effective from - active",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled:      false,
 					EffectiveFrom: &pastTime,
 				},
@@ -1005,8 +1005,8 @@ func TestIsBindingActive(t *testing.T) {
 		},
 		{
 			name: "within time window - active",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled:      false,
 					EffectiveFrom: &pastTime,
 					ExpiresAt:     &futureTime,
@@ -1016,8 +1016,8 @@ func TestIsBindingActive(t *testing.T) {
 		},
 		{
 			name: "expired but not disabled",
-			binding: &telekomv1alpha1.DebugSessionClusterBinding{
-				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					Disabled:  false,
 					ExpiresAt: &pastTime,
 				},
@@ -1041,29 +1041,29 @@ func TestClusterBindingAPIController_handleListClusterBindings_HiddenFilter(t *t
 
 	now := metav1.Now()
 
-	visibleBinding := telekomv1alpha1.DebugSessionClusterBinding{
+	visibleBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "visible-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Visible Binding",
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-1"},
 			Clusters:    []string{"cluster-a"},
 			Hidden:      false,
 		},
 	}
 
-	hiddenBinding := telekomv1alpha1.DebugSessionClusterBinding{
+	hiddenBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "hidden-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Hidden Binding",
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-2"},
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-2"},
 			Clusters:    []string{"cluster-b"},
 			Hidden:      true,
 		},
@@ -1159,57 +1159,57 @@ func TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter(
 	pastTime := metav1.NewTime(time.Now().Add(-24 * time.Hour))
 	futureTime := metav1.NewTime(time.Now().Add(24 * time.Hour))
 
-	activeBinding := telekomv1alpha1.DebugSessionClusterBinding{
+	activeBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "active-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Active Binding",
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-1"},
 			Clusters:    []string{"cluster-a"},
 			Disabled:    false,
 		},
 	}
 
-	disabledBinding := telekomv1alpha1.DebugSessionClusterBinding{
+	disabledBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "disabled-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Disabled Binding",
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-2"},
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-2"},
 			Clusters:    []string{"cluster-b"},
 			Disabled:    true,
 		},
 	}
 
-	expiredBinding := telekomv1alpha1.DebugSessionClusterBinding{
+	expiredBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "expired-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Expired Binding",
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-3"},
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-3"},
 			Clusters:    []string{"cluster-c"},
 			ExpiresAt:   &pastTime,
 		},
 	}
 
-	futureBinding := telekomv1alpha1.DebugSessionClusterBinding{
+	futureBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "future-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName:   "Future Binding",
-			TemplateRef:   &telekomv1alpha1.TemplateReference{Name: "template-4"},
+			TemplateRef:   &breakglassv1alpha1.TemplateReference{Name: "template-4"},
 			Clusters:      []string{"cluster-d"},
 			EffectiveFrom: &futureTime,
 		},
@@ -1267,30 +1267,30 @@ func TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter(
 	})
 
 	t.Run("combines hidden and activeOnly filters", func(t *testing.T) {
-		hiddenActiveBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		hiddenActiveBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "hidden-active-binding",
 				Namespace:         "default",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Hidden Active Binding",
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-5"},
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-5"},
 				Clusters:    []string{"cluster-e"},
 				Hidden:      true,
 				Disabled:    false,
 			},
 		}
 
-		hiddenInactiveBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		hiddenInactiveBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "hidden-inactive-binding",
 				Namespace:         "default",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Hidden Inactive Binding",
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-6"},
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-6"},
 				Clusters:    []string{"cluster-f"},
 				Hidden:      true,
 				Disabled:    true,
@@ -1352,15 +1352,15 @@ func TestClusterBindingAPIController_handleGetClusterBinding_NotFound(t *testing
 
 	t.Run("returns 404 for binding in wrong namespace", func(t *testing.T) {
 		now := metav1.Now()
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "test-binding",
 				Namespace:         "correct-namespace",
 				CreationTimestamp: now,
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Test Binding",
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-1"},
 			},
 		}
 
@@ -1394,24 +1394,24 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 	now := metav1.Now()
 
 	// Create a ClusterConfig for cluster-a
-	clusterConfigA := telekomv1alpha1.ClusterConfig{
+	clusterConfigA := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster-a",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			Tenant: "test-tenant",
 		},
 	}
 
-	binding := telekomv1alpha1.DebugSessionClusterBinding{
+	binding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "cluster-a-binding",
 			Namespace:         "default",
 			CreationTimestamp: now,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			DisplayName: "Cluster A Binding",
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-1"},
 			Clusters:    []string{"cluster-a"},
 		},
 	}
@@ -1440,11 +1440,11 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 
 	t.Run("returns empty list for cluster with no matching bindings", func(t *testing.T) {
 		// Create a ClusterConfig for cluster-b but no bindings reference it
-		clusterConfigB := telekomv1alpha1.ClusterConfig{
+		clusterConfigB := breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "cluster-b",
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				Tenant: "test-tenant",
 			},
 		}
@@ -1512,12 +1512,12 @@ func TestClusterBindingAPIController_bindingToResponse_EdgeCases(t *testing.T) {
 
 	t.Run("handles binding with priority", func(t *testing.T) {
 		priority := int32(100)
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "priority-binding",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Priority Binding",
 				Priority:    &priority,
 			},
@@ -1533,12 +1533,12 @@ func TestClusterBindingAPIController_bindingToResponse_EdgeCases(t *testing.T) {
 		effectiveFrom := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 		expiresAt := metav1.NewTime(time.Now().Add(24 * time.Hour))
 
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "time-constrained-binding",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName:   "Time Constrained Binding",
 				EffectiveFrom: &effectiveFrom,
 				ExpiresAt:     &expiresAt,
@@ -1553,25 +1553,25 @@ func TestClusterBindingAPIController_bindingToResponse_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("handles binding with resolved status", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "resolved-binding",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Resolved Binding",
 			},
-			Status: telekomv1alpha1.DebugSessionClusterBindingStatus{
+			Status: breakglassv1alpha1.DebugSessionClusterBindingStatus{
 				ActiveSessionCount: 5,
-				ResolvedTemplates: []telekomv1alpha1.ResolvedTemplateRef{
+				ResolvedTemplates: []breakglassv1alpha1.ResolvedTemplateRef{
 					{Name: "template-1", DisplayName: "Template 1"},
 				},
-				ResolvedClusters: []telekomv1alpha1.ResolvedClusterRef{
+				ResolvedClusters: []breakglassv1alpha1.ResolvedClusterRef{
 					{Name: "cluster-a", MatchedBy: "explicit"},
 				},
 				Conditions: []metav1.Condition{
 					{
-						Type:   string(telekomv1alpha1.DebugSessionClusterBindingConditionReady),
+						Type:   string(breakglassv1alpha1.DebugSessionClusterBindingConditionReady),
 						Status: metav1.ConditionTrue,
 					},
 				},
@@ -1590,12 +1590,12 @@ func TestClusterBindingAPIController_bindingToResponse_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("handles binding with cluster selector", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "selector-binding",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Selector Binding",
 				ClusterSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
@@ -1614,12 +1614,12 @@ func TestClusterBindingAPIController_bindingToResponse_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("handles binding with template selector", func(t *testing.T) {
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "template-selector-binding",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				DisplayName: "Template Selector Binding",
 				TemplateSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{

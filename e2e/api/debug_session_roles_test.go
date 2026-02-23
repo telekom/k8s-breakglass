@@ -21,7 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -32,9 +32,9 @@ func TestDebugSessionViewerRoleFunctionality(t *testing.T) {
 
 	t.Run("ViewerRoleConstants", func(t *testing.T) {
 		// Verify role constants are defined correctly
-		assert.Equal(t, telekomv1alpha1.ParticipantRole("viewer"), telekomv1alpha1.ParticipantRoleViewer)
-		assert.Equal(t, telekomv1alpha1.ParticipantRole("participant"), telekomv1alpha1.ParticipantRoleParticipant)
-		assert.Equal(t, telekomv1alpha1.ParticipantRole("owner"), telekomv1alpha1.ParticipantRoleOwner)
+		assert.Equal(t, breakglassv1alpha1.ParticipantRole("viewer"), breakglassv1alpha1.ParticipantRoleViewer)
+		assert.Equal(t, breakglassv1alpha1.ParticipantRole("participant"), breakglassv1alpha1.ParticipantRoleParticipant)
+		assert.Equal(t, breakglassv1alpha1.ParticipantRole("owner"), breakglassv1alpha1.ParticipantRoleOwner)
 		t.Logf("VIEWER-001: Debug session participant role constants are defined correctly")
 	})
 
@@ -51,18 +51,18 @@ func TestDebugSessionParticipantManagement(t *testing.T) {
 
 	t.Run("ParticipantStructure", func(t *testing.T) {
 		// Test that DebugSessionParticipant can hold required fields
-		participant := telekomv1alpha1.DebugSessionParticipant{
+		participant := breakglassv1alpha1.DebugSessionParticipant{
 			User: helpers.TestUsers.Requester.Email,
-			Role: telekomv1alpha1.ParticipantRoleParticipant,
+			Role: breakglassv1alpha1.ParticipantRoleParticipant,
 		}
 		assert.Equal(t, helpers.TestUsers.Requester.Email, participant.User)
-		assert.Equal(t, telekomv1alpha1.ParticipantRoleParticipant, participant.Role)
+		assert.Equal(t, breakglassv1alpha1.ParticipantRoleParticipant, participant.Role)
 		t.Logf("PARTICIPANT-001: Participant structure correctly holds user and role")
 	})
 
 	t.Run("InvitedParticipantsInSpec", func(t *testing.T) {
 		// Verify invitedParticipants field exists in DebugSessionSpec
-		spec := telekomv1alpha1.DebugSessionSpec{
+		spec := breakglassv1alpha1.DebugSessionSpec{
 			Cluster:             "test-cluster",
 			TemplateRef:         "test-template",
 			RequestedBy:         helpers.TestUsers.Requester.Email,
@@ -74,11 +74,11 @@ func TestDebugSessionParticipantManagement(t *testing.T) {
 
 	t.Run("ParticipantsInStatus", func(t *testing.T) {
 		// Verify participants field exists in DebugSessionStatus
-		status := telekomv1alpha1.DebugSessionStatus{
-			State: telekomv1alpha1.DebugSessionStateActive,
-			Participants: []telekomv1alpha1.DebugSessionParticipant{
-				{User: helpers.TestUsers.Requester.Email, Role: telekomv1alpha1.ParticipantRoleOwner},
-				{User: helpers.TestUsers.Limited.Email, Role: telekomv1alpha1.ParticipantRoleViewer},
+		status := breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: helpers.TestUsers.Requester.Email, Role: breakglassv1alpha1.ParticipantRoleOwner},
+				{User: helpers.TestUsers.Limited.Email, Role: breakglassv1alpha1.ParticipantRoleViewer},
 			},
 		}
 		assert.Len(t, status.Participants, 2)
@@ -99,7 +99,7 @@ func TestDebugSessionTerminalSharing(t *testing.T) {
 	})
 
 	t.Run("TerminalSharingStatusStructure", func(t *testing.T) {
-		status := telekomv1alpha1.TerminalSharingStatus{
+		status := breakglassv1alpha1.TerminalSharingStatus{
 			Enabled:       true,
 			SessionName:   "debug-session-123",
 			AttachCommand: "tmux attach -t debug-session-123",
@@ -161,7 +161,7 @@ func TestDebugSessionOwnerPermissions(t *testing.T) {
 	})
 
 	t.Run("OwnerInSpec", func(t *testing.T) {
-		spec := telekomv1alpha1.DebugSessionSpec{
+		spec := breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "test-cluster",
 			TemplateRef: "test-template",
 			RequestedBy: helpers.TestUsers.Requester.Email,

@@ -370,6 +370,8 @@ type ClusterConfigStatus struct {
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="ClusterID",type=string,JSONPath=`.spec.clusterID`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+
+// ClusterConfig is the Schema for the clusterconfigs API.
 type ClusterConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -484,6 +486,8 @@ func (cc *ClusterConfig) SetupWebhookWithManager(mgr ctrl.Manager) error {
 }
 
 // +kubebuilder:object:root=true
+
+// ClusterConfigList contains a list of ClusterConfig resources.
 type ClusterConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

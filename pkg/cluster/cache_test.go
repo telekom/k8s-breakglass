@@ -14,7 +14,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/stretchr/testify/assert"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -127,14 +127,14 @@ func mustBuildKubeconfigYAML(host string) []byte {
 func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://127.0.0.1:6443")
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
 		},
 	}
 	secret := corev1.Secret{
@@ -159,14 +159,14 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 func TestGetRESTConfig_MissingSecretKey(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// secret contains default key, but ClusterConfig points to a different key
 	kubeYAML := mustBuildKubeconfigYAML("https://example.com:6443")
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "c2", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "kube-secret-2", Namespace: "default", Key: "nonexistent"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret-2", Namespace: "default", Key: "nonexistent"},
 		},
 	}
 	secret := corev1.Secret{
@@ -185,12 +185,12 @@ func TestGetRESTConfig_MissingSecretKey(t *testing.T) {
 func TestGet_CachingAndNotFound(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "c1", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc).Build()
@@ -214,12 +214,12 @@ func TestGet_CachingAndNotFound(t *testing.T) {
 func TestInvalidate_ClearsCache(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "ci1", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
 
@@ -246,13 +246,13 @@ func TestInvalidate_ClearsCache(t *testing.T) {
 func TestInvalidateSecret_EvictsTrackedEntries(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	kubeYAML := mustBuildKubeconfigYAML("https://kind-control-plane:6443")
-	cc := telekomv1alpha1.ClusterConfig{
+	cc := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "kind", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "kind-kube", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kind-kube", Namespace: "default"},
 		},
 	}
 	secret := corev1.Secret{
@@ -284,25 +284,25 @@ func TestIsSecretTracked_FalseForUnknownSecret(t *testing.T) {
 func TestGetAcrossAllNamespaces_DoesNotMatchSimilarNames(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create clusters with similar names
-	ccProd := telekomv1alpha1.ClusterConfig{
+	ccProd := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "prod", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
-	ccMyProd := telekomv1alpha1.ClusterConfig{
+	ccMyProd := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-prod", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
-	ccTestProd := telekomv1alpha1.ClusterConfig{
+	ccTestProd := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-prod", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
 

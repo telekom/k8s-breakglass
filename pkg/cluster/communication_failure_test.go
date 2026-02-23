@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // TestConnectionRefused tests handling of connection refused errors.
@@ -244,7 +244,7 @@ func TestMockClusterClientProvider_CallCounting(t *testing.T) {
 // testScheme creates a scheme with necessary types for testing
 func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
-	_ = telekomv1alpha1.AddToScheme(s)
+	_ = breakglassv1alpha1.AddToScheme(s)
 	_ = corev1.AddToScheme(s)
 	return s
 }
@@ -267,14 +267,14 @@ func TestClientProvider_SecretNotFound(t *testing.T) {
 	scheme := testScheme()
 
 	// Create a ClusterConfig that references a non-existent secret
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "breakglass-system",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeKubeconfig,
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "missing-secret",
 				Namespace: "breakglass-system",
 				Key:       "kubeconfig",
@@ -310,14 +310,14 @@ func TestClientProvider_SecretKeyMissing(t *testing.T) {
 		},
 	}
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "breakglass-system",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeKubeconfig,
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "test-secret",
 				Namespace: "breakglass-system",
 				Key:       "kubeconfig",
@@ -353,14 +353,14 @@ func TestClientProvider_InvalidKubeconfig(t *testing.T) {
 		},
 	}
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "breakglass-system",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeKubeconfig,
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "test-secret",
 				Namespace: "breakglass-system",
 				Key:       "kubeconfig",
@@ -386,12 +386,12 @@ func TestClientProvider_NoAuthMethodConfigured(t *testing.T) {
 	scheme := testScheme()
 
 	// Create a ClusterConfig with no auth method
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "breakglass-system",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			// No AuthType, no KubeconfigSecretRef, no OIDCAuth
 		},
 	}
@@ -443,14 +443,14 @@ users:
 		},
 	}
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "breakglass-system",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeKubeconfig,
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "test-secret",
 				Namespace: "breakglass-system",
 				Key:       "kubeconfig",
@@ -505,14 +505,14 @@ users:
 		},
 	}
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "breakglass-system",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeKubeconfig,
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "test-secret",
 				Namespace: "breakglass-system",
 				Key:       "kubeconfig",
@@ -574,14 +574,14 @@ users:
 		},
 	}
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "breakglass-system",
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeKubeconfig,
-			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "shared-secret",
 				Namespace: "breakglass-system",
 				Key:       "kubeconfig",

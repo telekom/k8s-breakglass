@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -47,11 +47,11 @@ func TestTemplateStringFormat_E2E_KindPodDaemonSet(t *testing.T) {
 	ctx := context.Background()
 
 	// Create DebugPodTemplate with kind: Pod templateString
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-kind-pod-daemonset",
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Kind Pod DaemonSet",
 			TemplateString: `apiVersion: v1
 kind: Pod
@@ -81,28 +81,28 @@ spec:
 	require.NoError(t, err, "Failed to create DebugPodTemplate with kind:Pod templateString")
 
 	// Create DebugSessionTemplate referencing the pod template
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-kind-pod-ds-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Kind Pod → DaemonSet",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplate.Name,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDaemonSet,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDaemonSet,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "1h",
 				DefaultDuration: "30m",
 			},
@@ -125,7 +125,7 @@ spec:
 
 	// Wait for session to become active
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Verify the workload was created as a DaemonSet
 	var ds appsv1.DaemonSet
@@ -157,14 +157,14 @@ func TestTemplateStringFormat_E2E_FullDeploymentManifest(t *testing.T) {
 
 	// Create DebugSessionTemplate with inline Deployment templateString
 	replicas := int32(1)
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-full-deployment",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:  "E2E Full Deployment",
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDeployment,
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:     &replicas,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
@@ -191,16 +191,16 @@ spec:
               memory: "64Mi"
 `,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "1h",
 				DefaultDuration: "30m",
 			},
@@ -222,7 +222,7 @@ spec:
 	defer func() { _ = cli.Delete(ctx, session) }()
 
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Verify Deployment was created
 	var deploy appsv1.Deployment
@@ -256,11 +256,11 @@ func TestTemplateStringFormat_E2E_WebhookRejectsUnsupportedKind(t *testing.T) {
 	cli := setupClient(t)
 	ctx := context.Background()
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-unsupported-kind",
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Unsupported Kind",
 			TemplateString: `apiVersion: batch/v1
 kind: Job
@@ -292,11 +292,11 @@ func TestTemplateStringFormat_E2E_WebhookRejectsWrongAPIVersion(t *testing.T) {
 	cli := setupClient(t)
 	ctx := context.Background()
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-wrong-api-version",
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Wrong API Version",
 			TemplateString: `apiVersion: apps/v1
 kind: Pod
@@ -326,14 +326,14 @@ func TestTemplateStringFormat_E2E_WorkloadTypeMismatchRejected(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a template where the templateString produces a DaemonSet but workloadType is Deployment
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-workload-mismatch",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:  "E2E Workload Mismatch",
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDeployment, // Mismatch!
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment, // Mismatch!
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -350,16 +350,16 @@ spec:
           command: ["sleep", "infinity"]
 `,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "1h",
 				DefaultDuration: "30m",
 			},
@@ -386,7 +386,7 @@ spec:
 
 	// If created, the session should fail during reconciliation
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateFailed, defaultTimeout)
+		breakglassv1alpha1.DebugSessionStateFailed, defaultTimeout)
 	assert.Contains(t, session.Status.Message, "must match",
 		"Expected failure message about workload type mismatch")
 }
@@ -401,14 +401,14 @@ func TestTemplateStringFormat_E2E_BareSpecBackwardCompatible(t *testing.T) {
 	ctx := context.Background()
 
 	// Create template with bare PodSpec (original format)
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-bare-spec",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:  "E2E Bare Spec",
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
@@ -419,16 +419,16 @@ func TestTemplateStringFormat_E2E_BareSpecBackwardCompatible(t *testing.T) {
         memory: "64Mi"
 `,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "1h",
 				DefaultDuration: "30m",
 			},
@@ -449,7 +449,7 @@ func TestTemplateStringFormat_E2E_BareSpecBackwardCompatible(t *testing.T) {
 	defer func() { _ = cli.Delete(ctx, session) }()
 
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Verify DaemonSet was created
 	var ds appsv1.DaemonSet
@@ -473,14 +473,14 @@ func TestTemplateStringFormat_E2E_FullDaemonSetManifest(t *testing.T) {
 	ctx := context.Background()
 
 	// Create DebugSessionTemplate with inline DaemonSet templateString
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-full-daemonset",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:  "E2E Full DaemonSet",
-			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+			Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -510,16 +510,16 @@ spec:
               memory: "32Mi"
 `,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "1h",
 				DefaultDuration: "30m",
 			},
@@ -541,7 +541,7 @@ spec:
 	defer func() { _ = cli.Delete(ctx, session) }()
 
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Verify DaemonSet was created
 	var ds appsv1.DaemonSet
@@ -575,11 +575,11 @@ func TestTemplateStringFormat_E2E_KindPodWithOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	// Create DebugPodTemplate with kind: Pod
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-pod-overrides",
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Pod With Overrides",
 			TemplateString: `apiVersion: v1
 kind: Pod
@@ -606,17 +606,17 @@ spec:
 	require.NoError(t, err, "Failed to create DebugPodTemplate")
 
 	// Create DebugSessionTemplate with toleration overrides
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-pod-overrides-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Pod Overrides",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplate.Name,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDaemonSet,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDaemonSet,
 			TargetNamespace: "breakglass-debug",
 			AdditionalTolerations: []corev1.Toleration{
 				{
@@ -626,16 +626,16 @@ spec:
 					Effect:   corev1.TaintEffectNoSchedule,
 				},
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "1h",
 				DefaultDuration: "30m",
 			},
@@ -657,7 +657,7 @@ spec:
 	defer func() { _ = cli.Delete(ctx, session) }()
 
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Verify the DaemonSet was created
 	var ds appsv1.DaemonSet

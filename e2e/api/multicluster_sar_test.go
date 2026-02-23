@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -148,20 +148,20 @@ func TestCrossClusterSARAuthorization(t *testing.T) {
 		require.NoError(t, err, "Failed to create session via API")
 
 		// Add to cleanup
-		var sessionToCleanup telekomv1alpha1.BreakglassSession
+		var sessionToCleanup breakglassv1alpha1.BreakglassSession
 		errGet := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &sessionToCleanup)
 		require.NoError(t, errGet)
 		cleanup.Add(&sessionToCleanup)
 
 		// Wait for session to get pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Approve via API
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for approved state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Send SAR request to webhook
 		sar := &authorizationv1.SubjectAccessReview{
@@ -244,7 +244,7 @@ func TestEscalationClusterConfigRefs(t *testing.T) {
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create multi-cluster escalation")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.ClusterConfigRefs, 2)

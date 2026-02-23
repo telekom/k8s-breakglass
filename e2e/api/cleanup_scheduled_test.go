@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -71,13 +71,13 @@ func TestScheduledSessionActivation(t *testing.T) {
 			Reason:  "Immediate scheduled session test",
 		})
 		require.NoError(t, err, "Failed to create immediate scheduled session via API")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to get a state
 		err = helpers.WaitForConditionSimple(ctx, func() bool {
-			var s telekomv1alpha1.BreakglassSession
+			var s breakglassv1alpha1.BreakglassSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &s); err != nil {
 				return false
 			}
@@ -132,7 +132,7 @@ func TestSessionRetentionCleanup(t *testing.T) {
 
 		// Wait for session to be created
 		err = helpers.WaitForConditionSimple(ctx, func() bool {
-			var s telekomv1alpha1.BreakglassSession
+			var s breakglassv1alpha1.BreakglassSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &s); err != nil {
 				return false
 			}
@@ -201,7 +201,7 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 
@@ -229,13 +229,13 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for approved state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateApproved, fetched.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, fetched.Status.State)
 
 		t.Logf("Session approved via API")
 	})
@@ -260,13 +260,13 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 		sessionName := helpers.GenerateUniqueName("e2e-debug-cleanup")
 		expiresAt := metav1.NewTime(time.Now().Add(-1 * time.Hour)) // Already expired
 
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      sessionName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("cleanup"),
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				RequestedBy: helpers.TestUsers.SchedulingTestRequester.Email,
 				Cluster:     helpers.GetTestClusterName(),
 				TemplateRef: "default-template",
@@ -282,9 +282,9 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 		for retry := 0; retry < 3; retry++ {
 			err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, ds)
 			require.NoError(t, err)
-			ds.Status.State = telekomv1alpha1.DebugSessionStateActive
+			ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
 			ds.Status.ExpiresAt = &expiresAt
-			ds.Status.AllowedPods = []telekomv1alpha1.AllowedPodRef{
+			ds.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 				{Name: "test-pod", Namespace: "default"},
 			}
 			updateErr = cli.Status().Update(ctx, ds)
@@ -305,16 +305,16 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 		// The cleanup routine should mark this as expired
 		// Wait up to 2 minutes for cleanup to run (default interval is 5m, may be shorter in e2e)
 		err := helpers.WaitForConditionSimple(ctx, func() bool {
-			var fetched telekomv1alpha1.DebugSession
+			var fetched breakglassv1alpha1.DebugSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &fetched); err != nil {
 				return false
 			}
-			return fetched.Status.State == telekomv1alpha1.DebugSessionStateExpired
+			return fetched.Status.State == breakglassv1alpha1.DebugSessionStateExpired
 		}, 2*time.Minute, 5*time.Second)
 
 		if err != nil {
 			// Log current state if wait failed
-			var fetched telekomv1alpha1.DebugSession
+			var fetched breakglassv1alpha1.DebugSession
 			_ = cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &fetched)
 			t.Logf("Debug session state after wait: %s (message: %s)", fetched.Status.State, fetched.Status.Message)
 		}
@@ -328,20 +328,20 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 		// We need to set specific terminal states directly (Expired, Terminated, Failed)
 		// which cannot be achieved via the normal API workflow. This tests that the
 		// controller properly handles and preserves terminal states.
-		for _, state := range []telekomv1alpha1.DebugSessionState{
-			telekomv1alpha1.DebugSessionStateExpired,
-			telekomv1alpha1.DebugSessionStateTerminated,
-			telekomv1alpha1.DebugSessionStateFailed,
+		for _, state := range []breakglassv1alpha1.DebugSessionState{
+			breakglassv1alpha1.DebugSessionStateExpired,
+			breakglassv1alpha1.DebugSessionStateTerminated,
+			breakglassv1alpha1.DebugSessionStateFailed,
 		} {
 			sessionName := helpers.GenerateUniqueName("e2e-debug-term")
 
-			ds := &telekomv1alpha1.DebugSession{
+			ds := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      sessionName,
 					Namespace: namespace,
 					Labels:    helpers.E2ELabelsWithFeature("terminal-states"),
 				},
-				Spec: telekomv1alpha1.DebugSessionSpec{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: helpers.TestUsers.SchedulingTestRequester.Email,
 					Cluster:     helpers.GetTestClusterName(),
 					TemplateRef: "default-template",
@@ -359,7 +359,7 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 				require.NoError(t, err)
 				ds.Status.State = state
 				ds.Status.Message = "Test terminal state"
-				ds.Status.AllowedPods = []telekomv1alpha1.AllowedPodRef{
+				ds.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 					{Name: "test-pod", Namespace: "default"},
 				}
 				updateErr = cli.Status().Update(ctx, ds)
@@ -414,13 +414,13 @@ func TestSessionRetainedUntilHandling(t *testing.T) {
 			Reason:  "RetainedUntil handling test",
 		})
 		require.NoError(t, err, "Failed to create session via API")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to get a state
 		err = helpers.WaitForConditionSimple(ctx, func() bool {
-			var s telekomv1alpha1.BreakglassSession
+			var s breakglassv1alpha1.BreakglassSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &s); err != nil {
 				return false
 			}
@@ -429,7 +429,7 @@ func TestSessionRetainedUntilHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Check that session exists
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
 		require.NoError(t, err)
 

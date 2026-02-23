@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -56,7 +56,7 @@ func TestClusterConfigWithKubeconfigSecret(t *testing.T) {
 	s.MustCreateResource(clusterConfig)
 
 	// Verify it can be fetched
-	var fetched telekomv1alpha1.ClusterConfig
+	var fetched breakglassv1alpha1.ClusterConfig
 	err := s.Client.Get(s.Ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: s.Namespace}, &fetched)
 	require.NoError(t, err, "Failed to get ClusterConfig")
 	assert.Equal(t, "e2e-test-cluster", fetched.Spec.ClusterID)

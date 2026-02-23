@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 const (
@@ -48,8 +48,8 @@ func WaitForCondition(ctx context.Context, condition func() (bool, error), timeo
 }
 
 // WaitForSessionState waits for a BreakglassSession to reach the specified state
-func WaitForSessionState(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, expectedState telekomv1alpha1.BreakglassSessionState, timeout time.Duration) *telekomv1alpha1.BreakglassSession {
-	var session telekomv1alpha1.BreakglassSession
+func WaitForSessionState(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, expectedState breakglassv1alpha1.BreakglassSessionState, timeout time.Duration) *breakglassv1alpha1.BreakglassSession {
+	var session breakglassv1alpha1.BreakglassSession
 
 	err := WaitForCondition(ctx, func() (bool, error) {
 		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &session); err != nil {
@@ -63,8 +63,8 @@ func WaitForSessionState(t *testing.T, ctx context.Context, cli client.Client, n
 }
 
 // WaitForDebugSessionState waits for a DebugSession to reach the specified state
-func WaitForDebugSessionState(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, expectedState telekomv1alpha1.DebugSessionState, timeout time.Duration) *telekomv1alpha1.DebugSession {
-	var session telekomv1alpha1.DebugSession
+func WaitForDebugSessionState(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, expectedState breakglassv1alpha1.DebugSessionState, timeout time.Duration) *breakglassv1alpha1.DebugSession {
+	var session breakglassv1alpha1.DebugSession
 
 	err := WaitForCondition(ctx, func() (bool, error) {
 		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &session); err != nil {
@@ -78,8 +78,8 @@ func WaitForDebugSessionState(t *testing.T, ctx context.Context, cli client.Clie
 }
 
 // WaitForDebugSessionStateAny waits for a DebugSession to have any non-empty state
-func WaitForDebugSessionStateAny(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) *telekomv1alpha1.DebugSession {
-	var session telekomv1alpha1.DebugSession
+func WaitForDebugSessionStateAny(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) *breakglassv1alpha1.DebugSession {
+	var session breakglassv1alpha1.DebugSession
 
 	err := WaitForCondition(ctx, func() (bool, error) {
 		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &session); err != nil {
@@ -167,15 +167,15 @@ func WaitForPodReady(ctx context.Context, cli client.Client, namespace, name str
 }
 
 // WaitForClusterConfigCondition waits for a ClusterConfig to have a specific condition status
-func WaitForClusterConfigCondition(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, conditionType telekomv1alpha1.ClusterConfigConditionType, expectedStatus metav1.ConditionStatus, timeout time.Duration) *telekomv1alpha1.ClusterConfig {
-	var cfg telekomv1alpha1.ClusterConfig
+func WaitForClusterConfigCondition(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, conditionType breakglassv1alpha1.ClusterConfigConditionType, expectedStatus metav1.ConditionStatus, timeout time.Duration) *breakglassv1alpha1.ClusterConfig {
+	var cfg breakglassv1alpha1.ClusterConfig
 
 	err := WaitForCondition(ctx, func() (bool, error) {
 		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cfg); err != nil {
 			return false, nil
 		}
 		for _, c := range cfg.Status.Conditions {
-			if telekomv1alpha1.ClusterConfigConditionType(c.Type) == conditionType {
+			if breakglassv1alpha1.ClusterConfigConditionType(c.Type) == conditionType {
 				return c.Status == expectedStatus, nil
 			}
 		}
@@ -191,8 +191,8 @@ func WaitForClusterConfigCondition(t *testing.T, ctx context.Context, cli client
 // WaitForAuditConfigReady waits for an AuditConfig to have Ready=True condition.
 // This is important to ensure the audit system is fully configured before running tests
 // that expect audit events to be captured.
-func WaitForAuditConfigReady(t *testing.T, ctx context.Context, cli client.Client, name string, timeout time.Duration) *telekomv1alpha1.AuditConfig {
-	var cfg telekomv1alpha1.AuditConfig
+func WaitForAuditConfigReady(t *testing.T, ctx context.Context, cli client.Client, name string, timeout time.Duration) *breakglassv1alpha1.AuditConfig {
+	var cfg breakglassv1alpha1.AuditConfig
 
 	err := WaitForCondition(ctx, func() (bool, error) {
 		if err := cli.Get(ctx, types.NamespacedName{Name: name}, &cfg); err != nil {
@@ -214,8 +214,8 @@ func WaitForAuditConfigReady(t *testing.T, ctx context.Context, cli client.Clien
 }
 
 // WaitForSessionStateAny waits for a BreakglassSession to have one of multiple expected states
-func WaitForSessionStateAny(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, expectedStates []telekomv1alpha1.BreakglassSessionState, timeout time.Duration) *telekomv1alpha1.BreakglassSession {
-	var session telekomv1alpha1.BreakglassSession
+func WaitForSessionStateAny(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, expectedStates []breakglassv1alpha1.BreakglassSessionState, timeout time.Duration) *breakglassv1alpha1.BreakglassSession {
+	var session breakglassv1alpha1.BreakglassSession
 
 	err := WaitForCondition(ctx, func() (bool, error) {
 		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &session); err != nil {
@@ -258,7 +258,7 @@ func RetryWithBackoff(ctx context.Context, maxRetries int, initialDelay time.Dur
 
 // ApproveSession approves a BreakglassSession by updating its status
 func ApproveSession(ctx context.Context, cli client.Client, name, namespace, approverEmail string) error {
-	var session telekomv1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	key := types.NamespacedName{Name: name, Namespace: namespace}
 	if err := cli.Get(ctx, key, &session); err != nil {
 		return fmt.Errorf("failed to get session %s: %w", name, err)
@@ -266,7 +266,7 @@ func ApproveSession(ctx context.Context, cli client.Client, name, namespace, app
 
 	session.Status.Approver = approverEmail
 	session.Status.ApprovedAt = metav1.Now()
-	session.Status.State = telekomv1alpha1.SessionStateApproved
+	session.Status.State = breakglassv1alpha1.SessionStateApproved
 	// CRITICAL: Set ExpiresAt - the webhook requires this to recognize active sessions
 	// Parse MaxValidFor from spec or default to 1h
 	maxValidFor := time.Hour
@@ -285,7 +285,7 @@ func ApproveSession(ctx context.Context, cli client.Client, name, namespace, app
 
 // RejectSession rejects a BreakglassSession by updating its status
 func RejectSession(ctx context.Context, cli client.Client, name, namespace, approverEmail, reason string) error {
-	var session telekomv1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	key := types.NamespacedName{Name: name, Namespace: namespace}
 	if err := cli.Get(ctx, key, &session); err != nil {
 		return fmt.Errorf("failed to get session %s: %w", name, err)
@@ -293,7 +293,7 @@ func RejectSession(ctx context.Context, cli client.Client, name, namespace, appr
 
 	session.Status.Approver = approverEmail
 	session.Status.RejectedAt = metav1.Now()
-	session.Status.State = telekomv1alpha1.SessionStateRejected
+	session.Status.State = breakglassv1alpha1.SessionStateRejected
 	session.Status.ApprovalReason = reason
 
 	if err := ApplySessionStatus(ctx, cli, &session); err != nil {
@@ -304,13 +304,13 @@ func RejectSession(ctx context.Context, cli client.Client, name, namespace, appr
 
 // WithdrawSession withdraws a BreakglassSession by updating its status
 func WithdrawSession(ctx context.Context, cli client.Client, name, namespace string) error {
-	var session telekomv1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	key := types.NamespacedName{Name: name, Namespace: namespace}
 	if err := cli.Get(ctx, key, &session); err != nil {
 		return fmt.Errorf("failed to get session %s: %w", name, err)
 	}
 
-	session.Status.State = telekomv1alpha1.SessionStateWithdrawn
+	session.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 
 	if err := ApplySessionStatus(ctx, cli, &session); err != nil {
 		return fmt.Errorf("failed to withdraw session %s: %w", name, err)
@@ -363,7 +363,7 @@ const CachePropagationDelay = 2 * time.Second
 //
 //	// Wait with verification
 //	helpers.WaitForCachePropagationWithVerify(ctx, t, func() bool {
-//	    var esc telekomv1alpha1.BreakglassEscalation
+//	    var esc breakglassv1alpha1.BreakglassEscalation
 //	    err := cli.Get(ctx, key, &esc)
 //	    return err == nil && esc.Status.Ready
 //	})

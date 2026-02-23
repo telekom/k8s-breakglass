@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -360,7 +360,7 @@ func TestNotificationOnSessionApproval(t *testing.T) {
 	t.Logf("Created session: %s/%s", session.Namespace, session.Name)
 
 	// Wait for session to be pending
-	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Session did not reach Pending state")
 
 	// Clear messages before approval
@@ -432,7 +432,7 @@ func TestNotificationOnSessionRejection(t *testing.T) {
 	t.Logf("Created session: %s/%s", session.Namespace, session.Name)
 
 	// Wait for session to be pending
-	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Session did not reach Pending state")
 
 	// Clear messages before rejection
@@ -463,7 +463,7 @@ func TestMailProviderConfiguration(t *testing.T) {
 	cli := helpers.GetClient(t)
 
 	t.Run("MailProviderExists", func(t *testing.T) {
-		var providers telekomv1alpha1.MailProviderList
+		var providers breakglassv1alpha1.MailProviderList
 		err := cli.List(ctx, &providers)
 		require.NoError(t, err, "Failed to list mail providers - check RBAC permissions")
 

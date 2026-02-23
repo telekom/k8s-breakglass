@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -105,7 +105,7 @@ users:
 		require.NoError(t, err, "Failed to create ClusterConfig")
 
 		// Verify it can be fetched
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err, "Failed to get ClusterConfig")
 		require.Equal(t, "spoke-cluster", fetched.Spec.ClusterID)
@@ -114,12 +114,12 @@ users:
 	})
 
 	t.Run("UpdateClusterConfig", func(t *testing.T) {
-		var clusterConfig telekomv1alpha1.ClusterConfig
+		var clusterConfig breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: spokeClusterName, Namespace: namespace}, &clusterConfig)
 		require.NoError(t, err)
 
 		// Use retry to handle conflicts with the ClusterConfigReconciler
-		err = helpers.UpdateWithRetry(ctx, cli, &clusterConfig, func(cc *telekomv1alpha1.ClusterConfig) error {
+		err = helpers.UpdateWithRetry(ctx, cli, &clusterConfig, func(cc *breakglassv1alpha1.ClusterConfig) error {
 			cc.Spec.Location = "us-west-2"
 			cc.Spec.Site = "primary"
 			return nil
@@ -127,7 +127,7 @@ users:
 		require.NoError(t, err, "Failed to update ClusterConfig")
 
 		// Verify the update
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Equal(t, "us-west-2", fetched.Spec.Location)
@@ -137,7 +137,7 @@ users:
 	t.Run("ClusterConfigWithIdentityProviderRefs", func(t *testing.T) {
 		// First create the IdentityProviders that will be referenced
 		primaryIDPName := helpers.GenerateUniqueName("primary-idp")
-		primaryIDP := &telekomv1alpha1.IdentityProvider{
+		primaryIDP := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      primaryIDPName,
 				Namespace: namespace,
@@ -145,8 +145,8 @@ users:
 					"e2e-test": "true",
 				},
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "primary-client",
 				},
@@ -159,7 +159,7 @@ users:
 		require.NoError(t, err, "Failed to create primary IDP")
 
 		backupIDPName := helpers.GenerateUniqueName("backup-idp")
-		backupIDP := &telekomv1alpha1.IdentityProvider{
+		backupIDP := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backupIDPName,
 				Namespace: namespace,
@@ -167,8 +167,8 @@ users:
 					"e2e-test": "true",
 				},
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://backup-auth.example.com",
 					ClientID:  "backup-client",
 				},
@@ -223,7 +223,7 @@ users:
 		err = cli.Create(ctx, clusterConfig)
 		require.NoError(t, err, "Failed to create ClusterConfig with IDP refs")
 
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.IdentityProviderRefs, 2)
@@ -231,14 +231,14 @@ users:
 	})
 
 	t.Run("DeleteClusterConfig", func(t *testing.T) {
-		var clusterConfig telekomv1alpha1.ClusterConfig
+		var clusterConfig breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: spokeClusterName, Namespace: namespace}, &clusterConfig)
 		require.NoError(t, err)
 
 		err = cli.Delete(ctx, &clusterConfig)
 		require.NoError(t, err, "Failed to delete ClusterConfig")
 
-		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &telekomv1alpha1.ClusterConfig{}, helpers.WaitForStateTimeout)
+		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &breakglassv1alpha1.ClusterConfig{}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "ClusterConfig was not deleted")
 	})
 }
@@ -267,7 +267,7 @@ func TestCrossClusterEscalation(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create multi-cluster escalation")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.Allowed.Clusters, 3)
@@ -291,7 +291,7 @@ func TestCrossClusterEscalation(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create ClusterConfigRefs escalation")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.ClusterConfigRefs, 1)
@@ -325,7 +325,7 @@ func TestCrossClusterEscalation(t *testing.T) {
 		require.NoError(t, err, "Failed to create session targeting specific cluster via API")
 		cleanup.Add(session)
 
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Equal(t, helpers.GetTestClusterName(), fetched.Spec.Cluster)
@@ -344,12 +344,12 @@ func TestClusterConfigValidation(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("RejectMissingKubeconfigSecretRef", func(t *testing.T) {
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-test-invalid-no-secret",
 				Namespace: namespace,
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID: "invalid-cluster",
 				// Missing KubeconfigSecretRef
 			},
@@ -439,7 +439,7 @@ func TestClusterConfigDeletionCleanupsSession(t *testing.T) {
 	require.NoError(t, err, "Failed to create ClusterConfig")
 
 	// Wait for the finalizer to be added
-	var fetchedCluster telekomv1alpha1.ClusterConfig
+	var fetchedCluster breakglassv1alpha1.ClusterConfig
 	err = helpers.WaitForCondition(ctx, func() (bool, error) {
 		if getErr := cli.Get(ctx, types.NamespacedName{Name: clusterName, Namespace: namespace}, &fetchedCluster); getErr != nil {
 			return false, getErr
@@ -487,7 +487,7 @@ func TestClusterConfigDeletionCleanupsSession(t *testing.T) {
 		err = cli.Delete(ctx, &fetchedCluster)
 		require.NoError(t, err, "Failed to delete ClusterConfig")
 
-		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterName, Namespace: namespace}, &telekomv1alpha1.ClusterConfig{}, 30*time.Second)
+		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterName, Namespace: namespace}, &breakglassv1alpha1.ClusterConfig{}, 30*time.Second)
 		require.NoError(t, err, "ClusterConfig was not deleted")
 		t.Log("ClusterConfig deleted successfully (no sessions to cleanup)")
 		return
@@ -496,20 +496,20 @@ func TestClusterConfigDeletionCleanupsSession(t *testing.T) {
 	t.Logf("Created session %s for cluster %s", session.Name, clusterName)
 
 	// Add session to cleanup in case test fails
-	cleanup.Add(&telekomv1alpha1.BreakglassSession{
+	cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
 	// Wait for session to be in a non-terminal state (pending or approved)
 	err = helpers.WaitForCondition(ctx, func() (bool, error) {
-		var s telekomv1alpha1.BreakglassSession
+		var s breakglassv1alpha1.BreakglassSession
 		if getErr := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &s); getErr != nil {
 			return false, getErr
 		}
 		// Pending or Approved are non-terminal states
 		state := s.Status.State
-		return state == telekomv1alpha1.SessionStatePending ||
-			state == telekomv1alpha1.SessionStateApproved, nil
+		return state == breakglassv1alpha1.SessionStatePending ||
+			state == breakglassv1alpha1.SessionStateApproved, nil
 	}, 30*time.Second, 1*time.Second)
 	require.NoError(t, err, "Session did not reach non-terminal state")
 
@@ -518,19 +518,19 @@ func TestClusterConfigDeletionCleanupsSession(t *testing.T) {
 	require.NoError(t, err, "Failed to delete ClusterConfig")
 
 	// Wait for ClusterConfig to be deleted (should happen after session cleanup)
-	err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterName, Namespace: namespace}, &telekomv1alpha1.ClusterConfig{}, 60*time.Second)
+	err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterName, Namespace: namespace}, &breakglassv1alpha1.ClusterConfig{}, 60*time.Second)
 	require.NoError(t, err, "ClusterConfig was not deleted - finalizer may be stuck")
 
 	// Verify the session was terminated/expired
-	var sessionAfter telekomv1alpha1.BreakglassSession
+	var sessionAfter breakglassv1alpha1.BreakglassSession
 	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &sessionAfter)
 	if err == nil {
 		// Session still exists - verify it's in a terminal state
 		t.Logf("Session state after cluster deletion: %s", sessionAfter.Status.State)
 		require.True(t,
-			sessionAfter.Status.State == telekomv1alpha1.SessionStateExpired ||
-				sessionAfter.Status.State == telekomv1alpha1.SessionStateRejected ||
-				sessionAfter.Status.State == telekomv1alpha1.SessionStateWithdrawn,
+			sessionAfter.Status.State == breakglassv1alpha1.SessionStateExpired ||
+				sessionAfter.Status.State == breakglassv1alpha1.SessionStateRejected ||
+				sessionAfter.Status.State == breakglassv1alpha1.SessionStateWithdrawn,
 			"Session should be in terminal state after cluster deletion, got: %s", sessionAfter.Status.State)
 	}
 	// Session might have been garbage collected - that's also OK

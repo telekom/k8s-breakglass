@@ -32,12 +32,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
 func init() {
-	_ = telekomv1alpha1.AddToScheme(scheme.Scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme.Scheme)
 }
 
 // SpokeHubAuthorizationSuite tests the complete user journey for multi-cluster breakglass access.
@@ -204,7 +204,7 @@ func (s *SpokeHubAuthorizationSuite) TestUserWithApprovedSessionAllowed() {
 	// Step 3: Wait for session to be pending
 	t.Log("Step 3: Session enters Pending state, awaiting approval")
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStatePending, 30*time.Second)
+		breakglassv1alpha1.SessionStatePending, 30*time.Second)
 	t.Log("✓ Session is Pending")
 
 	// Step 4-5: Approver authenticates and approves via API
@@ -219,7 +219,7 @@ func (s *SpokeHubAuthorizationSuite) TestUserWithApprovedSessionAllowed() {
 	// Step 6: Verify session is approved
 	t.Log("Step 6: Session transitions to Approved state")
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Log("✓ Session is now Active")
 
 	// Step 7: Employee accesses spoke cluster
@@ -271,11 +271,11 @@ func (s *SpokeHubAuthorizationSuite) TestSessionClusterScopeEnforced() {
 
 	// Approve via API
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStatePending, 30*time.Second)
+		breakglassv1alpha1.SessionStatePending, 30*time.Second)
 	err = s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace)
 	s.Require().NoError(err)
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Logf("✓ Session approved for %s", spokeA)
 
 	// Get user token
@@ -335,11 +335,11 @@ func (s *SpokeHubAuthorizationSuite) TestDenyPolicyEnforcedOnSpoke() {
 
 	// Approve via API
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStatePending, 30*time.Second)
+		breakglassv1alpha1.SessionStatePending, 30*time.Second)
 	err = s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace)
 	s.Require().NoError(err)
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Log("✓ Session approved with limited access")
 
 	token := s.mcCtx.GetTokenForTestUser(t, s.ctx, testUser)
@@ -391,7 +391,7 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	// First, expire ALL existing sessions for this user on this cluster
 	// to ensure we're testing with a clean slate (other tests may have created sessions)
 	t.Log("Step 0: Expiring any existing sessions for this user")
-	sessionList := &telekomv1alpha1.BreakglassSessionList{}
+	sessionList := &breakglassv1alpha1.BreakglassSessionList{}
 	err := s.hubClient.List(s.ctx, sessionList, client.InNamespace(s.namespace))
 	s.Require().NoError(err, "Failed to list sessions")
 
@@ -399,9 +399,9 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 		session := &sessionList.Items[i]
 		if session.Spec.User == testUser.Email &&
 			session.Spec.Cluster == spokeCluster &&
-			session.Status.State == telekomv1alpha1.SessionStateApproved {
+			session.Status.State == breakglassv1alpha1.SessionStateApproved {
 			t.Logf("Expiring pre-existing session: %s", session.Name)
-			session.Status.State = telekomv1alpha1.SessionStateExpired
+			session.Status.State = breakglassv1alpha1.SessionStateExpired
 			session.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
 			_ = s.hubClient.Status().Update(s.ctx, session)
 		}
@@ -425,7 +425,7 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	s.Require().NoError(err, "Failed to approve session via API")
 
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Log("✓ Session approved and active")
 
 	// Quick check - should be allowed initially
@@ -447,7 +447,7 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 
 	// Re-list and expire ALL sessions for this user on this cluster
 	// This handles sessions created by parallel tests after our initial cleanup
-	sessionList = &telekomv1alpha1.BreakglassSessionList{}
+	sessionList = &breakglassv1alpha1.BreakglassSessionList{}
 	err = s.hubClient.List(s.ctx, sessionList, client.InNamespace(s.namespace))
 	s.Require().NoError(err, "Failed to list sessions for expiry")
 
@@ -456,9 +456,9 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 		sess := &sessionList.Items[i]
 		if sess.Spec.User == testUser.Email &&
 			sess.Spec.Cluster == spokeCluster &&
-			sess.Status.State == telekomv1alpha1.SessionStateApproved {
+			sess.Status.State == breakglassv1alpha1.SessionStateApproved {
 			t.Logf("Expiring session: %s", sess.Name)
-			sess.Status.State = telekomv1alpha1.SessionStateExpired
+			sess.Status.State = breakglassv1alpha1.SessionStateExpired
 			sess.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
 			if err := s.hubClient.Status().Update(s.ctx, sess); err != nil {
 				t.Logf("Warning: failed to expire session %s: %v", sess.Name, err)
@@ -537,11 +537,11 @@ func (s *SpokeHubAuthorizationSuite) TestMultipleUsersIndependentSessions() {
 	s.cleanup.Add(session)
 
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStatePending, 30*time.Second)
+		breakglassv1alpha1.SessionStatePending, 30*time.Second)
 	err = s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace)
 	s.Require().NoError(err)
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Logf("✓ First user session approved: %s", session.Name)
 
 	kubeconfig := s.getOIDCKubeconfig(spokeCluster)

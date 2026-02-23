@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
@@ -147,7 +147,7 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 	var deletedCount int
 
 	// List sessions across all namespaces
-	bsl := telekomv1alpha1.BreakglassSessionList{}
+	bsl := breakglassv1alpha1.BreakglassSessionList{}
 	if err := routine.Manager.List(ctx, &bsl); err != nil {
 		routine.Log.Error("error listing breakglass sessions for cleanup", zap.String("error", err.Error()))
 		return
@@ -185,7 +185,7 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 		// they have no RetainedUntil set (zero value) and are not pending. Expired
 		// sessions are handled above based on RetainedUntil.
 		if len(ses.OwnerReferences) == 0 {
-			if ses.Status.RetainedUntil.IsZero() && ses.Status.State != telekomv1alpha1.SessionStatePending {
+			if ses.Status.RetainedUntil.IsZero() && ses.Status.State != breakglassv1alpha1.SessionStatePending {
 				routine.Log.Infow("Deleting session without OwnerReferences (orphaned/legacy - no RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
 				if err := routine.Manager.DeleteBreakglassSession(ctx, &ses); err != nil {
 					routine.Log.Errorw("error deleting orphaned breakglass session", append(system.NamespacedFields(ses.Name, ses.Namespace), "error", err)...)
@@ -209,7 +209,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 	var expiredCount, deletedCount int
 
 	// List debug sessions across all namespaces
-	dsl := telekomv1alpha1.DebugSessionList{}
+	dsl := breakglassv1alpha1.DebugSessionList{}
 	if err := routine.Manager.List(ctx, &dsl); err != nil {
 		routine.Log.Error("error listing debug sessions for cleanup", zap.String("error", err.Error()))
 		return
@@ -231,9 +231,9 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 			system.NamespacedFields(ds.Name, ds.Namespace)...)
 
 		// Skip sessions that are already in terminal states (Expired, Terminated, Failed)
-		if ds.Status.State == telekomv1alpha1.DebugSessionStateExpired ||
-			ds.Status.State == telekomv1alpha1.DebugSessionStateTerminated ||
-			ds.Status.State == telekomv1alpha1.DebugSessionStateFailed {
+		if ds.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+			ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+			ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 			// Check if session should be deleted after retention period
 			// Use ExpiresAt or CreationTimestamp to determine retention eligibility
 			retentionStart := ds.CreationTimestamp.Time
@@ -262,7 +262,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		}
 
 		// Check if active session has expired
-		if ds.Status.State == telekomv1alpha1.DebugSessionStateActive {
+		if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 			if ds.Status.ExpiresAt != nil && now.After(ds.Status.ExpiresAt.Time) {
 				routine.Log.Infow("Debug session expired, marking as Expired",
 					append(system.NamespacedFields(ds.Name, ds.Namespace),
@@ -273,7 +273,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"expiresAt", ds.Status.ExpiresAt,
 					)...)
 
-				ds.Status.State = telekomv1alpha1.DebugSessionStateExpired
+				ds.Status.State = breakglassv1alpha1.DebugSessionStateExpired
 				ds.Status.Message = "Session expired (cleanup routine)"
 
 				if err := applyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
@@ -296,7 +296,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		}
 
 		// Check pending approval sessions that have timed out
-		if ds.Status.State == telekomv1alpha1.DebugSessionStatePendingApproval {
+		if ds.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval {
 			// If approval times out, mark as failed
 			if ds.Status.Approval != nil && ds.CreationTimestamp.Add(DebugSessionApprovalTimeout).Before(now) {
 				routine.Log.Infow("Debug session approval timed out, marking as Failed",
@@ -308,7 +308,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"approvalTimeout", DebugSessionApprovalTimeout.String(),
 					)...)
 
-				ds.Status.State = telekomv1alpha1.DebugSessionStateFailed
+				ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 				ds.Status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
 
 				if err := applyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
@@ -334,7 +334,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 }
 
 // sendDebugSessionExpiredEmail sends a notification when a debug session expires
-func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds telekomv1alpha1.DebugSession) {
+func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds breakglassv1alpha1.DebugSession) {
 	if routine.DisableEmail || routine.MailService == nil || !routine.MailService.IsEnabled() {
 		return
 	}
@@ -388,13 +388,13 @@ func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds telekomv1alpha1.De
 	}
 }
 
-func buildDebugSessionNotificationRecipients(ds telekomv1alpha1.DebugSession) []string {
+func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession) []string {
 	base := []string{ds.Spec.RequestedBy}
 	if ds.Spec.RequestedByEmail != "" {
 		base = []string{ds.Spec.RequestedByEmail}
 	}
 
-	cfg := (*telekomv1alpha1.DebugSessionNotificationConfig)(nil)
+	cfg := (*breakglassv1alpha1.DebugSessionNotificationConfig)(nil)
 	if ds.Status.ResolvedTemplate != nil {
 		cfg = ds.Status.ResolvedTemplate.Notification
 	}

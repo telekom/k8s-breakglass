@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,7 +14,7 @@ import (
 // ExpireApprovedSessions sets state to Expired for approved sessions that have passed ExpiresAt
 func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 	// Use indexed query to fetch only approved sessions
-	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), telekomv1alpha1.SessionStateApproved)
+	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStateApproved)
 	if err != nil {
 		wc.log.Error("error listing breakglass sessions for approved expiry", err)
 		return
@@ -26,9 +26,9 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 			wc.log.Infow("Expiring approved session due to reached ExpiresAt", "session", ses.Name, "expiresAt", ses.Status.ExpiresAt.Time, "now", now)
 
 			// Prepare status transition
-			ses.Status.State = telekomv1alpha1.SessionStateExpired
+			ses.Status.State = breakglassv1alpha1.SessionStateExpired
 			ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
-				Type:               string(telekomv1alpha1.SessionConditionTypeExpired),
+				Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 				Status:             metav1.ConditionTrue,
 				LastTransitionTime: metav1.Now(),
 				Reason:             "ExpiredByTime",
@@ -88,7 +88,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 }
 
 // sendSessionExpiredEmail sends a notification when a session expires
-func (wc *BreakglassSessionController) sendSessionExpiredEmail(session telekomv1alpha1.BreakglassSession, expirationReason string) {
+func (wc *BreakglassSessionController) sendSessionExpiredEmail(session breakglassv1alpha1.BreakglassSession, expirationReason string) {
 	if wc.disableEmail || wc.mailService == nil || !wc.mailService.IsEnabled() {
 		return
 	}

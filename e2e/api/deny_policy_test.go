@@ -26,7 +26,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -57,7 +57,7 @@ func TestDenyPolicyEnforcement(t *testing.T) {
 		require.NoError(t, err, "Failed to create DenyPolicy")
 
 		// Verify it can be fetched
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err, "Failed to get DenyPolicy")
 		require.Len(t, fetched.Spec.Rules, 1)
@@ -75,45 +75,45 @@ func TestDenyPolicyEnforcement(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create multi-rule DenyPolicy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.Rules, 2)
 	})
 
 	t.Run("UpdateDenyPolicy", func(t *testing.T) {
-		var policy telekomv1alpha1.DenyPolicy
+		var policy breakglassv1alpha1.DenyPolicy
 		err := cli.Get(ctx, types.NamespacedName{Name: "e2e-test-deny-secrets"}, &policy)
 		require.NoError(t, err)
 
 		// Use retry to handle conflicts with the DenyPolicyReconciler
-		err = helpers.UpdateWithRetry(ctx, cli, &policy, func(p *telekomv1alpha1.DenyPolicy) error {
+		err = helpers.UpdateWithRetry(ctx, cli, &policy, func(p *breakglassv1alpha1.DenyPolicy) error {
 			// Add another deny rule
-			p.Spec.Rules = append(p.Spec.Rules, telekomv1alpha1.DenyRule{
+			p.Spec.Rules = append(p.Spec.Rules, breakglassv1alpha1.DenyRule{
 				APIGroups:  []string{""},
 				Resources:  []string{"configmaps"},
 				Verbs:      []string{"delete"},
-				Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 			})
 			return nil
 		})
 		require.NoError(t, err, "Failed to update DenyPolicy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.Rules, 2)
 	})
 
 	t.Run("DeleteDenyPolicy", func(t *testing.T) {
-		var policy telekomv1alpha1.DenyPolicy
+		var policy breakglassv1alpha1.DenyPolicy
 		err := cli.Get(ctx, types.NamespacedName{Name: "e2e-test-deny-secrets"}, &policy)
 		require.NoError(t, err)
 
 		err = cli.Delete(ctx, &policy)
 		require.NoError(t, err, "Failed to delete DenyPolicy")
 
-		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: policy.Name}, &telekomv1alpha1.DenyPolicy{}, helpers.WaitForStateTimeout)
+		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: policy.Name}, &breakglassv1alpha1.DenyPolicy{}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "DenyPolicy was not deleted")
 	})
 }
@@ -130,17 +130,17 @@ func TestDenyPolicyWithPodSecurityRules(t *testing.T) {
 
 	t.Run("CreatePolicyWithPodSecurityRules", func(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder("e2e-test-pod-security-policy", "").
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
 				BlockFactors: []string{
 					"hostNetwork",
 					"hostPID",
 				},
-				RiskFactors: telekomv1alpha1.RiskFactors{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 					HostNetwork:         80,
 					HostPID:             80,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 80, Action: "warn"},
 					{MaxScore: 100, Action: "deny", Reason: "Pod risk score too high: {{.Score}}"},
@@ -154,7 +154,7 @@ func TestDenyPolicyWithPodSecurityRules(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create DenyPolicy with PodSecurityRules")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
@@ -213,7 +213,7 @@ func TestDenyPolicyBlocksSpecificVerbs(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("DeleteVerbBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -306,7 +306,7 @@ func TestDenyPolicyBlocksSpecificResources(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("SecretsBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -398,7 +398,7 @@ func TestDenyPolicyBlocksSpecificNamespaces(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("ProductionNamespaceBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -491,7 +491,7 @@ func TestDenyPolicyBlocksSpecificAPIGroups(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("AppsGroupBlocked", func(t *testing.T) {
 		// Deployments are in the "apps" group
@@ -553,11 +553,11 @@ func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
 
 	// Create DenyPolicy that blocks access to secret named "database-password"
 	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp005-block-resource-name", "").
-		WithRule(telekomv1alpha1.DenyRule{
+		WithRule(breakglassv1alpha1.DenyRule{
 			APIGroups:     []string{""},
 			Resources:     []string{"secrets"},
 			Verbs:         []string{"*"},
-			Namespaces:    &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+			Namespaces:    &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 			ResourceNames: []string{"database-password"},
 		}).
 		Build()
@@ -592,7 +592,7 @@ func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("SpecificSecretBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -700,7 +700,7 @@ func TestDenyPolicyPrecedenceOrdering(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Both policies should be evaluated and block their respective resources
 	t.Run("SecretsBlockedByLowerPrecedence", func(t *testing.T) {
@@ -775,17 +775,17 @@ func TestDenyPolicyExemptionByNamespace(t *testing.T) {
 
 	// Create DenyPolicy with PodSecurityRules that exempts kube-system namespace
 	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp008-exempt-namespace", "").
-		WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-			RiskFactors: telekomv1alpha1.RiskFactors{
+		WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				HostNetwork:         80,
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []telekomv1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 50, Action: "allow"},
 				{MaxScore: 100, Action: "deny", Reason: "High risk pod"},
 			},
-			Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-				Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+			Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 			},
 		}).
 		Build()
@@ -794,7 +794,7 @@ func TestDenyPolicyExemptionByNamespace(t *testing.T) {
 	require.NoError(t, err, "Failed to create DenyPolicy with namespace exemption")
 
 	// Verify policy was created correctly
-	var fetched telekomv1alpha1.DenyPolicy
+	var fetched breakglassv1alpha1.DenyPolicy
 	err = cli.Get(ctx, types.NamespacedName{Name: denyPolicy.Name}, &fetched)
 	require.NoError(t, err)
 	require.NotNil(t, fetched.Spec.PodSecurityRules)
@@ -854,7 +854,7 @@ func TestDenyPolicyAppliesToClusters(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("PolicyNotEnforcedOnOtherCluster", func(t *testing.T) {
 		// Policy applies to "other-cluster", not our test cluster

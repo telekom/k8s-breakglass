@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sync"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -54,11 +54,11 @@ func (em *EscalationManager) getConfig() (cfgpkg.Config, error) {
 }
 
 // Get all stored BreakglassEscalations
-func (em *EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
 	log.Debug("Fetching all BreakglassEscalations")
 	metrics.APIEndpointRequests.WithLabelValues("GetAllBreakglassEscalations").Inc()
-	escal := telekomv1alpha1.BreakglassEscalationList{}
+	escal := breakglassv1alpha1.BreakglassEscalationList{}
 	if err := em.List(ctx, &escal); err != nil {
 		log.Errorw("Failed to get BreakglassEscalationList", "error", err)
 		return nil, fmt.Errorf("failed to get BreakglassEscalationList: %w", err)
@@ -68,12 +68,12 @@ func (em *EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([
 }
 
 func (em *EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Context,
-	filter func(telekomv1alpha1.BreakglassEscalation) bool,
-) ([]telekomv1alpha1.BreakglassEscalation, error) {
+	filter func(breakglassv1alpha1.BreakglassEscalation) bool,
+) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
 	log.Debug("Fetching BreakglassEscalations with filter")
 	metrics.APIEndpointRequests.WithLabelValues("GetBreakglassEscalationsWithFilter").Inc()
-	ess := telekomv1alpha1.BreakglassEscalationList{}
+	ess := breakglassv1alpha1.BreakglassEscalationList{}
 
 	if err := em.List(ctx, &ess); err != nil {
 		log.Errorw("Failed to list BreakglassEscalation for filtered get", "error", err)
@@ -81,7 +81,7 @@ func (em *EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Cont
 	}
 	log.Debugw("Retrieved escalations for filtering", "totalCount", len(ess.Items))
 
-	output := make([]telekomv1alpha1.BreakglassEscalation, 0, len(ess.Items))
+	output := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(ess.Items))
 	for _, it := range ess.Items {
 		if filter(it) {
 			log.Debugw("Escalation matched filter", system.NamespacedFields(it.Name, it.Namespace)...)
@@ -98,11 +98,11 @@ func (em *EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Cont
 // GetBreakglassEscalationsWithSelector with custom field selector.
 func (em *EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Context,
 	fs fields.Selector,
-) ([]telekomv1alpha1.BreakglassEscalation, error) {
+) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
 	log.Debugw("Fetching BreakglassEscalations with selector", "selector", fs.String())
 	metrics.APIEndpointRequests.WithLabelValues("GetBreakglassEscalationsWithSelector").Inc()
-	ess := telekomv1alpha1.BreakglassEscalationList{}
+	ess := breakglassv1alpha1.BreakglassEscalationList{}
 
 	if err := em.List(ctx, &ess, &client.ListOptions{FieldSelector: fs}); err != nil {
 		log.Errorw("Failed to list BreakglassEscalation with selector", "selector", fs.String(), "error", err)
@@ -115,11 +115,11 @@ func (em *EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Co
 
 // GetBreakglassEscalation retrieves a single BreakglassEscalation by namespace/name using the cached controller-runtime client.
 // Prefer this over filter-based scans when the owner reference is known to minimize cache iterations.
-func (em *EscalationManager) GetBreakglassEscalation(ctx context.Context, namespace, name string) (*telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetBreakglassEscalation(ctx context.Context, namespace, name string) (*breakglassv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
 	log.Debugw("Fetching BreakglassEscalation by name", "namespace", namespace, "name", name)
 	metrics.APIEndpointRequests.WithLabelValues("GetBreakglassEscalation").Inc()
-	got := &telekomv1alpha1.BreakglassEscalation{}
+	got := &breakglassv1alpha1.BreakglassEscalation{}
 	if err := em.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, got); err != nil {
 		status := "500"
 		if apierrors.IsNotFound(err) {
@@ -134,14 +134,14 @@ func (em *EscalationManager) GetBreakglassEscalation(ctx context.Context, namesp
 // GetGroupBreakglassEscalations returns escalations available to users in the specified groups
 func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	groups []string,
-) ([]telekomv1alpha1.BreakglassEscalation, error) {
+) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
 	log.Debugw("Fetching group BreakglassEscalations", "groups", groups)
 	metrics.APIEndpointRequests.WithLabelValues("GetGroupBreakglassEscalations").Inc()
 	// First try index-based lookup for each group and collect results (deduped)
-	collectedMap := map[string]telekomv1alpha1.BreakglassEscalation{}
+	collectedMap := map[string]breakglassv1alpha1.BreakglassEscalation{}
 	for _, g := range groups {
-		list := telekomv1alpha1.BreakglassEscalationList{}
+		list := breakglassv1alpha1.BreakglassEscalationList{}
 		if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.group": g}); err == nil {
 			log.Debugw("Index lookup for group returned items", "group", g, "count", len(list.Items))
 			for _, it := range list.Items {
@@ -159,7 +159,7 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 		}
 	}
 	if len(collectedMap) > 0 {
-		collected := make([]telekomv1alpha1.BreakglassEscalation, 0, len(collectedMap))
+		collected := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(collectedMap))
 		for _, v := range collectedMap {
 			collected = append(collected, v)
 		}
@@ -172,7 +172,7 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 		oidcPrefixes = cfg.Kubernetes.OIDCPrefixes
 		log.Debugw("Loaded OIDC prefixes for group normalization", "prefixes", oidcPrefixes)
 	}
-	return em.GetBreakglassEscalationsWithFilter(ctx, func(be telekomv1alpha1.BreakglassEscalation) bool {
+	return em.GetBreakglassEscalationsWithFilter(ctx, func(be breakglassv1alpha1.BreakglassEscalation) bool {
 		allowedGroups := be.Spec.Allowed.Groups
 		if len(oidcPrefixes) > 0 {
 			allowedGroups = stripOIDCPrefixes(allowedGroups, oidcPrefixes)
@@ -190,10 +190,10 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 
 // collectClusterEscalations queries the index for escalations matching a specific cluster
 // and global "*" patterns. Returns combined results (may be empty if no index hits).
-func (em *EscalationManager) collectClusterEscalations(ctx context.Context, cluster string) []telekomv1alpha1.BreakglassEscalation {
-	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
+func (em *EscalationManager) collectClusterEscalations(ctx context.Context, cluster string) []breakglassv1alpha1.BreakglassEscalation {
+	collected := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 	seen := make(map[string]struct{})
-	addUnique := func(items []telekomv1alpha1.BreakglassEscalation) {
+	addUnique := func(items []breakglassv1alpha1.BreakglassEscalation) {
 		for _, item := range items {
 			key := item.Namespace + "/" + item.Name
 			if _, exists := seen[key]; !exists {
@@ -202,11 +202,11 @@ func (em *EscalationManager) collectClusterEscalations(ctx context.Context, clus
 			}
 		}
 	}
-	list := telekomv1alpha1.BreakglassEscalationList{}
+	list := breakglassv1alpha1.BreakglassEscalationList{}
 	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
 		addUnique(list.Items)
 	}
-	globalList := telekomv1alpha1.BreakglassEscalationList{}
+	globalList := breakglassv1alpha1.BreakglassEscalationList{}
 	if err := em.List(ctx, &globalList, client.MatchingFields{"spec.allowed.cluster": "*"}); err == nil && len(globalList.Items) > 0 {
 		addUnique(globalList.Items)
 	}
@@ -215,7 +215,7 @@ func (em *EscalationManager) collectClusterEscalations(ctx context.Context, clus
 
 // GetClusterBreakglassEscalations returns escalations that apply to a specific cluster.
 // Supports glob patterns in both Allowed.Clusters and ClusterConfigRefs fields.
-func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterBreakglassEscalations").Inc()
 
@@ -224,7 +224,7 @@ func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context
 
 	// If index returned results, filter using shared helper and return
 	if len(collected) > 0 {
-		out := make([]telekomv1alpha1.BreakglassEscalation, 0)
+		out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 		for _, be := range collected {
 			if escalationMatchesCluster(be, cluster) {
 				out = append(out, be)
@@ -236,7 +236,7 @@ func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context
 	}
 
 	// Fallback to filter-based scan for glob patterns
-	return em.GetBreakglassEscalationsWithFilter(ctx, func(be telekomv1alpha1.BreakglassEscalation) bool {
+	return em.GetBreakglassEscalationsWithFilter(ctx, func(be breakglassv1alpha1.BreakglassEscalation) bool {
 		return escalationMatchesCluster(be, cluster)
 	})
 }
@@ -262,7 +262,7 @@ func clusterMatchesPatterns(cluster string, patterns []string) bool {
 // escalationMatchesCluster checks if an escalation applies to a given cluster.
 // Both Allowed.Clusters and ClusterConfigRefs are checked with glob pattern support.
 // Empty values in both fields means the escalation applies to no clusters (use "*" for global).
-func escalationMatchesCluster(be telekomv1alpha1.BreakglassEscalation, cluster string) bool {
+func escalationMatchesCluster(be breakglassv1alpha1.BreakglassEscalation, cluster string) bool {
 	return clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) ||
 		clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs)
 }
@@ -293,7 +293,7 @@ func groupsMatch(userGroups, allowedGroups, oidcPrefixes []string) bool {
 }
 
 // GetClusterGroupBreakglassEscalations returns escalations for specific cluster and user groups
-func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groups", groups)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 
@@ -311,7 +311,7 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 
 	// Filter collected by cluster matching and groups using shared helpers
 	oidcPrefixes := em.getOIDCPrefixes()
-	out := make([]telekomv1alpha1.BreakglassEscalation, 0)
+	out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
 		if !escalationMatchesCluster(be, cluster) {
 			continue
@@ -324,12 +324,12 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 }
 
 // GetClusterGroupTargetBreakglassEscalation returns escalations for specific cluster, user groups, and target group
-func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroups", userGroups, "targetGroup", targetGroup)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupTargetBreakglassEscalation").Inc()
 	// Try index-based lookup by escalatedGroup first
-	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
-	list := telekomv1alpha1.BreakglassEscalationList{}
+	collected := make([]breakglassv1alpha1.BreakglassEscalation, 0)
+	list := breakglassv1alpha1.BreakglassEscalationList{}
 	if err := em.List(ctx, &list, client.MatchingFields{"spec.escalatedGroup": targetGroup}); err == nil && len(list.Items) > 0 {
 		collected = append(collected, list.Items...)
 	}
@@ -344,7 +344,7 @@ func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx conte
 
 	// Filter collected by cluster and allowed groups using shared helpers
 	oidcPrefixes := em.getOIDCPrefixes()
-	out := make([]telekomv1alpha1.BreakglassEscalation, 0)
+	out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
 		if be.Spec.EscalatedGroup != targetGroup {
 			continue
@@ -430,7 +430,7 @@ func (em *EscalationManager) SetResolver(resolver GroupMemberResolver) {
 }
 
 // UpdateBreakglassEscalationStatus updates the given escalation resource status
-func (em *EscalationManager) UpdateBreakglassEscalationStatus(ctx context.Context, esc telekomv1alpha1.BreakglassEscalation) error {
+func (em *EscalationManager) UpdateBreakglassEscalationStatus(ctx context.Context, esc breakglassv1alpha1.BreakglassEscalation) error {
 	log := em.getLogger()
 	log.Infow("Updating BreakglassEscalation status", "name", esc.Name)
 	if err := applyBreakglassEscalationStatus(ctx, em, &esc); err != nil {

@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -46,14 +46,14 @@ func TestIdentityProviderHotReload(t *testing.T) {
 
 	t.Run("UpdateIdentityProviderSpec", func(t *testing.T) {
 		idpName := helpers.GenerateUniqueName("e2e-reload-idp")
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      idpName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("hot-reload"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://original-issuer.example.com",
 					ClientID:  "original-client-id",
 				},
@@ -65,14 +65,14 @@ func TestIdentityProviderHotReload(t *testing.T) {
 
 		time.Sleep(2 * time.Second)
 
-		var initial telekomv1alpha1.IdentityProvider
+		var initial breakglassv1alpha1.IdentityProvider
 		err := cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &initial)
 		require.NoError(t, err)
 		assert.Equal(t, "https://original-issuer.example.com", initial.Spec.OIDC.Authority)
 		t.Logf("Initial IDP authority: %s", initial.Spec.OIDC.Authority)
 
 		// Use retry to handle conflicts with the IdentityProviderReconciler
-		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *telekomv1alpha1.IdentityProvider) error {
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.OIDC.Authority = "https://updated-issuer.example.com"
 			idp.Spec.OIDC.ClientID = "updated-client-id"
 			idp.Spec.Issuer = "https://updated-issuer.example.com"
@@ -82,7 +82,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 
 		time.Sleep(3 * time.Second)
 
-		var updated telekomv1alpha1.IdentityProvider
+		var updated breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, "https://updated-issuer.example.com", updated.Spec.OIDC.Authority)
@@ -95,14 +95,14 @@ func TestIdentityProviderHotReload(t *testing.T) {
 
 	t.Run("UpdateIdentityProviderDisabledFlag", func(t *testing.T) {
 		idpName := helpers.GenerateUniqueName("e2e-reload-idp-disabled")
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      idpName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("hot-reload-disabled"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://disabled-test.example.com",
 					ClientID:  "disabled-client",
 				},
@@ -115,14 +115,14 @@ func TestIdentityProviderHotReload(t *testing.T) {
 
 		time.Sleep(2 * time.Second)
 
-		var initial telekomv1alpha1.IdentityProvider
+		var initial breakglassv1alpha1.IdentityProvider
 		err := cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &initial)
 		require.NoError(t, err)
 		assert.False(t, initial.Spec.Disabled)
 		t.Logf("Initial IDP disabled: %v", initial.Spec.Disabled)
 
 		// Disable the provider using retry to handle conflicts with reconciler
-		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *telekomv1alpha1.IdentityProvider) error {
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.Disabled = true
 			return nil
 		})
@@ -130,7 +130,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 
 		time.Sleep(3 * time.Second)
 
-		var updated telekomv1alpha1.IdentityProvider
+		var updated breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		assert.True(t, updated.Spec.Disabled)
@@ -194,14 +194,14 @@ users:
 
 		time.Sleep(2 * time.Second)
 
-		var initial telekomv1alpha1.ClusterConfig
+		var initial breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &initial)
 		require.NoError(t, err)
 		assert.Equal(t, "original-cluster-id", initial.Spec.ClusterID)
 		t.Logf("Initial ClusterConfig: ClusterID=%s", initial.Spec.ClusterID)
 
 		// Use retry to handle conflicts with the ClusterConfigReconciler
-		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(cc *telekomv1alpha1.ClusterConfig) error {
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(cc *breakglassv1alpha1.ClusterConfig) error {
 			cc.Spec.ClusterID = "updated-cluster-id"
 			cc.Spec.Environment = "staging"
 			return nil
@@ -210,7 +210,7 @@ users:
 
 		time.Sleep(3 * time.Second)
 
-		var updated telekomv1alpha1.ClusterConfig
+		var updated breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, "updated-cluster-id", updated.Spec.ClusterID)
@@ -262,7 +262,7 @@ users:
 
 		time.Sleep(2 * time.Second)
 
-		var initial telekomv1alpha1.ClusterConfig
+		var initial breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &initial)
 		require.NoError(t, err)
 		initialGeneration := initial.Generation
@@ -292,7 +292,7 @@ users:
 
 		time.Sleep(3 * time.Second)
 
-		var updated telekomv1alpha1.ClusterConfig
+		var updated breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		t.Logf("ClusterConfig after secret update: Generation=%d, ObservedGeneration=%d",
@@ -332,19 +332,19 @@ func TestMailProviderHotReload(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, secret), "Failed to create mail secret")
 
 		mpName := helpers.GenerateUniqueName("e2e-reload-mp")
-		mp := &telekomv1alpha1.MailProvider{
+		mp := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      mpName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("hot-reload"),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
+			Spec: breakglassv1alpha1.MailProviderSpec{
 				DisplayName: "Original Mail Provider",
-				SMTP: telekomv1alpha1.SMTPConfig{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "original-smtp.example.com",
 					Port: 587,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "original@example.com",
 					Name:    "Original Sender",
 				},
@@ -355,14 +355,14 @@ func TestMailProviderHotReload(t *testing.T) {
 
 		time.Sleep(2 * time.Second)
 
-		var initial telekomv1alpha1.MailProvider
+		var initial breakglassv1alpha1.MailProvider
 		err := cli.Get(ctx, types.NamespacedName{Name: mpName, Namespace: namespace}, &initial)
 		require.NoError(t, err)
 		assert.Equal(t, "original-smtp.example.com", initial.Spec.SMTP.Host)
 		t.Logf("Initial MailProvider host: %s", initial.Spec.SMTP.Host)
 
 		// Use retry to handle conflicts with the MailProviderReconciler
-		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(mp *telekomv1alpha1.MailProvider) error {
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(mp *breakglassv1alpha1.MailProvider) error {
 			mp.Spec.SMTP.Host = "updated-smtp.example.com"
 			mp.Spec.Sender.Address = "updated@example.com"
 			return nil
@@ -371,7 +371,7 @@ func TestMailProviderHotReload(t *testing.T) {
 
 		time.Sleep(3 * time.Second)
 
-		var updated telekomv1alpha1.MailProvider
+		var updated breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: mpName, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, "updated-smtp.example.com", updated.Spec.SMTP.Host)
@@ -400,12 +400,12 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		require.NoError(t, err, "API should work before config update")
 		t.Logf("Sessions before update: %d", len(sessions))
 
-		var idpList telekomv1alpha1.IdentityProviderList
+		var idpList breakglassv1alpha1.IdentityProviderList
 		err = cli.List(ctx, &idpList)
 		require.NoError(t, err)
 		require.NotEmpty(t, idpList.Items, "Should have at least one IdentityProvider")
 
-		var testIDP *telekomv1alpha1.IdentityProvider
+		var testIDP *breakglassv1alpha1.IdentityProvider
 		for i := range idpList.Items {
 			if idpList.Items[i].Labels != nil && idpList.Items[i].Labels["e2e-test"] == "true" {
 				testIDP = &idpList.Items[i]
@@ -423,13 +423,13 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		// Ensure we restore the original client ID at the end
 		defer func() {
 			// Re-fetch to get latest version to avoid conflict
-			_ = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *telekomv1alpha1.IdentityProvider) error {
+			_ = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
 				idp.Spec.OIDC.ClientID = originalClientID
 				return nil
 			})
 		}()
 
-		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *telekomv1alpha1.IdentityProvider) error {
+		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.OIDC.ClientID = "temporary-client-id-" + helpers.GenerateUniqueName("")
 			return nil
 		})
@@ -446,7 +446,7 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		}
 
 		// Explicitly restore (defer will handle it if this fails, but good to be explicit for the test flow)
-		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *telekomv1alpha1.IdentityProvider) error {
+		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.OIDC.ClientID = originalClientID
 			return nil
 		})

@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -55,18 +55,18 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	t.Run("CC-OIDC-001_BasicOIDCConfig", func(t *testing.T) {
 		// Create ClusterConfig with basic OIDC authentication
 		name := helpers.GenerateUniqueName("cc-oidc-basic")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-test-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL: keycloakIssuer,
 					ClientID:  "breakglass-controller",
 					Server:    "https://kubernetes.default.svc:443",
@@ -76,12 +76,12 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Verify the ClusterConfig was created
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get OIDC ClusterConfig")
 
 		// Verify OIDC configuration
-		assert.Equal(t, telekomv1alpha1.ClusterAuthTypeOIDC, fetched.Spec.AuthType)
+		assert.Equal(t, breakglassv1alpha1.ClusterAuthTypeOIDC, fetched.Spec.AuthType)
 		require.NotNil(t, fetched.Spec.OIDCAuth, "OIDCAuth should not be nil")
 		assert.Equal(t, keycloakIssuer, fetched.Spec.OIDCAuth.IssuerURL)
 		assert.Equal(t, "breakglass-controller", fetched.Spec.OIDCAuth.ClientID)
@@ -107,22 +107,22 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		// Create ClusterConfig with OIDC and client secret reference
 		name := helpers.GenerateUniqueName("cc-oidc-secret")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-secret-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL: keycloakIssuer,
 					ClientID:  "breakglass-controller",
 					Server:    "https://kubernetes.default.svc:443",
-					ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name:      secretName,
 						Namespace: s.Namespace,
 						Key:       "client-secret",
@@ -133,7 +133,7 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Verify the ClusterConfig was created with secret reference
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get OIDC ClusterConfig with secret")
 
@@ -176,29 +176,29 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		// Create ClusterConfig with OIDC token exchange configuration
 		name := helpers.GenerateUniqueName("cc-oidc-exchange")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-exchange-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL: keycloakIssuer,
 					ClientID:  "breakglass-controller",
 					Server:    "https://kubernetes.default.svc:443",
-					ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name:      clientSecretName,
 						Namespace: s.Namespace,
 						Key:       "client-secret",
 					},
-					TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+					TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 						Enabled: true,
-						SubjectTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+						SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 							Name:      subjectTokenSecretName,
 							Namespace: s.Namespace,
 							Key:       "token",
@@ -213,7 +213,7 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Verify the ClusterConfig was created with token exchange
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get OIDC ClusterConfig with token exchange")
 
@@ -229,16 +229,16 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	t.Run("CC-OIDC-004_OIDCFromIdentityProvider", func(t *testing.T) {
 		// First create an IdentityProvider to reference
 		idpName := helpers.GenerateUniqueName("test-idp")
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      idpName,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Test OIDC Provider",
 				Primary:     true,
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: keycloakIssuer,
 					ClientID:  "breakglass-ui",
 				},
@@ -248,18 +248,18 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		// Create ClusterConfig that references the IdentityProvider
 		name := helpers.GenerateUniqueName("cc-oidc-from-idp")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-from-idp-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 					Name:   idpName,
 					Server: "https://kubernetes.default.svc:443",
 				},
@@ -268,7 +268,7 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Verify the ClusterConfig was created with IDP reference
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get OIDC ClusterConfig from IDP")
 
@@ -282,16 +282,16 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	t.Run("CC-OIDC-005_ValidationErrors", func(t *testing.T) {
 		t.Run("MissingIssuerURL", func(t *testing.T) {
 			name := helpers.GenerateUniqueName("cc-oidc-invalid")
-			clusterConfig := &telekomv1alpha1.ClusterConfig{
+			clusterConfig := &breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      name,
 					Namespace: s.Namespace,
 					Labels:    helpers.E2ETestLabels(),
 				},
-				Spec: telekomv1alpha1.ClusterConfigSpec{
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
 					ClusterID: "invalid-oidc-cluster",
-					AuthType:  telekomv1alpha1.ClusterAuthTypeOIDC,
-					OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+					AuthType:  breakglassv1alpha1.ClusterAuthTypeOIDC,
+					OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 						// Missing IssuerURL
 						ClientID: "breakglass-controller",
 						Server:   "https://kubernetes.default.svc:443",
@@ -308,16 +308,16 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		t.Run("MissingServer", func(t *testing.T) {
 			name := helpers.GenerateUniqueName("cc-oidc-invalid2")
-			clusterConfig := &telekomv1alpha1.ClusterConfig{
+			clusterConfig := &breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      name,
 					Namespace: s.Namespace,
 					Labels:    helpers.E2ETestLabels(),
 				},
-				Spec: telekomv1alpha1.ClusterConfigSpec{
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
 					ClusterID: "invalid-oidc-cluster2",
-					AuthType:  telekomv1alpha1.ClusterAuthTypeOIDC,
-					OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+					AuthType:  breakglassv1alpha1.ClusterAuthTypeOIDC,
+					OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 						IssuerURL: keycloakIssuer,
 						ClientID:  "breakglass-controller",
 						// Missing Server
@@ -334,16 +334,16 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		t.Run("InvalidIssuerURLScheme", func(t *testing.T) {
 			name := helpers.GenerateUniqueName("cc-oidc-invalid3")
-			clusterConfig := &telekomv1alpha1.ClusterConfig{
+			clusterConfig := &breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      name,
 					Namespace: s.Namespace,
 					Labels:    helpers.E2ETestLabels(),
 				},
-				Spec: telekomv1alpha1.ClusterConfigSpec{
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
 					ClusterID: "invalid-oidc-cluster3",
-					AuthType:  telekomv1alpha1.ClusterAuthTypeOIDC,
-					OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+					AuthType:  breakglassv1alpha1.ClusterAuthTypeOIDC,
+					OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 						IssuerURL: "http://insecure-issuer.example.com", // Should require https
 						ClientID:  "breakglass-controller",
 						Server:    "https://kubernetes.default.svc:443",
@@ -374,22 +374,22 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		// Create ClusterConfig with OIDC and CA certificate reference
 		name := helpers.GenerateUniqueName("cc-oidc-with-ca")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-with-ca-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL: keycloakIssuer,
 					ClientID:  "breakglass-controller",
 					Server:    "https://external-cluster.example.com:6443",
-					CASecretRef: &telekomv1alpha1.SecretKeyReference{
+					CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name:      caSecretName,
 						Namespace: s.Namespace,
 						Key:       "ca.crt",
@@ -400,7 +400,7 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Verify the ClusterConfig was created with CA reference
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get OIDC ClusterConfig with CA")
 
@@ -413,18 +413,18 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 	t.Run("CC-OIDC-007_OIDCWithScopes", func(t *testing.T) {
 		name := helpers.GenerateUniqueName("cc-oidc-scopes")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-scopes-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL: keycloakIssuer,
 					ClientID:  "breakglass-controller",
 					Server:    "https://kubernetes.default.svc:443",
@@ -436,7 +436,7 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Verify the ClusterConfig was created with custom scopes
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get OIDC ClusterConfig with scopes")
 
@@ -516,22 +516,22 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 		// (spokes have OIDC configured, hub doesn't)
 		apiServerURL := helpers.GetOIDCEnabledAPIServerURL()
 
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-status-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL: issuerURL, // Use the validated/constructed issuer URL
 					ClientID:  "breakglass-group-sync",
 					Server:    apiServerURL, // Use OIDC-enabled API server (spoke in multi-cluster)
-					ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name:      secretName,
 						Namespace: s.Namespace,
 						Key:       "client-secret",
@@ -544,7 +544,7 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Wait for the Ready condition to be set with successful OIDC validation
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		var finalReason, finalMessage string
 		var finalStatus metav1.ConditionStatus
 
@@ -561,7 +561,7 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 		for _, cond := range fetched.Status.Conditions {
 			t.Logf("Condition: Type=%s, Status=%s, Reason=%s, Message=%s",
 				cond.Type, cond.Status, cond.Reason, cond.Message)
-			if cond.Type == string(telekomv1alpha1.ClusterConfigConditionReady) {
+			if cond.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) {
 				finalStatus = cond.Status
 				finalReason = cond.Reason
 				finalMessage = cond.Message
@@ -593,7 +593,7 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 		}
 
 		// Verify the reason indicates OIDC success, not just any Ready state
-		if finalReason != string(telekomv1alpha1.ClusterConfigReasonOIDCValidated) {
+		if finalReason != string(breakglassv1alpha1.ClusterConfigReasonOIDCValidated) {
 			t.Fatalf("CC-OIDC-STATUS-001: ClusterConfig %s is Ready but reason is %s, expected OIDCValidated.\n"+
 				"Message: %s\n"+
 				"This could indicate the cluster is using kubeconfig auth instead of OIDC.",
@@ -605,18 +605,18 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 
 	t.Run("CC-OIDC-STATUS-002_InvalidIssuerSetsFailedCondition", func(t *testing.T) {
 		name := helpers.GenerateUniqueName("cc-oidc-invalid-issuer")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-invalid-issuer",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL:             "https://nonexistent-issuer.invalid:8443/realms/test",
 					ClientID:              "breakglass-controller",
 					Server:                "https://kubernetes.default.svc:443",
@@ -627,7 +627,7 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 		s.MustCreateResource(clusterConfig)
 
 		// Wait for failure condition to be set
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		require.Eventually(t, func() bool {
 			err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 			if err != nil {
@@ -635,7 +635,7 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 			}
 			// Check for Ready=False condition
 			for _, cond := range fetched.Status.Conditions {
-				if cond.Type == string(telekomv1alpha1.ClusterConfigConditionReady) &&
+				if cond.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) &&
 					cond.Status == metav1.ConditionFalse {
 					return true
 				}
@@ -645,15 +645,15 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 
 		// Verify the reason indicates OIDC discovery failure
 		for _, cond := range fetched.Status.Conditions {
-			if cond.Type == string(telekomv1alpha1.ClusterConfigConditionReady) {
+			if cond.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) {
 				t.Logf("Ready condition: Status=%s, Reason=%s, Message=%s",
 					cond.Status, cond.Reason, cond.Message)
 				// The reason should indicate OIDC-related failure
 				assert.Contains(t, []string{
-					string(telekomv1alpha1.ClusterConfigReasonOIDCDiscoveryFailed),
-					string(telekomv1alpha1.ClusterConfigReasonClusterUnreachable),
-					string(telekomv1alpha1.ClusterConfigReasonValidationFailed),
-					string(telekomv1alpha1.ClusterConfigReasonOIDCConfigMissing),
+					string(breakglassv1alpha1.ClusterConfigReasonOIDCDiscoveryFailed),
+					string(breakglassv1alpha1.ClusterConfigReasonClusterUnreachable),
+					string(breakglassv1alpha1.ClusterConfigReasonValidationFailed),
+					string(breakglassv1alpha1.ClusterConfigReasonOIDCConfigMissing),
 				}, cond.Reason, "Expected OIDC-related failure reason")
 			}
 		}
@@ -676,18 +676,18 @@ func TestClusterConfigOIDCWithEscalation(t *testing.T) {
 	t.Run("CC-OIDC-ESC-001_EscalationWithOIDCClusterConfigRef", func(t *testing.T) {
 		// Create OIDC-based ClusterConfig
 		ccName := helpers.GenerateUniqueName("cc-oidc-for-esc")
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      ccName,
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID:   "oidc-esc-cluster",
 				Tenant:      "e2e-tenant",
 				Environment: "test",
-				AuthType:    telekomv1alpha1.ClusterAuthTypeOIDC,
-				OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				AuthType:    breakglassv1alpha1.ClusterAuthTypeOIDC,
+				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 					IssuerURL:             keycloakIssuer,
 					ClientID:              "breakglass-controller",
 					Server:                "https://kubernetes.default.svc:443",
@@ -707,7 +707,7 @@ func TestClusterConfigOIDCWithEscalation(t *testing.T) {
 		s.MustCreateResource(escalation)
 
 		// Verify the escalation was created with ClusterConfigRefs
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: escName, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get Escalation")
 

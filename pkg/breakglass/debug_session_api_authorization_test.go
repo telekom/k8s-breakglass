@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,10 +43,10 @@ func TestIsUserAuthorizedToApprove_NoResolvedTemplate(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	// Create template with approvers
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 				Users:  []string{"approver@example.com"},
 				Groups: []string{"admins"},
 			},
@@ -60,12 +60,12 @@ func TestIsUserAuthorizedToApprove_NoResolvedTemplate(t *testing.T) {
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: "test-template",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
 			ResolvedTemplate: nil, // No resolved template
 		},
 	}
@@ -91,12 +91,12 @@ func TestIsUserAuthorizedToApprove_TemplateFetchFails(t *testing.T) {
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: "non-existent-template",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
 			ResolvedTemplate: nil,
 		},
 	}
@@ -111,9 +111,9 @@ func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "no-approvers-template"},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			Approvers: nil, // No approvers
 		},
 	}
@@ -125,12 +125,12 @@ func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: "no-approvers-template",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
 			ResolvedTemplate: nil,
 		},
 	}
@@ -149,14 +149,14 @@ func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: "test-template",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Users: []string{"approver@example.com", "admin@example.com"},
 				},
 			},
@@ -184,14 +184,14 @@ func TestIsUserAuthorizedToApprove_ResolvedTemplateGroupMatch(t *testing.T) {
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec: telekomv1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: "test-template",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Groups: []string{"cluster-admins", "platform-team"},
 				},
 			},
@@ -273,12 +273,12 @@ func TestIsUserAuthorizedToApprove_WildcardPatterns(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			session := &telekomv1alpha1.DebugSession{
+			session := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-				Spec:       telekomv1alpha1.DebugSessionSpec{TemplateRef: "test"},
-				Status: telekomv1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-						Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				Spec:       breakglassv1alpha1.DebugSessionSpec{TemplateRef: "test"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 							Users:  tc.users,
 							Groups: tc.groups,
 						},
@@ -302,12 +302,12 @@ func TestIsUserAuthorizedToApprove_GroupsAsInterfaceSlice(t *testing.T) {
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.DebugSessionSpec{TemplateRef: "test"},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		Spec:       breakglassv1alpha1.DebugSessionSpec{TemplateRef: "test"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Groups: []string{"admins"},
 				},
 			},
@@ -331,12 +331,12 @@ func TestIsUserAuthorizedToApprove_EmptyApproversAllowsAll(t *testing.T) {
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Spec:       telekomv1alpha1.DebugSessionSpec{TemplateRef: "test"},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+		Spec:       breakglassv1alpha1.DebugSessionSpec{TemplateRef: "test"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Users:  []string{},
 					Groups: []string{},
 				},
@@ -358,7 +358,7 @@ func TestCheckApproverAuthorization_DirectUserMatch(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	approvers := &telekomv1alpha1.DebugSessionApprovers{
+	approvers := &breakglassv1alpha1.DebugSessionApprovers{
 		Users: []string{"user1@example.com", "user2@example.com"},
 	}
 
@@ -372,7 +372,7 @@ func TestCheckApproverAuthorization_DirectGroupMatch(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	approvers := &telekomv1alpha1.DebugSessionApprovers{
+	approvers := &breakglassv1alpha1.DebugSessionApprovers{
 		Groups: []string{"admin-group", "approvers"},
 	}
 
@@ -491,8 +491,8 @@ func TestIsUserParticipant_SessionOwner(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
-		Spec: telekomv1alpha1.DebugSessionSpec{
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			RequestedBy: "owner@example.com",
 		},
 	}
@@ -506,12 +506,12 @@ func TestIsUserParticipant_ActiveParticipant(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
-	session := &telekomv1alpha1.DebugSession{
-		Spec: telekomv1alpha1.DebugSessionSpec{
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			RequestedBy: "owner@example.com",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			Participants: []telekomv1alpha1.DebugSessionParticipant{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{User: "participant1@example.com", LeftAt: nil},
 				{User: "participant2@example.com", LeftAt: nil},
 			},
@@ -529,12 +529,12 @@ func TestIsUserParticipant_LeftParticipant(t *testing.T) {
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
 	leftAt := metav1.Now()
-	session := &telekomv1alpha1.DebugSession{
-		Spec: telekomv1alpha1.DebugSessionSpec{
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			RequestedBy: "owner@example.com",
 		},
-		Status: telekomv1alpha1.DebugSessionStatus{
-			Participants: []telekomv1alpha1.DebugSessionParticipant{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{User: "left-participant@example.com", LeftAt: &leftAt},
 			},
 		},
@@ -631,7 +631,7 @@ func TestExtractRunAsNonRoot(t *testing.T) {
 func TestGetDebugSessionByName_Found(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass",
@@ -671,7 +671,7 @@ func TestGetDebugSessionByName_NotFound(t *testing.T) {
 func TestGetDebugSessionByName_FoundViaLabel(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "debug-user-cluster-12345",
 			Namespace: "breakglass",
@@ -700,7 +700,7 @@ func TestGetDebugSessionByName_DefaultNamespaceFallback(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	// Session in default namespace without label
-	session := &telekomv1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "simple-session",
 			Namespace: "default",
@@ -728,7 +728,7 @@ func TestGetDebugSessionByName_DefaultNamespaceFallback(t *testing.T) {
 func TestShouldSendNotification(t *testing.T) {
 	tests := []struct {
 		name     string
-		cfg      *telekomv1alpha1.DebugSessionNotificationConfig
+		cfg      *breakglassv1alpha1.DebugSessionNotificationConfig
 		event    notificationEvent
 		expected bool
 	}{
@@ -740,7 +740,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "disabled config returns false",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled: false,
 			},
 			event:    notificationEventRequest,
@@ -748,7 +748,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "enabled config - request event with notify on request",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled:         true,
 				NotifyOnRequest: true,
 			},
@@ -757,7 +757,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "enabled config - request event without notify on request",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled:         true,
 				NotifyOnRequest: false,
 			},
@@ -766,7 +766,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "enabled config - approval event with notify on approval",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled:          true,
 				NotifyOnApproval: true,
 			},
@@ -775,7 +775,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "enabled config - approval event without notify on approval",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled:          true,
 				NotifyOnApproval: false,
 			},
@@ -784,7 +784,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "enabled config - expiry event with notify on expiry",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled:        true,
 				NotifyOnExpiry: true,
 			},
@@ -793,7 +793,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "enabled config - expiry event without notify on expiry",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled:        true,
 				NotifyOnExpiry: false,
 			},
@@ -802,7 +802,7 @@ func TestShouldSendNotification(t *testing.T) {
 		},
 		{
 			name: "enabled config - unknown event returns true",
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled: true,
 			},
 			event:    notificationEvent("unknown"),
@@ -826,7 +826,7 @@ func TestBuildNotificationRecipients(t *testing.T) {
 	tests := []struct {
 		name      string
 		base      []string
-		cfg       *telekomv1alpha1.DebugSessionNotificationConfig
+		cfg       *breakglassv1alpha1.DebugSessionNotificationConfig
 		wantEmpty bool
 		wantLen   int
 	}{
@@ -851,7 +851,7 @@ func TestBuildNotificationRecipients(t *testing.T) {
 		{
 			name: "base recipients with additional recipients in config",
 			base: []string{"user@example.com"},
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				AdditionalRecipients: []string{"admin@example.com"},
 			},
 			wantLen: 2,
@@ -859,7 +859,7 @@ func TestBuildNotificationRecipients(t *testing.T) {
 		{
 			name: "deduplication of recipients",
 			base: []string{"user@example.com", "admin@example.com"},
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				AdditionalRecipients: []string{"user@example.com", "new@example.com"},
 			},
 			wantLen: 3, // user, admin, new (user deduplicated)
@@ -886,7 +886,7 @@ func TestBuildNotificationRecipients_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name    string
 		base    []string
-		cfg     *telekomv1alpha1.DebugSessionNotificationConfig
+		cfg     *breakglassv1alpha1.DebugSessionNotificationConfig
 		wantLen int
 	}{
 		{
@@ -899,7 +899,7 @@ func TestBuildNotificationRecipients_EdgeCases(t *testing.T) {
 		{
 			name: "empty strings in additional recipients are skipped",
 			base: []string{"user@example.com"},
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				AdditionalRecipients: []string{"", "admin@example.com", ""},
 			},
 			wantLen: 2,
@@ -907,7 +907,7 @@ func TestBuildNotificationRecipients_EdgeCases(t *testing.T) {
 		{
 			name: "all duplicates should be deduplicated",
 			base: []string{"user@example.com", "user@example.com", "user@example.com"},
-			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				AdditionalRecipients: []string{"user@example.com", "user@example.com"},
 			},
 			wantLen: 1, // Only one unique
@@ -971,24 +971,24 @@ func TestExtractRunAsNonRoot_EdgeCases(t *testing.T) {
 // Test that invalid session state transitions are properly rejected
 func TestSessionStateTransition_InvalidTransitions(t *testing.T) {
 	// This tests the core logic that terminal states cannot transition
-	terminalStates := []telekomv1alpha1.DebugSessionState{
-		telekomv1alpha1.DebugSessionStateExpired,
-		telekomv1alpha1.DebugSessionStateTerminated,
-		telekomv1alpha1.DebugSessionStateFailed,
+	terminalStates := []breakglassv1alpha1.DebugSessionState{
+		breakglassv1alpha1.DebugSessionStateExpired,
+		breakglassv1alpha1.DebugSessionStateTerminated,
+		breakglassv1alpha1.DebugSessionStateFailed,
 	}
 
 	for _, terminalState := range terminalStates {
 		t.Run("terminal state "+string(terminalState)+" cannot become active", func(t *testing.T) {
-			session := &telekomv1alpha1.DebugSession{
-				Status: telekomv1alpha1.DebugSessionStatus{
+			session := &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
 					State: terminalState,
 				},
 			}
 			// Verify it's in a terminal state
-			assert.Contains(t, []telekomv1alpha1.DebugSessionState{
-				telekomv1alpha1.DebugSessionStateExpired,
-				telekomv1alpha1.DebugSessionStateTerminated,
-				telekomv1alpha1.DebugSessionStateFailed,
+			assert.Contains(t, []breakglassv1alpha1.DebugSessionState{
+				breakglassv1alpha1.DebugSessionStateExpired,
+				breakglassv1alpha1.DebugSessionStateTerminated,
+				breakglassv1alpha1.DebugSessionStateFailed,
 			}, session.Status.State)
 		})
 	}

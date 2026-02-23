@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -81,7 +81,7 @@ func TestCrossClusterSessionIsolation(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("VerifySessionWorksForClusterA", func(t *testing.T) {
 		sar := createSecuritySAR(sessionUser, escalation.Spec.EscalatedGroup)
@@ -148,12 +148,12 @@ func TestExpiredSessionRaceCondition(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-	var toExpire telekomv1alpha1.BreakglassSession
+	var toExpire breakglassv1alpha1.BreakglassSession
 	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 	require.NoError(t, err)
-	toExpire.Status.State = telekomv1alpha1.SessionStateExpired
+	toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 	toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Second))
 	err = helpers.ApplySessionStatus(ctx, cli, &toExpire)
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestDifferentUserSameGroup(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("VerifyUserBDeniedSameGroup", func(t *testing.T) {
 		sar := createSecuritySAR(userB.Email, escalation.Spec.EscalatedGroup)
@@ -281,7 +281,7 @@ func TestSameUserDifferentGroup(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("VerifyUserDeniedGroupY", func(t *testing.T) {
 		sar := createSecuritySAR(user, escalationGroupY.Spec.EscalatedGroup)
