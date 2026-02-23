@@ -49,6 +49,11 @@ const (
 )
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
+//
+// +kubebuilder:validation:XValidation:rule="size(self.approvers.users) > 0 || size(self.approvers.groups) > 0",message="at least one approver (user or group) must be specified"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || size(self.approvers.groups) > 0",message="blockSelfApproval requires at least one approver group"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || !self.approvers.groups.exists(g, g == self.escalatedGroup)",message="escalatedGroup cannot be an approver group when blockSelfApproval is enabled"
+// +kubebuilder:validation:XValidation:rule="size(self.allowedIdentityProviders) == 0 || (size(self.allowedIdentityProvidersForRequests) == 0 && size(self.allowedIdentityProvidersForApprovers) == 0)",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
@@ -227,6 +232,8 @@ type NotificationExclusions struct {
 
 // SessionLimitsOverride allows an escalation to override the IdentityProvider's session limits.
 // This enables differentiated access for platform teams vs tenants.
+//
+// +kubebuilder:validation:XValidation:rule="!self.unlimited || (!has(self.maxActiveSessionsPerUser) && !has(self.maxActiveSessionsTotal))",message="unlimited=true is mutually exclusive with maxActiveSessionsPerUser and maxActiveSessionsTotal"
 type SessionLimitsOverride struct {
 	// unlimited disables session limits entirely for this escalation.
 	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.

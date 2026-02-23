@@ -404,9 +404,28 @@ spec:
                       Use with caution - this should only be granted to trusted platform teams.
                     type: boolean
                 type: object
+                x-kubernetes-validations:
+                - message: unlimited=true is mutually exclusive with maxActiveSessionsPerUser
+                    and maxActiveSessionsTotal
+                  rule: '!self.unlimited || (!has(self.maxActiveSessionsPerUser) &&
+                    !has(self.maxActiveSessionsTotal))'
             required:
             - allowed
             type: object
+            x-kubernetes-validations:
+            - message: at least one approver (user or group) must be specified
+              rule: size(self.approvers.users) > 0 || size(self.approvers.groups)
+                > 0
+            - message: blockSelfApproval requires at least one approver group
+              rule: '!has(self.blockSelfApproval) || !self.blockSelfApproval || size(self.approvers.groups)
+                > 0'
+            - message: escalatedGroup cannot be an approver group when blockSelfApproval
+                is enabled
+              rule: '!has(self.blockSelfApproval) || !self.blockSelfApproval || !self.approvers.groups.exists(g,
+                g == self.escalatedGroup)'
+            - message: allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers
+              rule: size(self.allowedIdentityProviders) == 0 || (size(self.allowedIdentityProvidersForRequests)
+                == 0 && size(self.allowedIdentityProvidersForApprovers) == 0)
           status:
             description: BreakglassEscalationStatus defines the observed state of
               BreakglassEscalation.
