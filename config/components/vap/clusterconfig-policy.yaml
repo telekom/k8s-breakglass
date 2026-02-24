@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# ValidatingAdmissionPolicy: ClusterConfig validations
+#
+# Supplements webhook-based validation with in-process CEL checks.
+# Phase 1 — deployed in Warn mode alongside existing webhooks.
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-clusterconfig-validation
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["breakglass.t-caas.telekom.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["clusterconfigs"]
+
+  validations:
+    # Auth config: exactly one of kubeconfigSecretRef or oidcAuth must be set
+    - expression: >-
+        (has(object.spec.kubeconfigSecretRef) && object.spec.kubeconfigSecretRef.name.size() > 0) !=
+        (has(object.spec.oidcAuth) && has(object.spec.oidcAuth.issuer) && object.spec.oidcAuth.issuer.size() > 0)
+      message: "exactly one of spec.kubeconfigSecretRef or spec.oidcAuth must be configured"
+      reason: Invalid
+
+    # kubeconfigSecretRef.name must be non-empty when set
+    - expression: >-
+        !has(object.spec.kubeconfigSecretRef) ||
+        object.spec.kubeconfigSecretRef.name.size() > 0
+      message: "spec.kubeconfigSecretRef.name is required when kubeconfigSecretRef is set"
+      reason: Invalid
+
+    # No duplicate identityProviderRefs
+    - expression: >-
+        !has(object.spec.identityProviderRefs) ||
+        object.spec.identityProviderRefs.size() == object.spec.identityProviderRefs.toSet().size()
+      message: "spec.identityProviderRefs must not contain duplicates"
+      reason: Invalid
