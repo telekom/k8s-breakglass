@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 type EscalationService struct {
@@ -16,16 +16,16 @@ func (c *Client) Escalations() *EscalationService {
 	return &EscalationService{client: c}
 }
 
-func (e *EscalationService) List(ctx context.Context) ([]v1alpha1.BreakglassEscalation, error) {
+func (e *EscalationService) List(ctx context.Context) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	endpoint := "api/breakglassEscalations"
-	var escs []v1alpha1.BreakglassEscalation
+	var escs []breakglassv1alpha1.BreakglassEscalation
 	if err := e.client.do(ctx, http.MethodGet, endpoint, nil, &escs); err != nil {
 		return nil, err
 	}
 	return escs, nil
 }
 
-func (e *EscalationService) Get(ctx context.Context, name string) (*v1alpha1.BreakglassEscalation, error) {
+func (e *EscalationService) Get(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassEscalation, error) {
 	escs, err := e.List(ctx)
 	if err != nil {
 		return nil, err

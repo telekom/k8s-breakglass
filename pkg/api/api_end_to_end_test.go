@@ -23,7 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -34,13 +34,13 @@ import (
 
 var sessionIndexFnsEndToEnd = map[string]client.IndexerFunc{
 	"spec.user": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 	},
 	"spec.grantedGroup": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
 }
 
@@ -103,37 +103,37 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 
 	kubeconfig := buildKubeconfig(env.sarServer.URL)
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithStatusSubresource(&v1alpha1.BreakglassSession{})
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{})
 	for name, fn := range sessionIndexFnsEndToEnd {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, name, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, name, fn)
 	}
-	builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexer)
-	builder = builder.WithIndex(&v1alpha1.ClusterConfig{}, "metadata.name", metadataNameIndexer)
+	builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexer)
+	builder = builder.WithIndex(&breakglassv1alpha1.ClusterConfig{}, "metadata.name", metadataNameIndexer)
 
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      e2eEscalation,
 			Namespace: e2eNamespace,
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{e2eClusterName},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: e2eGroup,
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{approverEmail},
 			},
 		},
 	}
 
-	clusterCfg := &v1alpha1.ClusterConfig{
+	clusterCfg := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      e2eClusterName,
 			Namespace: e2eNamespace,
 		},
-		Spec: v1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "ccfg-secret",
 				Namespace: e2eNamespace,
 				Key:       "value",
@@ -141,13 +141,13 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 		},
 	}
 
-	clusterCfgAlt := &v1alpha1.ClusterConfig{
+	clusterCfgAlt := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      e2eAltClusterName,
 			Namespace: e2eNamespace,
 		},
-		Spec: v1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "ccfg-secret",
 				Namespace: e2eNamespace,
 				Key:       "value",
@@ -236,11 +236,11 @@ func (env *apiEndToEndEnv) createSessionWithRequest(t *testing.T, req breakglass
 	require.Equal(t, http.StatusCreated, rr.Code)
 }
 
-func (env *apiEndToEndEnv) listSessions(t *testing.T) []v1alpha1.BreakglassSession {
+func (env *apiEndToEndEnv) listSessions(t *testing.T) []breakglassv1alpha1.BreakglassSession {
 	t.Helper()
 	rr := env.doRequest(t, http.MethodGet, sessionsBasePath, nil)
 	require.Equal(t, http.StatusOK, rr.Code)
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &sessions))
 	return sessions
 }
@@ -338,7 +338,7 @@ func TestEndToEndSessionFlowAuthorizesSAR(t *testing.T) {
 
 	env.approveSession(t, sessions[0].Name)
 	sessions = env.listSessions(t)
-	require.Equal(t, v1alpha1.SessionStateApproved, sessions[0].Status.State)
+	require.Equal(t, breakglassv1alpha1.SessionStateApproved, sessions[0].Status.State)
 
 	resp := env.invokeSAR(t)
 	require.True(t, resp.Status.Allowed, "expected SAR to be allowed after approved session")
@@ -362,7 +362,7 @@ func TestEndToEndSARDeniedWhileSessionPending(t *testing.T) {
 	env.createSession(t)
 	sessions := env.listSessions(t)
 	require.Len(t, sessions, 1)
-	require.Equal(t, v1alpha1.SessionStatePending, sessions[0].Status.State)
+	require.Equal(t, breakglassv1alpha1.SessionStatePending, sessions[0].Status.State)
 
 	resp := env.invokeSAR(t)
 	require.False(t, resp.Status.Allowed, "pending sessions must not authorize access")
@@ -380,9 +380,9 @@ func TestEndToEndSARDeniedWithExpiredSession(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	expiredAt := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	env.updateSessionStatus(t, sessions[0].Name, func(bs *v1alpha1.BreakglassSession) {
+	env.updateSessionStatus(t, sessions[0].Name, func(bs *breakglassv1alpha1.BreakglassSession) {
 		bs.Status.ExpiresAt = expiredAt
-		bs.Status.State = v1alpha1.SessionStateExpired
+		bs.Status.State = breakglassv1alpha1.SessionStateExpired
 	})
 
 	resp := env.invokeSAR(t)
@@ -419,7 +419,7 @@ func TestEndToEndSARDeniedForIDPIssuerMismatch(t *testing.T) {
 		storedIssuer = "https://issuer.authorized"
 		otherIssuer  = "https://issuer.mismatched"
 	)
-	env.updateSessionSpec(t, sessions[0].Name, func(bs *v1alpha1.BreakglassSession) {
+	env.updateSessionSpec(t, sessions[0].Name, func(bs *breakglassv1alpha1.BreakglassSession) {
 		bs.Spec.IdentityProviderName = "trusted-idp"
 		bs.Spec.IdentityProviderIssuer = storedIssuer
 		bs.Spec.AllowIDPMismatch = false
@@ -444,9 +444,9 @@ func TestEndToEndSARDeniedByGlobalDenyPolicy(t *testing.T) {
 	require.Len(t, sessions, 1)
 	env.approveSession(t, sessions[0].Name)
 
-	env.createDenyPolicy(t, "global-block", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		Rules: []v1alpha1.DenyRule{{
+	env.createDenyPolicy(t, "global-block", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Rules: []breakglassv1alpha1.DenyRule{{
 			Verbs:     []string{"create"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
@@ -468,9 +468,9 @@ func TestEndToEndSARDeniedBySessionScopedPolicy(t *testing.T) {
 	require.Len(t, sessions, 1)
 	env.approveSession(t, sessions[0].Name)
 
-	env.createDenyPolicy(t, "session-block", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Sessions: []string{sessions[0].Name}},
-		Rules: []v1alpha1.DenyRule{{
+	env.createDenyPolicy(t, "session-block", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Sessions: []string{sessions[0].Name}},
+		Rules: []breakglassv1alpha1.DenyRule{{
 			Verbs:     []string{"create"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
@@ -499,10 +499,10 @@ func TestEndToEndSessionSARDeniedByTargetCluster(t *testing.T) {
 	require.Greater(t, env.sarRequests, 0, "session SAR should hit target cluster when impersonation runs")
 }
 
-func (env *apiEndToEndEnv) updateSessionStatus(t *testing.T, name string, mutate func(*v1alpha1.BreakglassSession)) {
+func (env *apiEndToEndEnv) updateSessionStatus(t *testing.T, name string, mutate func(*breakglassv1alpha1.BreakglassSession)) {
 	t.Helper()
 	ctx := context.Background()
-	var session v1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	require.NoError(t, env.client.Get(ctx, client.ObjectKey{Namespace: e2eNamespace, Name: name}, &session))
 	mutate(&session)
 	// Use Status().Update() for fake client - SSA is used in production code
@@ -510,10 +510,10 @@ func (env *apiEndToEndEnv) updateSessionStatus(t *testing.T, name string, mutate
 	require.NoError(t, env.client.Status().Update(ctx, &session))
 }
 
-func (env *apiEndToEndEnv) updateSessionSpec(t *testing.T, name string, mutate func(*v1alpha1.BreakglassSession)) {
+func (env *apiEndToEndEnv) updateSessionSpec(t *testing.T, name string, mutate func(*breakglassv1alpha1.BreakglassSession)) {
 	t.Helper()
 	ctx := context.Background()
-	var session v1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	require.NoError(t, env.client.Get(ctx, client.ObjectKey{Namespace: e2eNamespace, Name: name}, &session))
 	mutate(&session)
 	// Use direct Update for fake client - SSA has limitations with fake client
@@ -521,10 +521,10 @@ func (env *apiEndToEndEnv) updateSessionSpec(t *testing.T, name string, mutate f
 	require.NoError(t, env.client.Update(ctx, &session))
 }
 
-func (env *apiEndToEndEnv) createDenyPolicy(t *testing.T, name string, spec v1alpha1.DenyPolicySpec) {
+func (env *apiEndToEndEnv) createDenyPolicy(t *testing.T, name string, spec breakglassv1alpha1.DenyPolicySpec) {
 	t.Helper()
 	ctx := context.Background()
-	dp := &v1alpha1.DenyPolicy{
+	dp := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec:       spec,
 	}
@@ -561,14 +561,14 @@ func TestEndToEndSARDeniedByPodSecurityRiskScore(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with PodSecurityRules
-	env.createDenyPolicy(t, "pod-security-block", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "pod-security-block", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100, // High weight for privileged
 				HostNetwork:         50,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 79, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
@@ -617,14 +617,14 @@ func TestEndToEndSARAllowedForSafePod(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with PodSecurityRules
-	env.createDenyPolicy(t, "pod-security-allow", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "pod-security-allow", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 				HostNetwork:         50,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 79, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
@@ -670,9 +670,9 @@ func TestEndToEndSARDeniedByBlockFactor(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy that blocks hostNetwork pods
-	env.createDenyPolicy(t, "block-hostnetwork", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
+	env.createDenyPolicy(t, "block-hostnetwork", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
 			BlockFactors: []string{"hostNetwork"},
 		},
 	})
@@ -716,18 +716,18 @@ func TestEndToEndSARAllowedByPodSecurityExemption(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with exemption for kube-system
-	env.createDenyPolicy(t, "exempt-kubesystem", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "exempt-kubesystem", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 49, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
-			Exemptions: &v1alpha1.PodSecurityExemptions{
-				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+			Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 			},
 		},
 	})
@@ -772,14 +772,14 @@ func TestEndToEndSARPodSecurityFailModeClosed(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with failMode: closed
-	env.createDenyPolicy(t, "fail-closed", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
+	env.createDenyPolicy(t, "fail-closed", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
 			FailMode: "closed",
-			RiskFactors: v1alpha1.RiskFactors{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 49, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
@@ -808,14 +808,14 @@ func TestEndToEndSARPodSecurityFailModeOpen(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with failMode: open
-	env.createDenyPolicy(t, "fail-open", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
+	env.createDenyPolicy(t, "fail-open", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
 			FailMode: "open",
-			RiskFactors: v1alpha1.RiskFactors{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 49, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
@@ -842,13 +842,13 @@ func TestEndToEndSARPodsAttachEvaluated(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy blocking privileged pods
-	env.createDenyPolicy(t, "block-attach", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "block-attach", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 49, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
@@ -903,9 +903,9 @@ func TestEndToEndSARPodsPortforwardEvaluated(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy blocking hostPID pods
-	env.createDenyPolicy(t, "block-portforward", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
+	env.createDenyPolicy(t, "block-portforward", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
 			BlockFactors: []string{"hostPID"},
 		},
 	})
@@ -953,21 +953,21 @@ func TestEndToEndSARPodSecurityWithEscalationOverride(t *testing.T) {
 
 	// Create escalation with podSecurityOverrides (increased threshold)
 	ctx := context.Background()
-	escWithOverride := &v1alpha1.BreakglassEscalation{
+	escWithOverride := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "override-escalation",
 			Namespace: e2eNamespace,
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{e2eClusterName},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "override-group",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{approverEmail},
 			},
-			PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+			PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 				Enabled:         true,        // Required for overrides to take effect
 				MaxAllowedScore: intPtr(200), // Higher threshold
 			},
@@ -987,13 +987,13 @@ func TestEndToEndSARPodSecurityWithEscalationOverride(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with threshold 50 (escalation overrides to 200)
-	env.createDenyPolicy(t, "low-threshold", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "low-threshold", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 49, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
@@ -1042,16 +1042,16 @@ func TestEndToEndSARPodSecurityScopeSubresource(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy that only applies to exec (not attach)
-	env.createDenyPolicy(t, "exec-only", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			AppliesTo: &v1alpha1.PodSecurityScope{
+	env.createDenyPolicy(t, "exec-only", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			AppliesTo: &breakglassv1alpha1.PodSecurityScope{
 				Subresources: []string{"exec"}, // Only exec, not attach
 			},
-			RiskFactors: v1alpha1.RiskFactors{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 49, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
@@ -1120,7 +1120,7 @@ func TestEndToEndSARResourceOperations(t *testing.T) {
 		resource   string
 		namespace  string
 		wantAllow  bool
-		denyPolicy *v1alpha1.DenyPolicySpec
+		denyPolicy *breakglassv1alpha1.DenyPolicySpec
 	}{
 		{
 			name:      "list pods in namespace",
@@ -1185,8 +1185,8 @@ func TestEndToEndSARResourceOperations(t *testing.T) {
 			resource:  "secrets",
 			namespace: "default",
 			wantAllow: false,
-			denyPolicy: &v1alpha1.DenyPolicySpec{
-				Rules: []v1alpha1.DenyRule{{
+			denyPolicy: &breakglassv1alpha1.DenyPolicySpec{
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:     []string{"get", "list"},
 					APIGroups: []string{""},
 					Resources: []string{"secrets"},
@@ -1200,8 +1200,8 @@ func TestEndToEndSARResourceOperations(t *testing.T) {
 			resource:  "namespaces",
 			namespace: "",
 			wantAllow: false,
-			denyPolicy: &v1alpha1.DenyPolicySpec{
-				Rules: []v1alpha1.DenyRule{{
+			denyPolicy: &breakglassv1alpha1.DenyPolicySpec{
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:     []string{"delete"},
 					APIGroups: []string{""},
 					Resources: []string{"namespaces"},
@@ -1223,7 +1223,7 @@ func TestEndToEndSARResourceOperations(t *testing.T) {
 
 			// Create deny policy if specified
 			if tc.denyPolicy != nil {
-				tc.denyPolicy.AppliesTo = &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}}
+				tc.denyPolicy.AppliesTo = &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}}
 				env.createDenyPolicy(t, "test-deny-"+tc.name, *tc.denyPolicy)
 			}
 
@@ -1254,7 +1254,7 @@ func TestEndToEndSARSubresources(t *testing.T) {
 		subresource string
 		verb        string
 		wantAllow   bool
-		denyPolicy  *v1alpha1.DenyPolicySpec
+		denyPolicy  *breakglassv1alpha1.DenyPolicySpec
 	}{
 		{
 			name:        "get deployment status",
@@ -1283,8 +1283,8 @@ func TestEndToEndSARSubresources(t *testing.T) {
 			subresource: "exec",
 			verb:        "create",
 			wantAllow:   false,
-			denyPolicy: &v1alpha1.DenyPolicySpec{
-				Rules: []v1alpha1.DenyRule{{
+			denyPolicy: &breakglassv1alpha1.DenyPolicySpec{
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:        []string{"create"},
 					APIGroups:    []string{""},
 					Resources:    []string{"pods"},
@@ -1312,7 +1312,7 @@ func TestEndToEndSARSubresources(t *testing.T) {
 			env.approveSession(t, sessions[0].Name)
 
 			if tc.denyPolicy != nil {
-				tc.denyPolicy.AppliesTo = &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}}
+				tc.denyPolicy.AppliesTo = &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}}
 				env.createDenyPolicy(t, "test-subresource-deny", *tc.denyPolicy)
 			}
 
@@ -1352,13 +1352,13 @@ func TestEndToEndSARWildcardDenyPolicy(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a deny policy with wildcard for all resources in kube-system
-	env.createDenyPolicy(t, "block-kubesystem", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		Rules: []v1alpha1.DenyRule{{
+	env.createDenyPolicy(t, "block-kubesystem", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Rules: []breakglassv1alpha1.DenyRule{{
 			Verbs:      []string{"*"},
 			APIGroups:  []string{"*"},
 			Resources:  []string{"*"},
-			Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+			Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 		}},
 	})
 
@@ -1394,9 +1394,9 @@ func TestEndToEndSARResourceNamePatterns(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a deny policy blocking specific secret names
-	env.createDenyPolicy(t, "block-specific-secrets", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		Rules: []v1alpha1.DenyRule{{
+	env.createDenyPolicy(t, "block-specific-secrets", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Rules: []breakglassv1alpha1.DenyRule{{
 			Verbs:         []string{"get", "list"},
 			APIGroups:     []string{""},
 			Resources:     []string{"secrets"},
@@ -1438,10 +1438,10 @@ func TestEndToEndSARPodSecurityCapabilities(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with capability scoring
-	env.createDenyPolicy(t, "capability-scoring", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "capability-scoring", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				Capabilities: map[string]int{
 					"SYS_ADMIN":  100, // High risk
 					"NET_ADMIN":  50,
@@ -1449,7 +1449,7 @@ func TestEndToEndSARPodSecurityCapabilities(t *testing.T) {
 					"SYS_PTRACE": 40,
 				},
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 79, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Capability risk too high"},
 			},
@@ -1518,17 +1518,17 @@ func TestEndToEndSARPodSecurityLabelExemption(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with label exemption
-	env.createDenyPolicy(t, "label-exempt", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "label-exempt", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				PrivilegedContainer: 100,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 49, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "Too risky"},
 			},
-			Exemptions: &v1alpha1.PodSecurityExemptions{
+			Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
 				PodLabels: map[string]string{
 					"breakglass.telekom.com/security-exempt": "true",
 				},
@@ -1603,15 +1603,15 @@ func TestEndToEndSARPodSecurityCumulativeScore(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with multiple risk factors
-	env.createDenyPolicy(t, "cumulative-scoring", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "cumulative-scoring", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				HostNetwork: 30,
 				HostPID:     30,
 				RunAsRoot:   30,
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 59, Action: "allow"}, // Two factors allowed
 				{MaxScore: 89, Action: "warn"},  // Three factors warned
 				{MaxScore: 1000, Action: "deny", Reason: "Too many risk factors"},
@@ -1699,10 +1699,10 @@ func TestEndToEndSARMultiplePoliciesPrecedence(t *testing.T) {
 	prec100 := int32(100)
 
 	// Policy with higher precedence (lower number) that blocks secrets
-	env.createDenyPolicy(t, "high-priority-block", v1alpha1.DenyPolicySpec{
-		AppliesTo:  &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+	env.createDenyPolicy(t, "high-priority-block", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo:  &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
 		Precedence: &prec10,
-		Rules: []v1alpha1.DenyRule{{
+		Rules: []breakglassv1alpha1.DenyRule{{
 			Verbs:     []string{"get"},
 			APIGroups: []string{""},
 			Resources: []string{"secrets"},
@@ -1711,10 +1711,10 @@ func TestEndToEndSARMultiplePoliciesPrecedence(t *testing.T) {
 
 	// Policy with lower precedence (higher number) that allows secrets
 	// This one would be overridden by the higher priority one
-	env.createDenyPolicy(t, "low-priority-allow", v1alpha1.DenyPolicySpec{
-		AppliesTo:  &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+	env.createDenyPolicy(t, "low-priority-allow", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo:  &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
 		Precedence: &prec100,
-		Rules: []v1alpha1.DenyRule{{
+		Rules: []breakglassv1alpha1.DenyRule{{
 			Verbs:     []string{"delete"}, // Different verb
 			APIGroups: []string{""},
 			Resources: []string{"secrets"},
@@ -2003,9 +2003,9 @@ func TestUseCaseFluxHelmReleaseBlockedByDenyPolicy(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a deny policy blocking HelmRelease deletion
-	env.createDenyPolicy(t, "block-helmrelease-delete", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		Rules: []v1alpha1.DenyRule{{
+	env.createDenyPolicy(t, "block-helmrelease-delete", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Rules: []breakglassv1alpha1.DenyRule{{
 			Verbs:     []string{"delete"},
 			APIGroups: []string{"helm.toolkit.fluxcd.io"},
 			Resources: []string{"helmreleases"},
@@ -2144,7 +2144,7 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 		namespace  string
 		name_      string
 		wantAllow  bool
-		denyPolicy *v1alpha1.DenyPolicySpec
+		denyPolicy *breakglassv1alpha1.DenyPolicySpec
 	}{
 		{
 			name:      "delete stuck pod",
@@ -2190,9 +2190,9 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 			namespace: "",
 			name_:     "production",
 			wantAllow: false,
-			denyPolicy: &v1alpha1.DenyPolicySpec{
-				AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{e2eClusterName}},
-				Rules: []v1alpha1.DenyRule{{
+			denyPolicy: &breakglassv1alpha1.DenyPolicySpec{
+				AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{e2eClusterName}},
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:     []string{"delete"},
 					APIGroups: []string{""},
 					Resources: []string{"namespaces"},
@@ -2207,9 +2207,9 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 			namespace: "default",
 			name_:     "database-password",
 			wantAllow: false,
-			denyPolicy: &v1alpha1.DenyPolicySpec{
-				AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{e2eClusterName}},
-				Rules: []v1alpha1.DenyRule{{
+			denyPolicy: &breakglassv1alpha1.DenyPolicySpec{
+				AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{e2eClusterName}},
+				Rules: []breakglassv1alpha1.DenyRule{{
 					Verbs:         []string{"delete"},
 					APIGroups:     []string{""},
 					Resources:     []string{"secrets"},
@@ -2258,10 +2258,10 @@ func TestUseCaseNetworkDebuggingPodSecurity(t *testing.T) {
 	env.approveSession(t, sessions[0].Name)
 
 	// Create a DenyPolicy with pod security rules for network debugging
-	env.createDenyPolicy(t, "network-debug-policy", v1alpha1.DenyPolicySpec{
-		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
-		PodSecurityRules: &v1alpha1.PodSecurityRules{
-			RiskFactors: v1alpha1.RiskFactors{
+	env.createDenyPolicy(t, "network-debug-policy", breakglassv1alpha1.DenyPolicySpec{
+		AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				HostNetwork: 30,
 				HostPID:     50,
 				HostIPC:     30,
@@ -2271,7 +2271,7 @@ func TestUseCaseNetworkDebuggingPodSecurity(t *testing.T) {
 					"SYS_ADMIN": 100, // Block SYS_ADMIN
 				},
 			},
-			Thresholds: []v1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 80, Action: "allow"},
 				{MaxScore: 1000, Action: "deny", Reason: "High-risk pod security configuration"},
 			},

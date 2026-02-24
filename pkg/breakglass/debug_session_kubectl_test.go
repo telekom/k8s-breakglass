@@ -30,7 +30,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 )
 
@@ -53,7 +53,7 @@ func (m *mockClientProvider) GetClient(_ context.Context, clusterName string) (c
 func newKubectlTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 	return scheme
 }
 
@@ -62,7 +62,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		session      *v1alpha1.DebugSession
+		session      *breakglassv1alpha1.DebugSession
 		namespace    string
 		podName      string
 		image        string
@@ -73,11 +73,11 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 	}{
 		{
 			name: "valid request",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled:       true,
 								AllowedImages: []string{"busybox:*", "alpine:*"},
 							},
@@ -94,8 +94,8 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "no resolved template",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{},
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{},
 			},
 			namespace:    "default",
 			podName:      "test-pod",
@@ -105,9 +105,9 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "ephemeral containers not configured",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
 						KubectlDebug: nil,
 					},
 				},
@@ -120,11 +120,11 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "ephemeral containers disabled",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled: false,
 							},
 						},
@@ -139,13 +139,13 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "namespace denied",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled:          true,
-								DeniedNamespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "kube-*"}},
+								DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "kube-*"}},
 							},
 						},
 					},
@@ -159,11 +159,11 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "image not allowed",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled:       true,
 								AllowedImages: []string{"busybox:*"},
 							},
@@ -179,11 +179,11 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "requires image digest",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled:            true,
 								RequireImageDigest: true,
 							},
@@ -199,11 +199,11 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "valid with image digest",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled:            true,
 								RequireImageDigest: true,
 							},
@@ -218,11 +218,11 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "capability not allowed",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled:         true,
 								MaxCapabilities: []string{"NET_ADMIN"},
 							},
@@ -239,11 +239,11 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		},
 		{
 			name: "requires non-root",
-			session: &v1alpha1.DebugSession{
-				Status: v1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-						KubectlDebug: &v1alpha1.KubectlDebugConfig{
-							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 								Enabled:        true,
 								RequireNonRoot: true,
 							},
@@ -291,8 +291,8 @@ func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
 	tests := []struct {
 		name      string
 		namespace string
-		allowed   *v1alpha1.NamespaceFilter
-		denied    *v1alpha1.NamespaceFilter
+		allowed   *breakglassv1alpha1.NamespaceFilter
+		denied    *breakglassv1alpha1.NamespaceFilter
 		expected  bool
 	}{
 		{
@@ -306,42 +306,42 @@ func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
 			name:      "explicitly denied",
 			namespace: "kube-system",
 			allowed:   nil,
-			denied:    &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+			denied:    &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 			expected:  false,
 		},
 		{
 			name:      "denied by pattern",
 			namespace: "kube-public",
 			allowed:   nil,
-			denied:    &v1alpha1.NamespaceFilter{Patterns: []string{"kube-*"}},
+			denied:    &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-*"}},
 			expected:  false,
 		},
 		{
 			name:      "allowed list only - match",
 			namespace: "default",
-			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
+			allowed:   &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
 			denied:    nil,
 			expected:  true,
 		},
 		{
 			name:      "allowed list only - no match",
 			namespace: "other",
-			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
+			allowed:   &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
 			denied:    nil,
 			expected:  false,
 		},
 		{
 			name:      "allowed by pattern",
 			namespace: "app-frontend",
-			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
+			allowed:   &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
 			denied:    nil,
 			expected:  true,
 		},
 		{
 			name:      "denied takes precedence",
 			namespace: "app-secret",
-			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"app-*"}},
-			denied:    &v1alpha1.NamespaceFilter{Patterns: []string{"app-secret"}},
+			allowed:   &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"app-*"}},
+			denied:    &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"app-secret"}},
 			expected:  false,
 		},
 	}
@@ -542,20 +542,20 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 	}
 
 	// Create a test session
-	testSession := &v1alpha1.DebugSession{
+	testSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			State: v1alpha1.DebugSessionStateActive,
-			ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-				Mode: v1alpha1.DebugSessionModeKubectlDebug,
-				KubectlDebug: &v1alpha1.KubectlDebugConfig{
-					EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 						Enabled: true,
 					},
 				},
@@ -572,7 +572,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 	hubClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(testSession).
-		WithStatusSubresource(&v1alpha1.DebugSession{}).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 
 	mockProvider := &mockClientProvider{
@@ -670,20 +670,20 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	}
 
 	// Create a test session
-	testSession := &v1alpha1.DebugSession{
+	testSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session-12345678",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			State: v1alpha1.DebugSessionStateActive,
-			ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-				Mode: v1alpha1.DebugSessionModeKubectlDebug,
-				KubectlDebug: &v1alpha1.KubectlDebugConfig{
-					PodCopy: &v1alpha1.PodCopyConfig{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					PodCopy: &breakglassv1alpha1.PodCopyConfig{
 						Enabled:         true,
 						TargetNamespace: "debug-copies",
 						TTL:             "1h",
@@ -701,7 +701,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	hubClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(testSession).
-		WithStatusSubresource(&v1alpha1.DebugSession{}).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 
 	mockProvider := &mockClientProvider{
@@ -792,24 +792,24 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 	}
 
 	// Create a test session
-	testSession := &v1alpha1.DebugSession{
+	testSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session-12345678",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			State: v1alpha1.DebugSessionStateActive,
-			ResolvedTemplate: &v1alpha1.DebugSessionTemplateSpec{
-				Mode:            v1alpha1.DebugSessionModeKubectlDebug,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
 				TargetNamespace: "breakglass-debug",
-				KubectlDebug: &v1alpha1.KubectlDebugConfig{
-					NodeDebug: &v1alpha1.NodeDebugConfig{
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
 						Enabled:       true,
 						AllowedImages: []string{"busybox:stable"},
-						HostNamespaces: &v1alpha1.HostNamespacesConfig{
+						HostNamespaces: &breakglassv1alpha1.HostNamespacesConfig{
 							HostNetwork: true,
 							HostPID:     true,
 							HostIPC:     false,
@@ -828,7 +828,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 	hubClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(testSession).
-		WithStatusSubresource(&v1alpha1.DebugSession{}).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 
 	mockProvider := &mockClientProvider{
@@ -911,15 +911,15 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		mockProvider := &mockClientProvider{}
 		handler := NewKubectlDebugHandler(hubClient, mockProvider)
 
-		session := &v1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "breakglass",
 			},
-			Spec: v1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "test-cluster",
 			},
-			Status: v1alpha1.DebugSessionStatus{
+			Status: breakglassv1alpha1.DebugSessionStatus{
 				KubectlDebugStatus: nil, // No kubectl debug status
 			},
 		}
@@ -938,17 +938,17 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		}
 		handler := NewKubectlDebugHandler(hubClient, mockProvider)
 
-		session := &v1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "breakglass",
 			},
-			Spec: v1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "test-cluster",
 			},
-			Status: v1alpha1.DebugSessionStatus{
-				KubectlDebugStatus: &v1alpha1.KubectlDebugStatus{
-					CopiedPods: []v1alpha1.CopiedPodRef{
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 						{CopyName: "pod-copy", CopyNamespace: "default"},
 					},
 				},
@@ -972,18 +972,18 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 			}).
 			Build()
 
-		session := &v1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "breakglass",
 			},
-			Spec: v1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "test-cluster",
 			},
-			Status: v1alpha1.DebugSessionStatus{
-				State: v1alpha1.DebugSessionStateTerminated,
-				KubectlDebugStatus: &v1alpha1.KubectlDebugStatus{
-					CopiedPods: []v1alpha1.CopiedPodRef{
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateTerminated,
+				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 						{CopyName: "pod-copy", CopyNamespace: "default"},
 					},
 				},
@@ -1023,17 +1023,17 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		}
 		handler := NewKubectlDebugHandler(hubClient, mockProvider)
 
-		session := &v1alpha1.DebugSession{
+		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "orphaned-session",
 				Namespace: "breakglass",
 			},
-			Spec: v1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "deleted-cluster",
 			},
-			Status: v1alpha1.DebugSessionStatus{
-				KubectlDebugStatus: &v1alpha1.KubectlDebugStatus{
-					CopiedPods: []v1alpha1.CopiedPodRef{
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 						{CopyName: "pod-copy", CopyNamespace: "default"},
 					},
 				},

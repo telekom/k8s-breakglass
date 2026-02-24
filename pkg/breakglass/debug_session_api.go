@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -149,25 +149,25 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 // getDebugSessionByName finds a debug session by name across all namespaces
 // or optionally in a specific namespace if provided via query param.
 // Uses the uncached apiReader if configured, for consistent reads after writes.
-func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, name, namespaceHint string) (*v1alpha1.DebugSession, error) {
+func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, name, namespaceHint string) (*breakglassv1alpha1.DebugSession, error) {
 	reader := c.reader()
 	// If namespace hint provided, try that first
 	if namespaceHint != "" {
-		session := &v1alpha1.DebugSession{}
+		session := &breakglassv1alpha1.DebugSession{}
 		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespaceHint}, session); err == nil {
 			return session, nil
 		}
 	}
 
 	// Search across all namespaces using label selector
-	sessionList := &v1alpha1.DebugSessionList{}
+	sessionList := &breakglassv1alpha1.DebugSessionList{}
 	if err := reader.List(ctx, sessionList, ctrlclient.MatchingLabels{DebugSessionLabelKey: name}); err != nil {
 		return nil, err
 	}
 
 	if len(sessionList.Items) == 0 {
 		// Fallback: try default namespace
-		session := &v1alpha1.DebugSession{}
+		session := &breakglassv1alpha1.DebugSession{}
 		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: "default"}, session); err != nil {
 			return nil, apierrors.NewNotFound(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, name)
 		}
@@ -237,24 +237,24 @@ type DebugSessionListResponse struct {
 
 // DebugSessionSummary represents a summarized debug session for list responses
 type DebugSessionSummary struct {
-	Name                   string                         `json:"name"`
-	TemplateRef            string                         `json:"templateRef"`
-	Cluster                string                         `json:"cluster"`
-	RequestedBy            string                         `json:"requestedBy"`
-	RequestedByDisplayName string                         `json:"requestedByDisplayName,omitempty"`
-	State                  v1alpha1.DebugSessionState     `json:"state"`
-	StatusMessage          string                         `json:"statusMessage,omitempty"`
-	StartsAt               *metav1.Time                   `json:"startsAt,omitempty"`
-	ExpiresAt              *metav1.Time                   `json:"expiresAt,omitempty"`
-	Participants           int                            `json:"participants"`
-	IsParticipant          bool                           `json:"isParticipant"`
-	AllowedPods            int                            `json:"allowedPods"`
-	AllowedPodOperations   *v1alpha1.AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+	Name                   string                                   `json:"name"`
+	TemplateRef            string                                   `json:"templateRef"`
+	Cluster                string                                   `json:"cluster"`
+	RequestedBy            string                                   `json:"requestedBy"`
+	RequestedByDisplayName string                                   `json:"requestedByDisplayName,omitempty"`
+	State                  breakglassv1alpha1.DebugSessionState     `json:"state"`
+	StatusMessage          string                                   `json:"statusMessage,omitempty"`
+	StartsAt               *metav1.Time                             `json:"startsAt,omitempty"`
+	ExpiresAt              *metav1.Time                             `json:"expiresAt,omitempty"`
+	Participants           int                                      `json:"participants"`
+	IsParticipant          bool                                     `json:"isParticipant"`
+	AllowedPods            int                                      `json:"allowedPods"`
+	AllowedPodOperations   *breakglassv1alpha1.AllowedPodOperations `json:"allowedPodOperations,omitempty"`
 }
 
 // DebugSessionDetailResponse represents the detailed debug session response
 type DebugSessionDetailResponse struct {
-	v1alpha1.DebugSession
+	breakglassv1alpha1.DebugSession
 	// Warnings contains non-critical issues or notes about defaults that were applied
 	Warnings []string `json:"warnings,omitempty"`
 }
@@ -277,7 +277,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		}
 	}
 
-	sessionList := &v1alpha1.DebugSessionList{}
+	sessionList := &breakglassv1alpha1.DebugSessionList{}
 	listOpts := []ctrlclient.ListOption{}
 
 	// Note: cluster/state/user filters are applied client-side after fetching
@@ -293,7 +293,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	}
 
 	// Apply filters
-	var filtered []v1alpha1.DebugSession
+	var filtered []breakglassv1alpha1.DebugSession
 	for _, s := range sessionList.Items {
 		// Cluster filter
 		if cluster != "" && s.Spec.Cluster != cluster {
@@ -411,7 +411,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Validate template exists
-	template := &v1alpha1.DebugSessionTemplate{}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
@@ -427,8 +427,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Fetch bindings and cluster configs to check if cluster is allowed via template or binding
-	var bindingList v1alpha1.DebugSessionClusterBindingList
-	var clusterConfigList v1alpha1.ClusterConfigList
+	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
 	if err := c.client.List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
@@ -441,7 +441,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Build cluster name -> ClusterConfig map for binding resolution
-	clusterMap := make(map[string]*v1alpha1.ClusterConfig, len(clusterConfigList.Items))
+	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(clusterConfigList.Items))
 	for i := range clusterConfigList.Items {
 		cc := &clusterConfigList.Items[i]
 		clusterMap[cc.Name] = cc
@@ -573,13 +573,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// (e.g., "5" instead of 5). Normalize them before validation and storage so
 	// templates render correct YAML (e.g., `storage: 5Gi` not `storage: "5"Gi`).
 	if len(req.ExtraDeployValues) > 0 {
-		req.ExtraDeployValues = v1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, template.Spec.ExtraDeployVariables)
+		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, template.Spec.ExtraDeployVariables)
 	}
 
 	// Validate extraDeployValues against template's extraDeployVariables
 	// This includes checking allowedGroups on variables and options
 	if len(req.ExtraDeployValues) > 0 || len(template.Spec.ExtraDeployVariables) > 0 {
-		valErrs := v1alpha1.ValidateExtraDeployValuesWithGroups(
+		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(
 			req.ExtraDeployValues,
 			template.Spec.ExtraDeployVariables,
 			userGroups,
@@ -617,7 +617,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	namespace := req.Namespace
 	if namespace == "" {
 		// Find ClusterConfig by cluster name to get its namespace
-		clusterConfigs := &v1alpha1.ClusterConfigList{}
+		clusterConfigs := &breakglassv1alpha1.ClusterConfigList{}
 		if err := c.client.List(apiCtx, clusterConfigs); err == nil {
 			for _, cc := range clusterConfigs.Items {
 				if cc.Name == req.Cluster || cc.Spec.Tenant == req.Cluster {
@@ -632,7 +632,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Create the debug session
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sessionName,
 			Namespace: namespace,
@@ -642,7 +642,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				DebugClusterLabelKey:  req.Cluster,
 			},
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef:                   req.TemplateRef,
 			Cluster:                       req.Cluster,
 			RequestedBy:                   currentUserStr,
@@ -670,16 +670,16 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Set explicit binding reference if provided (format: "namespace/name")
-	var resolvedBinding *v1alpha1.DebugSessionClusterBinding
+	var resolvedBinding *breakglassv1alpha1.DebugSessionClusterBinding
 	if req.BindingRef != "" {
 		parts := strings.SplitN(req.BindingRef, "/", 2)
 		if len(parts) == 2 {
-			session.Spec.BindingRef = &v1alpha1.BindingReference{
+			session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{
 				Name:      parts[1],
 				Namespace: parts[0],
 			}
 			// Fetch the binding for limit checking
-			resolvedBinding = &v1alpha1.DebugSessionClusterBinding{}
+			resolvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
 			if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: parts[1], Namespace: parts[0]}, resolvedBinding); err != nil {
 				if apierrors.IsNotFound(err) {
 					reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
@@ -805,10 +805,10 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	var req JoinDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		// Default to viewer role if not specified
-		req.Role = string(v1alpha1.ParticipantRoleViewer)
+		req.Role = string(breakglassv1alpha1.ParticipantRoleViewer)
 	}
 	if req.Role == "" {
-		req.Role = string(v1alpha1.ParticipantRoleViewer)
+		req.Role = string(breakglassv1alpha1.ParticipantRoleViewer)
 	}
 
 	// Get current user
@@ -833,7 +833,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	}
 
 	// Check session is active
-	if session.Status.State != v1alpha1.DebugSessionStateActive {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot join session in state '%s'", session.Status.State))
 		return
 	}
@@ -858,9 +858,9 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	}
 
 	// Determine role
-	role := v1alpha1.ParticipantRoleViewer
-	if req.Role == string(v1alpha1.ParticipantRoleParticipant) {
-		role = v1alpha1.ParticipantRoleParticipant
+	role := breakglassv1alpha1.ParticipantRoleViewer
+	if req.Role == string(breakglassv1alpha1.ParticipantRoleParticipant) {
+		role = breakglassv1alpha1.ParticipantRoleParticipant
 	}
 
 	// Get display name from context (set by auth middleware from "name" claim)
@@ -881,7 +881,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 
 	// Add participant
 	now := metav1.Now()
-	session.Status.Participants = append(session.Status.Participants, v1alpha1.DebugSessionParticipant{
+	session.Status.Participants = append(session.Status.Participants, breakglassv1alpha1.DebugSessionParticipant{
 		User:        username,
 		Email:       userEmail,
 		DisplayName: displayName,
@@ -922,7 +922,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 
 	// Parse extension duration (supports day units like "1d")
-	extendBy, err := v1alpha1.ParseDuration(req.ExtendBy)
+	extendBy, err := breakglassv1alpha1.ParseDuration(req.ExtendBy)
 	if err != nil {
 		apiresponses.RespondBadRequest(ctx, "invalid duration format")
 		return
@@ -964,7 +964,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 
 	// Check session is active
-	if session.Status.State != v1alpha1.DebugSessionStateActive {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot renew session in state '%s'", session.Status.State))
 		return
 	}
@@ -996,7 +996,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 
 		// Check total duration would not exceed max
 		if constraints.MaxDuration != "" {
-			maxDur, err := v1alpha1.ParseDuration(constraints.MaxDuration)
+			maxDur, err := breakglassv1alpha1.ParseDuration(constraints.MaxDuration)
 			if err == nil && session.Status.StartsAt != nil {
 				currentDuration := time.Since(session.Status.StartsAt.Time)
 				if currentDuration+extendBy > maxDur {
@@ -1071,15 +1071,15 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	}
 
 	// Check session can be terminated
-	if session.Status.State == v1alpha1.DebugSessionStateTerminated ||
-		session.Status.State == v1alpha1.DebugSessionStateExpired ||
-		session.Status.State == v1alpha1.DebugSessionStateFailed {
+	if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+		session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+		session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
 	}
 
 	// Mark as terminated
-	session.Status.State = v1alpha1.DebugSessionStateTerminated
+	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 	session.Status.Message = fmt.Sprintf("Terminated by %s", currentUser)
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
@@ -1129,7 +1129,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 
 	// Check session is pending approval
-	if session.Status.State != v1alpha1.DebugSessionStatePendingApproval {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
@@ -1144,7 +1144,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	// Mark as approved
 	now := metav1.Now()
 	if session.Status.Approval == nil {
-		session.Status.Approval = &v1alpha1.DebugSessionApproval{}
+		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
 	}
 	session.Status.Approval.ApprovedBy = currentUser.(string)
 	session.Status.Approval.ApprovedAt = &now
@@ -1211,7 +1211,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	}
 
 	// Check session is pending approval
-	if session.Status.State != v1alpha1.DebugSessionStatePendingApproval {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
@@ -1226,7 +1226,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	// Mark as rejected
 	now := metav1.Now()
 	if session.Status.Approval == nil {
-		session.Status.Approval = &v1alpha1.DebugSessionApproval{}
+		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
 	}
 	session.Status.Approval.RejectedBy = currentUser.(string)
 	session.Status.Approval.RejectedAt = &now
@@ -1243,7 +1243,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	session.Status.Approval.Reason = sanitizedReason
 
 	// Move to terminated state
-	session.Status.State = v1alpha1.DebugSessionStateTerminated
+	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
@@ -1299,7 +1299,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	for i := range session.Status.Participants {
 		if session.Status.Participants[i].User == username {
 			// Check if owner - owners cannot leave
-			if session.Status.Participants[i].Role == v1alpha1.ParticipantRoleOwner {
+			if session.Status.Participants[i].Role == breakglassv1alpha1.ParticipantRoleOwner {
 				apiresponses.RespondForbidden(ctx, "session owner cannot leave; use terminate instead")
 				return
 			}
@@ -1336,26 +1336,26 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 
 // DebugSessionTemplateResponse represents a template in API responses
 type DebugSessionTemplateResponse struct {
-	Name                  string                            `json:"name"`
-	DisplayName           string                            `json:"displayName"`
-	Description           string                            `json:"description,omitempty"`
-	Mode                  v1alpha1.DebugSessionTemplateMode `json:"mode"`
-	WorkloadType          v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
-	PodTemplateRef        string                            `json:"podTemplateRef,omitempty"`
-	TargetNamespace       string                            `json:"targetNamespace,omitempty"`
-	Constraints           *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	AllowedClusters       []string                          `json:"allowedClusters,omitempty"`
-	AllowedGroups         []string                          `json:"allowedGroups,omitempty"`
-	RequiresApproval      bool                              `json:"requiresApproval"`
-	SchedulingOptions     *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
-	NamespaceConstraints  *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
-	ExtraDeployVariables  []v1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
-	Priority              int32                             `json:"priority,omitempty"`
-	Hidden                bool                              `json:"hidden,omitempty"`
-	Deprecated            bool                              `json:"deprecated,omitempty"`
-	DeprecationMessage    string                            `json:"deprecationMessage,omitempty"`
-	HasAvailableClusters  bool                              `json:"hasAvailableClusters"`            // True if at least one cluster is available for this template
-	AvailableClusterCount int                               `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
+	Name                  string                                      `json:"name"`
+	DisplayName           string                                      `json:"displayName"`
+	Description           string                                      `json:"description,omitempty"`
+	Mode                  breakglassv1alpha1.DebugSessionTemplateMode `json:"mode"`
+	WorkloadType          breakglassv1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
+	PodTemplateRef        string                                      `json:"podTemplateRef,omitempty"`
+	TargetNamespace       string                                      `json:"targetNamespace,omitempty"`
+	Constraints           *breakglassv1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	AllowedClusters       []string                                    `json:"allowedClusters,omitempty"`
+	AllowedGroups         []string                                    `json:"allowedGroups,omitempty"`
+	RequiresApproval      bool                                        `json:"requiresApproval"`
+	SchedulingOptions     *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints  *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
+	ExtraDeployVariables  []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
+	Priority              int32                                       `json:"priority,omitempty"`
+	Hidden                bool                                        `json:"hidden,omitempty"`
+	Deprecated            bool                                        `json:"deprecated,omitempty"`
+	DeprecationMessage    string                                      `json:"deprecationMessage,omitempty"`
+	HasAvailableClusters  bool                                        `json:"hasAvailableClusters"`            // True if at least one cluster is available for this template
+	AvailableClusterCount int                                         `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
 
 // SchedulingOptionsResponse represents scheduling options in API responses
@@ -1415,42 +1415,42 @@ type TemplateClustersResponse struct {
 // When multiple bindings match a cluster, BindingOptions contains all available options.
 // The first binding option (or BindingRef for backward compatibility) is the default.
 type AvailableClusterDetail struct {
-	Name                          string                            `json:"name"`
-	DisplayName                   string                            `json:"displayName,omitempty"`
-	Environment                   string                            `json:"environment,omitempty"`
-	Location                      string                            `json:"location,omitempty"`
-	Site                          string                            `json:"site,omitempty"`
-	Tenant                        string                            `json:"tenant,omitempty"`
-	BindingRef                    *BindingReference                 `json:"bindingRef,omitempty"`     // Default/primary binding (backward compat)
-	BindingOptions                []BindingOption                   `json:"bindingOptions,omitempty"` // All available binding options
-	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`    // Default constraints (from first binding)
-	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
-	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
-	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
-	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
-	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
-	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
-	RequestReason                 *ReasonConfigInfo                 `json:"requestReason,omitempty"`
-	ApprovalReason                *ReasonConfigInfo                 `json:"approvalReason,omitempty"`
-	Notification                  *NotificationConfigInfo           `json:"notification,omitempty"`
-	Status                        *ClusterStatusInfo                `json:"status,omitempty"`
+	Name                          string                                      `json:"name"`
+	DisplayName                   string                                      `json:"displayName,omitempty"`
+	Environment                   string                                      `json:"environment,omitempty"`
+	Location                      string                                      `json:"location,omitempty"`
+	Site                          string                                      `json:"site,omitempty"`
+	Tenant                        string                                      `json:"tenant,omitempty"`
+	BindingRef                    *BindingReference                           `json:"bindingRef,omitempty"`     // Default/primary binding (backward compat)
+	BindingOptions                []BindingOption                             `json:"bindingOptions,omitempty"` // All available binding options
+	Constraints                   *breakglassv1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`    // Default constraints (from first binding)
+	SchedulingConstraints         *SchedulingConstraintsSummary               `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary                       `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                                    `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                               `json:"approval,omitempty"`
+	RequestReason                 *ReasonConfigInfo                           `json:"requestReason,omitempty"`
+	ApprovalReason                *ReasonConfigInfo                           `json:"approvalReason,omitempty"`
+	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
+	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 
 // BindingOption represents a single binding option for a cluster with its resolved configuration.
 // When users select a cluster with multiple binding options, they can choose which binding to use.
 type BindingOption struct {
-	BindingRef                    BindingReference                  `json:"bindingRef"`
-	DisplayName                   string                            `json:"displayName,omitempty"` // Effective display name for this binding
-	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
-	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
-	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
-	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
-	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
-	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
-	RequestReason                 *ReasonConfigInfo                 `json:"requestReason,omitempty"`
-	ApprovalReason                *ReasonConfigInfo                 `json:"approvalReason,omitempty"`
-	Notification                  *NotificationConfigInfo           `json:"notification,omitempty"`
+	BindingRef                    BindingReference                            `json:"bindingRef"`
+	DisplayName                   string                                      `json:"displayName,omitempty"` // Effective display name for this binding
+	Constraints                   *breakglassv1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	SchedulingConstraints         *SchedulingConstraintsSummary               `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary                       `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                                    `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                               `json:"approval,omitempty"`
+	RequestReason                 *ReasonConfigInfo                           `json:"requestReason,omitempty"`
+	ApprovalReason                *ReasonConfigInfo                           `json:"approvalReason,omitempty"`
+	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -1517,7 +1517,7 @@ type NotificationConfigInfo struct {
 func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 
-	templateList := &v1alpha1.DebugSessionTemplateList{}
+	templateList := &breakglassv1alpha1.DebugSessionTemplateList{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
@@ -1528,13 +1528,13 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	}
 
 	// Fetch all ClusterConfigs for pattern resolution
-	clusterConfigList := &v1alpha1.ClusterConfigList{}
+	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
 	if err := c.reader().List(apiCtx, clusterConfigList); err != nil {
 		reqLog.Warnw("Failed to list cluster configs for pattern resolution", "error", err)
 		// Continue without pattern resolution - clusters will be empty
 	}
 	allClusterNames := make([]string, 0, len(clusterConfigList.Items))
-	clusterMap := make(map[string]*v1alpha1.ClusterConfig, len(clusterConfigList.Items))
+	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(clusterConfigList.Items))
 	for i := range clusterConfigList.Items {
 		cc := &clusterConfigList.Items[i]
 		allClusterNames = append(allClusterNames, cc.Name)
@@ -1542,7 +1542,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	}
 
 	// Fetch all bindings to determine which templates have available clusters
-	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
 	if err := c.reader().List(apiCtx, bindingList); err != nil {
 		reqLog.Warnw("Failed to list bindings for template cluster resolution", "error", err)
 		// Continue without binding resolution
@@ -1690,7 +1690,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 		return
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
@@ -1779,7 +1779,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	defer cancel()
 
 	// Fetch the template
-	template := &v1alpha1.DebugSessionTemplate{}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			apiresponses.RespondNotFoundSimple(ctx, "template not found")
@@ -1824,8 +1824,8 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	}
 
 	// Fetch ClusterConfigs and ClusterBindings in parallel for performance
-	var clusterConfigList v1alpha1.ClusterConfigList
-	var bindingList v1alpha1.DebugSessionClusterBindingList
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
+	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
 	var ccErr, bindErr error
 
 	// Use goroutines with sync.WaitGroup for parallel fetching
@@ -1857,7 +1857,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	}
 
 	// Build cluster name -> ClusterConfig map
-	clusterMap := make(map[string]*v1alpha1.ClusterConfig, len(clusterConfigList.Items))
+	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(clusterConfigList.Items))
 	for i := range clusterConfigList.Items {
 		cc := &clusterConfigList.Items[i]
 		clusterMap[cc.Name] = cc
@@ -1900,9 +1900,9 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 // countAvailableClustersForTemplate counts how many clusters are available for a template.
 // It considers both bindings and direct template.Spec.Allowed.Clusters patterns.
 func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
-	template *v1alpha1.DebugSessionTemplate,
-	allBindings []v1alpha1.DebugSessionClusterBinding,
-	clusterMap map[string]*v1alpha1.ClusterConfig,
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	allBindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	clusterMap map[string]*breakglassv1alpha1.ClusterConfig,
 	allClusterNames []string,
 ) int {
 	seenClusters := make(map[string]bool)
@@ -1935,8 +1935,8 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 }
 
 // findBindingsForTemplate returns all bindings that reference the given template
-func (c *DebugSessionAPIController) findBindingsForTemplate(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding) []v1alpha1.DebugSessionClusterBinding {
-	var result []v1alpha1.DebugSessionClusterBinding
+func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding) []breakglassv1alpha1.DebugSessionClusterBinding {
+	var result []breakglassv1alpha1.DebugSessionClusterBinding
 	for i := range bindings {
 		binding := &bindings[i]
 		bindingID := fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
@@ -1986,9 +1986,9 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *v1alpha1.D
 // resolveTemplateClusters resolves all available clusters for a template.
 // When multiple bindings match the same cluster, all binding options are returned
 // so users can select which binding configuration to use.
-func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding, clusterMap map[string]*v1alpha1.ClusterConfig, userGroups []string) []AvailableClusterDetail {
+func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig, userGroups []string) []AvailableClusterDetail {
 	// Build a map of cluster -> all matching bindings
-	clusterBindings := make(map[string][]*v1alpha1.DebugSessionClusterBinding)
+	clusterBindings := make(map[string][]*breakglassv1alpha1.DebugSessionClusterBinding)
 
 	// Collect all bindings for each cluster
 	for i := range bindings {
@@ -2048,7 +2048,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.D
 
 // buildClusterDetailWithBindings creates a cluster detail with all matching binding options.
 // The first binding becomes the default (for backward compatibility with BindingRef).
-func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1alpha1.DebugSessionTemplate, matchingBindings []*v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig, userGroups []string) AvailableClusterDetail {
+func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *breakglassv1alpha1.DebugSessionTemplate, matchingBindings []*breakglassv1alpha1.DebugSessionClusterBinding, cc *breakglassv1alpha1.ClusterConfig, userGroups []string) AvailableClusterDetail {
 	detail := AvailableClusterDetail{
 		Name:        cc.Name,
 		DisplayName: cc.Name,
@@ -2074,7 +2074,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 	// Build all binding options
 	detail.BindingOptions = make([]BindingOption, 0, len(matchingBindings))
 	for _, binding := range matchingBindings {
-		effectiveDisplayName := v1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
+		effectiveDisplayName := breakglassv1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
 		option := BindingOption{
 			BindingRef: BindingReference{
 				Name:              binding.Name,
@@ -2121,7 +2121,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 }
 
 // resolveClustersFromBinding resolves cluster names from a binding's spec
-func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *v1alpha1.DebugSessionClusterBinding, clusterMap map[string]*v1alpha1.ClusterConfig) []string {
+func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig) []string {
 	var result []string
 	bindingID := fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 
@@ -2177,7 +2177,7 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *v1alpha1
 }
 
 // mergeConstraints merges template and binding constraints
-func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *v1alpha1.DebugSessionConstraints, binding *v1alpha1.DebugSessionClusterBinding) *v1alpha1.DebugSessionConstraints {
+func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *breakglassv1alpha1.DebugSessionConstraints, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionConstraints {
 	if binding == nil || binding.Spec.Constraints == nil {
 		return templateConstraints
 	}
@@ -2206,8 +2206,8 @@ func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *v1alph
 }
 
 // getSchedulingConstraintsSummary builds a summary of scheduling constraints
-func (c *DebugSessionAPIController) getSchedulingConstraintsSummary(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *SchedulingConstraintsSummary {
-	var sc *v1alpha1.SchedulingConstraints
+func (c *DebugSessionAPIController) getSchedulingConstraintsSummary(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *SchedulingConstraintsSummary {
+	var sc *breakglassv1alpha1.SchedulingConstraints
 
 	// Binding constraints take precedence
 	if binding != nil && binding.Spec.SchedulingConstraints != nil {
@@ -2225,7 +2225,7 @@ func (c *DebugSessionAPIController) getSchedulingConstraintsSummary(template *v1
 
 // buildConstraintsSummary builds a SchedulingConstraintsSummary from SchedulingConstraints.
 // Shared between cluster-level and per-option constraint summaries.
-func buildConstraintsSummary(sc *v1alpha1.SchedulingConstraints) *SchedulingConstraintsSummary {
+func buildConstraintsSummary(sc *breakglassv1alpha1.SchedulingConstraints) *SchedulingConstraintsSummary {
 	if sc == nil {
 		return nil
 	}
@@ -2270,8 +2270,8 @@ func buildConstraintsSummary(sc *v1alpha1.SchedulingConstraints) *SchedulingCons
 }
 
 // resolveSchedulingOptions resolves scheduling options from binding or template
-func (c *DebugSessionAPIController) resolveSchedulingOptions(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *SchedulingOptionsResponse {
-	var so *v1alpha1.SchedulingOptions
+func (c *DebugSessionAPIController) resolveSchedulingOptions(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *SchedulingOptionsResponse {
+	var so *breakglassv1alpha1.SchedulingOptions
 
 	// Binding options take precedence
 	if binding != nil && binding.Spec.SchedulingOptions != nil {
@@ -2303,8 +2303,8 @@ func (c *DebugSessionAPIController) resolveSchedulingOptions(template *v1alpha1.
 }
 
 // resolveNamespaceConstraints resolves namespace constraints from binding or template
-func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *NamespaceConstraintsResponse {
-	var nc *v1alpha1.NamespaceConstraints
+func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *NamespaceConstraintsResponse {
+	var nc *breakglassv1alpha1.NamespaceConstraints
 
 	// Binding constraints take precedence
 	if binding != nil && binding.Spec.NamespaceConstraints != nil {
@@ -2335,8 +2335,8 @@ func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *v1alph
 }
 
 // resolveImpersonation resolves impersonation settings from binding or template
-func (c *DebugSessionAPIController) resolveImpersonation(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *ImpersonationSummary {
-	var imp *v1alpha1.ImpersonationConfig
+func (c *DebugSessionAPIController) resolveImpersonation(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *ImpersonationSummary {
+	var imp *breakglassv1alpha1.ImpersonationConfig
 
 	// Binding impersonation takes precedence
 	if binding != nil && binding.Spec.Impersonation != nil {
@@ -2364,10 +2364,10 @@ func (c *DebugSessionAPIController) resolveImpersonation(template *v1alpha1.Debu
 // resolveApproval resolves approval requirements from binding, template, or ClusterConfig.
 // It also evaluates AutoApproveFor conditions to determine if the current user
 // would be auto-approved, matching the logic in the reconciler's requiresApproval().
-func (c *DebugSessionAPIController) resolveApproval(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig, userGroups []string) *ApprovalInfo {
+func (c *DebugSessionAPIController) resolveApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, cc *breakglassv1alpha1.ClusterConfig, userGroups []string) *ApprovalInfo {
 	info := &ApprovalInfo{}
 
-	var autoApproveFor *v1alpha1.AutoApproveConfig
+	var autoApproveFor *breakglassv1alpha1.AutoApproveConfig
 
 	// Check binding approvers first
 	if binding != nil && binding.Spec.Approvers != nil {
@@ -2393,7 +2393,7 @@ func (c *DebugSessionAPIController) resolveApproval(template *v1alpha1.DebugSess
 
 // evaluateAutoApprove checks if auto-approve conditions are met for the given cluster and user groups.
 // This mirrors the reconciler's checkAutoApprove() logic for API preview purposes.
-func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *v1alpha1.AutoApproveConfig, clusterName string, userGroups []string) bool {
+func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *breakglassv1alpha1.AutoApproveConfig, clusterName string, userGroups []string) bool {
 	// Check cluster patterns
 	for _, pattern := range autoApprove.Clusters {
 		if matched, _ := filepath.Match(pattern, clusterName); matched {
@@ -2414,12 +2414,12 @@ func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *v1alpha1.Au
 }
 
 // resolveClusterStatus returns cluster health status
-func (c *DebugSessionAPIController) resolveClusterStatus(cc *v1alpha1.ClusterConfig) *ClusterStatusInfo {
+func (c *DebugSessionAPIController) resolveClusterStatus(cc *breakglassv1alpha1.ClusterConfig) *ClusterStatusInfo {
 	status := &ClusterStatusInfo{}
 
 	// Check for Ready condition
 	for _, cond := range cc.Status.Conditions {
-		if cond.Type == string(v1alpha1.ClusterConfigConditionReady) {
+		if cond.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) {
 			status.Healthy = cond.Status == metav1.ConditionTrue
 			status.LastChecked = cond.LastTransitionTime.Format("2006-01-02T15:04:05Z")
 			break
@@ -2431,7 +2431,7 @@ func (c *DebugSessionAPIController) resolveClusterStatus(cc *v1alpha1.ClusterCon
 
 // resolveRequiredAuxResourceCategories returns required auxiliary resource categories
 // from binding or template configuration.
-func (c *DebugSessionAPIController) resolveRequiredAuxResourceCategories(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) []string {
+func (c *DebugSessionAPIController) resolveRequiredAuxResourceCategories(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) []string {
 	// Collect categories from both template and binding
 	categories := make(map[string]bool)
 
@@ -2461,7 +2461,7 @@ func (c *DebugSessionAPIController) resolveRequiredAuxResourceCategories(templat
 }
 
 // resolveRequestReason resolves request reason configuration from binding or template
-func (c *DebugSessionAPIController) resolveRequestReason(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *ReasonConfigInfo {
+func (c *DebugSessionAPIController) resolveRequestReason(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *ReasonConfigInfo {
 	// Binding overrides template
 	if binding != nil && binding.Spec.RequestReason != nil {
 		return &ReasonConfigInfo{
@@ -2488,7 +2488,7 @@ func (c *DebugSessionAPIController) resolveRequestReason(template *v1alpha1.Debu
 }
 
 // resolveApprovalReason resolves approval reason configuration from binding or template
-func (c *DebugSessionAPIController) resolveApprovalReason(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *ReasonConfigInfo {
+func (c *DebugSessionAPIController) resolveApprovalReason(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *ReasonConfigInfo {
 	// Binding overrides template
 	if binding != nil && binding.Spec.ApprovalReason != nil {
 		return &ReasonConfigInfo{
@@ -2509,7 +2509,7 @@ func (c *DebugSessionAPIController) resolveApprovalReason(template *v1alpha1.Deb
 }
 
 // resolveNotification resolves notification configuration from binding or template
-func (c *DebugSessionAPIController) resolveNotification(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *NotificationConfigInfo {
+func (c *DebugSessionAPIController) resolveNotification(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *NotificationConfigInfo {
 	// Binding overrides template
 	if binding != nil && binding.Spec.Notification != nil {
 		return &NotificationConfigInfo{
@@ -2535,14 +2535,14 @@ const (
 	notificationEventExpiry   notificationEvent = "expiry"
 )
 
-func resolveNotificationConfig(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *v1alpha1.DebugSessionNotificationConfig {
+func resolveNotificationConfig(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionNotificationConfig {
 	if binding != nil && binding.Spec.Notification != nil {
 		return binding.Spec.Notification
 	}
 	return template.Spec.Notification
 }
 
-func shouldSendNotification(cfg *v1alpha1.DebugSessionNotificationConfig, event notificationEvent) bool {
+func shouldSendNotification(cfg *breakglassv1alpha1.DebugSessionNotificationConfig, event notificationEvent) bool {
 	if cfg == nil {
 		return true
 	}
@@ -2561,7 +2561,7 @@ func shouldSendNotification(cfg *v1alpha1.DebugSessionNotificationConfig, event 
 	}
 }
 
-func buildNotificationRecipients(base []string, cfg *v1alpha1.DebugSessionNotificationConfig) []string {
+func buildNotificationRecipients(base []string, cfg *breakglassv1alpha1.DebugSessionNotificationConfig) []string {
 	if cfg == nil && len(base) == 0 {
 		return nil
 	}
@@ -2605,7 +2605,7 @@ func buildNotificationRecipients(base []string, cfg *v1alpha1.DebugSessionNotifi
 	return recipients
 }
 
-func (c *DebugSessionAPIController) resolveNotificationConfigForSession(ctx context.Context, session *v1alpha1.DebugSession) *v1alpha1.DebugSessionNotificationConfig {
+func (c *DebugSessionAPIController) resolveNotificationConfigForSession(ctx context.Context, session *breakglassv1alpha1.DebugSession) *breakglassv1alpha1.DebugSessionNotificationConfig {
 	if session == nil {
 		return nil
 	}
@@ -2615,16 +2615,16 @@ func (c *DebugSessionAPIController) resolveNotificationConfigForSession(ctx cont
 	}
 
 	// Resolve template
-	template := &v1alpha1.DebugSessionTemplate{}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
 		c.log.Debugw("Failed to load template for notification config", "template", session.Spec.TemplateRef, "error", err)
 		return nil
 	}
 
 	// Resolve binding if referenced
-	var binding *v1alpha1.DebugSessionClusterBinding
+	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if session.Spec.BindingRef != nil {
-		resolved := &v1alpha1.DebugSessionClusterBinding{}
+		resolved := &breakglassv1alpha1.DebugSessionClusterBinding{}
 		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}, resolved); err != nil {
 			c.log.Debugw("Failed to load binding for notification config", "binding", session.Spec.BindingRef.Name, "error", err)
 		} else {
@@ -2648,7 +2648,7 @@ func labelSetFromMap(m map[string]string) labels.Set {
 func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 
-	templateList := &v1alpha1.DebugPodTemplateList{}
+	templateList := &breakglassv1alpha1.DebugPodTemplateList{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
@@ -2685,7 +2685,7 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 		return
 	}
 
-	template := &v1alpha1.DebugPodTemplate{}
+	template := &breakglassv1alpha1.DebugPodTemplate{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
@@ -2717,7 +2717,7 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 // isUserAuthorizedToApprove checks if the user is authorized to approve/reject a debug session
 // The user must be in one of the approver groups/users defined in the session's template or binding.
 // Additionally, the requester of the session is not allowed to self-approve.
-func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Context, session *v1alpha1.DebugSession, username string, userGroupsInterface interface{}) bool {
+func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username string, userGroupsInterface interface{}) bool {
 	// Block self-approval: the user who requested the session cannot approve it
 	if session.Spec.RequestedBy == username {
 		c.log.Infow("Blocking self-approval attempt",
@@ -2726,7 +2726,7 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 	}
 
 	// First try to find the binding that granted this session - it may have its own approvers
-	bindings := &v1alpha1.DebugSessionClusterBindingList{}
+	bindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
 	if err := c.client.List(ctx, bindings); err == nil {
 		for i := range bindings.Items {
 			binding := &bindings.Items[i]
@@ -2749,7 +2749,7 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 	// If template has no resolved approvers info in status, fall back to fetching template
 	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Approvers == nil {
 		// Fetch the template to check approvers
-		template := &v1alpha1.DebugSessionTemplate{}
+		template := &breakglassv1alpha1.DebugSessionTemplate{}
 		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
 			// If we can't fetch template, allow approval (fail open for usability)
 			c.log.Warnw("Could not fetch template to check approvers, allowing approval",
@@ -2770,7 +2770,7 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 }
 
 // checkApproverAuthorization checks if user is in the approved users/groups
-func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *v1alpha1.DebugSessionApprovers, username string, userGroupsInterface interface{}) bool {
+func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakglassv1alpha1.DebugSessionApprovers, username string, userGroupsInterface interface{}) bool {
 	// Check if user is in allowed users list
 	for _, allowedUser := range approvers.Users {
 		if matchPattern(allowedUser, username) {
@@ -2831,7 +2831,7 @@ func matchPattern(pattern, value string) bool {
 }
 
 // convertSelectorTerms converts v1alpha1 selector terms to API response format
-func convertSelectorTerms(terms []v1alpha1.NamespaceSelectorTerm) []NamespaceSelectorTermResponse {
+func convertSelectorTerms(terms []breakglassv1alpha1.NamespaceSelectorTerm) []NamespaceSelectorTermResponse {
 	if len(terms) == 0 {
 		return nil
 	}
@@ -2859,7 +2859,7 @@ func convertSelectorTerms(terms []v1alpha1.NamespaceSelectorTerm) []NamespaceSel
 // Returns the resolved namespace or an error if the requested namespace is not allowed.
 // If a binding is provided and has namespace constraints, those constraints are used to extend
 // or override the template's constraints (e.g., binding.AllowUserNamespace=true overrides template's false).
-func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.DebugSessionTemplate, requestedNamespace string, binding *v1alpha1.DebugSessionClusterBinding) (string, error) {
+func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv1alpha1.DebugSessionTemplate, requestedNamespace string, binding *breakglassv1alpha1.DebugSessionClusterBinding) (string, error) {
 	// Start with template's namespace constraints
 	nc := template.Spec.NamespaceConstraints
 
@@ -2978,8 +2978,8 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.De
 // Binding constraints can extend what template allows (e.g., enable user namespaces).
 // Returns a new NamespaceConstraints with merged values.
 func (c *DebugSessionAPIController) mergeNamespaceConstraints(
-	templateNC, bindingNC *v1alpha1.NamespaceConstraints,
-) *v1alpha1.NamespaceConstraints {
+	templateNC, bindingNC *breakglassv1alpha1.NamespaceConstraints,
+) *breakglassv1alpha1.NamespaceConstraints {
 	// If both are nil, return nil
 	if templateNC == nil && bindingNC == nil {
 		return nil
@@ -3035,7 +3035,7 @@ func (c *DebugSessionAPIController) mergeNamespaceConstraints(
 
 // matchNamespaceFilter checks if a namespace matches a NamespaceFilter.
 // Only evaluates patterns; label selector matching requires runtime access to namespaces.
-func matchNamespaceFilter(namespace string, filter *v1alpha1.NamespaceFilter) bool {
+func matchNamespaceFilter(namespace string, filter *breakglassv1alpha1.NamespaceFilter) bool {
 	if filter == nil || filter.IsEmpty() {
 		return false
 	}
@@ -3063,10 +3063,10 @@ func matchNamespaceFilter(namespace string, filter *v1alpha1.NamespaceFilter) bo
 // on top of the template, and its scheduling options take precedence over the template's.
 // Returns the merged constraints, the selected option name, and any error.
 func (c *DebugSessionAPIController) resolveSchedulingConstraints(
-	template *v1alpha1.DebugSessionTemplate,
+	template *breakglassv1alpha1.DebugSessionTemplate,
 	selectedOption string,
-	binding *v1alpha1.DebugSessionClusterBinding,
-) (*v1alpha1.SchedulingConstraints, string, error) {
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+) (*breakglassv1alpha1.SchedulingConstraints, string, error) {
 	// Start with the template's base scheduling constraints and merge in binding-level
 	// base constraints (which are documented as mandatory additions on top of the template).
 	baseConstraints := template.Spec.SchedulingConstraints
@@ -3075,7 +3075,7 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	}
 
 	// Resolve effective scheduling options: binding takes precedence over template
-	var effectiveOpts *v1alpha1.SchedulingOptions
+	var effectiveOpts *breakglassv1alpha1.SchedulingOptions
 	if binding != nil && binding.Spec.SchedulingOptions != nil {
 		effectiveOpts = binding.Spec.SchedulingOptions
 	} else if template.Spec.SchedulingOptions != nil {
@@ -3118,7 +3118,7 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	}
 
 	// Find the selected option
-	var selectedOpt *v1alpha1.SchedulingOption
+	var selectedOpt *breakglassv1alpha1.SchedulingOption
 	for i := range opts.Options {
 		if opts.Options[i].Name == selectedOption {
 			selectedOpt = &opts.Options[i]
@@ -3138,7 +3138,7 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 
 // mergeSchedulingConstraints merges base constraints with option constraints.
 // Option constraints override base constraints for conflicting keys.
-func mergeSchedulingConstraints(base, option *v1alpha1.SchedulingConstraints) *v1alpha1.SchedulingConstraints {
+func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConstraints) *breakglassv1alpha1.SchedulingConstraints {
 	if base == nil && option == nil {
 		return nil
 	}
@@ -3243,7 +3243,7 @@ func resolveClusterPatterns(patterns []string, allClusters []string) []string {
 }
 
 // sendDebugSessionRequestEmail sends email notification to approvers when a debug session is created
-func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Context, session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) {
+func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
 		return
 	}
@@ -3308,7 +3308,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 }
 
 // sendDebugSessionApprovalEmail sends email notification to requester when a debug session is approved
-func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(ctx context.Context, session *v1alpha1.DebugSession) {
+func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
 		return
 	}
@@ -3383,7 +3383,7 @@ func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(ctx context.Co
 }
 
 // sendDebugSessionRejectionEmail sends email notification to requester when a debug session is rejected
-func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.Context, session *v1alpha1.DebugSession) {
+func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
 		return
 	}
@@ -3452,7 +3452,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.C
 }
 
 // sendDebugSessionCreatedEmail sends email confirmation to requester when a debug session is created
-func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Context, session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) {
+func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
 		return
 	}
@@ -3511,7 +3511,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 }
 
 // emitDebugSessionAuditEvent emits an audit event for debug session lifecycle changes
-func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *v1alpha1.DebugSession, user string, message string) {
+func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, user string, message string) {
 	if c.auditService == nil || !c.auditService.IsEnabled() {
 		return
 	}
@@ -3580,7 +3580,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Verify session is active
-	if session.Status.State != v1alpha1.DebugSessionStateActive {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
@@ -3593,8 +3593,8 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 
 	// Verify template supports kubectl-debug mode
 	if session.Status.ResolvedTemplate == nil ||
-		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
-			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
+		(session.Status.ResolvedTemplate.Mode != breakglassv1alpha1.DebugSessionModeKubectlDebug &&
+			session.Status.ResolvedTemplate.Mode != breakglassv1alpha1.DebugSessionModeHybrid) {
 		apiresponses.RespondBadRequest(ctx, "session template does not support kubectl-debug mode")
 		return
 	}
@@ -3668,7 +3668,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Verify session is active
-	if session.Status.State != v1alpha1.DebugSessionStateActive {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
@@ -3681,8 +3681,8 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 
 	// Verify template supports kubectl-debug mode
 	if session.Status.ResolvedTemplate == nil ||
-		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
-			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
+		(session.Status.ResolvedTemplate.Mode != breakglassv1alpha1.DebugSessionModeKubectlDebug &&
+			session.Status.ResolvedTemplate.Mode != breakglassv1alpha1.DebugSessionModeHybrid) {
 		apiresponses.RespondBadRequest(ctx, "session template does not support kubectl-debug mode")
 		return
 	}
@@ -3751,7 +3751,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Verify session is active
-	if session.Status.State != v1alpha1.DebugSessionStateActive {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
@@ -3764,8 +3764,8 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 
 	// Verify template supports kubectl-debug mode
 	if session.Status.ResolvedTemplate == nil ||
-		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
-			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
+		(session.Status.ResolvedTemplate.Mode != breakglassv1alpha1.DebugSessionModeKubectlDebug &&
+			session.Status.ResolvedTemplate.Mode != breakglassv1alpha1.DebugSessionModeHybrid) {
 		apiresponses.RespondBadRequest(ctx, "session template does not support kubectl-debug mode")
 		return
 	}
@@ -3810,7 +3810,7 @@ func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string
 }
 
 // isUserParticipant checks if the user is a participant of the session
-func (c *DebugSessionAPIController) isUserParticipant(session *v1alpha1.DebugSession, user string) bool {
+func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha1.DebugSession, user string) bool {
 	// Owner is always a participant
 	if session.Spec.RequestedBy == user {
 		return true
@@ -3848,13 +3848,13 @@ func extractRunAsNonRoot(sc *corev1.SecurityContext) bool {
 
 // checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.
 // Returns nil if the session can be created, or an error describing the limit violation.
-func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *v1alpha1.DebugSessionClusterBinding, userEmail string) error {
+func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *breakglassv1alpha1.DebugSessionClusterBinding, userEmail string) error {
 	if binding == nil {
 		return nil
 	}
 
 	// Get current active sessions for this binding
-	sessionList := &v1alpha1.DebugSessionList{}
+	sessionList := &breakglassv1alpha1.DebugSessionList{}
 	if err := c.client.List(ctx, sessionList); err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
@@ -3872,9 +3872,9 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		}
 
 		// Check if session is active (pending or approved, not expired/terminated/failed)
-		if session.Status.State == v1alpha1.DebugSessionStateTerminated ||
-			session.Status.State == v1alpha1.DebugSessionStateExpired ||
-			session.Status.State == v1alpha1.DebugSessionStateFailed {
+		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 			continue
 		}
 
@@ -3904,9 +3904,9 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 // ClusterAllowedResult contains the result of checking if a cluster is allowed
 type ClusterAllowedResult struct {
 	Allowed         bool
-	AllowedBySource string                                // "template" or "binding:<ns>/<name>"
-	MatchingBinding *v1alpha1.DebugSessionClusterBinding  // Non-nil if allowed by binding
-	AllBindings     []v1alpha1.DebugSessionClusterBinding // All bindings that allow this cluster
+	AllowedBySource string                                          // "template" or "binding:<ns>/<name>"
+	MatchingBinding *breakglassv1alpha1.DebugSessionClusterBinding  // Non-nil if allowed by binding
+	AllBindings     []breakglassv1alpha1.DebugSessionClusterBinding // All bindings that allow this cluster
 }
 
 // isClusterAllowedByTemplateOrBinding checks if a cluster is allowed by the template's allowed.clusters
@@ -3915,10 +3915,10 @@ type ClusterAllowedResult struct {
 // If the template has no allowed.clusters, cluster access depends on bindings.
 // If there are no bindings either, access is implicitly allowed (backward compatibility).
 func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
-	template *v1alpha1.DebugSessionTemplate,
+	template *breakglassv1alpha1.DebugSessionTemplate,
 	clusterName string,
-	bindings []v1alpha1.DebugSessionClusterBinding,
-	clusterConfigs map[string]*v1alpha1.ClusterConfig,
+	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	clusterConfigs map[string]*breakglassv1alpha1.ClusterConfig,
 ) ClusterAllowedResult {
 	result := ClusterAllowedResult{}
 

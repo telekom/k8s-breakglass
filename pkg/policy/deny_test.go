@@ -2175,8 +2175,8 @@ func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 		Pod:         complexPod,
 		PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
-			MaxAllowedScore: ptr.To(60),                                                         // allows score 50 (20+30)
-			ExemptFactors:   []string{"hostNetwork"},                                            // bypasses block
+			MaxAllowedScore: ptr.To(60),                                                            // allows score 50 (20+30)
+			ExemptFactors:   []string{"hostNetwork"},                                               // bypasses block
 			NamespaceScope:  &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"monitoring"}}, // only in monitoring
 		},
 	})

@@ -3,7 +3,7 @@ package utils
 import (
 	"fmt"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -27,7 +27,7 @@ func CreateScheme() (*runtime.Scheme, error) {
 	}
 
 	// Add custom breakglass CRD types (v1alpha1)
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
+	if err := breakglassv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add v1alpha1 CRDs to scheme: %w", err)
 	}
 

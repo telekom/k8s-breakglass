@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,41 +13,41 @@ import (
 // TestMultiIDP_HappyPath_ValidIssuerMatch tests complete flow with valid IDP issuer matching
 func TestMultiIDP_HappyPath_ValidIssuerMatch(t *testing.T) {
 	// Setup: Create sessions for different IDPs
-	keycloakSession := v1alpha1.BreakglassSession{
+	keycloakSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-kc"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
 			IdentityProviderIssuer: "https://keycloak.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
-	ldapSession := v1alpha1.BreakglassSession{
+	ldapSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-ldap"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
 			IdentityProviderIssuer: "https://ldap.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
 	// Test: User authenticates via Keycloak, should match Keycloak session only
-	sessions := []v1alpha1.BreakglassSession{keycloakSession, ldapSession}
+	sessions := []breakglassv1alpha1.BreakglassSession{keycloakSession, ldapSession}
 	issuer := "https://keycloak.corp.com"
 
 	// Simulate getSessionsWithIDPMismatchInfo logic
-	var matchedSessions []v1alpha1.BreakglassSession
-	var mismatchedSessions []v1alpha1.BreakglassSession
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
+	var mismatchedSessions []breakglassv1alpha1.BreakglassSession
 
 	for _, s := range sessions {
 		if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
@@ -68,40 +68,40 @@ func TestMultiIDP_HappyPath_ValidIssuerMatch(t *testing.T) {
 // accept any IDP (backward compatibility for single-IDP deployments)
 func TestMultiIDP_HappyPath_BackwardCompatibility(t *testing.T) {
 	// Setup: Create session with AllowIDPMismatch=true (legacy single-IDP deployment)
-	legacySession := v1alpha1.BreakglassSession{
+	legacySession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-legacy"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:          "prod-cluster",
 			User:             "user@example.com",
 			GrantedGroup:     "admin",
 			AllowIDPMismatch: true, // Backward compatibility flag
 			// No IDP issuer set
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
-	keycloakSession := v1alpha1.BreakglassSession{
+	keycloakSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-kc"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
 			IdentityProviderIssuer: "https://keycloak.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
 	// Test: User authenticates via Keycloak, both sessions should match
-	sessions := []v1alpha1.BreakglassSession{legacySession, keycloakSession}
+	sessions := []breakglassv1alpha1.BreakglassSession{legacySession, keycloakSession}
 	issuer := "https://keycloak.corp.com"
 
 	// Simulate getSessionsWithIDPMismatchInfo logic
-	var matchedSessions []v1alpha1.BreakglassSession
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
 
 	for _, s := range sessions {
 		if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
@@ -118,27 +118,27 @@ func TestMultiIDP_HappyPath_BackwardCompatibility(t *testing.T) {
 // TestMultiIDP_BadPath_NoMatchingIssuer tests authorization failure when no IDP issuer matches
 func TestMultiIDP_BadPath_NoMatchingIssuer(t *testing.T) {
 	// Setup: Create sessions for specific IDPs
-	keycloakSession := v1alpha1.BreakglassSession{
+	keycloakSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-kc"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
 			IdentityProviderIssuer: "https://keycloak.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
 	// Test: User authenticates via unknown IDP (not in any session)
-	sessions := []v1alpha1.BreakglassSession{keycloakSession}
+	sessions := []breakglassv1alpha1.BreakglassSession{keycloakSession}
 	issuer := "https://unknown-idp.corp.com"
 
 	// Simulate getSessionsWithIDPMismatchInfo logic
-	var matchedSessions []v1alpha1.BreakglassSession
-	var mismatchedSessions []v1alpha1.BreakglassSession
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
+	var mismatchedSessions []breakglassv1alpha1.BreakglassSession
 
 	for _, s := range sessions {
 		if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
@@ -156,9 +156,9 @@ func TestMultiIDP_BadPath_NoMatchingIssuer(t *testing.T) {
 // TestMultiIDP_BadPath_IssuerMismatchErrorInfo tests that mismatch error provides useful information
 func TestMultiIDP_BadPath_IssuerMismatchErrorInfo(t *testing.T) {
 	// Setup: Create multiple sessions with different IDPs
-	keycloakSession := v1alpha1.BreakglassSession{
+	keycloakSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-kc"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
@@ -166,14 +166,14 @@ func TestMultiIDP_BadPath_IssuerMismatchErrorInfo(t *testing.T) {
 			IdentityProviderIssuer: "https://keycloak.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
-	ldapSession := v1alpha1.BreakglassSession{
+	ldapSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-ldap"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
@@ -181,18 +181,18 @@ func TestMultiIDP_BadPath_IssuerMismatchErrorInfo(t *testing.T) {
 			IdentityProviderIssuer: "https://ldap.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
 	// Test: User authenticates via unknown IDP, should get error with available options
-	sessions := []v1alpha1.BreakglassSession{keycloakSession, ldapSession}
+	sessions := []breakglassv1alpha1.BreakglassSession{keycloakSession, ldapSession}
 	userIssuer := "https://unknown-idp.corp.com"
 
 	// Simulate getSessionsWithIDPMismatchInfo logic to build error message
 	var mismatchedIDPs []string
-	var matchedSessions []v1alpha1.BreakglassSession
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
 
 	for _, s := range sessions {
 		if userIssuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != userIssuer {
@@ -212,11 +212,11 @@ func TestMultiIDP_BadPath_IssuerMismatchErrorInfo(t *testing.T) {
 // TestMultiIDP_BadPath_EmptySessionList tests handling when no sessions exist
 func TestMultiIDP_BadPath_EmptySessionList(t *testing.T) {
 	// Setup: No sessions
-	sessions := []v1alpha1.BreakglassSession{}
+	sessions := []breakglassv1alpha1.BreakglassSession{}
 	issuer := "https://keycloak.corp.com"
 
 	// Simulate getSessionsWithIDPMismatchInfo logic
-	var matchedSessions []v1alpha1.BreakglassSession
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
 
 	for _, s := range sessions {
 		if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
@@ -233,27 +233,27 @@ func TestMultiIDP_BadPath_EmptySessionList(t *testing.T) {
 // TestMultiIDP_BadPath_NoIssuerInSAR tests handling when SAR has no issuer (no JWT)
 func TestMultiIDP_BadPath_NoIssuerInSAR(t *testing.T) {
 	// Setup: Create session requiring specific IDP
-	keycloakSession := v1alpha1.BreakglassSession{
+	keycloakSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-kc"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
 			IdentityProviderIssuer: "https://keycloak.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
 	// Test: SAR has NO issuer (no JWT or auth middleware failure)
-	sessions := []v1alpha1.BreakglassSession{keycloakSession}
+	sessions := []breakglassv1alpha1.BreakglassSession{keycloakSession}
 	issuer := "" // Empty issuer from SAR
 
 	// Simulate getSessionsWithIDPMismatchInfo logic
-	var matchedSessions []v1alpha1.BreakglassSession
-	var mismatchedSessions []v1alpha1.BreakglassSession
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
+	var mismatchedSessions []breakglassv1alpha1.BreakglassSession
 
 	for _, s := range sessions {
 		if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
@@ -272,52 +272,52 @@ func TestMultiIDP_BadPath_NoIssuerInSAR(t *testing.T) {
 func TestMultiIDP_HappyPath_MultipleValidIssuers(t *testing.T) {
 	// Setup: Create a flexible session (AllowIDPMismatch=true) for backward compat
 	// and new multi-IDP sessions
-	flexibleSession := v1alpha1.BreakglassSession{
+	flexibleSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-flexible"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:          "prod-cluster",
 			User:             "user@example.com",
 			GrantedGroup:     "admin",
 			AllowIDPMismatch: true, // Accepts any IDP
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
-	keycloakSession := v1alpha1.BreakglassSession{
+	keycloakSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-kc"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
 			IdentityProviderIssuer: "https://keycloak.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
-	ldapSession := v1alpha1.BreakglassSession{
+	ldapSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-ldap"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
 			IdentityProviderIssuer: "https://ldap.corp.com",
 			AllowIDPMismatch:       false,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
 	// Test Case 1: User with Keycloak should match both flexible and keycloak sessions
-	sessions := []v1alpha1.BreakglassSession{flexibleSession, keycloakSession, ldapSession}
+	sessions := []breakglassv1alpha1.BreakglassSession{flexibleSession, keycloakSession, ldapSession}
 	issuer := "https://keycloak.corp.com"
 
-	var matchedSessions []v1alpha1.BreakglassSession
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
 	for _, s := range sessions {
 		if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
 			// Skip mismatched
@@ -359,7 +359,7 @@ func TestMultiIDP_IntegrationFlow_SessionCreationToAuthorization(t *testing.T) {
 	// 6. SAR is authorized or denied
 
 	// Step 1-2: Session creation sets AllowIDPMismatch
-	sessionSpec := v1alpha1.BreakglassSessionSpec{
+	sessionSpec := breakglassv1alpha1.BreakglassSessionSpec{
 		Cluster:      "prod-cluster",
 		User:         "user@example.com",
 		GrantedGroup: "admin",
@@ -373,11 +373,11 @@ func TestMultiIDP_IntegrationFlow_SessionCreationToAuthorization(t *testing.T) {
 	sessionSpec.IdentityProviderName = "keycloak"
 	sessionSpec.IdentityProviderIssuer = "https://keycloak.corp.com"
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-test"},
 		Spec:       sessionSpec,
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
@@ -386,7 +386,7 @@ func TestMultiIDP_IntegrationFlow_SessionCreationToAuthorization(t *testing.T) {
 		"Session should have AllowIDPMismatch=true when no IDP restrictions")
 
 	// Step 3: Approver already approved (simulated)
-	assert.Equal(t, v1alpha1.SessionStateApproved, session.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, session.Status.State)
 
 	// Step 4-5: User SAR comes with issuer, webhook filters
 	sar := &authorizationv1.SubjectAccessReview{
@@ -405,8 +405,8 @@ func TestMultiIDP_IntegrationFlow_SessionCreationToAuthorization(t *testing.T) {
 	}
 
 	// Filter sessions
-	var matchedSessions []v1alpha1.BreakglassSession
-	sessions := []v1alpha1.BreakglassSession{session}
+	var matchedSessions []breakglassv1alpha1.BreakglassSession
+	sessions := []breakglassv1alpha1.BreakglassSession{session}
 
 	for _, s := range sessions {
 		if userIssuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != userIssuer {

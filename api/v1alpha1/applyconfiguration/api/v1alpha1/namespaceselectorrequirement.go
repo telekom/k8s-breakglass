@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // NamespaceSelectorRequirementApplyConfiguration represents a declarative configuration of the NamespaceSelectorRequirement type for use
@@ -22,7 +22,7 @@ type NamespaceSelectorRequirementApplyConfiguration struct {
 	Key *string `json:"key,omitempty"`
 	// operator represents a key's relationship to a set of values.
 	// Valid operators: In, NotIn, Exists, DoesNotExist.
-	Operator *apiv1alpha1.NamespaceSelectorOperator `json:"operator,omitempty"`
+	Operator *breakglassv1alpha1.NamespaceSelectorOperator `json:"operator,omitempty"`
 	// values is an array of string values.
 	// Required for In and NotIn operators.
 	// Must be empty for Exists and DoesNotExist.
@@ -46,7 +46,7 @@ func (b *NamespaceSelectorRequirementApplyConfiguration) WithKey(value string) *
 // WithOperator sets the Operator field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Operator field is set to the value of the last call.
-func (b *NamespaceSelectorRequirementApplyConfiguration) WithOperator(value apiv1alpha1.NamespaceSelectorOperator) *NamespaceSelectorRequirementApplyConfiguration {
+func (b *NamespaceSelectorRequirementApplyConfiguration) WithOperator(value breakglassv1alpha1.NamespaceSelectorOperator) *NamespaceSelectorRequirementApplyConfiguration {
 	b.Operator = &value
 	return b
 }

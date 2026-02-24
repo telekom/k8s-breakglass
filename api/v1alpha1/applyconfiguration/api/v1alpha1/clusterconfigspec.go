@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // ClusterConfigSpecApplyConfiguration represents a declarative configuration of the ClusterConfigSpec type for use
@@ -30,7 +30,7 @@ type ClusterConfigSpecApplyConfiguration struct {
 	Location *string `json:"location,omitempty"`
 	// authType specifies the authentication method for connecting to the target cluster.
 	// Defaults to "Kubeconfig" if kubeconfigSecretRef is specified, "OIDC" if oidcAuth is specified.
-	AuthType *apiv1alpha1.ClusterAuthType `json:"authType,omitempty"`
+	AuthType *breakglassv1alpha1.ClusterAuthType `json:"authType,omitempty"`
 	// kubeconfigSecretRef references a secret containing an admin-level kubeconfig for the target cluster.
 	// Required when authType is "Kubeconfig". The referenced Secret MUST exist in the specified namespace and contain the key (default: "value", compatible with cluster-api).
 	KubeconfigSecretRef *SecretKeyReferenceApplyConfiguration `json:"kubeconfigSecretRef,omitempty"`
@@ -66,7 +66,7 @@ type ClusterConfigSpecApplyConfiguration struct {
 	// Kubernetes API server OIDC configuration.
 	// Common values: "email" (recommended), "preferred_username", "sub"
 	// If not set, falls back to global config kubernetes.userIdentifierClaim.
-	UserIdentifierClaim *apiv1alpha1.UserIdentifierClaimType `json:"userIdentifierClaim,omitempty"`
+	UserIdentifierClaim *breakglassv1alpha1.UserIdentifierClaimType `json:"userIdentifierClaim,omitempty"`
 }
 
 // ClusterConfigSpecApplyConfiguration constructs a declarative configuration of the ClusterConfigSpec type for use with
@@ -118,7 +118,7 @@ func (b *ClusterConfigSpecApplyConfiguration) WithLocation(value string) *Cluste
 // WithAuthType sets the AuthType field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the AuthType field is set to the value of the last call.
-func (b *ClusterConfigSpecApplyConfiguration) WithAuthType(value apiv1alpha1.ClusterAuthType) *ClusterConfigSpecApplyConfiguration {
+func (b *ClusterConfigSpecApplyConfiguration) WithAuthType(value breakglassv1alpha1.ClusterAuthType) *ClusterConfigSpecApplyConfiguration {
 	b.AuthType = &value
 	return b
 }
@@ -202,7 +202,7 @@ func (b *ClusterConfigSpecApplyConfiguration) WithMailProvider(value string) *Cl
 // WithUserIdentifierClaim sets the UserIdentifierClaim field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the UserIdentifierClaim field is set to the value of the last call.
-func (b *ClusterConfigSpecApplyConfiguration) WithUserIdentifierClaim(value apiv1alpha1.UserIdentifierClaimType) *ClusterConfigSpecApplyConfiguration {
+func (b *ClusterConfigSpecApplyConfiguration) WithUserIdentifierClaim(value breakglassv1alpha1.UserIdentifierClaimType) *ClusterConfigSpecApplyConfiguration {
 	b.UserIdentifierClaim = &value
 	return b
 }

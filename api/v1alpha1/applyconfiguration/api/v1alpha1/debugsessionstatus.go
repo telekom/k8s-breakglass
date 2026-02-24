@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
@@ -22,7 +22,7 @@ type DebugSessionStatusApplyConfiguration struct {
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// state is the current state of the debug session.
-	State *apiv1alpha1.DebugSessionState `json:"state,omitempty"`
+	State *breakglassv1alpha1.DebugSessionState `json:"state,omitempty"`
 	// approval tracks approval information.
 	Approval *DebugSessionApprovalApplyConfiguration `json:"approval,omitempty"`
 	// participants lists users currently in the session.
@@ -79,7 +79,7 @@ func (b *DebugSessionStatusApplyConfiguration) WithObservedGeneration(value int6
 // WithState sets the State field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the State field is set to the value of the last call.
-func (b *DebugSessionStatusApplyConfiguration) WithState(value apiv1alpha1.DebugSessionState) *DebugSessionStatusApplyConfiguration {
+func (b *DebugSessionStatusApplyConfiguration) WithState(value breakglassv1alpha1.DebugSessionState) *DebugSessionStatusApplyConfiguration {
 	b.State = &value
 	return b
 }

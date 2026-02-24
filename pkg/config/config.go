@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"gopkg.in/yaml.v2"
 )
 
@@ -346,15 +346,15 @@ func Load(configPath ...string) (Config, error) {
 
 // GetUserIdentifierClaim returns the configured user identifier claim type.
 // Returns UserIdentifierClaimEmail as default if not configured or if an invalid value is set.
-func (c Config) GetUserIdentifierClaim() v1alpha1.UserIdentifierClaimType {
+func (c Config) GetUserIdentifierClaim() breakglassv1alpha1.UserIdentifierClaimType {
 	switch c.Kubernetes.UserIdentifierClaim {
-	case string(v1alpha1.UserIdentifierClaimEmail):
-		return v1alpha1.UserIdentifierClaimEmail
-	case string(v1alpha1.UserIdentifierClaimPreferredUsername):
-		return v1alpha1.UserIdentifierClaimPreferredUsername
-	case string(v1alpha1.UserIdentifierClaimSub):
-		return v1alpha1.UserIdentifierClaimSub
+	case string(breakglassv1alpha1.UserIdentifierClaimEmail):
+		return breakglassv1alpha1.UserIdentifierClaimEmail
+	case string(breakglassv1alpha1.UserIdentifierClaimPreferredUsername):
+		return breakglassv1alpha1.UserIdentifierClaimPreferredUsername
+	case string(breakglassv1alpha1.UserIdentifierClaimSub):
+		return breakglassv1alpha1.UserIdentifierClaimSub
 	default:
-		return v1alpha1.UserIdentifierClaimEmail
+		return breakglassv1alpha1.UserIdentifierClaimEmail
 	}
 }

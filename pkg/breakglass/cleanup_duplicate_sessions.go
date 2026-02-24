@@ -8,20 +8,20 @@ import (
 	"context"
 	"sort"
 
-	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // sessionStatePriority returns a numeric priority for a given session state.
 // Higher values indicate higher priority when choosing which duplicate to keep.
-func sessionStatePriority(state v1alpha1.BreakglassSessionState) int {
+func sessionStatePriority(state breakglassv1alpha1.BreakglassSessionState) int {
 	switch state {
-	case v1alpha1.SessionStateApproved:
+	case breakglassv1alpha1.SessionStateApproved:
 		return 3
-	case v1alpha1.SessionStateWaitingForScheduledTime:
+	case breakglassv1alpha1.SessionStateWaitingForScheduledTime:
 		return 2
-	case v1alpha1.SessionStatePending:
+	case breakglassv1alpha1.SessionStatePending:
 		return 1
 	default:
 		return 0
@@ -49,13 +49,13 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 	}
 
 	// Collect active sessions from all "in-flight" states.
-	activeStates := []v1alpha1.BreakglassSessionState{
-		v1alpha1.SessionStatePending,
-		v1alpha1.SessionStateApproved,
-		v1alpha1.SessionStateWaitingForScheduledTime,
+	activeStates := []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStatePending,
+		breakglassv1alpha1.SessionStateApproved,
+		breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 	}
 
-	var allActive []v1alpha1.BreakglassSession
+	var allActive []breakglassv1alpha1.BreakglassSession
 	for _, state := range activeStates {
 		sessions, err := mgr.GetSessionsByState(ctx, state)
 		if err != nil {
@@ -73,7 +73,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 	type tripleKey struct {
 		Cluster, User, Group string
 	}
-	groups := make(map[tripleKey][]v1alpha1.BreakglassSession)
+	groups := make(map[tripleKey][]breakglassv1alpha1.BreakglassSession)
 	for _, s := range allActive {
 		key := tripleKey{
 			Cluster: s.Spec.Cluster,
@@ -138,26 +138,26 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 			)
 
 			var (
-				targetState      v1alpha1.BreakglassSessionState
-				conditionType    v1alpha1.BreakglassSessionConditionType
+				targetState      breakglassv1alpha1.BreakglassSessionState
+				conditionType    breakglassv1alpha1.BreakglassSessionConditionType
 				conditionReason  string
 				conditionMessage string
 				reasonEnded      string
 			)
 
 			switch dup.Status.State {
-			case v1alpha1.SessionStatePending, v1alpha1.SessionStateWaitingForScheduledTime:
+			case breakglassv1alpha1.SessionStatePending, breakglassv1alpha1.SessionStateWaitingForScheduledTime:
 				// Pending/Waiting sessions must be withdrawn, not expired,
 				// to satisfy the webhook state machine.
-				targetState = v1alpha1.SessionStateWithdrawn
-				conditionType = v1alpha1.SessionConditionTypeCanceled
+				targetState = breakglassv1alpha1.SessionStateWithdrawn
+				conditionType = breakglassv1alpha1.SessionConditionTypeCanceled
 				conditionReason = "DuplicateSessionWithdrawn"
 				conditionMessage = "Withdrawn by cleanup routine: duplicate session for the same cluster/user/group triple."
 				reasonEnded = "withdrawn"
-			case v1alpha1.SessionStateApproved:
+			case breakglassv1alpha1.SessionStateApproved:
 				// Approved sessions can be directly expired.
-				targetState = v1alpha1.SessionStateExpired
-				conditionType = v1alpha1.SessionConditionTypeExpired
+				targetState = breakglassv1alpha1.SessionStateExpired
+				conditionType = breakglassv1alpha1.SessionConditionTypeExpired
 				conditionReason = "DuplicateSessionTerminated"
 				conditionMessage = "Terminated by cleanup routine: duplicate session for the same cluster/user/group triple."
 				reasonEnded = "duplicateCleanup"
@@ -175,12 +175,12 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 			now := metav1.Now()
 
 			// Populate terminal-state timestamps that the rest of the system expects.
-			if targetState == v1alpha1.SessionStateWithdrawn {
+			if targetState == breakglassv1alpha1.SessionStateWithdrawn {
 				if dup.Status.WithdrawnAt.IsZero() {
 					dup.Status.WithdrawnAt = now
 				}
 			}
-			if targetState == v1alpha1.SessionStateExpired {
+			if targetState == breakglassv1alpha1.SessionStateExpired {
 				dup.Status.ExpiresAt = now
 			}
 			// Set RetainedUntil so the cleanup routine can later garbage-collect the session.

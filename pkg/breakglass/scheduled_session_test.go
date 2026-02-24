@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,12 +58,12 @@ func TestScheduledSessionValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := &v1alpha1.BreakglassSession{
+			session := &breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-session",
 					Namespace: "default",
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      "test-cluster",
 					User:         "test@example.com",
 					GrantedGroup: "admin",
@@ -87,10 +87,10 @@ func TestScheduledSessionValidation(t *testing.T) {
 			}
 
 			// Test session state validity
-			session.Status.State = v1alpha1.SessionStateApproved
+			session.Status.State = breakglassv1alpha1.SessionStateApproved
 			session.Status.ApprovedAt = metav1.Now()
 			if tt.scheduledTime != nil && !tt.scheduledTime.IsZero() {
-				session.Status.State = v1alpha1.SessionStateWaitingForScheduledTime
+				session.Status.State = breakglassv1alpha1.SessionStateWaitingForScheduledTime
 			}
 
 			isValid := IsSessionValid(*session)
@@ -104,19 +104,19 @@ func TestScheduledSessionValidation(t *testing.T) {
 // TestIsSessionValidNotValidBeforeScheduledTime ensures sessions are invalid before ScheduledStartTime
 func TestIsSessionValidNotValidBeforeScheduledTime(t *testing.T) {
 	futureTime := time.Now().Add(1 * time.Hour)
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "scheduled-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "test-cluster",
 			User:               "test@example.com",
 			GrantedGroup:       "admin",
 			ScheduledStartTime: &metav1.Time{Time: futureTime},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:           v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:           breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt:      metav1.Now(),
 			ExpiresAt:       metav1.NewTime(futureTime.Add(1 * time.Hour)),
 			ActualStartTime: metav1.Time{},
@@ -131,7 +131,7 @@ func TestIsSessionValidNotValidBeforeScheduledTime(t *testing.T) {
 	// Simulate time passing to scheduled time and activation
 	pastTime := time.Now().Add(-5 * time.Minute) // Already in the past
 	session.Spec.ScheduledStartTime = &metav1.Time{Time: pastTime}
-	session.Status.State = v1alpha1.SessionStateApproved
+	session.Status.State = breakglassv1alpha1.SessionStateApproved
 	session.Status.ActualStartTime = metav1.Now()
 	session.Status.ExpiresAt = metav1.NewTime(time.Now().Add(55 * time.Minute))
 
@@ -143,19 +143,19 @@ func TestIsSessionValidNotValidBeforeScheduledTime(t *testing.T) {
 
 // TestIsSessionValidWithoutScheduledTime ensures immediate sessions still work
 func TestIsSessionValidWithoutScheduledTime(t *testing.T) {
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "immediate-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "test@example.com",
 			GrantedGroup: "admin",
 			// No ScheduledStartTime = immediate
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:           v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:           breakglassv1alpha1.SessionStateApproved,
 			ApprovedAt:      metav1.Now(),
 			ActualStartTime: metav1.Now(),
 			ExpiresAt:       metav1.NewTime(time.Now().Add(1 * time.Hour)),
@@ -171,19 +171,19 @@ func TestIsSessionValidWithoutScheduledTime(t *testing.T) {
 // TestWaitingForScheduledTimeStateNotValid ensures WaitingForScheduledTime state is never valid
 func TestWaitingForScheduledTimeStateNotValid(t *testing.T) {
 	futureTime := time.Now().Add(10 * time.Minute)
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "scheduled-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "test-cluster",
 			User:               "test@example.com",
 			GrantedGroup:       "admin",
 			ScheduledStartTime: &metav1.Time{Time: futureTime},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt: metav1.Now(),
 			ExpiresAt:  metav1.NewTime(futureTime.Add(1 * time.Hour)),
 		},
@@ -212,47 +212,47 @@ func TestScheduledSessionActivatorActivatesAtTime(t *testing.T) {
 	pastTime := now.Add(-5 * time.Minute)   // Already passed
 	futureTime := now.Add(10 * time.Minute) // Not yet
 
-	sessionPassed := &v1alpha1.BreakglassSession{
+	sessionPassed := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "session-passed",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "test-cluster",
 			User:               "test@example.com",
 			GrantedGroup:       "admin",
 			ScheduledStartTime: &metav1.Time{Time: pastTime},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt: metav1.NewTime(now.Add(-10 * time.Minute)),
 			ExpiresAt:  metav1.NewTime(now.Add(50 * time.Minute)),
 		},
 	}
 
-	sessionNotReached := &v1alpha1.BreakglassSession{
+	sessionNotReached := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "session-future",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "test-cluster",
 			User:               "test@example.com",
 			GrantedGroup:       "admin",
 			ScheduledStartTime: &metav1.Time{Time: futureTime},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt: metav1.NewTime(now.Add(-5 * time.Minute)),
 			ExpiresAt:  metav1.NewTime(futureTime.Add(1 * time.Hour)),
 		},
 	}
 
 	// Verify pre-conditions
-	if sessionPassed.Status.State != v1alpha1.SessionStateWaitingForScheduledTime {
+	if sessionPassed.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
 		t.Error("Test setup: sessionPassed should be in WaitingForScheduledTime state")
 	}
-	if sessionNotReached.Status.State != v1alpha1.SessionStateWaitingForScheduledTime {
+	if sessionNotReached.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
 		t.Error("Test setup: sessionNotReached should be in WaitingForScheduledTime state")
 	}
 	if !IsSessionValid(*sessionPassed) {
@@ -334,18 +334,18 @@ func TestScheduledSessionActivator_ActivatesAndSendsEmail(t *testing.T) {
 		startTime := metav1.NewTime(now)
 		expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
 
-		session := v1alpha1.BreakglassSession{
+		session := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "scheduled-activation-email",
 				Namespace: "breakglass",
 			},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:         "developer@example.com",
 				GrantedGroup: "cluster-admin",
 				Cluster:      "production",
 			},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State:           v1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:           breakglassv1alpha1.SessionStateApproved,
 				ActualStartTime: startTime,
 				ExpiresAt:       expiresAt,
 			},
@@ -382,9 +382,9 @@ func TestScheduledSessionActivator_ActivatesAndSendsEmail(t *testing.T) {
 	t.Run("does not send email when disabled", func(t *testing.T) {
 		mockMail := NewMockMailEnqueuer(true)
 
-		session := v1alpha1.BreakglassSession{
+		session := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "no-email-session"},
-			Spec:       v1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 		}
 
 		activator := &ScheduledSessionActivator{
@@ -403,7 +403,7 @@ func TestScheduledSessionActivator_ActivatesAndSendsEmail(t *testing.T) {
 	})
 
 	t.Run("does not panic with nil mail service", func(t *testing.T) {
-		session := v1alpha1.BreakglassSession{
+		session := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "nil-mail-session"},
 		}
 
@@ -427,59 +427,59 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	futureTime := now.Add(10 * time.Minute) // Not yet
 
 	// Session whose scheduled time has passed - should be activated
-	sessionToActivate := &v1alpha1.BreakglassSession{
+	sessionToActivate := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            "session-to-activate",
 			Namespace:       "default",
 			ResourceVersion: "1",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "test-cluster",
 			User:               "test@example.com",
 			GrantedGroup:       "admin",
 			ScheduledStartTime: &metav1.Time{Time: pastTime},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt: metav1.NewTime(now.Add(-10 * time.Minute)),
 			ExpiresAt:  metav1.NewTime(now.Add(50 * time.Minute)),
 		},
 	}
 
 	// Session whose scheduled time has NOT passed - should NOT be activated
-	sessionNotReady := &v1alpha1.BreakglassSession{
+	sessionNotReady := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            "session-not-ready",
 			Namespace:       "default",
 			ResourceVersion: "1",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "test-cluster",
 			User:               "test2@example.com",
 			GrantedGroup:       "editor",
 			ScheduledStartTime: &metav1.Time{Time: futureTime},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt: metav1.NewTime(now.Add(-5 * time.Minute)),
 			ExpiresAt:  metav1.NewTime(futureTime.Add(1 * time.Hour)),
 		},
 	}
 
 	// Session already approved - should be left alone
-	sessionAlreadyApproved := &v1alpha1.BreakglassSession{
+	sessionAlreadyApproved := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            "session-already-approved",
 			Namespace:       "default",
 			ResourceVersion: "1",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "test3@example.com",
 			GrantedGroup: "viewer",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:           v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:           breakglassv1alpha1.SessionStateApproved,
 			ApprovedAt:      metav1.NewTime(now.Add(-30 * time.Minute)),
 			ActualStartTime: metav1.NewTime(now.Add(-30 * time.Minute)),
 			ExpiresAt:       metav1.NewTime(now.Add(30 * time.Minute)),
@@ -487,20 +487,20 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	}
 
 	// Session in WaitingForScheduledTime but missing ScheduledStartTime (edge case)
-	sessionMissingScheduledTime := &v1alpha1.BreakglassSession{
+	sessionMissingScheduledTime := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            "session-missing-time",
 			Namespace:       "default",
 			ResourceVersion: "1",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "test4@example.com",
 			GrantedGroup: "viewer",
 			// No ScheduledStartTime
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt: metav1.NewTime(now.Add(-5 * time.Minute)),
 			ExpiresAt:  metav1.NewTime(now.Add(1 * time.Hour)),
 		},
@@ -510,8 +510,8 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(Scheme).
 		WithObjects(sessionToActivate, sessionNotReady, sessionAlreadyApproved, sessionMissingScheduledTime).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
 		Build()
 
 	// Create session manager
@@ -528,7 +528,7 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	activator.ActivateScheduledSessions()
 
 	// Verify sessionToActivate was activated
-	var updatedSession v1alpha1.BreakglassSession
+	var updatedSession breakglassv1alpha1.BreakglassSession
 	err := fakeClient.Get(context.Background(), client.ObjectKey{
 		Name:      "session-to-activate",
 		Namespace: "default",
@@ -536,7 +536,7 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get session-to-activate: %v", err)
 	}
-	if updatedSession.Status.State != v1alpha1.SessionStateApproved {
+	if updatedSession.Status.State != breakglassv1alpha1.SessionStateApproved {
 		t.Errorf("session-to-activate should be Approved, got %s", updatedSession.Status.State)
 	}
 	if updatedSession.Status.ActualStartTime.IsZero() {
@@ -555,7 +555,7 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	}
 
 	// Verify sessionNotReady was NOT activated
-	var notReadySession v1alpha1.BreakglassSession
+	var notReadySession breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(context.Background(), client.ObjectKey{
 		Name:      "session-not-ready",
 		Namespace: "default",
@@ -563,12 +563,12 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get session-not-ready: %v", err)
 	}
-	if notReadySession.Status.State != v1alpha1.SessionStateWaitingForScheduledTime {
+	if notReadySession.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
 		t.Errorf("session-not-ready should still be WaitingForScheduledTime, got %s", notReadySession.Status.State)
 	}
 
 	// Verify sessionAlreadyApproved was NOT modified
-	var approvedSession v1alpha1.BreakglassSession
+	var approvedSession breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(context.Background(), client.ObjectKey{
 		Name:      "session-already-approved",
 		Namespace: "default",
@@ -576,12 +576,12 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get session-already-approved: %v", err)
 	}
-	if approvedSession.Status.State != v1alpha1.SessionStateApproved {
+	if approvedSession.Status.State != breakglassv1alpha1.SessionStateApproved {
 		t.Errorf("session-already-approved should remain Approved, got %s", approvedSession.Status.State)
 	}
 
 	// Verify sessionMissingScheduledTime was NOT activated (edge case handling)
-	var missingTimeSession v1alpha1.BreakglassSession
+	var missingTimeSession breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(context.Background(), client.ObjectKey{
 		Name:      "session-missing-time",
 		Namespace: "default",
@@ -589,7 +589,7 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get session-missing-time: %v", err)
 	}
-	if missingTimeSession.Status.State != v1alpha1.SessionStateWaitingForScheduledTime {
+	if missingTimeSession.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
 		t.Errorf("session-missing-time should still be WaitingForScheduledTime (invalid state), got %s", missingTimeSession.Status.State)
 	}
 
@@ -614,8 +614,8 @@ func TestScheduledSessionActivator_NoSessionsToActivate(t *testing.T) {
 	// Create fake client with no sessions
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(Scheme).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
 		Build()
 
 	sesManager := NewSessionManagerWithClient(fakeClient)
@@ -640,20 +640,20 @@ func TestScheduledSessionActivator_EmailDisabled(t *testing.T) {
 	now := time.Now()
 	pastTime := now.Add(-5 * time.Minute)
 
-	sessionToActivate := &v1alpha1.BreakglassSession{
+	sessionToActivate := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            "session-to-activate-no-email",
 			Namespace:       "default",
 			ResourceVersion: "1",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "test-cluster",
 			User:               "test@example.com",
 			GrantedGroup:       "admin",
 			ScheduledStartTime: &metav1.Time{Time: pastTime},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt: metav1.NewTime(now.Add(-10 * time.Minute)),
 			ExpiresAt:  metav1.NewTime(now.Add(50 * time.Minute)),
 		},
@@ -662,8 +662,8 @@ func TestScheduledSessionActivator_EmailDisabled(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(Scheme).
 		WithObjects(sessionToActivate).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
 		Build()
 
 	sesManager := NewSessionManagerWithClient(fakeClient)
@@ -676,7 +676,7 @@ func TestScheduledSessionActivator_EmailDisabled(t *testing.T) {
 	activator.ActivateScheduledSessions()
 
 	// Session should still be activated
-	var updatedSession v1alpha1.BreakglassSession
+	var updatedSession breakglassv1alpha1.BreakglassSession
 	err := fakeClient.Get(context.Background(), client.ObjectKey{
 		Name:      "session-to-activate-no-email",
 		Namespace: "default",
@@ -684,7 +684,7 @@ func TestScheduledSessionActivator_EmailDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get session: %v", err)
 	}
-	if updatedSession.Status.State != v1alpha1.SessionStateApproved {
+	if updatedSession.Status.State != breakglassv1alpha1.SessionStateApproved {
 		t.Errorf("Session should be Approved, got %s", updatedSession.Status.State)
 	}
 

@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -52,8 +52,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassSession", "spec.cluster", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.cluster", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.Cluster != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*breakglassv1alpha1.BreakglassSession); ok && bs.Spec.Cluster != "" {
 				return []string{bs.Spec.Cluster}
 			}
 			return nil
@@ -63,8 +63,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassSession", "spec.user", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.User != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*breakglassv1alpha1.BreakglassSession); ok && bs.Spec.User != "" {
 				return []string{bs.Spec.User}
 			}
 			return nil
@@ -74,8 +74,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassSession", "spec.grantedGroup", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.grantedGroup", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.GrantedGroup != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassSession{}, "spec.grantedGroup", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*breakglassv1alpha1.BreakglassSession); ok && bs.Spec.GrantedGroup != "" {
 				return []string{bs.Spec.GrantedGroup}
 			}
 			return nil
@@ -85,8 +85,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassSession", "metadata.name", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "metadata.name", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Name != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassSession{}, "metadata.name", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*breakglassv1alpha1.BreakglassSession); ok && bs.Name != "" {
 				return []string{bs.Name}
 			}
 			return nil
@@ -96,8 +96,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassSession", "status.state", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "status.state", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Status.State != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassSession{}, "status.state", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*breakglassv1alpha1.BreakglassSession); ok && bs.Status.State != "" {
 				return []string{string(bs.Status.State)}
 			}
 			return nil
@@ -107,8 +107,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("DebugSession", "spec.cluster", func() error {
-		return idx.IndexField(ctx, &v1alpha1.DebugSession{}, "spec.cluster", func(rawObj client.Object) []string {
-			if ds, ok := rawObj.(*v1alpha1.DebugSession); ok && ds.Spec.Cluster != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSession{}, "spec.cluster", func(rawObj client.Object) []string {
+			if ds, ok := rawObj.(*breakglassv1alpha1.DebugSession); ok && ds.Spec.Cluster != "" {
 				return []string{ds.Spec.Cluster}
 			}
 			return nil
@@ -118,8 +118,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("DebugSession", "status.state", func() error {
-		return idx.IndexField(ctx, &v1alpha1.DebugSession{}, "status.state", func(rawObj client.Object) []string {
-			if ds, ok := rawObj.(*v1alpha1.DebugSession); ok && ds.Status.State != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSession{}, "status.state", func(rawObj client.Object) []string {
+			if ds, ok := rawObj.(*breakglassv1alpha1.DebugSession); ok && ds.Status.State != "" {
 				return []string{string(ds.Status.State)}
 			}
 			return nil
@@ -129,8 +129,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("DebugSession", "status.participants.user", func() error {
-		return idx.IndexField(ctx, &v1alpha1.DebugSession{}, "status.participants.user", func(rawObj client.Object) []string {
-			ds, ok := rawObj.(*v1alpha1.DebugSession)
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSession{}, "status.participants.user", func(rawObj client.Object) []string {
+			ds, ok := rawObj.(*breakglassv1alpha1.DebugSession)
 			if !ok || ds == nil || len(ds.Status.Participants) == 0 {
 				return nil
 			}
@@ -150,8 +150,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassEscalation", "spec.allowed.cluster", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.cluster", func(rawObj client.Object) []string {
-			be, ok := rawObj.(*v1alpha1.BreakglassEscalation)
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, "spec.allowed.cluster", func(rawObj client.Object) []string {
+			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
 			if !ok || be == nil {
 				return nil
 			}
@@ -165,8 +165,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassEscalation", "spec.allowed.group", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(rawObj client.Object) []string {
-			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(rawObj client.Object) []string {
+			if be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation); ok && be != nil {
 				return be.Spec.Allowed.Groups
 			}
 			return nil
@@ -176,8 +176,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassEscalation", "spec.escalatedGroup", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(rawObj client.Object) []string {
-			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil && be.Spec.EscalatedGroup != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(rawObj client.Object) []string {
+			if be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation); ok && be != nil && be.Spec.EscalatedGroup != "" {
 				return []string{be.Spec.EscalatedGroup}
 			}
 			return nil
@@ -187,8 +187,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("BreakglassEscalation", "metadata.name", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "metadata.name", func(rawObj client.Object) []string {
-			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil && be.Name != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, "metadata.name", func(rawObj client.Object) []string {
+			if be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation); ok && be != nil && be.Name != "" {
 				return []string{be.Name}
 			}
 			return nil
@@ -198,8 +198,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("ClusterConfig", "metadata.name", func() error {
-		return idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "metadata.name", func(rawObj client.Object) []string {
-			if cc, ok := rawObj.(*v1alpha1.ClusterConfig); ok && cc != nil && cc.Name != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.ClusterConfig{}, "metadata.name", func(rawObj client.Object) []string {
+			if cc, ok := rawObj.(*breakglassv1alpha1.ClusterConfig); ok && cc != nil && cc.Name != "" {
 				return []string{cc.Name}
 			}
 			return nil
@@ -209,8 +209,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 	}
 
 	if err := register("ClusterConfig", "spec.clusterID", func() error {
-		return idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "spec.clusterID", func(rawObj client.Object) []string {
-			if cc, ok := rawObj.(*v1alpha1.ClusterConfig); ok && cc != nil && cc.Spec.ClusterID != "" {
+		return idx.IndexField(ctx, &breakglassv1alpha1.ClusterConfig{}, "spec.clusterID", func(rawObj client.Object) []string {
+			if cc, ok := rawObj.(*breakglassv1alpha1.ClusterConfig); ok && cc != nil && cc.Spec.ClusterID != "" {
 				return []string{cc.Spec.ClusterID}
 			}
 			return nil

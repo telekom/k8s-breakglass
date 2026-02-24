@@ -21,7 +21,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -131,7 +131,7 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 
 	// Try to find matching IdentityProvider by issuer
 	// This helps users know which provider authenticated them
-	idpList := &v1alpha1.IdentityProviderList{}
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
 	if err := wc.escalManager.List(ctx, idpList); err != nil {
 		reqLog.With("error", err.Error()).Warn("Failed to list IdentityProviders for IDP hint")
 		// Fallback: just mention the issuer
@@ -181,7 +181,7 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 // If the escalation has AllowedIdentityProvidersForRequests, the issuer must match one of those.
 // If AllowedIdentityProvidersForRequests is empty, the request is allowed from any IDP (backward compatible).
 // This function maps IDP issuer URLs to IDP names for matching.
-func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer string, esc *v1alpha1.BreakglassEscalation, reqLog *zap.SugaredLogger) bool {
+func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer string, esc *breakglassv1alpha1.BreakglassEscalation, reqLog *zap.SugaredLogger) bool {
 	// If no IDP restrictions, request is allowed from any IDP
 	if len(esc.Spec.AllowedIdentityProvidersForRequests) == 0 {
 		return true
@@ -194,7 +194,7 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 	}
 
 	// Find matching IdentityProvider by issuer
-	idpList := &v1alpha1.IdentityProviderList{}
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
 	if err := wc.escalManager.List(ctx, idpList); err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
 		// Fail closed: if we can't load IDPs, deny the request for security
@@ -280,10 +280,10 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 	}
 
 	// List active debug sessions for this cluster using indexed fields
-	debugSessionList := &v1alpha1.DebugSessionList{}
+	debugSessionList := &breakglassv1alpha1.DebugSessionList{}
 	fieldSelector := client.MatchingFields{
 		"spec.cluster":             clusterName,
-		"status.state":             string(v1alpha1.DebugSessionStateActive),
+		"status.state":             string(breakglassv1alpha1.DebugSessionStateActive),
 		"status.participants.user": username,
 	}
 	if err := wc.escalManager.List(ctx, debugSessionList, fieldSelector); err != nil {
@@ -294,7 +294,7 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 	// Check each active debug session
 	for _, ds := range debugSessionList.Items {
 		// Only check active sessions for this cluster
-		if ds.Status.State != v1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
+		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 			continue
 		}
 
@@ -340,13 +340,13 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 // getPodSecurityOverridesFromSessions retrieves the PodSecurityOverrides from the escalation
 // associated with the user's active sessions. If multiple sessions exist with different escalations,
 // the first non-nil PodSecurityOverrides is returned (escalations are processed in session order).
-func (wc *WebhookController) getPodSecurityOverridesFromSessions(ctx context.Context, sessions []v1alpha1.BreakglassSession, reqLog *zap.SugaredLogger) *v1alpha1.PodSecurityOverrides {
+func (wc *WebhookController) getPodSecurityOverridesFromSessions(ctx context.Context, sessions []breakglassv1alpha1.BreakglassSession, reqLog *zap.SugaredLogger) *breakglassv1alpha1.PodSecurityOverrides {
 	if wc.escalManager == nil {
 		return nil
 	}
 
 	for _, s := range sessions {
-		if s.Status.State != v1alpha1.SessionStateApproved {
+		if s.Status.State != breakglassv1alpha1.SessionStateApproved {
 			continue
 		}
 
@@ -384,7 +384,7 @@ func (wc *WebhookController) getPodSecurityOverridesFromSessions(ctx context.Con
 // by delegating to the ClientProvider legacy behavior (empty namespace). The Webhook
 // controller does not have an escalation namespace context, so callers should use this
 // helper when they need the provider to search across namespaces.
-func (wc *WebhookController) getClusterConfigAcrossNamespaces(ctx context.Context, name string) (*v1alpha1.ClusterConfig, error) {
+func (wc *WebhookController) getClusterConfigAcrossNamespaces(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
 	if wc.ccProvider == nil {
 		return nil, fmt.Errorf("cluster client provider not configured")
 	}
@@ -463,7 +463,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	reqLog.Infow("Processing authorization", "username", username, "groupsRequested", sar.Spec.Groups)
 
 	phaseTracker.StartPhase() // Start cluster_config phase
-	var clusterCfg *v1alpha1.ClusterConfig
+	var clusterCfg *breakglassv1alpha1.ClusterConfig
 	if wc.ccProvider != nil {
 		cfg, cfgErr := wc.getClusterConfigAcrossNamespaces(ctx, clusterName)
 		if cfgErr != nil {
@@ -805,7 +805,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	reason := ""
 	allowSource := "" // rbac|session
 	allowDetail := ""
-	var escals []v1alpha1.BreakglassEscalation // declare here so it's available for denial logging
+	var escals []breakglassv1alpha1.BreakglassEscalation // declare here so it's available for denial logging
 
 	if can {
 		reqLog.Info("User authorized through regular RBAC permissions")
@@ -878,7 +878,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		reqLog.With("escalationsCount", len(escals)).Debug("Retrieved group-specific escalations")
 
 		// Check for target group escalations if we have a specific group request
-		var groupescals []v1alpha1.BreakglassEscalation
+		var groupescals []breakglassv1alpha1.BreakglassEscalation
 		// SECURITY FIX: Check if ResourceAttributes is not nil before accessing its fields
 		if sar.Spec.ResourceAttributes != nil && sar.Spec.ResourceAttributes.Group != "" {
 			var groupErr error
@@ -900,7 +900,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		// Filter escalations based on requestor's IDP (multi-IDP awareness)
 		// If an escalation has AllowedIdentityProvidersForRequests, the requestor's IDP must be in that list
-		var idpFilteredEscals []v1alpha1.BreakglassEscalation
+		var idpFilteredEscals []breakglassv1alpha1.BreakglassEscalation
 		for _, esc := range escals {
 			if wc.isRequestFromAllowedIDP(ctx, issuer, &esc, reqLog) {
 				idpFilteredEscals = append(idpFilteredEscals, esc)
@@ -1318,7 +1318,7 @@ func (wc *WebhookController) WithAuditService(svc *audit.Service) *WebhookContro
 
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
-func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string, clusterCfg *v1alpha1.ClusterConfig) ([]string, []v1alpha1.BreakglassSession, string, error) {
+func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string, clusterCfg *breakglassv1alpha1.ClusterConfig) ([]string, []breakglassv1alpha1.BreakglassSession, string, error) {
 	groups, sessions, _, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clustername, issuer, clusterCfg)
 	return groups, sessions, tenant, err
 }
@@ -1326,7 +1326,7 @@ func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, usern
 // getUserGroupsAndSessionsWithIDPInfo returns groups from active sessions, list of sessions, IDP mismatch info, and a tenant.
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
 // Returns: (groups, sessions, idpMismatchedSessions, tenant, error)
-func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Context, username, clustername, issuer string, clusterCfg *v1alpha1.ClusterConfig) ([]string, []v1alpha1.BreakglassSession, []v1alpha1.BreakglassSession, string, error) {
+func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Context, username, clustername, issuer string, clusterCfg *breakglassv1alpha1.ClusterConfig) ([]string, []breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession, string, error) {
 	sessions, idpMismatches, err := wc.getSessionsWithIDPMismatchInfo(ctx, username, clustername, issuer)
 	if err != nil {
 		return nil, nil, nil, "", err
@@ -1351,13 +1351,13 @@ func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Con
 // If issuer is provided, only returns sessions that match the issuer (multi-IDP mode)
 // If issuer is empty, returns all sessions (single-IDP or backward compatibility mode)
 // Also returns a list of sessions that were filtered out due to IDP issuer mismatch
-func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context, username, clustername, issuer string) ([]v1alpha1.BreakglassSession, []v1alpha1.BreakglassSession, error) {
+func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context, username, clustername, issuer string) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession, error) {
 	all, err := wc.sesManager.GetClusterUserBreakglassSessions(ctx, clustername, username)
 	if err != nil {
 		return nil, nil, err
 	}
-	out := make([]v1alpha1.BreakglassSession, 0, len(all))
-	idpMismatches := make([]v1alpha1.BreakglassSession, 0)
+	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
+	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
 	now := time.Now()
 	for _, s := range all {
 		if breakglass.IsSessionRetained(s) {
@@ -1391,7 +1391,7 @@ func dedupeStrings(in []string) []string {
 }
 
 // authorizeViaSessions performs per-session SubjectAccessReviews using the session's granted group.
-func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []v1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string) {
+func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []breakglassv1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string) {
 	var logger *zap.SugaredLogger
 	if len(reqLog) > 0 {
 		logger = reqLog[0]

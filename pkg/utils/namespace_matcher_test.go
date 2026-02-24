@@ -20,13 +20,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestNamespaceMatcher_Matches(t *testing.T) {
 	tests := []struct {
 		name      string
-		filter    *v1alpha1.NamespaceFilter
+		filter    *breakglassv1alpha1.NamespaceFilter
 		namespace string
 		want      bool
 	}{
@@ -38,13 +38,13 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 		},
 		{
 			name:      "empty filter matches nothing",
-			filter:    &v1alpha1.NamespaceFilter{},
+			filter:    &breakglassv1alpha1.NamespaceFilter{},
 			namespace: "default",
 			want:      false,
 		},
 		{
 			name: "exact pattern match",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-system"},
 			},
 			namespace: "kube-system",
@@ -52,7 +52,7 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 		},
 		{
 			name: "glob pattern match",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			namespace: "app-frontend",
@@ -60,7 +60,7 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 		},
 		{
 			name: "glob pattern no match",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			namespace: "service-backend",
@@ -68,7 +68,7 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 		},
 		{
 			name: "multiple patterns - first matches",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*", "app-*"},
 			},
 			namespace: "kube-system",
@@ -76,7 +76,7 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 		},
 		{
 			name: "multiple patterns - second matches",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*", "app-*"},
 			},
 			namespace: "app-backend",
@@ -84,8 +84,8 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 		},
 		{
 			name: "selector terms ignored without labels",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
@@ -106,7 +106,7 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 	tests := []struct {
 		name      string
-		filter    *v1alpha1.NamespaceFilter
+		filter    *breakglassv1alpha1.NamespaceFilter
 		namespace string
 		labels    map[string]string
 		want      bool
@@ -120,7 +120,7 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "pattern match takes precedence over labels",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
 			},
 			namespace: "kube-system",
@@ -129,8 +129,8 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchLabels - exact match",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
@@ -140,8 +140,8 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchLabels - missing label",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
@@ -151,8 +151,8 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchLabels - wrong value",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
@@ -162,8 +162,8 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchLabels - multiple labels all match",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod", "team": "sre"}},
 				},
 			},
@@ -173,8 +173,8 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchLabels - multiple labels partial match fails",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod", "team": "sre"}},
 				},
 			},
@@ -184,11 +184,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - In operator",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "env", Operator: v1alpha1.NamespaceSelectorOpIn, Values: []string{"prod", "staging"}},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "env", Operator: breakglassv1alpha1.NamespaceSelectorOpIn, Values: []string{"prod", "staging"}},
 						},
 					},
 				},
@@ -199,11 +199,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - In operator no match",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "env", Operator: v1alpha1.NamespaceSelectorOpIn, Values: []string{"prod", "staging"}},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "env", Operator: breakglassv1alpha1.NamespaceSelectorOpIn, Values: []string{"prod", "staging"}},
 						},
 					},
 				},
@@ -214,11 +214,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - NotIn operator",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "env", Operator: v1alpha1.NamespaceSelectorOpNotIn, Values: []string{"prod", "staging"}},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "env", Operator: breakglassv1alpha1.NamespaceSelectorOpNotIn, Values: []string{"prod", "staging"}},
 						},
 					},
 				},
@@ -229,11 +229,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - NotIn with missing key",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "env", Operator: v1alpha1.NamespaceSelectorOpNotIn, Values: []string{"prod"}},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "env", Operator: breakglassv1alpha1.NamespaceSelectorOpNotIn, Values: []string{"prod"}},
 						},
 					},
 				},
@@ -244,11 +244,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - Exists operator",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "team", Operator: v1alpha1.NamespaceSelectorOpExists},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "team", Operator: breakglassv1alpha1.NamespaceSelectorOpExists},
 						},
 					},
 				},
@@ -259,11 +259,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - Exists operator no match",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "team", Operator: v1alpha1.NamespaceSelectorOpExists},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "team", Operator: breakglassv1alpha1.NamespaceSelectorOpExists},
 						},
 					},
 				},
@@ -274,11 +274,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - DoesNotExist operator",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "deprecated", Operator: v1alpha1.NamespaceSelectorOpDoesNotExist},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "deprecated", Operator: breakglassv1alpha1.NamespaceSelectorOpDoesNotExist},
 						},
 					},
 				},
@@ -289,11 +289,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "matchExpressions - DoesNotExist operator fails when key exists",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "deprecated", Operator: v1alpha1.NamespaceSelectorOpDoesNotExist},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "deprecated", Operator: breakglassv1alpha1.NamespaceSelectorOpDoesNotExist},
 						},
 					},
 				},
@@ -304,8 +304,8 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "multiple selector terms - OR semantics",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"team": "sre"}},
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
@@ -316,12 +316,12 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "combined matchLabels and matchExpressions - AND semantics within term",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
 						MatchLabels: map[string]string{"env": "prod"},
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "team", Operator: v1alpha1.NamespaceSelectorOpExists},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "team", Operator: breakglassv1alpha1.NamespaceSelectorOpExists},
 						},
 					},
 				},
@@ -332,12 +332,12 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "combined matchLabels and matchExpressions - partial match fails",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
 						MatchLabels: map[string]string{"env": "prod"},
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "team", Operator: v1alpha1.NamespaceSelectorOpExists},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "team", Operator: breakglassv1alpha1.NamespaceSelectorOpExists},
 						},
 					},
 				},
@@ -348,9 +348,9 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "pattern OR selector match",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
@@ -360,11 +360,11 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 		},
 		{
 			name: "nil labels treated as empty map",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-							{Key: "team", Operator: v1alpha1.NamespaceSelectorOpDoesNotExist},
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+							{Key: "team", Operator: breakglassv1alpha1.NamespaceSelectorOpDoesNotExist},
 						},
 					},
 				},
@@ -387,8 +387,8 @@ func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 func TestNamespaceAllowDenyMatcher(t *testing.T) {
 	tests := []struct {
 		name      string
-		allow     *v1alpha1.NamespaceFilter
-		deny      *v1alpha1.NamespaceFilter
+		allow     *breakglassv1alpha1.NamespaceFilter
+		deny      *breakglassv1alpha1.NamespaceFilter
 		namespace string
 		labels    map[string]string
 		want      bool
@@ -403,7 +403,7 @@ func TestNamespaceAllowDenyMatcher(t *testing.T) {
 		},
 		{
 			name: "allow pattern matches",
-			allow: &v1alpha1.NamespaceFilter{
+			allow: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			deny:      nil,
@@ -413,7 +413,7 @@ func TestNamespaceAllowDenyMatcher(t *testing.T) {
 		},
 		{
 			name: "allow pattern not matched",
-			allow: &v1alpha1.NamespaceFilter{
+			allow: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			deny:      nil,
@@ -424,7 +424,7 @@ func TestNamespaceAllowDenyMatcher(t *testing.T) {
 		{
 			name:  "deny overrides allow",
 			allow: nil,
-			deny: &v1alpha1.NamespaceFilter{
+			deny: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
 			},
 			namespace: "kube-system",
@@ -433,10 +433,10 @@ func TestNamespaceAllowDenyMatcher(t *testing.T) {
 		},
 		{
 			name: "allowed but also denied - deny wins",
-			allow: &v1alpha1.NamespaceFilter{
+			allow: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"*"},
 			},
-			deny: &v1alpha1.NamespaceFilter{
+			deny: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
 			},
 			namespace: "kube-system",
@@ -445,12 +445,12 @@ func TestNamespaceAllowDenyMatcher(t *testing.T) {
 		},
 		{
 			name: "label-based allow with pattern deny",
-			allow: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			allow: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
-			deny: &v1alpha1.NamespaceFilter{
+			deny: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
 			},
 			namespace: "production",
@@ -460,8 +460,8 @@ func TestNamespaceAllowDenyMatcher(t *testing.T) {
 		{
 			name:  "label-based deny blocks access",
 			allow: nil,
-			deny: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			deny: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"security": "restricted"}},
 				},
 			},
@@ -483,7 +483,7 @@ func TestNamespaceAllowDenyMatcher(t *testing.T) {
 func TestNamespaceFilter_IsEmpty(t *testing.T) {
 	tests := []struct {
 		name   string
-		filter *v1alpha1.NamespaceFilter
+		filter *breakglassv1alpha1.NamespaceFilter
 		want   bool
 	}{
 		{
@@ -493,20 +493,20 @@ func TestNamespaceFilter_IsEmpty(t *testing.T) {
 		},
 		{
 			name:   "empty filter",
-			filter: &v1alpha1.NamespaceFilter{},
+			filter: &breakglassv1alpha1.NamespaceFilter{},
 			want:   true,
 		},
 		{
 			name: "filter with patterns",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			want: false,
 		},
 		{
 			name: "filter with selector terms",
-			filter: &v1alpha1.NamespaceFilter{
-				SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+			filter: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
@@ -525,11 +525,11 @@ func TestNamespaceFilter_IsEmpty(t *testing.T) {
 // TestMatchesWithLabels_UnknownOperator tests that unknown operators return false
 func TestMatchesWithLabels_UnknownOperator(t *testing.T) {
 	// Create a filter with an unknown operator (bypassing enum validation for test)
-	filter := &v1alpha1.NamespaceFilter{
-		SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+	filter := &breakglassv1alpha1.NamespaceFilter{
+		SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 			{
-				MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-					{Key: "env", Operator: v1alpha1.NamespaceSelectorOperator("Unknown"), Values: []string{"prod"}},
+				MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+					{Key: "env", Operator: breakglassv1alpha1.NamespaceSelectorOperator("Unknown"), Values: []string{"prod"}},
 				},
 			},
 		},
@@ -543,11 +543,11 @@ func TestMatchesWithLabels_UnknownOperator(t *testing.T) {
 
 // TestMatchesWithLabels_InOperatorMissingKey tests In operator with missing key
 func TestMatchesWithLabels_InOperatorMissingKey(t *testing.T) {
-	filter := &v1alpha1.NamespaceFilter{
-		SelectorTerms: []v1alpha1.NamespaceSelectorTerm{
+	filter := &breakglassv1alpha1.NamespaceFilter{
+		SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 			{
-				MatchExpressions: []v1alpha1.NamespaceSelectorRequirement{
-					{Key: "env", Operator: v1alpha1.NamespaceSelectorOpIn, Values: []string{"prod", "staging"}},
+				MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
+					{Key: "env", Operator: breakglassv1alpha1.NamespaceSelectorOpIn, Values: []string{"prod", "staging"}},
 				},
 			},
 		},
@@ -619,7 +619,7 @@ func TestNewNamespaceAllowDenyMatcher_NilFilters(t *testing.T) {
 func TestNamespaceMatcher_MatchesAny(t *testing.T) {
 	tests := []struct {
 		name   string
-		filter *v1alpha1.NamespaceFilter
+		filter *breakglassv1alpha1.NamespaceFilter
 		want   bool
 	}{
 		{
@@ -629,12 +629,12 @@ func TestNamespaceMatcher_MatchesAny(t *testing.T) {
 		},
 		{
 			name:   "empty filter matches any",
-			filter: &v1alpha1.NamespaceFilter{},
+			filter: &breakglassv1alpha1.NamespaceFilter{},
 			want:   true,
 		},
 		{
 			name: "filter with patterns does not match any",
-			filter: &v1alpha1.NamespaceFilter{
+			filter: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			want: false,
@@ -662,8 +662,8 @@ func TestNamespaceMatcher_NilFilter(t *testing.T) {
 func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 	tests := []struct {
 		name      string
-		allow     *v1alpha1.NamespaceFilter
-		deny      *v1alpha1.NamespaceFilter
+		allow     *breakglassv1alpha1.NamespaceFilter
+		deny      *breakglassv1alpha1.NamespaceFilter
 		namespace string
 		want      bool
 	}{
@@ -676,7 +676,7 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 		},
 		{
 			name: "allow pattern matches",
-			allow: &v1alpha1.NamespaceFilter{
+			allow: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			deny:      nil,
@@ -685,7 +685,7 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 		},
 		{
 			name: "allow pattern not matched",
-			allow: &v1alpha1.NamespaceFilter{
+			allow: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 			deny:      nil,
@@ -695,7 +695,7 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 		{
 			name:  "deny overrides allow",
 			allow: nil,
-			deny: &v1alpha1.NamespaceFilter{
+			deny: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
 			},
 			namespace: "kube-system",
@@ -703,10 +703,10 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 		},
 		{
 			name: "allowed but also denied - deny wins",
-			allow: &v1alpha1.NamespaceFilter{
+			allow: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"*"},
 			},
-			deny: &v1alpha1.NamespaceFilter{
+			deny: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
 			},
 			namespace: "kube-system",
@@ -714,10 +714,10 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 		},
 		{
 			name: "allowed namespace not denied",
-			allow: &v1alpha1.NamespaceFilter{
+			allow: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
-			deny: &v1alpha1.NamespaceFilter{
+			deny: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"kube-*"},
 			},
 			namespace: "app-production",
@@ -725,8 +725,8 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 		},
 		{
 			name:      "empty filters allow all",
-			allow:     &v1alpha1.NamespaceFilter{},
-			deny:      &v1alpha1.NamespaceFilter{},
+			allow:     &breakglassv1alpha1.NamespaceFilter{},
+			deny:      &breakglassv1alpha1.NamespaceFilter{},
 			namespace: "random-namespace",
 			want:      true,
 		},

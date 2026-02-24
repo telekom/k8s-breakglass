@@ -16,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"go.uber.org/zap"
@@ -52,13 +52,13 @@ func (s *FakeMailSender) GetPort() int {
 
 var sessionIndexFunctions = map[string]client.IndexerFunc{
 	"spec.user": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 	},
 	"spec.grantedGroup": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
 	"metadata.name": func(o client.Object) []string {
 		return []string{o.GetName()}
@@ -66,7 +66,7 @@ var sessionIndexFunctions = map[string]client.IndexerFunc{
 }
 
 func TestDropK8sInternalFieldsSessionStripsMetadata(t *testing.T) {
-	s := &v1alpha1.BreakglassSession{
+	s := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			UID:             types.UID("abc123"),
 			ResourceVersion: "999",
@@ -126,25 +126,25 @@ func TestDropK8sInternalFieldsSessionStripsMetadata(t *testing.T) {
 func TestRequestApproveRejectGetSession(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "tester-allow-create-all",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "breakglass-create-all",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@telekom.de", "rejector@telekom.de"},
 			},
 		},
 	})
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{
 		Client: cli,
 	}
@@ -202,7 +202,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	}
 
 	// get created request and check if proper fields are set
-	getSession := func() v1alpha1.BreakglassSession {
+	getSession := func() breakglassv1alpha1.BreakglassSession {
 		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
@@ -210,7 +210,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 		}
-		respSessions := []v1alpha1.BreakglassSession{}
+		respSessions := []breakglassv1alpha1.BreakglassSession{}
 		err := json.NewDecoder(response.Body).Decode(&respSessions)
 		if err != nil {
 			t.Fatalf("Failed to decode response body %v", err)
@@ -289,25 +289,25 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 func TestApproveSetsApproverMetadata(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "tester-allow-create-all-2",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "breakglass-create-all",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@telekom.de", "rejector@telekom.de"},
 			},
 		},
 	})
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -372,7 +372,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
 	}
@@ -398,7 +398,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions = []v1alpha1.BreakglassSession{}
+	respSessions = []breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
 	}
@@ -437,7 +437,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions = []v1alpha1.BreakglassSession{}
+	respSessions = []breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
 	}
@@ -454,28 +454,28 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "esc-for-ownerref",
 			UID:       "1234",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "esc-group",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@example.com"},
 			},
 		},
 	}
 	builder.WithObjects(esc)
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -537,9 +537,9 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -581,7 +581,7 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Expected OK getting sessions, got %d", resp.StatusCode)
 	}
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
 		t.Fatalf("failed to decode sessions: %v", err)
 	}
@@ -594,27 +594,27 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// escalation sets BlockSelfApproval=true
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-block-override"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:           v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:           breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup:    "g-block",
-			Approvers:         v1alpha1.BreakglassEscalationApprovers{Users: []string{"self@example.com"}},
+			Approvers:         breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"self@example.com"}},
 			BlockSelfApproval: ptrBool(true),
 		},
 	})
 
 	// cluster config allows self approval (false)
-	builder.WithObjects(&v1alpha1.ClusterConfig{
+	builder.WithObjects(&breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"},
-		Spec:       v1alpha1.ClusterConfigSpec{BlockSelfApproval: false},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{BlockSelfApproval: false},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -647,7 +647,7 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 
 	// Now try to approve as the same user -> should NOT be allowed
 	// The POST response contains the created session object; decode it to get the name
-	created := v1alpha1.BreakglassSession{}
+	created := breakglassv1alpha1.BreakglassSession{}
 	_ = json.NewDecoder(w.Result().Body).Decode(&created)
 	name := created.Name
 
@@ -664,27 +664,27 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// escalation restricts approver domains to example.org
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-domain-override"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:                v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c2"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:                breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c2"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup:         "g-domain",
-			Approvers:              v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.org"}},
+			Approvers:              breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.org"}},
 			AllowedApproverDomains: []string{"example.org"},
 		},
 	})
 
 	// cluster allows example.com
-	builder.WithObjects(&v1alpha1.ClusterConfig{
+	builder.WithObjects(&breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "c2", Namespace: "default"},
-		Spec:       v1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"example.com"}},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"example.com"}},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -721,7 +721,7 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 	}
 
 	// The POST response contains the created session object; decode it to get the name
-	created := v1alpha1.BreakglassSession{}
+	created := breakglassv1alpha1.BreakglassSession{}
 	_ = json.NewDecoder(w.Result().Body).Decode(&created)
 	name := created.Name
 
@@ -739,28 +739,28 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// Escalation lives in namespace "escns" and allows cluster "test"
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "esc-namespace-test",
 			Namespace: "escns",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "g1",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@example.com"},
 			},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -795,7 +795,7 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 	}
 
 	// confirm the created BreakglassSession was persisted into the escalation namespace
-	list := &v1alpha1.BreakglassSessionList{}
+	list := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := cli.List(context.Background(), list); err != nil {
 		t.Fatalf("failed to list sessions: %v", err)
 	}
@@ -810,27 +810,27 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "esc-user-mismatch",
 			Namespace: "escns",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "g1",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@example.com"},
 			},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -868,44 +868,44 @@ func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
 func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLookup(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	clusterName := "test-cluster"
 	// Existing session stored with sub claim
-	existing := &v1alpha1.BreakglassSession{
+	existing := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "existing-session",
 			Namespace: "escns",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      clusterName,
 			User:         "sub-123",
 			GrantedGroup: "g1",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStatePending,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
 		},
 	}
 
 	// ClusterConfig specifying sub as the user identifier claim
-	clusterConfig := &v1alpha1.ClusterConfig{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clusterName,
 			Namespace: "escns",
 		},
-		Spec: v1alpha1.ClusterConfigSpec{
-			UserIdentifierClaim: v1alpha1.UserIdentifierClaimSub,
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			UserIdentifierClaim: breakglassv1alpha1.UserIdentifierClaimSub,
 		},
 	}
 
-	builder.WithObjects(existing, clusterConfig, &v1alpha1.BreakglassEscalation{
+	builder.WithObjects(existing, clusterConfig, &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "esc-existing",
 			Namespace: "escns",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{clusterName},
 				Groups:   []string{"system:authenticated"},
 			},
@@ -913,7 +913,7 @@ func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLook
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -969,7 +969,7 @@ func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLook
 func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 	tests := []struct {
 		name                string
-		userIdentifierClaim v1alpha1.UserIdentifierClaimType
+		userIdentifierClaim breakglassv1alpha1.UserIdentifierClaimType
 		contextEmail        string
 		contextUsername     string
 		contextUserID       string
@@ -977,7 +977,7 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 	}{
 		{
 			name:                "Email claim (default)",
-			userIdentifierClaim: v1alpha1.UserIdentifierClaimEmail,
+			userIdentifierClaim: breakglassv1alpha1.UserIdentifierClaimEmail,
 			contextEmail:        "user@example.com",
 			contextUsername:     "testuser",
 			contextUserID:       "sub-123",
@@ -985,7 +985,7 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 		},
 		{
 			name:                "Preferred username claim",
-			userIdentifierClaim: v1alpha1.UserIdentifierClaimPreferredUsername,
+			userIdentifierClaim: breakglassv1alpha1.UserIdentifierClaimPreferredUsername,
 			contextEmail:        "user@example.com",
 			contextUsername:     "testuser",
 			contextUserID:       "sub-123",
@@ -993,7 +993,7 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 		},
 		{
 			name:                "Sub claim",
-			userIdentifierClaim: v1alpha1.UserIdentifierClaimSub,
+			userIdentifierClaim: breakglassv1alpha1.UserIdentifierClaimSub,
 			contextEmail:        "user@example.com",
 			contextUsername:     "testuser",
 			contextUserID:       "sub-123",
@@ -1013,7 +1013,7 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			builder := fake.NewClientBuilder().WithScheme(Scheme)
 			for index, fn := range sessionIndexFunctions {
-				builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 			}
 
 			clusterName := "test-cluster-" + string(tt.userIdentifierClaim)
@@ -1022,12 +1022,12 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 			}
 
 			// Create ClusterConfig with specific userIdentifierClaim
-			clusterConfig := &v1alpha1.ClusterConfig{
+			clusterConfig := &breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: clusterName,
 				},
-				Spec: v1alpha1.ClusterConfigSpec{
-					KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
+					KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name:      "test-secret",
 						Namespace: "default",
 					},
@@ -1036,25 +1036,25 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 			}
 
 			// Create escalation for the cluster
-			escalation := &v1alpha1.BreakglassEscalation{
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "esc-" + clusterName,
 					Namespace: "default",
 				},
-				Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{clusterName},
 						Groups:   []string{"system:authenticated"},
 					},
 					EscalatedGroup: "test-group",
-					Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 						Users: []string{"approver@example.com"},
 					},
 				},
 			}
 
 			cli := builder.WithObjects(clusterConfig, escalation).
-				WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+				WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 			sesmanager := SessionManager{Client: cli}
 			escmanager := EscalationManager{Client: cli}
 
@@ -1093,7 +1093,7 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 			}
 
 			// Verify the created session has the correct spec.User
-			list := &v1alpha1.BreakglassSessionList{}
+			list := &breakglassv1alpha1.BreakglassSessionList{}
 			if err := cli.List(context.Background(), list); err != nil {
 				t.Fatalf("failed to list sessions: %v", err)
 			}
@@ -1134,20 +1134,20 @@ func ptrInt32(i int32) *int32 { return &i }
 func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "clusterA",
 				User:         "user1@example.com",
 				GrantedGroup: "groupA",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "clusterB",
 				User:         "user2@example.com",
 				GrantedGroup: "groupB",
@@ -1191,7 +1191,7 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -1221,31 +1221,31 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	now := metav1.Now()
-	pending := &v1alpha1.BreakglassSession{
+	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "pending-1"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "c1",
 			User:         "requester@example.com",
 			GrantedGroup: "g1",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending, TimeoutAt: now, RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: now, RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration))},
 	}
 
 	// Escalation exists but approver user is different
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-1"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c1"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c1"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g1",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"someoneelse@example.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"someoneelse@example.com"}},
 		},
 	}
 
-	cli := builder.WithObjects(pending, esc).WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithObjects(pending, esc).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -1282,8 +1282,8 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 	tests := []struct {
 		name               string
-		setupEscalation    func() *v1alpha1.BreakglassEscalation
-		setupClusterConfig func() *v1alpha1.ClusterConfig
+		setupEscalation    func() *breakglassv1alpha1.BreakglassEscalation
+		setupClusterConfig func() *breakglassv1alpha1.ClusterConfig
 		approverEmail      string
 		requesterEmail     string
 		expectedStatus     int
@@ -1291,13 +1291,13 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 	}{
 		{
 			name: "self-approval blocked returns 403 with specific message",
-			setupEscalation: func() *v1alpha1.BreakglassEscalation {
-				return &v1alpha1.BreakglassEscalation{
+			setupEscalation: func() *breakglassv1alpha1.BreakglassEscalation {
+				return &breakglassv1alpha1.BreakglassEscalation{
 					ObjectMeta: metav1.ObjectMeta{Name: "esc-self-block", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						Allowed:           v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed:           breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
 						EscalatedGroup:    "test-group",
-						Approvers:         v1alpha1.BreakglassEscalationApprovers{Users: []string{"user@example.com"}},
+						Approvers:         breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"user@example.com"}},
 						BlockSelfApproval: ptrBool(true),
 					},
 				}
@@ -1310,13 +1310,13 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 		},
 		{
 			name: "domain not allowed returns 403 with specific message",
-			setupEscalation: func() *v1alpha1.BreakglassEscalation {
-				return &v1alpha1.BreakglassEscalation{
+			setupEscalation: func() *breakglassv1alpha1.BreakglassEscalation {
+				return &breakglassv1alpha1.BreakglassEscalation{
 					ObjectMeta: metav1.ObjectMeta{Name: "esc-domain-block", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						Allowed:                v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed:                breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
 						EscalatedGroup:         "test-group",
-						Approvers:              v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@external.com"}},
+						Approvers:              breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@external.com"}},
 						AllowedApproverDomains: []string{"internal.com"},
 					},
 				}
@@ -1329,13 +1329,13 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 		},
 		{
 			name: "not an approver returns 403 with specific message",
-			setupEscalation: func() *v1alpha1.BreakglassEscalation {
-				return &v1alpha1.BreakglassEscalation{
+			setupEscalation: func() *breakglassv1alpha1.BreakglassEscalation {
+				return &breakglassv1alpha1.BreakglassEscalation{
 					ObjectMeta: metav1.ObjectMeta{Name: "esc-not-approver", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
 						EscalatedGroup: "test-group",
-						Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"real-approver@example.com"}},
+						Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"real-approver@example.com"}},
 					},
 				}
 			},
@@ -1348,13 +1348,13 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 		{
 			name: "no matching escalation returns 403 with specific message",
 			// Create an escalation with a DIFFERENT group than the session's granted group
-			setupEscalation: func() *v1alpha1.BreakglassEscalation {
-				return &v1alpha1.BreakglassEscalation{
+			setupEscalation: func() *breakglassv1alpha1.BreakglassEscalation {
+				return &breakglassv1alpha1.BreakglassEscalation{
 					ObjectMeta: metav1.ObjectMeta{Name: "esc-different-group", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
 						EscalatedGroup: "different-group", // Does NOT match session's "test-group"
-						Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+						Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
 					},
 				}
 			},
@@ -1370,7 +1370,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			builder := fake.NewClientBuilder().WithScheme(Scheme)
 			for index, fn := range sessionIndexFunctions {
-				builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 			}
 
 			esc := tt.setupEscalation()
@@ -1382,22 +1382,22 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 
 			// Create a pending session
 			now := metav1.Now()
-			session := &v1alpha1.BreakglassSession{
+			session := &breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-session", Namespace: esc.Namespace},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      "test-cluster",
 					User:         tt.requesterEmail,
 					GrantedGroup: "test-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:         v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStatePending,
 					TimeoutAt:     now,
 					RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
 				},
 			}
 			builder.WithObjects(session)
 
-			cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+			cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 			sesmanager := SessionManager{Client: cli}
 			escmanager := EscalationManager{Client: cli}
 			ccmanager := NewClusterConfigManager(cli)
@@ -1453,20 +1453,20 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 func TestTerminalStateImmutability(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// basic escalation allowing approver
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-imut"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"a@e.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"a@e.com"}},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -1504,7 +1504,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 	}
 
 	// decode created session name from POST response
-	created := v1alpha1.BreakglassSession{}
+	created := breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(w.Result().Body).Decode(&created); err != nil {
 		t.Fatalf("failed to decode created session: %v", err)
 	}
@@ -1558,20 +1558,20 @@ func TestTerminalStateImmutability(t *testing.T) {
 func TestDropApprovedSessionExpires(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// escalation with approver
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-drop"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@e.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@e.com"}},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -1609,7 +1609,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 
 	// decode created session name from POST response
-	created := v1alpha1.BreakglassSession{}
+	created := breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(w.Result().Body).Decode(&created); err != nil {
 		t.Fatalf("failed to decode created session: %v", err)
 	}
@@ -1628,13 +1628,13 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	var gotResp struct {
-		Session v1alpha1.BreakglassSession `json:"session"`
+		Session breakglassv1alpha1.BreakglassSession `json:"session"`
 	}
 	if err := json.NewDecoder(w.Result().Body).Decode(&gotResp); err != nil {
 		t.Fatalf("failed to decode session status: %v", err)
 	}
 	got := gotResp.Session
-	if got.Status.State != v1alpha1.SessionStateApproved || got.Status.ApprovedAt.IsZero() {
+	if got.Status.State != breakglassv1alpha1.SessionStateApproved || got.Status.ApprovedAt.IsZero() {
 		t.Fatalf("expected approved session, got state=%s approvedAt=%v", got.Status.State, got.Status.ApprovedAt)
 	}
 
@@ -1651,13 +1651,13 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	var gotAfterDropResp struct {
-		Session v1alpha1.BreakglassSession `json:"session"`
+		Session breakglassv1alpha1.BreakglassSession `json:"session"`
 	}
 	if err := json.NewDecoder(w.Result().Body).Decode(&gotAfterDropResp); err != nil {
 		t.Fatalf("failed to decode session status after drop: %v", err)
 	}
 	gotAfterDrop := gotAfterDropResp.Session
-	if gotAfterDrop.Status.State != v1alpha1.SessionStateExpired {
+	if gotAfterDrop.Status.State != breakglassv1alpha1.SessionStateExpired {
 		t.Fatalf("expected expired session after drop, got state=%s", gotAfterDrop.Status.State)
 	}
 	if gotAfterDrop.Status.ExpiresAt.IsZero() {
@@ -1695,20 +1695,20 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 func TestApproverCancelRunningSession(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// escalation with approver
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-cancel"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@e.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@e.com"}},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -1747,7 +1747,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	}
 
 	// decode created session name from POST response
-	created := v1alpha1.BreakglassSession{}
+	created := breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(w.Result().Body).Decode(&created); err != nil {
 		t.Fatalf("failed to decode created session: %v", err)
 	}
@@ -1770,11 +1770,11 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	}
 
 	// decode cancel response (handler returns the updated session)
-	canceled := v1alpha1.BreakglassSession{}
+	canceled := breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(w.Result().Body).Decode(&canceled); err != nil {
 		t.Fatalf("failed to decode cancel response: %v", err)
 	}
-	if canceled.Status.State != v1alpha1.SessionStateExpired {
+	if canceled.Status.State != breakglassv1alpha1.SessionStateExpired {
 		t.Fatalf("expected expired session after cancel, got state=%s", canceled.Status.State)
 	}
 
@@ -1805,20 +1805,20 @@ func TestApproverCancelRunningSession(t *testing.T) {
 func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "s1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "clusterA",
 				User:         "user1@example.com",
 				GrantedGroup: "groupA",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "s2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "clusterB",
 				User:         "user2@example.com",
 				GrantedGroup: "groupB",
@@ -1853,7 +1853,7 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -1866,20 +1866,20 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "u1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "clusterX",
 				User:         "alice@example.com",
 				GrantedGroup: "groupX",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "u2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "clusterY",
 				User:         "bob@example.com",
 				GrantedGroup: "groupY",
@@ -1914,7 +1914,7 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -1927,20 +1927,20 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "g1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cluster1",
 				User:         "u@example.com",
 				GrantedGroup: "admins",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "g2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cluster2",
 				User:         "v@example.com",
 				GrantedGroup: "devs",
@@ -1975,7 +1975,7 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -1988,32 +1988,32 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// pending session owned by owner@example.com
-	pending := &v1alpha1.BreakglassSession{
+	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "w-pending"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "cl-a",
 			User:         "owner@example.com",
 			GrantedGroup: "g",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
 	}
 
 	// approved session (should not be withdrawable)
-	approved := &v1alpha1.BreakglassSession{
+	approved := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "w-approved"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "cl-a",
 			User:         "owner@example.com",
 			GrantedGroup: "g",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(time.Now().Add(-time.Minute))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(time.Now().Add(-time.Minute))},
 	}
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).WithObjects(pending, approved).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).WithObjects(pending, approved).Build()
 	ss := SessionManager{Client: cli}
 	es := EscalationManager{Client: cli}
 
@@ -2052,11 +2052,11 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 			t.Fatalf("expected 200 OK for owner withdraw, got %d", res.StatusCode)
 		}
 		// verify status updated
-		var bs v1alpha1.BreakglassSession
+		var bs breakglassv1alpha1.BreakglassSession
 		if err := ss.Get(context.Background(), client.ObjectKey{Name: "w-pending"}, &bs); err != nil {
 			t.Fatalf("failed to get session after withdraw: %v", err)
 		}
-		if bs.Status.State != v1alpha1.SessionStateWithdrawn {
+		if bs.Status.State != breakglassv1alpha1.SessionStateWithdrawn {
 			t.Fatalf("expected withdrawn state, got %s", bs.Status.State)
 		}
 	}
@@ -2090,20 +2090,20 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "c1u1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "c1",
 				User:         "u1@example.com",
 				GrantedGroup: "g1",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "c1u2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "c1",
 				User:         "u2@example.com",
 				GrantedGroup: "g1",
@@ -2138,7 +2138,7 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -2151,22 +2151,22 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 func TestRequestAndApproveWithReasons(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// Escalation requires request reason and approver reason is optional
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "reason-esc"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c1"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c1"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g-with-reason",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
-			RequestReason:  &v1alpha1.ReasonConfig{Mandatory: true, Description: "CASM TicketID"},
-			ApprovalReason: &v1alpha1.ReasonConfig{Mandatory: false, Description: "Approval note"},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			RequestReason:  &breakglassv1alpha1.ReasonConfig{Mandatory: true, Description: "CASM TicketID"},
+			ApprovalReason: &breakglassv1alpha1.ReasonConfig{Mandatory: false, Description: "Approval note"},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -2232,7 +2232,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions, got %d", res.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(res.Body).Decode(&respSessions); err != nil {
 		t.Fatalf("failed to decode sessions: %v", err)
 	}
@@ -2263,7 +2263,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions after approve, got %d", res.StatusCode)
 	}
-	respSessions = []v1alpha1.BreakglassSession{}
+	respSessions = []breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(res.Body).Decode(&respSessions); err != nil {
 		t.Fatalf("failed to decode sessions after approve: %v", err)
 	}
@@ -2279,18 +2279,18 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 func TestLongReasonStored(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "long-reason-esc"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"lc1"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"lc1"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g-long",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -2335,7 +2335,7 @@ func TestLongReasonStored(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions, got %d", res.StatusCode)
 	}
-	sessions := []v1alpha1.BreakglassSession{}
+	sessions := []breakglassv1alpha1.BreakglassSession{}
 	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -2347,18 +2347,18 @@ func TestLongReasonStored(t *testing.T) {
 func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-esc"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"wc1"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"wc1"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g-ws",
-			RequestReason:  &v1alpha1.ReasonConfig{Mandatory: true, Description: "Ticket"},
+			RequestReason:  &breakglassv1alpha1.ReasonConfig{Mandatory: true, Description: "Ticket"},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -2390,13 +2390,13 @@ func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 func TestOwnerCanRejectPendingSession(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "owner-reject-esc"},
-		Spec:       v1alpha1.BreakglassEscalationSpec{Allowed: v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"oc1"}, Groups: []string{"system:authenticated"}}, EscalatedGroup: "g-owner"},
+		Spec:       breakglassv1alpha1.BreakglassEscalationSpec{Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"oc1"}, Groups: []string{"system:authenticated"}}, EscalatedGroup: "g-owner"},
 	})
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -2438,7 +2438,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	_ = json.NewDecoder(w.Result().Body).Decode(&sessions)
 	if len(sessions) != 1 {
 		t.Fatalf("expected session present")
@@ -2457,9 +2457,9 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	sessions = []v1alpha1.BreakglassSession{}
+	sessions = []breakglassv1alpha1.BreakglassSession{}
 	_ = json.NewDecoder(w.Result().Body).Decode(&sessions)
-	if sessions[0].Status.State != v1alpha1.SessionStateRejected {
+	if sessions[0].Status.State != breakglassv1alpha1.SessionStateRejected {
 		t.Fatalf("expected state rejected, got %s", sessions[0].Status.State)
 	}
 }
@@ -2467,20 +2467,20 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "cg1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cluster1",
 				User:         "x@example.com",
 				GrantedGroup: "ops",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "cg2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cluster2",
 				User:         "y@example.com",
 				GrantedGroup: "ops",
@@ -2514,7 +2514,7 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -2527,20 +2527,20 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "ug1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cl1",
 				User:         "sam@example.com",
 				GrantedGroup: "ops",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "ug2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cl2",
 				User:         "sam@example.com",
 				GrantedGroup: "dev",
@@ -2574,7 +2574,7 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -2587,20 +2587,20 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "all1"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "z1",
 				User:         "p@example.com",
 				GrantedGroup: "wheel",
 			},
 		},
-		&v1alpha1.BreakglassSession{
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "all2"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "z2",
 				User:         "p@example.com",
 				GrantedGroup: "wheel",
@@ -2634,7 +2634,7 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []v1alpha1.BreakglassSession{}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
 	err := json.NewDecoder(response.Body).Decode(&respSessions)
 	if err != nil {
 		t.Fatalf("Failed to decode response body %v", err)
@@ -2647,50 +2647,50 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 func TestFilterBreakglassSessionsByState(t *testing.T) {
 	// Create sessions with various states
 	now := time.Now()
-	pending := &v1alpha1.BreakglassSession{
+	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-pending"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "a@ex.com", GrantedGroup: "g"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "a@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
 	}
-	approved := &v1alpha1.BreakglassSession{
+	approved := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-approved"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "b@ex.com", GrantedGroup: "g"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute)), ExpiresAt: metav1.NewTime(now.Add(time.Hour))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "b@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute)), ExpiresAt: metav1.NewTime(now.Add(time.Hour))},
 	}
-	waiting := &v1alpha1.BreakglassSession{
+	waiting := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-waiting"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:            "st-cl",
 			User:               "g@ex.com",
 			GrantedGroup:       "g",
 			ScheduledStartTime: &metav1.Time{Time: now.Add(time.Hour)},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateWaitingForScheduledTime},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateWaitingForScheduledTime},
 	}
-	rejected := &v1alpha1.BreakglassSession{
+	rejected := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-rejected"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "c@ex.com", GrantedGroup: "g"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateRejected, RejectedAt: metav1.NewTime(now.Add(-time.Minute))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "c@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateRejected, RejectedAt: metav1.NewTime(now.Add(-time.Minute))},
 	}
-	withdrawn := &v1alpha1.BreakglassSession{
+	withdrawn := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-withdrawn"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "d@ex.com", GrantedGroup: "g"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateWithdrawn, RejectedAt: metav1.NewTime(now.Add(-time.Minute))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "d@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateWithdrawn, RejectedAt: metav1.NewTime(now.Add(-time.Minute))},
 	}
-	expired := &v1alpha1.BreakglassSession{
+	expired := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-expired"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "e@ex.com", GrantedGroup: "g"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateExpired, ExpiresAt: metav1.NewTime(now.Add(-time.Hour))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "e@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired, ExpiresAt: metav1.NewTime(now.Add(-time.Hour))},
 	}
-	timeout := &v1alpha1.BreakglassSession{
+	timeout := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-timeout"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "f@ex.com", GrantedGroup: "g"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateTimeout, TimeoutAt: metav1.NewTime(now.Add(-time.Hour))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "f@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateTimeout, TimeoutAt: metav1.NewTime(now.Add(-time.Hour))},
 	}
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	builder.WithObjects(pending, approved, waiting, rejected, withdrawn, expired, timeout)
 	cli := builder.Build()
@@ -2739,7 +2739,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
 	// helper to query by state
-	queryByState := func(state string) []v1alpha1.BreakglassSession {
+	queryByState := func(state string) []breakglassv1alpha1.BreakglassSession {
 		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?state="+state+"&mine=true", nil)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
@@ -2747,7 +2747,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("Expected status OK (200) got '%d' instead for state %s", response.StatusCode, state)
 		}
-		respSessions := []v1alpha1.BreakglassSession{}
+		respSessions := []breakglassv1alpha1.BreakglassSession{}
 		if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
 			t.Fatalf("Failed to decode response body for state %s: %v", state, err)
 		}
@@ -2775,20 +2775,20 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 
 func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 	viewer := "viewer@example.com"
-	makeSession := func(name string, state v1alpha1.BreakglassSessionState) *v1alpha1.BreakglassSession {
-		return &v1alpha1.BreakglassSession{
+	makeSession := func(name string, state breakglassv1alpha1.BreakglassSessionState) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "multi", User: viewer, GrantedGroup: "g"},
-			Status:     v1alpha1.BreakglassSessionStatus{State: state},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "multi", User: viewer, GrantedGroup: "g"},
+			Status:     breakglassv1alpha1.BreakglassSessionStatus{State: state},
 		}
 	}
-	pending := makeSession("multi-pending", v1alpha1.SessionStatePending)
-	approved := makeSession("multi-approved", v1alpha1.SessionStateApproved)
-	rejected := makeSession("multi-rejected", v1alpha1.SessionStateRejected)
+	pending := makeSession("multi-pending", breakglassv1alpha1.SessionStatePending)
+	approved := makeSession("multi-approved", breakglassv1alpha1.SessionStateApproved)
+	rejected := makeSession("multi-rejected", breakglassv1alpha1.SessionStateRejected)
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	cli := builder.WithObjects(pending, approved, rejected).Build()
 	sesmanager := SessionManager{Client: cli}
@@ -2819,7 +2819,7 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 		}
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
@@ -2845,35 +2845,35 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 	approver := "approver@example.com"
-	sessApproved := &v1alpha1.BreakglassSession{
+	sessApproved := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "approved-now"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner1@example.com", GrantedGroup: "g1"},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:     v1alpha1.SessionStateApproved,
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner1@example.com", GrantedGroup: "g1"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
 			Approver:  approver,
 			Approvers: []string{approver},
 		},
 	}
-	sessWithdrawn := &v1alpha1.BreakglassSession{
+	sessWithdrawn := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "approved-in-past"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner2@example.com", GrantedGroup: "g2"},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:     v1alpha1.SessionStateWithdrawn,
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner2@example.com", GrantedGroup: "g2"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateWithdrawn,
 			Approvers: []string{approver},
 		},
 	}
-	sessNotMine := &v1alpha1.BreakglassSession{
+	sessNotMine := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "not-approved-by-me"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner3@example.com", GrantedGroup: "g3"},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:     v1alpha1.SessionStateApproved,
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner3@example.com", GrantedGroup: "g3"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
 			Approvers: []string{"someoneelse@example.com"},
 		},
 	}
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	cli := builder.WithObjects(sessApproved, sessWithdrawn, sessNotMine).Build()
 	sesmanager := SessionManager{Client: cli}
@@ -2902,7 +2902,7 @@ func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2925,27 +2925,27 @@ func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 func TestApproverCanSeePendingSessions(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// pending session owned by alice, grantedGroup 'approvable'
-	pending := &v1alpha1.BreakglassSession{
+	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "approver-sess-1"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "cl-approve",
 			User:         "alice@example.com",
 			GrantedGroup: "approvable",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
 	}
 
 	// escalation that grants 'approvable' and lists bob as approver
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-approvable"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cl-approve"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cl-approve"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "approvable",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"bob@example.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"bob@example.com"}},
 		},
 	}
 
@@ -2981,7 +2981,7 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
 		t.Fatalf("failed decode response: %v", err)
 	}
@@ -2998,7 +2998,7 @@ func (e ErrIdentityProvider) GetEmail(c *gin.Context) (string, error) {
 }
 func (e ErrIdentityProvider) GetUsername(c *gin.Context) string { return "" }
 func (e ErrIdentityProvider) GetIdentity(c *gin.Context) string { return "" }
-func (e ErrIdentityProvider) GetUserIdentifier(c *gin.Context, claimType v1alpha1.UserIdentifierClaimType) (string, error) {
+func (e ErrIdentityProvider) GetUserIdentifier(c *gin.Context, claimType breakglassv1alpha1.UserIdentifierClaimType) (string, error) {
 	return "", fmt.Errorf("simulated idp error")
 }
 
@@ -3007,12 +3007,12 @@ func (e ErrIdentityProvider) GetUserIdentifier(c *gin.Context, claimType v1alpha
 func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 	// single session that would otherwise match
-	s := &v1alpha1.BreakglassSession{
+	s := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-sess"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "cl-idp", User: "who@example.com", GrantedGroup: "g"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cl-idp", User: "who@example.com", GrantedGroup: "g"},
 	}
 	cli := builder.WithObjects(s).Build()
 	sesmanager := SessionManager{Client: cli}
@@ -3041,34 +3041,34 @@ func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// pending session owned by self@example.com
-	pending := &v1alpha1.BreakglassSession{
+	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "self-approve-sess"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "cluster-block",
 			User:         "self@example.com",
 			GrantedGroup: "g-block",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
 	}
 
 	// escalation that would normally allow the user to approve (lists the user)
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-block"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster-block"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster-block"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g-block",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"self@example.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"self@example.com"}},
 		},
 	}
 
 	// ClusterConfig that blocks self approval
-	cc := &v1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-block"},
-		Spec:       v1alpha1.ClusterConfigSpec{BlockSelfApproval: true},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{BlockSelfApproval: true},
 	}
 
 	cli := builder.WithObjects(pending, esc, cc).Build()
@@ -3103,7 +3103,7 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
 		t.Fatalf("failed decode response: %v", err)
 	}
@@ -3116,31 +3116,31 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
-	pending := &v1alpha1.BreakglassSession{
+	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "domain-approve-sess"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "cluster-domain",
 			User:         "user@other.com",
 			GrantedGroup: "g-domain",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
 	}
 
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-domain"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster-domain"}, Groups: []string{"system:authenticated"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster-domain"}, Groups: []string{"system:authenticated"}},
 			EscalatedGroup: "g-domain",
-			Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
 		},
 	}
 
-	cc := &v1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-domain"},
-		Spec:       v1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"example.com"}},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"example.com"}},
 	}
 
 	cli := builder.WithObjects(pending, esc, cc).Build()
@@ -3174,7 +3174,7 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
 		t.Fatalf("failed decode response: %v", err)
 	}
@@ -3187,39 +3187,39 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	now := time.Now()
-	s1 := &v1alpha1.BreakglassSession{
+	s1 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s1"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1@example.com", GrantedGroup: "g1"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1@example.com", GrantedGroup: "g1"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
 	}
-	s2 := &v1alpha1.BreakglassSession{
+	s2 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s2"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u2@example.com", GrantedGroup: "g1"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u2@example.com", GrantedGroup: "g1"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute))},
 	}
-	s3 := &v1alpha1.BreakglassSession{
+	s3 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s3"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u1@example.com", GrantedGroup: "g2"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateRejected, RejectedAt: metav1.NewTime(now.Add(-time.Minute))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u1@example.com", GrantedGroup: "g2"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateRejected, RejectedAt: metav1.NewTime(now.Add(-time.Minute))},
 	}
-	s4 := &v1alpha1.BreakglassSession{
+	s4 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s4"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g2"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g2"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
 	}
-	s5 := &v1alpha1.BreakglassSession{
+	s5 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s5"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1@example.com", GrantedGroup: "g2"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1@example.com", GrantedGroup: "g2"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute))},
 	}
-	s6 := &v1alpha1.BreakglassSession{
+	s6 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s6"},
-		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g1"},
-		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateExpired, ExpiresAt: metav1.NewTime(now.Add(-time.Hour))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g1"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired, ExpiresAt: metav1.NewTime(now.Add(-time.Hour))},
 	}
 
 	cli := builder.WithObjects(s1, s2, s3, s4, s5, s6).Build()
@@ -3276,7 +3276,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("case %s: expected 200 OK, got %d", tc.name, res.StatusCode)
 		}
-		var got []v1alpha1.BreakglassSession
+		var got []breakglassv1alpha1.BreakglassSession
 		if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
 			t.Fatalf("case %s: failed to decode response: %v", tc.name, err)
 		}
@@ -3303,7 +3303,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 	cases := []struct {
 		name      string
 		approvers []string
-		exclusion *v1alpha1.NotificationExclusions
+		exclusion *breakglassv1alpha1.NotificationExclusions
 		expect    []string
 	}{
 		{
@@ -3315,7 +3315,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 		{
 			name:      "Exclude single user",
 			approvers: []string{"user1@example.com", "user2@example.com", "user3@example.com"},
-			exclusion: &v1alpha1.NotificationExclusions{
+			exclusion: &breakglassv1alpha1.NotificationExclusions{
 				Users: []string{"user2@example.com"},
 			},
 			expect: []string{"user1@example.com", "user3@example.com"},
@@ -3323,7 +3323,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 		{
 			name:      "Exclude multiple users",
 			approvers: []string{"user1@example.com", "user2@example.com", "user3@example.com"},
-			exclusion: &v1alpha1.NotificationExclusions{
+			exclusion: &breakglassv1alpha1.NotificationExclusions{
 				Users: []string{"user1@example.com", "user3@example.com"},
 			},
 			expect: []string{"user2@example.com"},
@@ -3331,7 +3331,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 		{
 			name:      "Exclude non-existing user",
 			approvers: []string{"user1@example.com", "user2@example.com"},
-			exclusion: &v1alpha1.NotificationExclusions{
+			exclusion: &breakglassv1alpha1.NotificationExclusions{
 				Users: []string{"nonexistent@example.com"},
 			},
 			expect: []string{"user1@example.com", "user2@example.com"},
@@ -3339,7 +3339,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 		{
 			name:      "All users excluded",
 			approvers: []string{"user1@example.com", "user2@example.com"},
-			exclusion: &v1alpha1.NotificationExclusions{
+			exclusion: &breakglassv1alpha1.NotificationExclusions{
 				Users: []string{"user1@example.com", "user2@example.com"},
 			},
 			expect: []string{},
@@ -3347,7 +3347,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 		{
 			name:      "Empty approvers",
 			approvers: []string{},
-			exclusion: &v1alpha1.NotificationExclusions{
+			exclusion: &breakglassv1alpha1.NotificationExclusions{
 				Users: []string{"user1@example.com"},
 			},
 			expect: []string{},
@@ -3355,8 +3355,8 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		escalation := &v1alpha1.BreakglassEscalation{
-			Spec: v1alpha1.BreakglassEscalationSpec{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				NotificationExclusions: tc.exclusion,
 			},
 		}
@@ -3394,8 +3394,8 @@ func TestDisableNotificationsFlag(t *testing.T) {
 	}
 
 	// Test with no exclusions
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			NotificationExclusions: nil,
 		},
 	}
@@ -3405,9 +3405,9 @@ func TestDisableNotificationsFlag(t *testing.T) {
 	}
 
 	// Test with empty exclusions
-	escalation = &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			NotificationExclusions: &v1alpha1.NotificationExclusions{},
+	escalation = &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{},
 		},
 	}
 	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, escalation)
@@ -3461,9 +3461,9 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			escalation := &v1alpha1.BreakglassEscalation{
-				Spec: v1alpha1.BreakglassEscalationSpec{
-					Approvers: v1alpha1.BreakglassEscalationApprovers{
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 						HiddenFromUI: tt.hidden,
 					},
 				},
@@ -3482,9 +3482,9 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 	}
 
 	// Test with empty hidden list
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				HiddenFromUI: []string{},
 			},
 		},
@@ -3503,12 +3503,12 @@ func TestHiddenFromUIAndNotificationExclusionsCombined(t *testing.T) {
 	// Start with approvers: alice, bob, charlie, dave
 	approvers := []string{"alice@example.com", "bob@example.com", "charlie@example.com", "dave@example.com"}
 
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				HiddenFromUI: []string{"charlie@example.com"}, // charlie is hidden
 			},
-			NotificationExclusions: &v1alpha1.NotificationExclusions{
+			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{
 				Users: []string{"dave@example.com"}, // dave is excluded from notifications
 			},
 		},
@@ -3543,28 +3543,28 @@ func TestHiddenFromUIAndNotificationExclusionsCombined(t *testing.T) {
 func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// Escalation with visible and hidden approver groups
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-with-hidden",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "admin",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Groups:       []string{"security-team", "flm-on-duty"},
 				HiddenFromUI: []string{"flm-on-duty"},
 			},
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -3641,18 +3641,18 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 
 	// Create escalation with hidden groups
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "admin",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Groups:       []string{"security-team", "flm-on-duty", "on-call"},
 				HiddenFromUI: []string{"flm-on-duty", "on-call"},
 			},
@@ -3691,7 +3691,7 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 	}
 
 	// Parse response
-	var escList []v1alpha1.BreakglassEscalation
+	var escList []breakglassv1alpha1.BreakglassEscalation
 	_ = json.Unmarshal(w.Body.Bytes(), &escList)
 
 	if len(escList) != 1 {
@@ -3722,21 +3722,21 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
 	// Escalation with mixed visible and hidden approvers
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-mixed",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test"},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "admin",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users:        []string{"alice@example.com", "emergency@example.com"},
 				Groups:       []string{"security-team"},
 				HiddenFromUI: []string{"emergency@example.com"},
@@ -3744,7 +3744,7 @@ func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 		},
 	})
 
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -3858,12 +3858,12 @@ func TestSendOnRequestEmail_ApproverGroupsToShow(t *testing.T) {
 			}
 
 			// Create test session
-			session := v1alpha1.BreakglassSession{
+			session := breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-session-123",
 					Namespace: "default",
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      "test-cluster",
 					User:         "test-user",
 					GrantedGroup: "admin",
@@ -3871,14 +3871,14 @@ func TestSendOnRequestEmail_ApproverGroupsToShow(t *testing.T) {
 			}
 
 			// Create test escalation
-			escalation := &v1alpha1.BreakglassEscalation{
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-escalation",
 					Namespace: "default",
 				},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					EscalatedGroup: "admin",
-					Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 						Groups: []string{"dttcaas-first-line_fixed-core", "dttcaas-first-line_mobile-core"},
 						Users:  []string{},
 					},
@@ -3936,12 +3936,12 @@ func TestSendOnRequestEmail_NilEscalation(t *testing.T) {
 		mailQueue: nil,
 	}
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session-456",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "test-user",
 			GrantedGroup: "admin",
@@ -4023,26 +4023,26 @@ func TestSendOnRequestEmailsByGroup_DeduplicateApproversInMultipleGroups(t *test
 				mail: fakeSender,
 			}
 
-			session := v1alpha1.BreakglassSession{
+			session := breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-session",
 					Namespace: "default",
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      "test-cluster",
 					User:         "test-user",
 					GrantedGroup: "admin",
 				},
 			}
 
-			escalation := &v1alpha1.BreakglassEscalation{
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-escalation",
 					Namespace: "default",
 				},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					EscalatedGroup: "admin",
-					Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 						Groups: []string{"fixed-core", "mobile-core"},
 						Users:  []string{},
 					},
@@ -4077,15 +4077,15 @@ func TestIsSessionPendingApproval(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		session  v1alpha1.BreakglassSession
+		session  breakglassv1alpha1.BreakglassSession
 		expected bool
 		reason   string
 	}{
 		{
 			name: "pending_session_no_timeout_set",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.Time{},
@@ -4096,9 +4096,9 @@ func TestIsSessionPendingApproval(t *testing.T) {
 		},
 		{
 			name: "pending_session_timeout_in_future",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -4109,9 +4109,9 @@ func TestIsSessionPendingApproval(t *testing.T) {
 		},
 		{
 			name: "pending_session_timeout_in_past",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -4122,9 +4122,9 @@ func TestIsSessionPendingApproval(t *testing.T) {
 		},
 		{
 			name: "approved_session",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now),
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -4135,9 +4135,9 @@ func TestIsSessionPendingApproval(t *testing.T) {
 		},
 		{
 			name: "rejected_session",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateRejected,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateRejected,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.NewTime(now),
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -4148,9 +4148,9 @@ func TestIsSessionPendingApproval(t *testing.T) {
 		},
 		{
 			name: "approved_and_timed_out",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now.Add(-2 * time.Hour)),
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -4161,9 +4161,9 @@ func TestIsSessionPendingApproval(t *testing.T) {
 		},
 		{
 			name: "timeout_exactly_now",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now),
@@ -4190,15 +4190,15 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		session  v1alpha1.BreakglassSession
+		session  breakglassv1alpha1.BreakglassSession
 		expected bool
 		reason   string
 	}{
 		{
 			name: "pending_timeout_in_future",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -4209,9 +4209,9 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 		},
 		{
 			name: "pending_timeout_in_past",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -4222,9 +4222,9 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 		},
 		{
 			name: "approved_timeout_in_past",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now.Add(-2 * time.Hour)),
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -4235,9 +4235,9 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 		},
 		{
 			name: "rejected_timeout_in_past",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateRejected,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateRejected,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.NewTime(now.Add(-2 * time.Hour)),
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -4248,9 +4248,9 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 		},
 		{
 			name: "pending_no_timeout_set",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.Time{},
@@ -4261,9 +4261,9 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 		},
 		{
 			name: "timeout_state_already_set",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateTimeout,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateTimeout,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -4309,16 +4309,16 @@ func TestUseCaseM2MAutomation(t *testing.T) {
 
 		// Create escalation with DisableNotifications=true
 		disableNotif := true
-		escalation := &v1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{Name: "m2m-automation"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:       "automation-access",
 				DisableNotifications: &disableNotif,
 				MaxValidFor:          "336h", // 14 days for long-running automation
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Groups: []string{"service-accounts"},
 				},
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"automation-approver@example.com"},
 				},
 			},
@@ -4339,16 +4339,16 @@ func TestUseCaseM2MAutomation(t *testing.T) {
 	// Test 2: Verify self-approval can be allowed for M2M
 	t.Run("self-approval allowed for M2M automation", func(t *testing.T) {
 		blockSelfApproval := false
-		escalation := &v1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{Name: "m2m-self-approve"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:    "automation-access",
 				BlockSelfApproval: &blockSelfApproval,
 				MaxValidFor:       "336h", // 14 days
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Groups: []string{"automation-service-accounts"},
 				},
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"automation@example.com"}, // Service account can self-approve
 				},
 			},
@@ -4378,19 +4378,19 @@ func TestUseCaseSelfServiceBISDebugging(t *testing.T) {
 	t.Run("team can self-approve during incidents", func(t *testing.T) {
 		// Create escalation where the same group can request and approve
 		blockSelfApproval := false
-		escalation := &v1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{Name: "bis-self-service"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:    "incident-debug",
 				BlockSelfApproval: &blockSelfApproval,
 				MaxValidFor:       "4h",
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Groups: []string{"sre-team"},
 				},
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"sre-team"}, // Same group can approve
 				},
-				RequestReason: &v1alpha1.ReasonConfig{
+				RequestReason: &breakglassv1alpha1.ReasonConfig{
 					Mandatory:   true,
 					Description: "BIS ticket number required",
 				},
@@ -4409,13 +4409,13 @@ func TestUseCaseSelfServiceBISDebugging(t *testing.T) {
 func TestUseCaseDebugSessionNetworkCapabilities(t *testing.T) {
 	t.Run("debug pod template with network capabilities", func(t *testing.T) {
 		// Create a debug pod template for TCP dump / network debugging
-		template := &v1alpha1.DebugPodTemplate{
+		template := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "network-debug"},
-			Spec: v1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Network Debug Tools",
 				Description: "Pod with tcpdump, netstat, and network debugging tools",
-				Template: &v1alpha1.DebugPodSpec{
-					Spec: v1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						HostNetwork: true, // Required for network-level debugging
 						Containers: []corev1.Container{
 							{
@@ -4447,27 +4447,27 @@ func TestUseCaseDebugSessionNetworkCapabilities(t *testing.T) {
 
 	t.Run("debug session template with auto-approval for SRE", func(t *testing.T) {
 		replicas := int32(1)
-		template := &v1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "network-debug-session"},
-			Spec: v1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Network Debug Session",
-				Mode:        v1alpha1.DebugSessionModeWorkload,
-				PodTemplateRef: &v1alpha1.DebugPodTemplateReference{
+				Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: "network-debug",
 				},
-				WorkloadType:    v1alpha1.DebugWorkloadDaemonSet, // DaemonSet for node-level debugging
+				WorkloadType:    breakglassv1alpha1.DebugWorkloadDaemonSet, // DaemonSet for node-level debugging
 				Replicas:        &replicas,
 				TargetNamespace: "debug-network",
-				Allowed: &v1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Groups: []string{"sre-team", "network-team"},
 				},
-				Approvers: &v1alpha1.DebugSessionApprovers{
-					AutoApproveFor: &v1alpha1.AutoApproveConfig{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 						Groups: []string{"sre-team"}, // SRE gets auto-approval
 					},
 					Groups: []string{"security-team"}, // Security team can also approve
 				},
-				Constraints: &v1alpha1.DebugSessionConstraints{
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration:     "2h",
 					DefaultDuration: "30m",
 					AllowRenewal:    ptrBool(true),
@@ -4477,7 +4477,7 @@ func TestUseCaseDebugSessionNetworkCapabilities(t *testing.T) {
 		}
 
 		// Verify the template configuration
-		require.Equal(t, v1alpha1.DebugWorkloadDaemonSet, template.Spec.WorkloadType)
+		require.Equal(t, breakglassv1alpha1.DebugWorkloadDaemonSet, template.Spec.WorkloadType)
 		require.Contains(t, template.Spec.Approvers.AutoApproveFor.Groups, "sre-team")
 		require.Equal(t, "2h", template.Spec.Constraints.MaxDuration)
 	})
@@ -4532,8 +4532,8 @@ func TestFormatDuration(t *testing.T) {
 // TestIsSessionRetained covers the IsSessionRetained helper function
 func TestIsSessionRetained(t *testing.T) {
 	t.Run("session retained - retention time in past", func(t *testing.T) {
-		session := v1alpha1.BreakglassSession{
-			Status: v1alpha1.BreakglassSessionStatus{
+		session := breakglassv1alpha1.BreakglassSession{
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 			},
 		}
@@ -4542,8 +4542,8 @@ func TestIsSessionRetained(t *testing.T) {
 	})
 
 	t.Run("session not ready for removal - retention time in future", func(t *testing.T) {
-		session := v1alpha1.BreakglassSession{
-			Status: v1alpha1.BreakglassSessionStatus{
+		session := breakglassv1alpha1.BreakglassSession{
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 			},
 		}
@@ -4562,20 +4562,20 @@ func TestSessionControllerBasePath(t *testing.T) {
 func TestIsSessionRejectedFunction(t *testing.T) {
 	tests := []struct {
 		name     string
-		state    v1alpha1.BreakglassSessionState
+		state    breakglassv1alpha1.BreakglassSessionState
 		expected bool
 	}{
-		{"rejected state", v1alpha1.SessionStateRejected, true},
-		{"approved state", v1alpha1.SessionStateApproved, false},
-		{"pending state", v1alpha1.SessionStatePending, false},
-		{"withdrawn state", v1alpha1.SessionStateWithdrawn, false},
-		{"expired state", v1alpha1.SessionStateExpired, false},
+		{"rejected state", breakglassv1alpha1.SessionStateRejected, true},
+		{"approved state", breakglassv1alpha1.SessionStateApproved, false},
+		{"pending state", breakglassv1alpha1.SessionStatePending, false},
+		{"withdrawn state", breakglassv1alpha1.SessionStateWithdrawn, false},
+		{"expired state", breakglassv1alpha1.SessionStateExpired, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -4588,19 +4588,19 @@ func TestIsSessionRejectedFunction(t *testing.T) {
 func TestIsSessionWithdrawnFunction(t *testing.T) {
 	tests := []struct {
 		name     string
-		state    v1alpha1.BreakglassSessionState
+		state    breakglassv1alpha1.BreakglassSessionState
 		expected bool
 	}{
-		{"withdrawn state", v1alpha1.SessionStateWithdrawn, true},
-		{"approved state", v1alpha1.SessionStateApproved, false},
-		{"pending state", v1alpha1.SessionStatePending, false},
-		{"rejected state", v1alpha1.SessionStateRejected, false},
+		{"withdrawn state", breakglassv1alpha1.SessionStateWithdrawn, true},
+		{"approved state", breakglassv1alpha1.SessionStateApproved, false},
+		{"pending state", breakglassv1alpha1.SessionStatePending, false},
+		{"rejected state", breakglassv1alpha1.SessionStateRejected, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -4613,30 +4613,30 @@ func TestIsSessionWithdrawnFunction(t *testing.T) {
 func TestIsSessionExpiredFunction(t *testing.T) {
 	tests := []struct {
 		name      string
-		state     v1alpha1.BreakglassSessionState
+		state     breakglassv1alpha1.BreakglassSessionState
 		expiresAt *metav1.Time
 		expected  bool
 	}{
 		// State-first: Expired state takes precedence
-		{"expired state", v1alpha1.SessionStateExpired, nil, true},
-		{"expired state with past time", v1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
-		{"expired state with future time", v1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
+		{"expired state", breakglassv1alpha1.SessionStateExpired, nil, true},
+		{"expired state with past time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
+		{"expired state with future time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
 
 		// Approved state checks timestamp
-		{"approved state with past time", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
-		{"approved state with future time", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), false},
-		{"approved state with zero time", v1alpha1.SessionStateApproved, nil, false},
+		{"approved state with past time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
+		{"approved state with future time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), false},
+		{"approved state with zero time", breakglassv1alpha1.SessionStateApproved, nil, false},
 
 		// Other states are not expired
-		{"pending state", v1alpha1.SessionStatePending, nil, false},
-		{"rejected state", v1alpha1.SessionStateRejected, nil, false},
-		{"withdrawn state", v1alpha1.SessionStateWithdrawn, nil, false},
+		{"pending state", breakglassv1alpha1.SessionStatePending, nil, false},
+		{"rejected state", breakglassv1alpha1.SessionStateRejected, nil, false},
+		{"withdrawn state", breakglassv1alpha1.SessionStateWithdrawn, nil, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -4657,29 +4657,29 @@ func ptr(t metav1.Time) *metav1.Time {
 func TestIsSessionValidFunction(t *testing.T) {
 	tests := []struct {
 		name      string
-		state     v1alpha1.BreakglassSessionState
+		state     breakglassv1alpha1.BreakglassSessionState
 		expiresAt *metav1.Time
 		expected  bool
 	}{
 		// Terminal states are never valid
-		{"rejected state", v1alpha1.SessionStateRejected, nil, false},
-		{"withdrawn state", v1alpha1.SessionStateWithdrawn, nil, false},
-		{"expired state", v1alpha1.SessionStateExpired, nil, false},
-		{"timeout state", v1alpha1.SessionStateTimeout, nil, false},
-		{"waiting for scheduled time", v1alpha1.SessionStateWaitingForScheduledTime, nil, false},
+		{"rejected state", breakglassv1alpha1.SessionStateRejected, nil, false},
+		{"withdrawn state", breakglassv1alpha1.SessionStateWithdrawn, nil, false},
+		{"expired state", breakglassv1alpha1.SessionStateExpired, nil, false},
+		{"timeout state", breakglassv1alpha1.SessionStateTimeout, nil, false},
+		{"waiting for scheduled time", breakglassv1alpha1.SessionStateWaitingForScheduledTime, nil, false},
 
 		// Approved state with valid expiry
-		{"approved with future expiry", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
-		{"approved with past expiry", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), false},
+		{"approved with future expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
+		{"approved with past expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), false},
 
 		// Pending is valid
-		{"pending state", v1alpha1.SessionStatePending, nil, true},
+		{"pending state", breakglassv1alpha1.SessionStatePending, nil, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -4765,7 +4765,7 @@ func TestAddIfNotPresentFunction(t *testing.T) {
 }
 
 func TestIsSessionRetained_ZeroTimestamp(t *testing.T) {
-	session := v1alpha1.BreakglassSession{}
+	session := breakglassv1alpha1.BreakglassSession{}
 	if IsSessionRetained(session) {
 		t.Fatalf("expected IsSessionRetained to be false when RetainedUntil is zero")
 	}
@@ -4888,7 +4888,7 @@ func TestSessionLimits(t *testing.T) {
 	t.Run("IDP default limit blocks session creation when reached", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -4897,42 +4897,42 @@ func TestSessionLimits(t *testing.T) {
 		maxPerUser := int32(2)
 
 		// Create IDP with default session limit
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &maxPerUser,
 				},
 			},
 		}
 
 		// Create escalation (no session limit override)
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-123"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"system:authenticated"},
 				},
 				EscalatedGroup: "admin-group",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -4940,19 +4940,19 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		// Create 2 existing active sessions for same user (at IDP limit)
-		existingSessions := []*v1alpha1.BreakglassSession{
+		existingSessions := []*breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "existing-session-1",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "test-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			},
 			{
@@ -4960,19 +4960,19 @@ func TestSessionLimits(t *testing.T) {
 					Name:      "existing-session-2",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "test-user@example.com",
 					GrantedGroup: "another-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			},
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5014,7 +5014,7 @@ func TestSessionLimits(t *testing.T) {
 	t.Run("escalation unlimited override bypasses IDP limits", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -5023,45 +5023,45 @@ func TestSessionLimits(t *testing.T) {
 		maxPerUser := int32(1) // Very restrictive
 
 		// Create IDP with restrictive limit
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &maxPerUser,
 				},
 			},
 		}
 
 		// Create escalation with unlimited override (for platform team)
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "platform-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-456"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"platform-team"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
-				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+				SessionLimitsOverride: &breakglassv1alpha1.SessionLimitsOverride{
 					Unlimited: true,
 				},
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5069,19 +5069,19 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		// Create existing sessions (would exceed limit without override)
-		existingSessions := []*v1alpha1.BreakglassSession{
+		existingSessions := []*breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "existing-session-1",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "platform-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			},
 			{
@@ -5089,19 +5089,19 @@ func TestSessionLimits(t *testing.T) {
 					Name:      "existing-session-2",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "platform-user@example.com",
 					GrantedGroup: "another-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			},
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5141,7 +5141,7 @@ func TestSessionLimits(t *testing.T) {
 	t.Run("IDP group override allows higher limits for specific groups", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -5151,18 +5151,18 @@ func TestSessionLimits(t *testing.T) {
 		platformLimit := int32(5)
 
 		// Create IDP with default limit and platform-team group override
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &defaultLimit,
-					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+					GroupOverrides: []breakglassv1alpha1.SessionLimitGroupOverride{
 						{
 							Group:                    "platform-team",
 							MaxActiveSessionsPerUser: &platformLimit,
@@ -5173,26 +5173,26 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		// Create escalation (no override - uses IDP group override)
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-789"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"platform-team"},
 				},
 				EscalatedGroup: "admin-group",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5200,19 +5200,19 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		// Create 2 existing sessions (exceeds default limit of 1, but under platform limit of 5)
-		existingSessions := []*v1alpha1.BreakglassSession{
+		existingSessions := []*breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "existing-session-1",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "platform-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			},
 			{
@@ -5220,19 +5220,19 @@ func TestSessionLimits(t *testing.T) {
 					Name:      "existing-session-2",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "platform-user@example.com",
 					GrantedGroup: "another-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			},
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5272,33 +5272,33 @@ func TestSessionLimits(t *testing.T) {
 	t.Run("no limits without IDP or escalation configuration", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
 		escalationNamespace := "default"
 
 		// Create escalation without any session limits
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-nolimit"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"system:authenticated"},
 				},
 				EscalatedGroup: "admin-group",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5306,7 +5306,7 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		builder.WithObjects(esc, clusterConfig)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5346,7 +5346,7 @@ func TestSessionLimits(t *testing.T) {
 	t.Run("escalation maxActiveSessionsTotal blocks when total sessions exceeded", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -5355,12 +5355,12 @@ func TestSessionLimits(t *testing.T) {
 		maxTotal := int32(2)
 
 		// Create IDP (no limits - escalation provides the limit)
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
@@ -5368,29 +5368,29 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		// Create escalation with maxActiveSessionsTotal limit
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-total"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"system:authenticated"},
 				},
 				EscalatedGroup: "admin-group",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
-				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+				SessionLimitsOverride: &breakglassv1alpha1.SessionLimitsOverride{
 					MaxActiveSessionsTotal: &maxTotal,
 				},
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5400,7 +5400,7 @@ func TestSessionLimits(t *testing.T) {
 		// Create 2 existing active sessions for admin-group (at total limit)
 		// Note: different users but same granted group
 		// Sessions must have owner references to the escalation to be counted
-		existingSessions := []*v1alpha1.BreakglassSession{
+		existingSessions := []*breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "existing-session-1",
@@ -5414,13 +5414,13 @@ func TestSessionLimits(t *testing.T) {
 						},
 					},
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "user1@example.com",
 					GrantedGroup: "admin-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			},
 			{
@@ -5436,19 +5436,19 @@ func TestSessionLimits(t *testing.T) {
 						},
 					},
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "user2@example.com",
 					GrantedGroup: "admin-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			},
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5490,7 +5490,7 @@ func TestSessionLimits(t *testing.T) {
 	t.Run("IDP group override with unlimited allows sessions", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -5499,18 +5499,18 @@ func TestSessionLimits(t *testing.T) {
 		restrictiveLimit := int32(1)
 
 		// Create IDP with very restrictive default but unlimited for sre-oncall
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &restrictiveLimit, // Very restrictive
-					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+					GroupOverrides: []breakglassv1alpha1.SessionLimitGroupOverride{
 						{
 							Group:     "sre-oncall",
 							Unlimited: true, // SRE oncall has no limits
@@ -5521,26 +5521,26 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		// Create escalation (no override)
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-unlimited-group"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"sre-oncall"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5548,19 +5548,19 @@ func TestSessionLimits(t *testing.T) {
 		}
 
 		// Create multiple existing sessions for this user (would exceed the default limit)
-		existingSessions := []*v1alpha1.BreakglassSession{
+		existingSessions := []*breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "existing-session-1",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "sre-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			},
 			{
@@ -5568,19 +5568,19 @@ func TestSessionLimits(t *testing.T) {
 					Name:      "existing-session-2",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "sre-user@example.com",
 					GrantedGroup: "another-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			},
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5623,7 +5623,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 	t.Run("glob pattern matches user group", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -5633,18 +5633,18 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		platformLimit := int32(10)
 
 		// Create IDP with glob pattern for platform-* groups
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &restrictiveLimit, // Default limit
-					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+					GroupOverrides: []breakglassv1alpha1.SessionLimitGroupOverride{
 						{
 							Group:                    "platform-*", // Glob pattern
 							MaxActiveSessionsPerUser: &platformLimit,
@@ -5655,26 +5655,26 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		}
 
 		// Create escalation
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-glob"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"platform-sre"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5684,25 +5684,25 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		// Create 5 existing sessions (exceeds default limit of 1, but under glob pattern limit of 10)
 		var existingSessions []client.Object
 		for i := range 5 {
-			existingSessions = append(existingSessions, &v1alpha1.BreakglassSession{
+			existingSessions = append(existingSessions, &breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("existing-session-%d", i),
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "platform-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			})
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
 		builder.WithObjects(existingSessions...)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5742,7 +5742,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 	t.Run("first matching glob wins", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -5753,18 +5753,18 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		generalLimit := int32(100) // More permissive but should not be used
 
 		// Create IDP where both patterns could match, but first should win
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &restrictiveLimit,
-					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+					GroupOverrides: []breakglassv1alpha1.SessionLimitGroupOverride{
 						{
 							Group:                    "platform-sre", // More specific - matches first
 							MaxActiveSessionsPerUser: &specificLimit, // Limit: 2
@@ -5778,26 +5778,26 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 			},
 		}
 
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-first-match"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"platform-sre"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5805,19 +5805,19 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		}
 
 		// Create 2 existing sessions (at first-match limit of 2)
-		existingSessions := []*v1alpha1.BreakglassSession{
+		existingSessions := []*breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "existing-session-1",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "sre-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			},
 			{
@@ -5825,19 +5825,19 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 					Name:      "existing-session-2",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "sre-user@example.com",
 					GrantedGroup: "another-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			},
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -5880,7 +5880,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 	t.Run("invalid glob pattern is skipped", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -5891,18 +5891,18 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		validPatternLimit := int32(10)
 
 		// Create IDP with an invalid glob pattern followed by a valid one
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &restrictiveLimit,
-					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+					GroupOverrides: []breakglassv1alpha1.SessionLimitGroupOverride{
 						{
 							Group:                    "[invalid-regex", // Invalid glob pattern
 							MaxActiveSessionsPerUser: &invalidPatternLimit,
@@ -5916,26 +5916,26 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 			},
 		}
 
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-invalid-glob"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"platform-team"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -5945,25 +5945,25 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		// Create 5 existing sessions (exceeds default of 1, but under valid pattern limit of 10)
 		var existingSessions []client.Object
 		for i := range 5 {
-			existingSessions = append(existingSessions, &v1alpha1.BreakglassSession{
+			existingSessions = append(existingSessions, &breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("existing-session-%d", i),
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "platform-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			})
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
 		builder.WithObjects(existingSessions...)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6005,7 +6005,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		// nor maxActiveSessionsPerUser set. Should fall through to IDP default limit.
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -6014,18 +6014,18 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		idpDefaultLimit := int32(2)
 
 		// Create IDP with a group override that has no limit fields set
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: idpName,
 			},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
-				SessionLimits: &v1alpha1.SessionLimits{
+				SessionLimits: &breakglassv1alpha1.SessionLimits{
 					MaxActiveSessionsPerUser: &idpDefaultLimit, // IDP default: 2 sessions
-					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+					GroupOverrides: []breakglassv1alpha1.SessionLimitGroupOverride{
 						{
 							Group: "special-group", // Just group name, no unlimited or maxActiveSessionsPerUser
 							// Unlimited: false (default)
@@ -6036,26 +6036,26 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 			},
 		}
 
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-fallthrough"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"special-group"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6063,19 +6063,19 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		}
 
 		// Create 2 existing sessions (at IDP default limit)
-		existingSessions := []*v1alpha1.BreakglassSession{
+		existingSessions := []*breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "existing-session-1",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "special-user@example.com",
 					GrantedGroup: "admin-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			},
 			{
@@ -6083,19 +6083,19 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 					Name:      "existing-session-2",
 					Namespace: escalationNamespace,
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "special-user@example.com",
 					GrantedGroup: "other-group",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			},
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6146,7 +6146,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 	t.Run("truncates single group exceeding MaxApproverGroupMembers", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -6154,10 +6154,10 @@ func TestApproverResolutionLimits(t *testing.T) {
 		idpName := "test-idp"
 
 		// Create IDP
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{Name: idpName},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
@@ -6165,26 +6165,26 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		// Create escalation with a single approver group
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-limit-test"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"requester-group"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"large-approver-group"}, // This group will have >1000 members
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6192,7 +6192,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6247,7 +6247,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		// The session should still be created with whatever approvers were collected.
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -6255,10 +6255,10 @@ func TestApproverResolutionLimits(t *testing.T) {
 		idpName := "test-idp"
 
 		// Create IDP
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{Name: idpName},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
@@ -6266,26 +6266,26 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		// Create escalation with multiple approver groups
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-total-limit-test"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"requester-group"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"group-1", "group-2", "group-3"}, // 3 groups
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6293,7 +6293,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6362,7 +6362,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		// the matched BreakglassEscalation is still properly recorded on the session.
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -6370,10 +6370,10 @@ func TestApproverResolutionLimits(t *testing.T) {
 		idpName := "test-idp"
 
 		// Create IDP
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{Name: idpName},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
@@ -6381,26 +6381,26 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		// Create escalation with a huge approver group that will be truncated
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "truncated-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-preserve-match"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"requester-group"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"huge-approver-group"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6408,7 +6408,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6457,7 +6457,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 			"session should be created with truncated approvers")
 
 		// Verify the session has the correct owner reference to the escalation
-		var sessions v1alpha1.BreakglassSessionList
+		var sessions breakglassv1alpha1.BreakglassSessionList
 		err := cli.List(context.Background(), &sessions)
 		require.NoError(t, err, "should list sessions")
 		require.Len(t, sessions.Items, 1, "should have exactly one session")
@@ -6471,7 +6471,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 	t.Run("totalSessionCount uses owner reference not grantedGroup", func(t *testing.T) {
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
@@ -6480,10 +6480,10 @@ func TestApproverResolutionLimits(t *testing.T) {
 		totalLimit := int32(2)
 
 		// Create IDP
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{Name: idpName},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
@@ -6494,52 +6494,52 @@ func TestApproverResolutionLimits(t *testing.T) {
 		// esc1 allows a *different* requester group so it will NOT match the request,
 		// while esc2 allows "requester-group" and will be the matched escalation.
 		esc1UID := types.UID("esc1-uid")
-		esc1 := &v1alpha1.BreakglassEscalation{
+		esc1 := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "escalation-1",
 				Namespace: escalationNamespace,
 				UID:       esc1UID,
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"other-team"}, // Does NOT match "requester-group"
 				},
 				EscalatedGroup: "cluster-admin", // Same group as esc2
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
-				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+				SessionLimitsOverride: &breakglassv1alpha1.SessionLimitsOverride{
 					MaxActiveSessionsTotal: &totalLimit, // Limit to 2 total sessions
 				},
 			},
 		}
 
 		esc2UID := types.UID("esc2-uid")
-		esc2 := &v1alpha1.BreakglassEscalation{
+		esc2 := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "escalation-2",
 				Namespace: escalationNamespace,
 				UID:       esc2UID,
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"requester-group"}, // Matches the request
 				},
 				EscalatedGroup: "cluster-admin", // Same group as esc1
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@example.com"},
 				},
 				MaxValidFor: "1h",
-				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+				SessionLimitsOverride: &breakglassv1alpha1.SessionLimitsOverride{
 					MaxActiveSessionsTotal: &totalLimit, // Limit to 2 total sessions
 				},
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6549,7 +6549,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		// Create 2 existing sessions OWNED BY esc1 (hitting its limit)
 		var existingSessions []client.Object
 		for i := range 2 {
-			existingSessions = append(existingSessions, &v1alpha1.BreakglassSession{
+			existingSessions = append(existingSessions, &breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("esc1-session-%d", i),
 					Namespace: escalationNamespace,
@@ -6562,20 +6562,20 @@ func TestApproverResolutionLimits(t *testing.T) {
 						},
 					},
 				},
-				Spec: v1alpha1.BreakglassSessionSpec{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					Cluster:      clusterName,
 					User:         "other-user@example.com",
 					GrantedGroup: "cluster-admin", // Same group - but owned by esc1
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStateApproved,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStateApproved,
 				},
 			})
 		}
 
 		builder.WithObjects(idp, esc1, esc2, clusterConfig)
 		builder.WithObjects(existingSessions...)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6620,11 +6620,11 @@ func TestApproverResolutionLimits(t *testing.T) {
 			"session should be created because esc2 has no sessions (esc1's sessions should not count)")
 
 		// Verify the created session is owned by esc2, not esc1
-		var response v1alpha1.BreakglassSession
+		var response breakglassv1alpha1.BreakglassSession
 		err := json.NewDecoder(w.Body).Decode(&response)
 		require.NoError(t, err, "should decode response")
 
-		createdSession := &v1alpha1.BreakglassSession{}
+		createdSession := &breakglassv1alpha1.BreakglassSession{}
 		err = cli.Get(context.Background(), client.ObjectKey{
 			Name:      response.Name,
 			Namespace: response.Namespace,
@@ -6640,43 +6640,43 @@ func TestApproverResolutionLimits(t *testing.T) {
 		// Should process all 1000 without truncation.
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
 		escalationNamespace := "default"
 		idpName := "test-idp"
 
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{Name: idpName},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
 			},
 		}
 
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "boundary-test-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-boundary"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"requester-group"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"exact-limit-group"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6684,7 +6684,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6738,17 +6738,17 @@ func TestApproverResolutionLimits(t *testing.T) {
 		// Tests that explicit users + group members together can't exceed MaxTotalApprovers
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
 		escalationNamespace := "default"
 		idpName := "test-idp"
 
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{Name: idpName},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
@@ -6761,19 +6761,19 @@ func TestApproverResolutionLimits(t *testing.T) {
 			explicitUsers[i] = fmt.Sprintf("explicit-user-%d@example.com", i)
 		}
 
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "explicit-plus-groups-escalation",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-explicit-groups"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"requester-group"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users:  explicitUsers,
 					Groups: []string{"group-that-also-has-many"},
 				},
@@ -6781,7 +6781,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6789,7 +6789,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6845,43 +6845,43 @@ func TestApproverResolutionLimits(t *testing.T) {
 		// rather than being truncated to an empty slice with misleading logs.
 		builder := fake.NewClientBuilder().WithScheme(Scheme)
 		for index, fn := range sessionIndexFunctions {
-			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
 		clusterName := "test-cluster"
 		escalationNamespace := "default"
 		idpName := "test-idp"
 
-		idp := &v1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{Name: idpName},
-			Spec: v1alpha1.IdentityProviderSpec{
-				OIDC: v1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth.example.com",
 					ClientID:  "test-client",
 				},
 			},
 		}
 
-		esc := &v1alpha1.BreakglassEscalation{
+		esc := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "remaining-capacity-test",
 				Namespace: escalationNamespace,
 				UID:       types.UID("esc-uid-remaining-capacity"),
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterName},
 					Groups:   []string{"requester-group"},
 				},
 				EscalatedGroup: "cluster-admin",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"first-group", "second-group", "third-group"},
 				},
 				MaxValidFor: "1h",
 			},
 		}
 
-		clusterConfig := &v1alpha1.ClusterConfig{
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName,
 				Namespace: escalationNamespace,
@@ -6889,7 +6889,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		}
 
 		builder.WithObjects(idp, esc, clusterConfig)
-		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
 		escmanager := EscalationManager{Client: cli}
 
@@ -6955,22 +6955,22 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "race-esc"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{clusterName},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "breakglass-admin",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@telekom.de"},
 			},
 		},
 	})
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 
@@ -7025,7 +7025,7 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 		"request should succeed after in-flight guard is released")
 
 	// Verify a session was actually created in the API server
-	var sessions v1alpha1.BreakglassSessionList
+	var sessions breakglassv1alpha1.BreakglassSessionList
 	err := cli.List(context.Background(), &sessions)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(sessions.Items), 1,
@@ -7040,22 +7040,22 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "parallel-esc"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{clusterName},
 				Groups:   []string{"system:authenticated"},
 			},
 			EscalatedGroup: "breakglass-admin",
-			Approvers: v1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@telekom.de"},
 			},
 		},
 	})
-	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
 

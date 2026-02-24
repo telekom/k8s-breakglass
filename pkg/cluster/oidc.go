@@ -25,7 +25,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
@@ -104,8 +104,8 @@ func tokenCacheKey(namespace, name string) string {
 // It supports both direct oidcAuth configuration and oidcFromIdentityProvider references.
 // The returned config uses WrapTransport to inject fresh tokens on each request,
 // allowing the config to be cached while tokens are refreshed dynamically.
-func (p *OIDCTokenProvider) GetRESTConfig(ctx context.Context, cc *v1alpha1.ClusterConfig) (*rest.Config, error) {
-	var oidc *v1alpha1.OIDCAuthConfig
+func (p *OIDCTokenProvider) GetRESTConfig(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (*rest.Config, error) {
+	var oidc *breakglassv1alpha1.OIDCAuthConfig
 
 	// Resolve OIDC configuration from either direct config or IdentityProvider reference
 	if cc.Spec.OIDCFromIdentityProvider != nil {
@@ -153,7 +153,7 @@ type tokenInjectorRoundTripper struct {
 	delegate    http.RoundTripper
 	provider    *OIDCTokenProvider
 	clusterName string
-	oidc        *v1alpha1.OIDCAuthConfig
+	oidc        *breakglassv1alpha1.OIDCAuthConfig
 	namespace   string
 }
 
@@ -173,7 +173,7 @@ func (t *tokenInjectorRoundTripper) RoundTrip(req *http.Request) (*http.Response
 }
 
 // createTokenInjector returns a transport wrapper that injects fresh OIDC tokens.
-func (p *OIDCTokenProvider) createTokenInjector(clusterName string, oidc *v1alpha1.OIDCAuthConfig, namespace string) func(rt http.RoundTripper) http.RoundTripper {
+func (p *OIDCTokenProvider) createTokenInjector(clusterName string, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) func(rt http.RoundTripper) http.RoundTripper {
 	return func(rt http.RoundTripper) http.RoundTripper {
 		return &tokenInjectorRoundTripper{
 			delegate:    rt,
@@ -187,11 +187,11 @@ func (p *OIDCTokenProvider) createTokenInjector(clusterName string, oidc *v1alph
 
 // resolveOIDCFromIdentityProvider builds an OIDCAuthConfig by resolving the referenced IdentityProvider
 // and merging it with the cluster-specific configuration from OIDCFromIdentityProviderConfig.
-func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context, cc *v1alpha1.ClusterConfig) (*v1alpha1.OIDCAuthConfig, error) {
+func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (*breakglassv1alpha1.OIDCAuthConfig, error) {
 	ref := cc.Spec.OIDCFromIdentityProvider
 
 	// Fetch the referenced IdentityProvider
-	idp := &v1alpha1.IdentityProvider{}
+	idp := &breakglassv1alpha1.IdentityProvider{}
 	if err := p.k8s.Get(ctx, types.NamespacedName{Name: ref.Name}, idp); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("IdentityProvider %q not found", ref.Name)
@@ -211,7 +211,7 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 	}
 
 	// Build OIDCAuthConfig from IdentityProvider OIDC settings + cluster-specific settings
-	oidc := &v1alpha1.OIDCAuthConfig{
+	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL:             idp.Spec.OIDC.Authority,
 		ClientID:              clientID,
 		Server:                ref.Server,
@@ -246,7 +246,7 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 
 // getToken retrieves a valid token, refreshing if necessary using refresh tokens when available.
 // This follows kubelogin's pattern: check cache -> try refresh token -> fall back to full auth
-func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oidc *v1alpha1.OIDCAuthConfig, namespace string) (string, error) {
+func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) (string, error) {
 	cacheKey := tokenCacheKey(namespace, clusterName)
 	p.mu.RLock()
 	cached, ok := p.tokens[cacheKey]
@@ -320,7 +320,7 @@ func (p *OIDCTokenProvider) cacheToken(clusterName string, token *tokenResponse)
 }
 
 // refreshToken attempts to refresh an access token using a refresh token
-func (p *OIDCTokenProvider) refreshToken(ctx context.Context, oidc *v1alpha1.OIDCAuthConfig, refreshTok string) (*tokenResponse, error) {
+func (p *OIDCTokenProvider) refreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, refreshTok string) (*tokenResponse, error) {
 	// Discover token endpoint
 	tokenEndpoint, err := p.discoverTokenEndpoint(ctx, oidc)
 	if err != nil {
@@ -384,7 +384,7 @@ func (p *OIDCTokenProvider) refreshToken(ctx context.Context, oidc *v1alpha1.OID
 }
 
 // clientCredentialsFlow performs the OAuth 2.0 client credentials flow
-func (p *OIDCTokenProvider) clientCredentialsFlow(ctx context.Context, oidc *v1alpha1.OIDCAuthConfig) (*tokenResponse, error) {
+func (p *OIDCTokenProvider) clientCredentialsFlow(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig) (*tokenResponse, error) {
 	// Discover token endpoint
 	tokenEndpoint, err := p.discoverTokenEndpoint(ctx, oidc)
 	if err != nil {
@@ -452,7 +452,7 @@ func (p *OIDCTokenProvider) clientCredentialsFlow(ctx context.Context, oidc *v1a
 
 // TokenExchangeFlow performs OAuth 2.0 token exchange (RFC 8693)
 // This exchanges a subject token (e.g., user's token) for a new token scoped to the target cluster.
-func (p *OIDCTokenProvider) TokenExchangeFlow(ctx context.Context, oidc *v1alpha1.OIDCAuthConfig, subjectToken string) (*tokenResponse, error) {
+func (p *OIDCTokenProvider) TokenExchangeFlow(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, subjectToken string) (*tokenResponse, error) {
 	if oidc.TokenExchange == nil || !oidc.TokenExchange.Enabled {
 		return nil, fmt.Errorf("token exchange is not enabled")
 	}
@@ -543,7 +543,7 @@ func (p *OIDCTokenProvider) TokenExchangeFlow(ctx context.Context, oidc *v1alpha
 
 // tokenExchangeFromSecret performs token exchange using a subject token from a Kubernetes secret.
 // This is used when the controller needs to exchange a stored service token for a cluster-scoped token.
-func (p *OIDCTokenProvider) tokenExchangeFromSecret(ctx context.Context, oidc *v1alpha1.OIDCAuthConfig, namespace string) (*tokenResponse, error) {
+func (p *OIDCTokenProvider) tokenExchangeFromSecret(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) (*tokenResponse, error) {
 	if oidc.TokenExchange == nil || !oidc.TokenExchange.Enabled {
 		return nil, fmt.Errorf("token exchange is not enabled")
 	}
@@ -572,7 +572,7 @@ func (p *OIDCTokenProvider) tokenExchangeFromSecret(ctx context.Context, oidc *v
 }
 
 // tokenExchangeWithActorToken performs token exchange with optional actor token (RFC 8693)
-func (p *OIDCTokenProvider) tokenExchangeWithActorToken(ctx context.Context, oidc *v1alpha1.OIDCAuthConfig, subjectToken, actorToken string) (*tokenResponse, error) {
+func (p *OIDCTokenProvider) tokenExchangeWithActorToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, subjectToken, actorToken string) (*tokenResponse, error) {
 	// Discover token endpoint
 	tokenEndpoint, err := p.discoverTokenEndpoint(ctx, oidc)
 	if err != nil {
@@ -668,7 +668,7 @@ func (p *OIDCTokenProvider) tokenExchangeWithActorToken(ctx context.Context, oid
 }
 
 // getTokenFromSecret retrieves a token from a Kubernetes secret
-func (p *OIDCTokenProvider) getTokenFromSecret(ctx context.Context, secretRef *v1alpha1.SecretKeyReference, namespace string) (string, error) {
+func (p *OIDCTokenProvider) getTokenFromSecret(ctx context.Context, secretRef *breakglassv1alpha1.SecretKeyReference, namespace string) (string, error) {
 	if secretRef == nil {
 		return "", fmt.Errorf("secret reference is nil")
 	}
@@ -700,7 +700,7 @@ func (p *OIDCTokenProvider) getTokenFromSecret(ctx context.Context, secretRef *v
 }
 
 // discoverTokenEndpoint discovers the token endpoint from OIDC discovery
-func (p *OIDCTokenProvider) discoverTokenEndpoint(ctx context.Context, oidc *v1alpha1.OIDCAuthConfig) (string, error) {
+func (p *OIDCTokenProvider) discoverTokenEndpoint(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig) (string, error) {
 	discoveryURL := strings.TrimSuffix(oidc.IssuerURL, "/") + "/.well-known/openid-configuration"
 
 	httpClient, err := p.createOIDCHTTPClient(oidc)
@@ -736,7 +736,7 @@ func (p *OIDCTokenProvider) discoverTokenEndpoint(ctx context.Context, oidc *v1a
 }
 
 // getClientSecret retrieves the client secret from the referenced secret
-func (p *OIDCTokenProvider) getClientSecret(ctx context.Context, oidc *v1alpha1.OIDCAuthConfig) (string, error) {
+func (p *OIDCTokenProvider) getClientSecret(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig) (string, error) {
 	if oidc.ClientSecretRef == nil {
 		return "", fmt.Errorf("clientSecretRef is required for client credentials flow")
 	}
@@ -767,7 +767,7 @@ func (p *OIDCTokenProvider) getClientSecret(ctx context.Context, oidc *v1alpha1.
 // 1. InsecureSkipTLSVerify - skip all TLS verification (not recommended)
 // 2. Explicit CertificateAuthority - use provided CA
 // 3. TOFU (Trust On First Use) - auto-discover and cache CA on first connection to the issuer
-func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *v1alpha1.OIDCAuthConfig) (*http.Client, error) {
+func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAuthConfig) (*http.Client, error) {
 	cacheKey := p.oidcHTTPClientCacheKey(oidc)
 	p.httpMu.RLock()
 	if client := p.httpClients[cacheKey]; client != nil {
@@ -837,7 +837,7 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *v1alpha1.OIDCAuthConfig) 
 // 1. Explicit CA from caSecretRef
 // 2. TOFU (Trust On First Use) - auto-discover and cache CA on first connection
 // 3. Insecure skip verify (not recommended)
-func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, oidc *v1alpha1.OIDCAuthConfig) error {
+func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, oidc *breakglassv1alpha1.OIDCAuthConfig) error {
 	clusterName := oidc.Server // Use API server URL as key for TOFU cache
 
 	// 0. Handle insecure skip verify first
@@ -921,7 +921,7 @@ func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, 
 	return nil
 }
 
-func (p *OIDCTokenProvider) oidcHTTPClientCacheKey(oidc *v1alpha1.OIDCAuthConfig) string {
+func (p *OIDCTokenProvider) oidcHTTPClientCacheKey(oidc *breakglassv1alpha1.OIDCAuthConfig) string {
 	if oidc == nil {
 		return ""
 	}
@@ -1047,7 +1047,7 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 }
 
 // persistTOFUCA saves the discovered CA certificate to the referenced secret using SSA
-func (p *OIDCTokenProvider) persistTOFUCA(ctx context.Context, secretRef *v1alpha1.SecretKeyReference, caPEM []byte) error {
+func (p *OIDCTokenProvider) persistTOFUCA(ctx context.Context, secretRef *breakglassv1alpha1.SecretKeyReference, caPEM []byte) error {
 	key := secretRef.Key
 	if key == "" {
 		key = "ca.crt"

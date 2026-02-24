@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
@@ -39,8 +39,8 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		{
 			name:     "simple variable substitution",
 			template: "Hello, {{ .session.name }}!",
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "test-session",
 				},
 			},
@@ -49,11 +49,11 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		{
 			name:     "nested context access",
 			template: "Cluster: {{ .session.cluster }}, Namespace: {{ .target.namespace }}",
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Cluster: "prod-cluster",
 				},
-				Target: v1alpha1.AuxiliaryResourceTargetContext{
+				Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 					Namespace: "debug-ns",
 				},
 			},
@@ -62,7 +62,7 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		{
 			name:     "user variables access",
 			template: "Size: {{ .vars.pvcSize }}, Class: {{ .vars.storageClass }}",
-			context: v1alpha1.AuxiliaryResourceContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"pvcSize":      "50Gi",
 					"storageClass": "csi-cinder",
@@ -73,8 +73,8 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		{
 			name:     "sprig functions - upper",
 			template: "{{ .session.name | upper }}",
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "test-session",
 				},
 			},
@@ -83,8 +83,8 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		{
 			name:     "sprig functions - trunc",
 			template: "{{ .session.name | trunc 8 }}",
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "very-long-session-name",
 				},
 			},
@@ -93,8 +93,8 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		{
 			name:     "sprig functions - quote",
 			template: "name: {{ .session.name | quote }}",
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "test-session",
 				},
 			},
@@ -103,7 +103,7 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		{
 			name:     "sprig functions - default",
 			template: "name: {{ .vars.missing | default \"default-value\" }}",
-			context: v1alpha1.AuxiliaryResourceContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{},
 			},
 			expected: "name: default-value",
@@ -113,7 +113,7 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 			template: `{{- if .vars.createPvc }}
 pvc: enabled
 {{- end }}`,
-			context: v1alpha1.AuxiliaryResourceContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"createPvc": "true",
 				},
@@ -126,7 +126,7 @@ pvc: enabled
 {{- range $k, $v := .labels }}
   {{ $k }}: {{ $v | quote }}
 {{- end }}`,
-			context: v1alpha1.AuxiliaryResourceContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Labels: map[string]string{
 					"app":     "test",
 					"version": "v1",
@@ -137,8 +137,8 @@ pvc: enabled
 		{
 			name:     "custom function - truncName",
 			template: "{{ truncName 10 .session.name }}",
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "very-long-session-name-that-exceeds-limit",
 				},
 			},
@@ -147,7 +147,7 @@ pvc: enabled
 		{
 			name:     "custom function - k8sName",
 			template: "{{ k8sName .vars.testName }}",
-			context: v1alpha1.AuxiliaryResourceContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"testName": "My Test_Name.123",
 				},
@@ -157,14 +157,14 @@ pvc: enabled
 		{
 			name:        "empty template",
 			template:    "",
-			context:     v1alpha1.AuxiliaryResourceContext{},
+			context:     breakglassv1alpha1.AuxiliaryResourceContext{},
 			expectError: true,
 			errorMsg:    "template string is empty",
 		},
 		{
 			name:        "invalid template syntax",
 			template:    "{{ .session.name",
-			context:     v1alpha1.AuxiliaryResourceContext{},
+			context:     breakglassv1alpha1.AuxiliaryResourceContext{},
 			expectError: true,
 			errorMsg:    "failed to parse template",
 		},
@@ -206,8 +206,8 @@ func TestTemplateRenderer_RenderMultiDocumentTemplate(t *testing.T) {
 kind: ConfigMap
 metadata:
   name: {{ .session.name }}`,
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "test-session",
 				},
 			},
@@ -225,8 +225,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: config-{{ .session.name }}`,
-			context: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "test",
 				},
 			},
@@ -246,7 +246,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: config-1`,
-			context:      v1alpha1.AuxiliaryResourceContext{},
+			context:      breakglassv1alpha1.AuxiliaryResourceContext{},
 			expectedDocs: 2, // Empty document should be skipped
 		},
 		{
@@ -257,7 +257,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: test-pvc
 {{- end }}`,
-			context: v1alpha1.AuxiliaryResourceContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{"createPvc": "true"},
 			},
 			expectedDocs: 1,
@@ -270,7 +270,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: test-pvc
 {{- end }}`,
-			context: v1alpha1.AuxiliaryResourceContext{
+			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{"createPvc": "false"},
 			},
 			expectedDocs: 0,
@@ -299,14 +299,14 @@ metadata:
 func TestTemplateRenderer_ValidateTemplate(t *testing.T) {
 	renderer := NewTemplateRenderer()
 
-	sampleCtx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	sampleCtx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:        "validation-session",
 			Namespace:   "breakglass-system",
 			Cluster:     "validation-cluster",
 			RequestedBy: "validator@example.com",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   "breakglass-debug",
 			ClusterName: "validation-cluster",
 		},
@@ -660,14 +660,14 @@ spec:
     requests:
       storage: {{ .vars.pvcSize }}`
 
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:        "debug-session-12345",
 			Namespace:   "breakglass-system",
 			Cluster:     "prod-cluster",
 			RequestedBy: "user@example.com",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   "breakglass-debug",
 			ClusterName: "prod-cluster",
 		},
@@ -736,7 +736,7 @@ spec:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := v1alpha1.AuxiliaryResourceContext{
+			ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: tt.vars,
 			}
 
@@ -955,7 +955,7 @@ func TestYamlQuoteInTemplate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := v1alpha1.AuxiliaryResourceContext{
+			ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: tt.vars,
 			}
 

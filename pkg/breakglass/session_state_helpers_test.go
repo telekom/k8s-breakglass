@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -13,50 +13,50 @@ import (
 func TestIsSessionPendingApproval_StateVariants(t *testing.T) {
 	tests := []struct {
 		name     string
-		state    v1alpha1.BreakglassSessionState
+		state    breakglassv1alpha1.BreakglassSessionState
 		expected bool
 	}{
 		{
 			name:     "pending state returns true",
-			state:    v1alpha1.SessionStatePending,
+			state:    breakglassv1alpha1.SessionStatePending,
 			expected: true,
 		},
 		{
 			name:     "approved state returns false",
-			state:    v1alpha1.SessionStateApproved,
+			state:    breakglassv1alpha1.SessionStateApproved,
 			expected: false,
 		},
 		{
 			name:     "rejected state returns false",
-			state:    v1alpha1.SessionStateRejected,
+			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
 		},
 		{
 			name:     "expired state returns false",
-			state:    v1alpha1.SessionStateExpired,
+			state:    breakglassv1alpha1.SessionStateExpired,
 			expected: false,
 		},
 		{
 			name:     "withdrawn state returns false",
-			state:    v1alpha1.SessionStateWithdrawn,
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
 			expected: false,
 		},
 		{
 			name:     "timeout state returns false",
-			state:    v1alpha1.SessionStateTimeout,
+			state:    breakglassv1alpha1.SessionStateTimeout,
 			expected: false,
 		},
 		{
 			name:     "waiting state returns false",
-			state:    v1alpha1.SessionStateWaitingForScheduledTime,
+			state:    breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -70,40 +70,40 @@ func TestIsSessionPendingApproval_StateVariants(t *testing.T) {
 func TestIsSessionRejected(t *testing.T) {
 	tests := []struct {
 		name     string
-		state    v1alpha1.BreakglassSessionState
+		state    breakglassv1alpha1.BreakglassSessionState
 		expected bool
 	}{
 		{
 			name:     "rejected state returns true",
-			state:    v1alpha1.SessionStateRejected,
+			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: true,
 		},
 		{
 			name:     "pending state returns false",
-			state:    v1alpha1.SessionStatePending,
+			state:    breakglassv1alpha1.SessionStatePending,
 			expected: false,
 		},
 		{
 			name:     "approved state returns false",
-			state:    v1alpha1.SessionStateApproved,
+			state:    breakglassv1alpha1.SessionStateApproved,
 			expected: false,
 		},
 		{
 			name:     "expired state returns false",
-			state:    v1alpha1.SessionStateExpired,
+			state:    breakglassv1alpha1.SessionStateExpired,
 			expected: false,
 		},
 		{
 			name:     "withdrawn state returns false",
-			state:    v1alpha1.SessionStateWithdrawn,
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -117,35 +117,35 @@ func TestIsSessionRejected(t *testing.T) {
 func TestIsSessionWithdrawn(t *testing.T) {
 	tests := []struct {
 		name     string
-		state    v1alpha1.BreakglassSessionState
+		state    breakglassv1alpha1.BreakglassSessionState
 		expected bool
 	}{
 		{
 			name:     "withdrawn state returns true",
-			state:    v1alpha1.SessionStateWithdrawn,
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
 			expected: true,
 		},
 		{
 			name:     "pending state returns false",
-			state:    v1alpha1.SessionStatePending,
+			state:    breakglassv1alpha1.SessionStatePending,
 			expected: false,
 		},
 		{
 			name:     "approved state returns false",
-			state:    v1alpha1.SessionStateApproved,
+			state:    breakglassv1alpha1.SessionStateApproved,
 			expected: false,
 		},
 		{
 			name:     "rejected state returns false",
-			state:    v1alpha1.SessionStateRejected,
+			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -161,54 +161,54 @@ func TestIsSessionExpired(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		state     v1alpha1.BreakglassSessionState
+		state     breakglassv1alpha1.BreakglassSessionState
 		expiresAt *time.Time
 		expected  bool
 	}{
 		{
 			name:     "expired state returns true regardless of timestamp",
-			state:    v1alpha1.SessionStateExpired,
+			state:    breakglassv1alpha1.SessionStateExpired,
 			expected: true,
 		},
 		{
 			name:      "approved state with past expiry returns true",
-			state:     v1alpha1.SessionStateApproved,
+			state:     breakglassv1alpha1.SessionStateApproved,
 			expiresAt: func() *time.Time { t := now.Add(-1 * time.Hour); return &t }(),
 			expected:  true,
 		},
 		{
 			name:      "approved state with future expiry returns false",
-			state:     v1alpha1.SessionStateApproved,
+			state:     breakglassv1alpha1.SessionStateApproved,
 			expiresAt: func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
 			expected:  false,
 		},
 		{
 			name:     "approved state with zero expiry returns false",
-			state:    v1alpha1.SessionStateApproved,
+			state:    breakglassv1alpha1.SessionStateApproved,
 			expected: false,
 		},
 		{
 			name:      "pending state with past expiry returns false (not approved)",
-			state:     v1alpha1.SessionStatePending,
+			state:     breakglassv1alpha1.SessionStatePending,
 			expiresAt: func() *time.Time { t := now.Add(-1 * time.Hour); return &t }(),
 			expected:  false,
 		},
 		{
 			name:     "rejected state returns false",
-			state:    v1alpha1.SessionStateRejected,
+			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
 		},
 		{
 			name:     "withdrawn state returns false",
-			state:    v1alpha1.SessionStateWithdrawn,
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -249,8 +249,8 @@ func TestIsSessionRetained_TimeVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					RetainedUntil: metav1.NewTime(tt.retainedUntil),
 				},
 			}
@@ -266,62 +266,62 @@ func TestIsSessionValid(t *testing.T) {
 
 	tests := []struct {
 		name               string
-		state              v1alpha1.BreakglassSessionState
+		state              breakglassv1alpha1.BreakglassSessionState
 		expiresAt          *time.Time
 		scheduledStartTime *time.Time
 		expected           bool
 	}{
 		{
 			name:      "approved session with valid expiry is valid",
-			state:     v1alpha1.SessionStateApproved,
+			state:     breakglassv1alpha1.SessionStateApproved,
 			expiresAt: func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
 			expected:  true,
 		},
 		{
 			name:     "pending session is valid",
-			state:    v1alpha1.SessionStatePending,
+			state:    breakglassv1alpha1.SessionStatePending,
 			expected: true,
 		},
 		{
 			name:     "rejected session is not valid",
-			state:    v1alpha1.SessionStateRejected,
+			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
 		},
 		{
 			name:     "withdrawn session is not valid",
-			state:    v1alpha1.SessionStateWithdrawn,
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
 			expected: false,
 		},
 		{
 			name:     "expired session is not valid",
-			state:    v1alpha1.SessionStateExpired,
+			state:    breakglassv1alpha1.SessionStateExpired,
 			expected: false,
 		},
 		{
 			name:     "timeout session is not valid",
-			state:    v1alpha1.SessionStateTimeout,
+			state:    breakglassv1alpha1.SessionStateTimeout,
 			expected: false,
 		},
 		{
 			name:     "waiting for scheduled time is not valid",
-			state:    v1alpha1.SessionStateWaitingForScheduledTime,
+			state:    breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			expected: false,
 		},
 		{
 			name:      "approved session with past expiry is not valid",
-			state:     v1alpha1.SessionStateApproved,
+			state:     breakglassv1alpha1.SessionStateApproved,
 			expiresAt: func() *time.Time { t := now.Add(-1 * time.Hour); return &t }(),
 			expected:  false,
 		},
 		{
 			name:               "scheduled session with future start time is not valid",
-			state:              v1alpha1.SessionStateApproved,
+			state:              breakglassv1alpha1.SessionStateApproved,
 			scheduledStartTime: func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
 			expected:           false,
 		},
 		{
 			name:               "scheduled session with past start time is valid",
-			state:              v1alpha1.SessionStateApproved,
+			state:              breakglassv1alpha1.SessionStateApproved,
 			scheduledStartTime: func() *time.Time { t := now.Add(-1 * time.Hour); return &t }(),
 			expiresAt:          func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
 			expected:           true,
@@ -330,8 +330,8 @@ func TestIsSessionValid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -353,47 +353,47 @@ func TestIsSessionActive(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		state     v1alpha1.BreakglassSessionState
+		state     breakglassv1alpha1.BreakglassSessionState
 		expiresAt *time.Time
 		expected  bool
 	}{
 		{
 			name:      "approved session with valid expiry is active",
-			state:     v1alpha1.SessionStateApproved,
+			state:     breakglassv1alpha1.SessionStateApproved,
 			expiresAt: func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
 			expected:  true,
 		},
 		{
 			name:     "pending session is active",
-			state:    v1alpha1.SessionStatePending,
+			state:    breakglassv1alpha1.SessionStatePending,
 			expected: true,
 		},
 		{
 			name:     "rejected session is not active",
-			state:    v1alpha1.SessionStateRejected,
+			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
 		},
 		{
 			name:     "withdrawn session is not active",
-			state:    v1alpha1.SessionStateWithdrawn,
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
 			expected: false,
 		},
 		{
 			name:     "expired session is not active",
-			state:    v1alpha1.SessionStateExpired,
+			state:    breakglassv1alpha1.SessionStateExpired,
 			expected: false,
 		},
 		{
 			name:     "timeout session is not active",
-			state:    v1alpha1.SessionStateTimeout,
+			state:    breakglassv1alpha1.SessionStateTimeout,
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
@@ -414,7 +414,7 @@ func TestDropK8sInternalFieldsSession(t *testing.T) {
 	})
 
 	t.Run("clears internal fields", func(t *testing.T) {
-		session := &v1alpha1.BreakglassSession{
+		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:            "test-session",
 				Namespace:       "default",
@@ -442,7 +442,7 @@ func TestDropK8sInternalFieldsSession(t *testing.T) {
 	})
 
 	t.Run("handles nil annotations", func(t *testing.T) {
-		session := &v1alpha1.BreakglassSession{
+		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:            "test-session",
 				Namespace:       "default",
@@ -460,12 +460,12 @@ func TestDropK8sInternalFieldsSession(t *testing.T) {
 // TestDropK8sInternalFieldsSessionList tests the dropK8sInternalFieldsSessionList function
 func TestDropK8sInternalFieldsSessionList(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
-		result := dropK8sInternalFieldsSessionList([]v1alpha1.BreakglassSession{})
+		result := dropK8sInternalFieldsSessionList([]breakglassv1alpha1.BreakglassSession{})
 		assert.Empty(t, result)
 	})
 
 	t.Run("clears fields from all sessions", func(t *testing.T) {
-		sessions := []v1alpha1.BreakglassSession{
+		sessions := []breakglassv1alpha1.BreakglassSession{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:            "session-1",

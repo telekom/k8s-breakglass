@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 type SessionService struct {
@@ -42,7 +42,7 @@ type SessionActionRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]v1alpha1.BreakglassSession, error) {
+func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]breakglassv1alpha1.BreakglassSession, error) {
 	endpoint := "api/breakglassSessions"
 	params := url.Values{}
 	if opts.Cluster != "" {
@@ -72,7 +72,7 @@ func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]v
 	if encoded := params.Encode(); encoded != "" {
 		endpoint = fmt.Sprintf("%s?%s", endpoint, encoded)
 	}
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &sessions); err != nil {
 		return nil, err
 	}
@@ -81,11 +81,11 @@ func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]v
 
 // SessionGetResponse wraps the session with authorization metadata
 type SessionGetResponse struct {
-	Session      v1alpha1.BreakglassSession `json:"session"`
-	ApprovalMeta map[string]interface{}     `json:"approvalMeta,omitempty"`
+	Session      breakglassv1alpha1.BreakglassSession `json:"session"`
+	ApprovalMeta map[string]interface{}               `json:"approvalMeta,omitempty"`
 }
 
-func (s *SessionService) Get(ctx context.Context, name string) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) Get(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassSession, error) {
 	endpoint := fmt.Sprintf("api/breakglassSessions/%s", url.PathEscape(name))
 	var resp SessionGetResponse
 	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
@@ -94,38 +94,38 @@ func (s *SessionService) Get(ctx context.Context, name string) (*v1alpha1.Breakg
 	return &resp.Session, nil
 }
 
-func (s *SessionService) Request(ctx context.Context, req SessionRequest) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) Request(ctx context.Context, req SessionRequest) (*breakglassv1alpha1.BreakglassSession, error) {
 	endpoint := "api/breakglassSessions"
-	var session v1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	if err := s.client.do(ctx, http.MethodPost, endpoint, req, &session); err != nil {
 		return nil, err
 	}
 	return &session, nil
 }
 
-func (s *SessionService) Approve(ctx context.Context, name, reason string) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) Approve(ctx context.Context, name, reason string) (*breakglassv1alpha1.BreakglassSession, error) {
 	return s.action(ctx, name, "approve", reason)
 }
 
-func (s *SessionService) Reject(ctx context.Context, name, reason string) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) Reject(ctx context.Context, name, reason string) (*breakglassv1alpha1.BreakglassSession, error) {
 	return s.action(ctx, name, "reject", reason)
 }
 
-func (s *SessionService) Withdraw(ctx context.Context, name string) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) Withdraw(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassSession, error) {
 	return s.action(ctx, name, "withdraw", "")
 }
 
-func (s *SessionService) Drop(ctx context.Context, name string) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) Drop(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassSession, error) {
 	return s.action(ctx, name, "drop", "")
 }
 
-func (s *SessionService) Cancel(ctx context.Context, name string) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) Cancel(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassSession, error) {
 	return s.action(ctx, name, "cancel", "")
 }
 
-func (s *SessionService) action(ctx context.Context, name, action, reason string) (*v1alpha1.BreakglassSession, error) {
+func (s *SessionService) action(ctx context.Context, name, action, reason string) (*breakglassv1alpha1.BreakglassSession, error) {
 	endpoint := fmt.Sprintf("api/breakglassSessions/%s/%s", url.PathEscape(name), action)
-	var session v1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	var payload *SessionActionRequest
 	if reason != "" {
 		payload = &SessionActionRequest{Reason: reason}

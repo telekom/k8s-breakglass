@@ -42,7 +42,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -106,7 +106,7 @@ func (c *DebugSessionController) WithMailService(mailService MailEnqueuer, brand
 // SetupWithManager sets up the controller with the Manager
 func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.DebugSession{}).
+		For(&breakglassv1alpha1.DebugSession{}).
 		Complete(c)
 }
 
@@ -126,7 +126,7 @@ func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := c.log.With("debugSession", req.NamespacedName)
 
-	ds := &v1alpha1.DebugSession{}
+	ds := &breakglassv1alpha1.DebugSession{}
 	if err := c.client.Get(ctx, req.NamespacedName, ds); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Debug("DebugSession not found, ignoring")
@@ -138,13 +138,13 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Perform structural validation using shared validation function.
 	// This catches malformed resources that somehow bypassed the admission webhook.
-	validationResult := v1alpha1.ValidateDebugSession(ds)
+	validationResult := breakglassv1alpha1.ValidateDebugSession(ds)
 	if !validationResult.IsValid() {
 		log.Warnw("DebugSession failed structural validation, skipping reconciliation",
 			"errors", validationResult.ErrorMessage())
 
 		// Update status condition to reflect validation failure
-		ds.Status.State = v1alpha1.DebugSessionStateFailed
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 		ds.Status.Message = fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
 		if statusErr := applyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
@@ -157,15 +157,15 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
 
 	switch ds.Status.State {
-	case "", v1alpha1.DebugSessionStatePending:
+	case "", breakglassv1alpha1.DebugSessionStatePending:
 		return c.handlePending(ctx, ds)
-	case v1alpha1.DebugSessionStatePendingApproval:
+	case breakglassv1alpha1.DebugSessionStatePendingApproval:
 		return c.handlePendingApproval(ctx, ds)
-	case v1alpha1.DebugSessionStateActive:
+	case breakglassv1alpha1.DebugSessionStateActive:
 		return c.handleActive(ctx, ds)
-	case v1alpha1.DebugSessionStateExpired, v1alpha1.DebugSessionStateTerminated:
+	case breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateTerminated:
 		return c.handleCleanup(ctx, ds)
-	case v1alpha1.DebugSessionStateFailed:
+	case breakglassv1alpha1.DebugSessionStateFailed:
 		// Terminal state, no action needed
 		return ctrl.Result{}, nil
 	default:
@@ -175,7 +175,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 }
 
 // handlePending processes a newly created debug session
-func (c *DebugSessionController) handlePending(ctx context.Context, ds *v1alpha1.DebugSession) (ctrl.Result, error) {
+func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
 	// Resolve the template
@@ -190,7 +190,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *v1alpha1
 
 	// Find binding early so we can check its approvers for the approval decision
 	// This ensures bindings with approvers properly trigger approval workflow
-	var binding *v1alpha1.DebugSessionClusterBinding
+	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if ds.Spec.BindingRef != nil {
 		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
 		if err != nil {
@@ -211,12 +211,12 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *v1alpha1
 
 	// Check if approval is required (checks both template and binding approvers)
 	requiresApproval := c.requiresApproval(template, binding, ds)
-	ds.Status.Approval = &v1alpha1.DebugSessionApproval{
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 		Required: requiresApproval,
 	}
 
 	if requiresApproval {
-		ds.Status.State = v1alpha1.DebugSessionStatePendingApproval
+		ds.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
 		ds.Status.Message = "Waiting for approval"
 		if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
 			return ctrl.Result{}, err
@@ -230,7 +230,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *v1alpha1
 }
 
 // handlePendingApproval checks for approval status
-func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *v1alpha1.DebugSession) (ctrl.Result, error) {
+func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	// If approved, activate
 	if ds.Status.Approval != nil && ds.Status.Approval.ApprovedAt != nil {
 		template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
@@ -238,7 +238,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 			return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 		}
 		// Find binding for merging allowed pod operations
-		var binding *v1alpha1.DebugSessionClusterBinding
+		var binding *breakglassv1alpha1.DebugSessionClusterBinding
 		if ds.Spec.BindingRef != nil {
 			binding, _ = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
 		}
@@ -250,7 +250,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 
 	// If rejected, mark as terminated
 	if ds.Status.Approval != nil && ds.Status.Approval.RejectedAt != nil {
-		ds.Status.State = v1alpha1.DebugSessionStateTerminated
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 		ds.Status.Message = fmt.Sprintf("Rejected by %s: %s", ds.Status.Approval.RejectedBy, ds.Status.Approval.Reason)
 		return ctrl.Result{}, applyDebugSessionStatus(ctx, c.client, ds)
 	}
@@ -260,7 +260,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 }
 
 // handleActive manages an active debug session
-func (c *DebugSessionController) handleActive(ctx context.Context, ds *v1alpha1.DebugSession) (ctrl.Result, error) {
+func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
 	// Emit expiring-soon status message when within grace period
@@ -288,7 +288,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *v1alpha1.
 			}
 			return ctrl.Result{}, nil
 		}
-		ds.Status.State = v1alpha1.DebugSessionStateExpired
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateExpired
 		ds.Status.Message = "Session expired"
 		if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
 			return ctrl.Result{}, err
@@ -314,7 +314,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *v1alpha1.
 }
 
 // handleCleanup removes deployed resources for expired/terminated sessions
-func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *v1alpha1.DebugSession) (ctrl.Result, error) {
+func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
 	if err := c.cleanupResources(ctx, ds); err != nil {
@@ -345,16 +345,16 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *v1alpha1
 }
 
 // activateSession deploys debug resources and marks session as active
-func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
+func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
 	if mode == "" {
-		mode = v1alpha1.DebugSessionModeWorkload
+		mode = breakglassv1alpha1.DebugSessionModeWorkload
 	}
 
-	if mode == v1alpha1.DebugSessionModeWorkload || mode == v1alpha1.DebugSessionModeHybrid {
+	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
 		if err := c.deployDebugResources(ctx, ds, template); err != nil {
 			log.Errorw("Failed to deploy debug resources", "error", err)
 			return c.failSession(ctx, ds, fmt.Sprintf("failed to deploy resources: %v", err))
@@ -366,25 +366,25 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 	now := metav1.Now()
 	expiresAt := metav1.NewTime(now.Add(duration))
 
-	ds.Status.State = v1alpha1.DebugSessionStateActive
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
 	ds.Status.StartsAt = &now
 	ds.Status.ExpiresAt = &expiresAt
 	ds.Status.Message = "Debug session active"
 
 	// Cache AllowedPodOperations merged from template and binding for webhook enforcement
 	// Binding can only be more restrictive than template
-	var bindingOps *v1alpha1.AllowedPodOperations
+	var bindingOps *breakglassv1alpha1.AllowedPodOperations
 	if binding != nil {
 		bindingOps = binding.Spec.AllowedPodOperations
 	}
-	ds.Status.AllowedPodOperations = v1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
+	ds.Status.AllowedPodOperations = breakglassv1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
 
 	// Add the requesting user as owner participant
-	ds.Status.Participants = []v1alpha1.DebugSessionParticipant{{
+	ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{
 		User:        ds.Spec.RequestedBy,
 		Email:       ds.Spec.RequestedByEmail,
 		DisplayName: ds.Spec.RequestedByDisplayName,
-		Role:        v1alpha1.ParticipantRoleOwner,
+		Role:        breakglassv1alpha1.ParticipantRoleOwner,
 		JoinedAt:    now,
 	}}
 
@@ -416,7 +416,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 }
 
 // failSession marks a session as failed and logs the failure
-func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.DebugSession, reason string) (ctrl.Result, error) {
+func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, reason string) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
 	// Best-effort cleanup of any partially deployed resources on the target cluster.
@@ -456,7 +456,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.D
 		})
 	}
 
-	ds.Status.State = v1alpha1.DebugSessionStateFailed
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 	ds.Status.Message = reason
 
 	// Send failure notification email to requester
@@ -469,7 +469,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.D
 }
 
 // sendDebugSessionFailedEmail sends email notification to requester when a debug session fails
-func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *v1alpha1.DebugSession, reason string) {
+func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alpha1.DebugSession, reason string) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
 		return
 	}
@@ -505,7 +505,7 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *v1alpha1.DebugS
 
 // shouldEmitAudit checks if audit events should be emitted for this session
 // based on the template's audit configuration.
-func (c *DebugSessionController) shouldEmitAudit(ds *v1alpha1.DebugSession) bool {
+func (c *DebugSessionController) shouldEmitAudit(ds *breakglassv1alpha1.DebugSession) bool {
 	if ds.Status.ResolvedTemplate == nil {
 		return true // Default to emit audit if no template resolved yet
 	}
@@ -517,7 +517,7 @@ func (c *DebugSessionController) shouldEmitAudit(ds *v1alpha1.DebugSession) bool
 
 // sendToWebhookDestinations sends audit events to configured webhook destinations
 // from the debug session template's audit config.
-func (c *DebugSessionController) sendToWebhookDestinations(ctx context.Context, ds *v1alpha1.DebugSession, eventType string, payload map[string]interface{}) {
+func (c *DebugSessionController) sendToWebhookDestinations(ctx context.Context, ds *breakglassv1alpha1.DebugSession, eventType string, payload map[string]interface{}) {
 	if ds.Status.ResolvedTemplate == nil || ds.Status.ResolvedTemplate.Audit == nil {
 		return
 	}
@@ -527,7 +527,7 @@ func (c *DebugSessionController) sendToWebhookDestinations(ctx context.Context, 
 			continue
 		}
 
-		go func(destination v1alpha1.AuditDestination) {
+		go func(destination breakglassv1alpha1.AuditDestination) {
 			if err := c.sendWebhookEvent(ctx, destination, eventType, ds, payload); err != nil {
 				c.log.Warnw("Failed to send audit event to webhook destination",
 					"url", destination.URL,
@@ -540,7 +540,7 @@ func (c *DebugSessionController) sendToWebhookDestinations(ctx context.Context, 
 }
 
 // sendWebhookEvent sends an audit event to a webhook destination.
-func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest v1alpha1.AuditDestination, eventType string, ds *v1alpha1.DebugSession, payload map[string]interface{}) error {
+func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest breakglassv1alpha1.AuditDestination, eventType string, ds *breakglassv1alpha1.DebugSession, payload map[string]interface{}) error {
 	// Build the full payload
 	fullPayload := map[string]interface{}{
 		"eventType": eventType,
@@ -586,8 +586,8 @@ func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest v1al
 }
 
 // getTemplate retrieves a DebugSessionTemplate by name
-func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (*v1alpha1.DebugSessionTemplate, error) {
-	template := &v1alpha1.DebugSessionTemplate{}
+func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugSessionTemplate, error) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		return nil, err
 	}
@@ -595,8 +595,8 @@ func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (
 }
 
 // getPodTemplate retrieves a DebugPodTemplate by name
-func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string) (*v1alpha1.DebugPodTemplate, error) {
-	template := &v1alpha1.DebugPodTemplate{}
+func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugPodTemplate, error) {
+	template := &breakglassv1alpha1.DebugPodTemplate{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		return nil, err
 	}
@@ -604,8 +604,8 @@ func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string
 }
 
 // getBinding retrieves a DebugSessionClusterBinding by name and namespace
-func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace string) (*v1alpha1.DebugSessionClusterBinding, error) {
-	binding := &v1alpha1.DebugSessionClusterBinding{}
+func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
 		return nil, err
 	}
@@ -615,15 +615,15 @@ func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace
 // findBindingForSession finds a DebugSessionClusterBinding that matches the session's template and cluster.
 // This enables binding configuration to be applied even when BindingRef is not explicitly set.
 // Returns nil if no matching binding is found.
-func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *v1alpha1.DebugSessionTemplate, clusterName string) (*v1alpha1.DebugSessionClusterBinding, error) {
-	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
 	if err := c.client.List(ctx, bindingList); err != nil {
 		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
 	}
 
 	// Get cluster config for label-based matching
-	var clusterConfig *v1alpha1.ClusterConfig
-	clusterConfigList := &v1alpha1.ClusterConfigList{}
+	var clusterConfig *breakglassv1alpha1.ClusterConfig
+	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
 	if err := c.client.List(ctx, clusterConfigList); err == nil {
 		for i := range clusterConfigList.Items {
 			if clusterConfigList.Items[i].Name == clusterName {
@@ -657,7 +657,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 }
 
 // bindingMatchesTemplate checks if a binding references the given template
-func (c *DebugSessionController) bindingMatchesTemplate(binding *v1alpha1.DebugSessionClusterBinding, template *v1alpha1.DebugSessionTemplate) bool {
+func (c *DebugSessionController) bindingMatchesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
 	// Check templateRef
 	if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
 		return true
@@ -676,7 +676,7 @@ func (c *DebugSessionController) bindingMatchesTemplate(binding *v1alpha1.DebugS
 }
 
 // bindingMatchesCluster checks if a binding applies to the given cluster
-func (c *DebugSessionController) bindingMatchesCluster(binding *v1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *v1alpha1.ClusterConfig) bool {
+func (c *DebugSessionController) bindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *breakglassv1alpha1.ClusterConfig) bool {
 	// Check explicit cluster list
 	for _, cluster := range binding.Spec.Clusters {
 		if cluster == clusterName {
@@ -701,9 +701,9 @@ func (c *DebugSessionController) bindingMatchesCluster(binding *v1alpha1.DebugSe
 // resolveImpersonationConfig determines the impersonation configuration for a session.
 // Binding impersonation overrides template impersonation.
 func (c *DebugSessionController) resolveImpersonationConfig(
-	template *v1alpha1.DebugSessionTemplate,
-	binding *v1alpha1.DebugSessionClusterBinding,
-) *v1alpha1.ImpersonationConfig {
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+) *breakglassv1alpha1.ImpersonationConfig {
 	// Binding takes precedence
 	if binding != nil && binding.Spec.Impersonation != nil {
 		return binding.Spec.Impersonation
@@ -720,7 +720,7 @@ func (c *DebugSessionController) resolveImpersonationConfig(
 func (c *DebugSessionController) createImpersonatedClient(
 	ctx context.Context,
 	clusterName string,
-	impConfig *v1alpha1.ImpersonationConfig,
+	impConfig *breakglassv1alpha1.ImpersonationConfig,
 ) (ctrlclient.Client, error) {
 	// Get base REST config for spoke cluster
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, clusterName)
@@ -751,7 +751,7 @@ func (c *DebugSessionController) createImpersonatedClient(
 func (c *DebugSessionController) validateSpokeServiceAccount(
 	ctx context.Context,
 	spokeClient ctrlclient.Client,
-	saRef *v1alpha1.ServiceAccountReference,
+	saRef *breakglassv1alpha1.ServiceAccountReference,
 ) error {
 	sa := &corev1.ServiceAccount{}
 	err := spokeClient.Get(ctx, ctrlclient.ObjectKey{
@@ -772,7 +772,7 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 // It checks both the template and the binding for approvers configuration.
 // Approval is required if either the template or binding specifies approvers
 // (unless auto-approve conditions are met).
-func (c *DebugSessionController) requiresApproval(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, ds *v1alpha1.DebugSession) bool {
+func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
 	// Check if binding has approvers configured (takes precedence)
 	if binding != nil && binding.Spec.Approvers != nil {
 		if len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0 {
@@ -811,7 +811,7 @@ func (c *DebugSessionController) requiresApproval(template *v1alpha1.DebugSessio
 }
 
 // checkAutoApprove checks if auto-approve conditions are met for the session
-func (c *DebugSessionController) checkAutoApprove(autoApprove *v1alpha1.AutoApproveConfig, ds *v1alpha1.DebugSession) bool {
+func (c *DebugSessionController) checkAutoApprove(autoApprove *breakglassv1alpha1.AutoApproveConfig, ds *breakglassv1alpha1.DebugSession) bool {
 	// Auto-approve for specific clusters
 	for _, pattern := range autoApprove.Clusters {
 		if matched, _ := filepath.Match(pattern, ds.Spec.Cluster); matched {
@@ -842,11 +842,11 @@ func (c *DebugSessionController) checkAutoApprove(autoApprove *v1alpha1.AutoAppr
 }
 
 // deployDebugResources creates the debug workload on the target cluster
-func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) error {
+func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
 
 	// Get pod template if referenced
-	var podTemplate *v1alpha1.DebugPodTemplate
+	var podTemplate *breakglassv1alpha1.DebugPodTemplate
 	if template.Spec.PodTemplateRef != nil {
 		var err error
 		podTemplate, err = c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
@@ -856,7 +856,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 	}
 
 	// Get binding if session was created via a binding
-	var binding *v1alpha1.DebugSessionClusterBinding
+	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if ds.Spec.BindingRef != nil {
 		var err error
 		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
@@ -887,8 +887,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 
 	// Cache resolved binding info in session status for observability
 	if binding != nil {
-		displayName := v1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
-		ds.Status.ResolvedBinding = &v1alpha1.ResolvedBindingRef{
+		displayName := breakglassv1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
+		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
 			Name:        binding.Name,
 			Namespace:   binding.Namespace,
 			DisplayName: displayName,
@@ -974,7 +974,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 				return fmt.Errorf("failed to apply resource quota: %w", err)
 			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(),
 				Kind:       gvk.Kind,
 				Name:       rq.Name,
@@ -996,7 +996,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
 			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(),
 				Kind:       gvk.Kind,
 				Name:       pdb.Name,
@@ -1034,7 +1034,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 	log.Infow("Debug workload applied", "name", workload.GetName())
 
 	// Record deployed resource using captured GVK
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion: gvk.GroupVersion().String(),
 		Kind:       gvk.Kind,
 		Name:       workload.GetName(),
@@ -1068,7 +1068,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 //   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment)
 //   - Full Pod manifest (kind: Pod): PodSpec extracted, wrapped into workloadType
 //   - Full workload manifest (kind: Deployment/DaemonSet): used directly with breakglass labels merged
-func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, podTemplate *v1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
+func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, podTemplate *breakglassv1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	// ds.Name already starts with "debug-" (generated as "debug-{user}-{cluster}-{ts}"),
 	// so we use it directly to avoid a redundant "debug-debug-" prefix.
 	workloadName := ds.Name
@@ -1116,7 +1116,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
-		workloadType = v1alpha1.DebugWorkloadDaemonSet
+		workloadType = breakglassv1alpha1.DebugWorkloadDaemonSet
 	}
 
 	podSpec := renderResult.PodSpec
@@ -1128,7 +1128,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 
 	// Enforce RestartPolicy: Always for DaemonSets and Deployments
 	// These workload types require Always restart policy
-	if workloadType == v1alpha1.DebugWorkloadDaemonSet || workloadType == v1alpha1.DebugWorkloadDeployment {
+	if workloadType == breakglassv1alpha1.DebugWorkloadDaemonSet || workloadType == breakglassv1alpha1.DebugWorkloadDeployment {
 		if podSpec.RestartPolicy != corev1.RestartPolicyAlways {
 			c.log.Debugw("Overriding RestartPolicy to Always for workload type",
 				"workloadType", workloadType,
@@ -1140,7 +1140,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 	}
 
 	switch workloadType {
-	case v1alpha1.DebugWorkloadDaemonSet:
+	case breakglassv1alpha1.DebugWorkloadDaemonSet:
 		return &appsv1.DaemonSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
@@ -1168,7 +1168,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 			},
 		}, renderResult.AdditionalResources, nil
 
-	case v1alpha1.DebugWorkloadDeployment:
+	case breakglassv1alpha1.DebugWorkloadDeployment:
 		replicas := int32(1)
 		if template.Spec.Replicas != nil {
 			replicas = *template.Spec.Replicas
@@ -1214,17 +1214,17 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 // and enforces breakglass policies (RestartPolicy, selectors, replicas).
 func (c *DebugSessionController) useTemplateWorkload(
 	renderResult *PodTemplateRenderResult,
-	workloadType v1alpha1.DebugWorkloadType,
+	workloadType breakglassv1alpha1.DebugWorkloadType,
 	workloadName, targetNs string,
-	ds *v1alpha1.DebugSession,
-	template *v1alpha1.DebugSessionTemplate,
+	ds *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplate,
 	labels, annotations map[string]string,
 ) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	workload := renderResult.Workload
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
 	// Validate workload kind matches the configured workloadType
-	if v1alpha1.DebugWorkloadType(gvk.Kind) != workloadType {
+	if breakglassv1alpha1.DebugWorkloadType(gvk.Kind) != workloadType {
 		return nil, nil, fmt.Errorf(
 			"templateString produces a %s but workloadType is %s: these must match",
 			gvk.Kind, workloadType,
@@ -1302,7 +1302,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 func (c *DebugSessionController) deployPodTemplateResource(
 	ctx context.Context,
 	targetClient ctrlclient.Client,
-	ds *v1alpha1.DebugSession,
+	ds *breakglassv1alpha1.DebugSession,
 	obj *unstructured.Unstructured,
 	targetNs string,
 ) error {
@@ -1340,7 +1340,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	}
 
 	// Track in session status
-	status := v1alpha1.PodTemplateResourceStatus{
+	status := breakglassv1alpha1.PodTemplateResourceStatus{
 		Kind:         obj.GetKind(),
 		APIVersion:   obj.GetAPIVersion(),
 		ResourceName: obj.GetName(),
@@ -1353,7 +1353,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
 
 	// Add to deployed resources list
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion: obj.GetAPIVersion(),
 		Kind:       obj.GetKind(),
 		Name:       obj.GetName(),
@@ -1374,7 +1374,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 // Now supports multi-document YAML where the first document can be a bare PodSpec,
 // a full Pod manifest, or a full Deployment/DaemonSet manifest.
 // Returns a PodTemplateRenderResult containing the PodSpec, optional workload, and metadata.
-func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) (*PodTemplateRenderResult, error) {
+func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (*PodTemplateRenderResult, error) {
 	var renderResult *PodTemplateRenderResult
 
 	// Build render context for template rendering (podTemplateString, podOverridesTemplate)
@@ -1509,20 +1509,20 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 
 // buildPodRenderContext creates the render context for pod templates.
 // This is a subset of AuxiliaryResourceContext, focused on pod rendering.
-func (c *DebugSessionController) buildPodRenderContext(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) v1alpha1.AuxiliaryResourceContext {
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+func (c *DebugSessionController) buildPodRenderContext(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate) breakglassv1alpha1.AuxiliaryResourceContext {
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:        ds.Name,
 			Namespace:   ds.Namespace,
 			Cluster:     ds.Spec.Cluster,
 			RequestedBy: ds.Spec.RequestedBy,
 			Reason:      ds.Spec.Reason,
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   ds.Spec.TargetNamespace,
 			ClusterName: ds.Spec.Cluster,
 		},
-		Template: v1alpha1.AuxiliaryResourceTemplateContext{
+		Template: breakglassv1alpha1.AuxiliaryResourceTemplateContext{
 			Name:        ds.Spec.TemplateRef,
 			DisplayName: template.Spec.DisplayName,
 		},
@@ -1556,8 +1556,8 @@ func (c *DebugSessionController) buildPodRenderContext(ds *v1alpha1.DebugSession
 // buildVarsFromSession extracts user-provided variable values from session spec
 // and applies defaults from template definition.
 func (c *DebugSessionController) buildVarsFromSession(
-	ds *v1alpha1.DebugSession,
-	templateSpec *v1alpha1.DebugSessionTemplateSpec,
+	ds *breakglassv1alpha1.DebugSession,
+	templateSpec *breakglassv1alpha1.DebugSessionTemplateSpec,
 ) map[string]string {
 	vars := make(map[string]string)
 
@@ -1636,7 +1636,7 @@ type PodTemplateRenderResult struct {
 // renderPodTemplateString renders a podTemplateString Go template and returns a PodSpec.
 // For backward compatibility, this returns only the PodSpec (first document).
 // Use renderPodTemplateStringMultiDoc for full multi-document support.
-func (c *DebugSessionController) renderPodTemplateString(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (corev1.PodSpec, error) {
+func (c *DebugSessionController) renderPodTemplateString(templateStr string, ctx breakglassv1alpha1.AuxiliaryResourceContext) (corev1.PodSpec, error) {
 	result, err := c.renderPodTemplateStringMultiDoc(templateStr, ctx)
 	if err != nil {
 		return corev1.PodSpec{}, err
@@ -1653,7 +1653,7 @@ func (c *DebugSessionController) renderPodTemplateString(templateStr string, ctx
 //
 // Subsequent documents can be any Kubernetes resource (ConfigMaps, Secrets, PVCs, etc.)
 // that will be deployed alongside the debug pod.
-func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (*PodTemplateRenderResult, error) {
+func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr string, ctx breakglassv1alpha1.AuxiliaryResourceContext) (*PodTemplateRenderResult, error) {
 	renderer := NewTemplateRenderer()
 	documents, err := renderer.RenderMultiDocumentTemplate(templateStr, ctx)
 	if err != nil {
@@ -1794,14 +1794,14 @@ func (c *DebugSessionController) extractPodSpecFromPodManifest(document []byte, 
 }
 
 // renderPodOverridesTemplate renders podOverridesTemplate and returns structured overrides.
-func (c *DebugSessionController) renderPodOverridesTemplate(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (*v1alpha1.DebugPodSpecOverrides, error) {
+func (c *DebugSessionController) renderPodOverridesTemplate(templateStr string, ctx breakglassv1alpha1.AuxiliaryResourceContext) (*breakglassv1alpha1.DebugPodSpecOverrides, error) {
 	renderer := NewTemplateRenderer()
 	rendered, err := renderer.RenderTemplateString(templateStr, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("template rendering failed: %w", err)
 	}
 
-	var overrides v1alpha1.DebugPodSpecOverrides
+	var overrides breakglassv1alpha1.DebugPodSpecOverrides
 	if err := yaml.Unmarshal(rendered, &overrides); err != nil {
 		return nil, fmt.Errorf("failed to parse rendered overrides YAML: %w", err)
 	}
@@ -1810,7 +1810,7 @@ func (c *DebugSessionController) renderPodOverridesTemplate(templateStr string, 
 }
 
 // applyPodOverridesStruct applies rendered overrides to a pod spec.
-func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, overrides *v1alpha1.DebugPodSpecOverrides) {
+func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, overrides *breakglassv1alpha1.DebugPodSpecOverrides) {
 	if overrides == nil {
 		return
 	}
@@ -1847,35 +1847,35 @@ func mergeStringMaps(base map[string]string, maps ...map[string]string) map[stri
 	return merged
 }
 
-func bindingLabels(binding *v1alpha1.DebugSessionClusterBinding) map[string]string {
+func bindingLabels(binding *breakglassv1alpha1.DebugSessionClusterBinding) map[string]string {
 	if binding == nil {
 		return nil
 	}
 	return binding.Spec.Labels
 }
 
-func bindingAnnotations(binding *v1alpha1.DebugSessionClusterBinding) map[string]string {
+func bindingAnnotations(binding *breakglassv1alpha1.DebugSessionClusterBinding) map[string]string {
 	if binding == nil {
 		return nil
 	}
 	return binding.Spec.Annotations
 }
 
-func podTemplateLabels(podTemplate *v1alpha1.DebugPodTemplate) map[string]string {
+func podTemplateLabels(podTemplate *breakglassv1alpha1.DebugPodTemplate) map[string]string {
 	if podTemplate == nil || podTemplate.Spec.Template == nil || podTemplate.Spec.Template.Metadata == nil {
 		return nil
 	}
 	return podTemplate.Spec.Template.Metadata.Labels
 }
 
-func podTemplateAnnotations(podTemplate *v1alpha1.DebugPodTemplate) map[string]string {
+func podTemplateAnnotations(podTemplate *breakglassv1alpha1.DebugPodTemplate) map[string]string {
 	if podTemplate == nil || podTemplate.Spec.Template == nil || podTemplate.Spec.Template.Metadata == nil {
 		return nil
 	}
 	return podTemplate.Spec.Template.Metadata.Annotations
 }
 
-func enforceContainerResources(cfg *v1alpha1.DebugResourceQuotaConfig, containers []corev1.Container, initContainers []corev1.Container) error {
+func enforceContainerResources(cfg *breakglassv1alpha1.DebugResourceQuotaConfig, containers []corev1.Container, initContainers []corev1.Container) error {
 	if cfg == nil {
 		return nil
 	}
@@ -1928,7 +1928,7 @@ func enforceContainerResources(cfg *v1alpha1.DebugResourceQuotaConfig, container
 	return nil
 }
 
-func (c *DebugSessionController) buildResourceQuota(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, targetNs string) (*corev1.ResourceQuota, error) {
+func (c *DebugSessionController) buildResourceQuota(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, targetNs string) (*corev1.ResourceQuota, error) {
 	if template.Spec.ResourceQuota == nil {
 		return nil, nil
 	}
@@ -1992,7 +1992,7 @@ func (c *DebugSessionController) buildResourceQuota(ds *v1alpha1.DebugSession, t
 	}, nil
 }
 
-func (c *DebugSessionController) buildPodDisruptionBudget(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, targetNs string) (*policyv1.PodDisruptionBudget, error) {
+func (c *DebugSessionController) buildPodDisruptionBudget(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, targetNs string) (*policyv1.PodDisruptionBudget, error) {
 	if template.Spec.PodDisruptionBudget == nil || !template.Spec.PodDisruptionBudget.Enabled {
 		return nil, nil
 	}
@@ -2044,7 +2044,7 @@ func (c *DebugSessionController) buildPodDisruptionBudget(ds *v1alpha1.DebugSess
 
 // applySchedulingConstraints applies SchedulingConstraints to a PodSpec.
 // This merges the constraints with any existing scheduling configuration.
-func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec, constraints *v1alpha1.SchedulingConstraints) {
+func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec, constraints *breakglassv1alpha1.SchedulingConstraints) {
 	if constraints == nil {
 		return
 	}
@@ -2136,7 +2136,7 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 }
 
 // convertDebugPodSpec converts our DebugPodSpecInner to corev1.PodSpec
-func (c *DebugSessionController) convertDebugPodSpec(dps v1alpha1.DebugPodSpecInner) corev1.PodSpec {
+func (c *DebugSessionController) convertDebugPodSpec(dps breakglassv1alpha1.DebugPodSpecInner) corev1.PodSpec {
 	spec := corev1.PodSpec{
 		Containers:                dps.Containers,
 		InitContainers:            dps.InitContainers,
@@ -2191,7 +2191,7 @@ func (c *DebugSessionController) convertDebugPodSpec(dps v1alpha1.DebugPodSpecIn
 }
 
 // updateAllowedPods updates the list of pods users can exec into and monitors pod health
-func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1alpha1.DebugSession) error {
+func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	if c.ccProvider == nil {
 		return nil
 	}
@@ -2218,7 +2218,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1al
 		return err
 	}
 
-	allowedPods := make([]v1alpha1.AllowedPodRef, 0, len(podList.Items))
+	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(podList.Items))
 	for _, pod := range podList.Items {
 		ready := false
 		for _, cond := range pod.Status.Conditions {
@@ -2234,7 +2234,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1al
 		// Build container status for detailed information
 		containerStatus := buildContainerStatus(&pod)
 
-		allowedPods = append(allowedPods, v1alpha1.AllowedPodRef{
+		allowedPods = append(allowedPods, breakglassv1alpha1.AllowedPodRef{
 			Namespace:       pod.Namespace,
 			Name:            pod.Name,
 			NodeName:        pod.Spec.NodeName,
@@ -2249,7 +2249,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1al
 }
 
 // monitorPodHealth checks pod status and emits audit events for failures/restarts
-func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alpha1.DebugSession, pod *corev1.Pod, log *zap.SugaredLogger) {
+func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod, log *zap.SugaredLogger) {
 	// Check for pod phase failures
 	if pod.Status.Phase == corev1.PodFailed {
 		reason := pod.Status.Reason
@@ -2350,13 +2350,13 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alp
 }
 
 // buildContainerStatus extracts detailed container state information from a pod
-func buildContainerStatus(pod *corev1.Pod) *v1alpha1.PodContainerStatus {
+func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatus {
 	if len(pod.Status.ContainerStatuses) == 0 {
 		return nil
 	}
 
 	// Look for the most interesting container status (one with problems)
-	var status *v1alpha1.PodContainerStatus
+	var status *breakglassv1alpha1.PodContainerStatus
 	for _, cs := range pod.Status.ContainerStatuses {
 		// Check for waiting state issues
 		if cs.State.Waiting != nil {
@@ -2368,7 +2368,7 @@ func buildContainerStatus(pod *corev1.Pod) *v1alpha1.PodContainerStatus {
 				waitingReason == "CreateContainerConfigError" ||
 				waitingReason == "CreateContainerError" ||
 				waitingReason == "ContainerCreating" {
-				status = &v1alpha1.PodContainerStatus{
+				status = &breakglassv1alpha1.PodContainerStatus{
 					WaitingReason:  waitingReason,
 					WaitingMessage: cs.State.Waiting.Message,
 					RestartCount:   cs.RestartCount,
@@ -2389,7 +2389,7 @@ func buildContainerStatus(pod *corev1.Pod) *v1alpha1.PodContainerStatus {
 
 		// Track restart counts even for running containers
 		if cs.RestartCount > 0 && status == nil {
-			status = &v1alpha1.PodContainerStatus{
+			status = &breakglassv1alpha1.PodContainerStatus{
 				RestartCount: cs.RestartCount,
 			}
 			if cs.LastTerminationState.Terminated != nil {
@@ -2405,7 +2405,7 @@ func buildContainerStatus(pod *corev1.Pod) *v1alpha1.PodContainerStatus {
 }
 
 // cleanupResources removes deployed resources from the target cluster
-func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alpha1.DebugSession) error {
+func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
 
 	if c.ccProvider == nil {
@@ -2530,7 +2530,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 }
 
 // cleanupPodTemplateResources removes resources deployed from multi-document pod templates.
-func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context, ds *v1alpha1.DebugSession, targetClient ctrlclient.Client) error {
+func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession, targetClient ctrlclient.Client) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
 
 	for i := range ds.Status.PodTemplateResourceStatuses {
@@ -2592,15 +2592,15 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 
 // parseDuration parses the requested duration with template constraints.
 // Supports day units (e.g., "1d", "7d") in addition to standard Go duration units.
-func (c *DebugSessionController) parseDuration(requested string, constraints *v1alpha1.DebugSessionConstraints) time.Duration {
+func (c *DebugSessionController) parseDuration(requested string, constraints *breakglassv1alpha1.DebugSessionConstraints) time.Duration {
 	defaultDur := time.Hour
 	maxDur := 4 * time.Hour
 
 	if constraints != nil {
-		if d, err := v1alpha1.ParseDuration(constraints.DefaultDuration); err == nil {
+		if d, err := breakglassv1alpha1.ParseDuration(constraints.DefaultDuration); err == nil {
 			defaultDur = d
 		}
-		if d, err := v1alpha1.ParseDuration(constraints.MaxDuration); err == nil {
+		if d, err := breakglassv1alpha1.ParseDuration(constraints.MaxDuration); err == nil {
 			maxDur = d
 		}
 	}
@@ -2609,7 +2609,7 @@ func (c *DebugSessionController) parseDuration(requested string, constraints *v1
 		return defaultDur
 	}
 
-	dur, err := v1alpha1.ParseDuration(requested)
+	dur, err := breakglassv1alpha1.ParseDuration(requested)
 	if err != nil {
 		return defaultDur
 	}
@@ -2621,7 +2621,7 @@ func (c *DebugSessionController) parseDuration(requested string, constraints *v1
 }
 
 // setupTerminalSharing configures terminal sharing status for the session
-func (c *DebugSessionController) setupTerminalSharing(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) *v1alpha1.TerminalSharingStatus {
+func (c *DebugSessionController) setupTerminalSharing(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate) *breakglassv1alpha1.TerminalSharingStatus {
 	if template.Spec.TerminalSharing == nil || !template.Spec.TerminalSharing.Enabled {
 		return nil
 	}
@@ -2653,7 +2653,7 @@ func (c *DebugSessionController) setupTerminalSharing(ds *v1alpha1.DebugSession,
 		"provider", provider,
 		"sessionName", sessionName)
 
-	return &v1alpha1.TerminalSharingStatus{
+	return &breakglassv1alpha1.TerminalSharingStatus{
 		Enabled:       true,
 		SessionName:   sessionName,
 		AttachCommand: attachCommand,
@@ -2661,7 +2661,7 @@ func (c *DebugSessionController) setupTerminalSharing(ds *v1alpha1.DebugSession,
 }
 
 // IsPodInDebugSession checks if a pod belongs to an active debug session
-func IsPodInDebugSession(namespace, name string, allowedPods []v1alpha1.AllowedPodRef) bool {
+func IsPodInDebugSession(namespace, name string, allowedPods []breakglassv1alpha1.AllowedPodRef) bool {
 	for _, pod := range allowedPods {
 		if pod.Namespace == namespace && pod.Name == name {
 			return true
@@ -2673,11 +2673,11 @@ func IsPodInDebugSession(namespace, name string, allowedPods []v1alpha1.AllowedP
 // updateTemplateStatus updates the DebugSessionTemplate and DebugPodTemplate status
 // to reflect active session counts and usage tracking.
 // incrementActive: true when activating a session, false when deactivating (cleanup/expiry)
-func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, template *v1alpha1.DebugSessionTemplate, incrementActive bool) error {
+func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, incrementActive bool) error {
 	log := c.log.With("template", template.Name)
 
 	// Re-fetch template to get latest version
-	currentTemplate := &v1alpha1.DebugSessionTemplate{}
+	currentTemplate := &breakglassv1alpha1.DebugSessionTemplate{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: template.Name}, currentTemplate); err != nil {
 		return fmt.Errorf("failed to get template: %w", err)
 	}
@@ -2717,7 +2717,7 @@ func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, templ
 // updatePodTemplateUsedBy ensures the DebugPodTemplate.status.usedBy list includes
 // the given DebugSessionTemplate name.
 func (c *DebugSessionController) updatePodTemplateUsedBy(ctx context.Context, podTemplateName, sessionTemplateName string) error {
-	podTemplate := &v1alpha1.DebugPodTemplate{}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: podTemplateName}, podTemplate); err != nil {
 		return fmt.Errorf("failed to get pod template: %w", err)
 	}

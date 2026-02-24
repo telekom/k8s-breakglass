@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
@@ -48,7 +48,7 @@ type BreakglassSessionStatusApplyConfiguration struct {
 	// This value is set based on spec.retainFor when the session is approved.
 	RetainedUntil *metav1.Time `json:"retainedUntil,omitempty"`
 	// State represents the current state of the Breakglass session.
-	State *apiv1alpha1.BreakglassSessionState `json:"state,omitempty"`
+	State *breakglassv1alpha1.BreakglassSessionState `json:"state,omitempty"`
 	// approver is the identity (email) of the last approver who changed the session state.
 	Approver *string `json:"approver,omitempty"`
 	// approvers is a list of identities (emails) who have approved this session.
@@ -147,7 +147,7 @@ func (b *BreakglassSessionStatusApplyConfiguration) WithRetainedUntil(value meta
 // WithState sets the State field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the State field is set to the value of the last call.
-func (b *BreakglassSessionStatusApplyConfiguration) WithState(value apiv1alpha1.BreakglassSessionState) *BreakglassSessionStatusApplyConfiguration {
+func (b *BreakglassSessionStatusApplyConfiguration) WithState(value breakglassv1alpha1.BreakglassSessionState) *BreakglassSessionStatusApplyConfiguration {
 	b.State = &value
 	return b
 }

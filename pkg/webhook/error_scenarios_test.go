@@ -15,7 +15,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -25,13 +25,13 @@ import (
 
 var errorScenarioIndexFns = map[string]client.IndexerFunc{
 	"spec.user": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 	},
 	"spec.grantedGroup": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
 }
 
@@ -39,7 +39,7 @@ var errorScenarioIndexFns = map[string]client.IndexerFunc{
 func TestHandleAuthorize_MalformedJSON(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -72,7 +72,7 @@ func TestHandleAuthorize_MalformedJSON(t *testing.T) {
 func TestHandleAuthorize_NilResourceAttributes(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -112,7 +112,7 @@ func TestHandleAuthorize_NilResourceAttributes(t *testing.T) {
 func TestHandleAuthorize_SpecialCharactersInReason(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -156,7 +156,7 @@ func TestHandleAuthorize_SpecialCharactersInReason(t *testing.T) {
 func TestHandleAuthorize_EmptyUserField(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -200,7 +200,7 @@ func TestHandleAuthorize_EmptyUserField(t *testing.T) {
 func TestHandleAuthorize_ConcurrentRequests(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -253,7 +253,7 @@ func TestHandleAuthorize_ConcurrentRequests(t *testing.T) {
 func TestHandleAuthorize_InvalidResourceName(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -298,7 +298,7 @@ func TestHandleAuthorize_InvalidResourceName(t *testing.T) {
 func TestHandleAuthorize_InvalidGroupFormat(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -338,7 +338,7 @@ func TestHandleAuthorize_InvalidGroupFormat(t *testing.T) {
 func TestHandleAuthorize_BothAttributeTypesPresent(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -386,7 +386,7 @@ func TestHandleAuthorize_BothAttributeTypesPresent(t *testing.T) {
 func TestHandleAuthorize_UnicodeCharactersInUser(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -430,7 +430,7 @@ func TestHandleAuthorize_UnicodeCharactersInUser(t *testing.T) {
 func TestHandleAuthorize_MissingContentType(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range errorScenarioIndexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 

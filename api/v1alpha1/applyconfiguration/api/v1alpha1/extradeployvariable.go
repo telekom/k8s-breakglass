@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
@@ -27,7 +27,7 @@ type ExtraDeployVariableApplyConfiguration struct {
 	// description provides help text for the user.
 	Description *string `json:"description,omitempty"`
 	// inputType defines the UI input control and value type.
-	InputType *apiv1alpha1.ExtraDeployInputType `json:"inputType,omitempty"`
+	InputType *breakglassv1alpha1.ExtraDeployInputType `json:"inputType,omitempty"`
 	// options provides choices for select/multiSelect input types.
 	// Required when inputType is select or multiSelect.
 	Options []SelectOptionApplyConfiguration `json:"options,omitempty"`
@@ -82,7 +82,7 @@ func (b *ExtraDeployVariableApplyConfiguration) WithDescription(value string) *E
 // WithInputType sets the InputType field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the InputType field is set to the value of the last call.
-func (b *ExtraDeployVariableApplyConfiguration) WithInputType(value apiv1alpha1.ExtraDeployInputType) *ExtraDeployVariableApplyConfiguration {
+func (b *ExtraDeployVariableApplyConfiguration) WithInputType(value breakglassv1alpha1.ExtraDeployInputType) *ExtraDeployVariableApplyConfiguration {
 	b.InputType = &value
 	return b
 }

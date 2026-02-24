@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,7 +26,7 @@ type DebugSessionParticipantApplyConfiguration struct {
 	// displayName is the human-readable name of the participant (from OIDC "name" claim).
 	DisplayName *string `json:"displayName,omitempty"`
 	// role is the participant's role (owner or participant).
-	Role *apiv1alpha1.ParticipantRole `json:"role,omitempty"`
+	Role *breakglassv1alpha1.ParticipantRole `json:"role,omitempty"`
 	// joinedAt is when the user joined the session.
 	JoinedAt *v1.Time `json:"joinedAt,omitempty"`
 	// leftAt is when the user left the session (if they have left).
@@ -66,7 +66,7 @@ func (b *DebugSessionParticipantApplyConfiguration) WithDisplayName(value string
 // WithRole sets the Role field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Role field is set to the value of the last call.
-func (b *DebugSessionParticipantApplyConfiguration) WithRole(value apiv1alpha1.ParticipantRole) *DebugSessionParticipantApplyConfiguration {
+func (b *DebugSessionParticipantApplyConfiguration) WithRole(value breakglassv1alpha1.ParticipantRole) *DebugSessionParticipantApplyConfiguration {
 	b.Role = &value
 	return b
 }

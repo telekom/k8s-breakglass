@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +77,7 @@ func TestParseRetainFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := v1alpha1.BreakglassSessionSpec{RetainFor: tt.value}
+			spec := breakglassv1alpha1.BreakglassSessionSpec{RetainFor: tt.value}
 			result := ParseRetainFor(spec, log)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -121,7 +121,7 @@ func TestParseMaxValidFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := v1alpha1.BreakglassSessionSpec{MaxValidFor: tt.value}
+			spec := breakglassv1alpha1.BreakglassSessionSpec{MaxValidFor: tt.value}
 			result := ParseMaxValidFor(spec, log)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -155,7 +155,7 @@ func TestParseEscalationMaxValidFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := v1alpha1.BreakglassEscalationSpec{MaxValidFor: tt.value}
+			spec := breakglassv1alpha1.BreakglassEscalationSpec{MaxValidFor: tt.value}
 			result := ParseEscalationMaxValidFor(spec, log)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -195,7 +195,7 @@ func TestParseApprovalTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := v1alpha1.BreakglassEscalationSpec{ApprovalTimeout: tt.value}
+			spec := breakglassv1alpha1.BreakglassEscalationSpec{ApprovalTimeout: tt.value}
 			result := ParseApprovalTimeout(spec, log)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -242,11 +242,11 @@ func TestParseDurationOrDefault(t *testing.T) {
 
 func TestParseDurationWithNilLogger(t *testing.T) {
 	// Ensure nil logger doesn't panic
-	spec := v1alpha1.BreakglassSessionSpec{RetainFor: "invalid"}
+	spec := breakglassv1alpha1.BreakglassSessionSpec{RetainFor: "invalid"}
 	result := ParseRetainFor(spec, nil)
 	assert.Equal(t, DefaultRetainForDuration, result)
 
-	spec2 := v1alpha1.BreakglassSessionSpec{MaxValidFor: "1h"}
+	spec2 := breakglassv1alpha1.BreakglassSessionSpec{MaxValidFor: "1h"}
 	result2 := ParseMaxValidFor(spec2, nil)
 	assert.Equal(t, time.Hour, result2)
 }
@@ -293,7 +293,7 @@ func TestParseEscalationRetainFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := v1alpha1.BreakglassEscalationSpec{RetainFor: tt.value}
+			spec := breakglassv1alpha1.BreakglassEscalationSpec{RetainFor: tt.value}
 			result := ParseEscalationRetainFor(spec, log)
 			assert.Equal(t, tt.expected, result)
 		})

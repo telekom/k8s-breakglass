@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -107,29 +107,29 @@ func writeTestConfigForEscalation(t *testing.T, serverURL string) string {
 
 // Mock server for integration-style tests
 func setupMockEscalationServer(t *testing.T) *httptest.Server {
-	escalations := []v1alpha1.BreakglassEscalation{
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-escalation-1"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "admin",
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-a", "cluster-b"},
 					Groups:   []string{"developers"},
 				},
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"approvers"},
 				},
 			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-escalation-2"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "viewer",
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-b", "cluster-c"},
 					Groups:   []string{"readers"},
 				},
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"admin@example.com"},
 				},
 			},
@@ -168,7 +168,7 @@ func TestEscalationListCommand_WithMockServer(t *testing.T) {
 
 	require.NoError(t, err)
 
-	var result []v1alpha1.BreakglassEscalation
+	var result []breakglassv1alpha1.BreakglassEscalation
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &result))
 	assert.Len(t, result, 2)
 	assert.Equal(t, "test-escalation-1", result[0].Name)

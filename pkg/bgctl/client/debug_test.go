@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -33,7 +33,7 @@ func TestDebugSessionsList(t *testing.T) {
 				TemplateRef:  "template-1",
 				Cluster:      "cluster-a",
 				RequestedBy:  "user@example.com",
-				State:        v1alpha1.DebugSessionStateActive,
+				State:        breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:     &startsAt,
 				ExpiresAt:    &expiresAt,
 				Participants: 2,
@@ -67,19 +67,19 @@ func TestDebugSessionsList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Sessions, 1)
 	assert.Equal(t, "debug-session-1", result.Sessions[0].Name)
-	assert.Equal(t, v1alpha1.DebugSessionStateActive, result.Sessions[0].State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, result.Sessions[0].State)
 }
 
 func TestDebugSessionsGet(t *testing.T) {
-	debugSession := v1alpha1.DebugSession{
+	debugSession := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			TemplateRef: "template-1",
 			Cluster:     "test-cluster",
 			RequestedBy: "user@example.com",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			State: v1alpha1.DebugSessionStateActive,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
 		},
 	}
 
@@ -98,7 +98,7 @@ func TestDebugSessionsGet(t *testing.T) {
 	result, err := client.DebugSessions().Get(context.Background(), "debug-session-123", "")
 	require.NoError(t, err)
 	assert.Equal(t, "debug-session-123", result.Name)
-	assert.Equal(t, v1alpha1.DebugSessionStateActive, result.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, result.Status.State)
 }
 
 func TestDebugSessionsCreate(t *testing.T) {
@@ -113,9 +113,9 @@ func TestDebugSessionsCreate(t *testing.T) {
 		assert.Equal(t, "cluster-a", req.Cluster)
 
 		response := DebugSessionDetailResponse{
-			DebugSession: v1alpha1.DebugSession{
+			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-new"},
-				Spec: v1alpha1.DebugSessionSpec{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					TemplateRef: req.TemplateRef,
 					Cluster:     req.Cluster,
 					RequestedBy: "test@example.com",
@@ -145,10 +145,10 @@ func TestDebugSessionsTerminate(t *testing.T) {
 		require.Equal(t, http.MethodPost, r.Method)
 
 		response := DebugSessionDetailResponse{
-			DebugSession: v1alpha1.DebugSession{
+			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
-				Status: v1alpha1.DebugSessionStatus{
-					State: v1alpha1.DebugSessionStateTerminated,
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStateTerminated,
 				},
 			},
 		}
@@ -162,7 +162,7 @@ func TestDebugSessionsTerminate(t *testing.T) {
 
 	result, err := client.DebugSessions().Terminate(context.Background(), "debug-session-123", "")
 	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.DebugSessionStateTerminated, result.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, result.Status.State)
 }
 
 func TestDebugSessionsApprove(t *testing.T) {
@@ -175,10 +175,10 @@ func TestDebugSessionsApprove(t *testing.T) {
 		assert.Equal(t, "approved for testing", req.Reason)
 
 		response := DebugSessionDetailResponse{
-			DebugSession: v1alpha1.DebugSession{
+			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
-				Status: v1alpha1.DebugSessionStatus{
-					State: v1alpha1.DebugSessionStateActive,
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStateActive,
 				},
 			},
 		}
@@ -192,7 +192,7 @@ func TestDebugSessionsApprove(t *testing.T) {
 
 	result, err := client.DebugSessions().Approve(context.Background(), "debug-session-123", "approved for testing", "")
 	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.DebugSessionStateActive, result.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, result.Status.State)
 }
 
 func TestDebugSessionsReject(t *testing.T) {
@@ -201,10 +201,10 @@ func TestDebugSessionsReject(t *testing.T) {
 		require.Equal(t, http.MethodPost, r.Method)
 
 		response := DebugSessionDetailResponse{
-			DebugSession: v1alpha1.DebugSession{
+			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
-				Status: v1alpha1.DebugSessionStatus{
-					State: v1alpha1.DebugSessionStateTerminated,
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStateTerminated,
 				},
 			},
 		}
@@ -218,7 +218,7 @@ func TestDebugSessionsReject(t *testing.T) {
 
 	result, err := client.DebugSessions().Reject(context.Background(), "debug-session-123", "not needed", "")
 	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.DebugSessionStateTerminated, result.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, result.Status.State)
 }
 
 func TestDebugSessionsJoin(t *testing.T) {
@@ -231,7 +231,7 @@ func TestDebugSessionsJoin(t *testing.T) {
 		assert.Equal(t, "participant", req.Role)
 
 		response := DebugSessionDetailResponse{
-			DebugSession: v1alpha1.DebugSession{
+			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
 			},
 		}
@@ -254,7 +254,7 @@ func TestDebugSessionsLeave(t *testing.T) {
 		require.Equal(t, http.MethodPost, r.Method)
 
 		response := DebugSessionDetailResponse{
-			DebugSession: v1alpha1.DebugSession{
+			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
 			},
 		}
@@ -281,7 +281,7 @@ func TestDebugSessionsRenew(t *testing.T) {
 		assert.Equal(t, "30m", req.ExtendBy)
 
 		response := DebugSessionDetailResponse{
-			DebugSession: v1alpha1.DebugSession{
+			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
 			},
 		}
@@ -425,9 +425,9 @@ func TestDebugPodTemplatesList(t *testing.T) {
 }
 
 func TestDebugPodTemplatesGet(t *testing.T) {
-	template := v1alpha1.DebugPodTemplate{
+	template := breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-template-1"},
-		Spec: v1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Pod Template",
 		},
 	}
@@ -657,7 +657,7 @@ func TestDebugTemplatesGetClusters(t *testing.T) {
 						Location:    "eu-west",
 						Site:        "datacenter-1",
 						Tenant:      "acme-corp",
-						Constraints: &v1alpha1.DebugSessionConstraints{
+						Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 							MaxDuration:     "2h",
 							DefaultDuration: "30m",
 						},

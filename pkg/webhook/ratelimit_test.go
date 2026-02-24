@@ -17,7 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -32,7 +32,7 @@ func TestWebhookRateLimiting(t *testing.T) {
 	setupWebhookController := func(t *testing.T) *WebhookController {
 		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 		for k, fn := range sessionIndexFnsWebhook {
-			builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+			builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 		}
 		cli := builder.Build()
 
@@ -136,7 +136,7 @@ func TestWebhookRateLimiting(t *testing.T) {
 		// Using default SAR config (1000 req/s, burst 5000) is too high and timing-dependent
 		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 		for k, fn := range sessionIndexFnsWebhook {
-			builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+			builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 		}
 		cli := builder.Build()
 
@@ -213,7 +213,7 @@ func TestWebhookControllerWithNilRateLimiter(t *testing.T) {
 	// Create controller manually without rate limiter to test nil handling
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -243,14 +243,14 @@ func BenchmarkWebhookWithRateLimiter(b *testing.B) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	indexFns := map[string]client.IndexerFunc{
 		"spec.user": func(o client.Object) []string {
-			return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
+			return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 		},
 		"spec.cluster": func(o client.Object) []string {
-			return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
+			return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 		},
 	}
 	for k, fn := range indexFns {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 

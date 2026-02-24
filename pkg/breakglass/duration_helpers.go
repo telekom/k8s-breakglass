@@ -19,42 +19,42 @@ package breakglass
 import (
 	"time"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 )
 
 // ParseRetainFor parses the RetainFor duration from a session spec.
 // Returns DefaultRetainForDuration if the value is empty or invalid.
 // Logs a warning if the value is present but invalid.
-func ParseRetainFor(spec v1alpha1.BreakglassSessionSpec, log *zap.SugaredLogger) time.Duration {
+func ParseRetainFor(spec breakglassv1alpha1.BreakglassSessionSpec, log *zap.SugaredLogger) time.Duration {
 	return parseDurationWithDefault(spec.RetainFor, DefaultRetainForDuration, "RetainFor", log)
 }
 
 // ParseMaxValidFor parses the MaxValidFor duration from a session spec.
 // Returns DefaultValidForDuration if the value is empty or invalid.
 // Logs a warning if the value is present but invalid.
-func ParseMaxValidFor(spec v1alpha1.BreakglassSessionSpec, log *zap.SugaredLogger) time.Duration {
+func ParseMaxValidFor(spec breakglassv1alpha1.BreakglassSessionSpec, log *zap.SugaredLogger) time.Duration {
 	return parseDurationWithDefault(spec.MaxValidFor, DefaultValidForDuration, "MaxValidFor", log)
 }
 
 // ParseEscalationMaxValidFor parses the MaxValidFor duration from an escalation spec.
 // Returns DefaultValidForDuration if the value is empty or invalid.
 // Logs a warning if the value is present but invalid.
-func ParseEscalationMaxValidFor(spec v1alpha1.BreakglassEscalationSpec, log *zap.SugaredLogger) time.Duration {
+func ParseEscalationMaxValidFor(spec breakglassv1alpha1.BreakglassEscalationSpec, log *zap.SugaredLogger) time.Duration {
 	return parseDurationWithDefault(spec.MaxValidFor, DefaultValidForDuration, "MaxValidFor", log)
 }
 
 // ParseEscalationRetainFor parses the RetainFor duration from an escalation spec.
 // Returns DefaultRetainForDuration if the value is empty or invalid.
 // Logs a warning if the value is present but invalid.
-func ParseEscalationRetainFor(spec v1alpha1.BreakglassEscalationSpec, log *zap.SugaredLogger) time.Duration {
+func ParseEscalationRetainFor(spec breakglassv1alpha1.BreakglassEscalationSpec, log *zap.SugaredLogger) time.Duration {
 	return parseDurationWithDefault(spec.RetainFor, DefaultRetainForDuration, "RetainFor", log)
 }
 
 // ParseApprovalTimeout parses the ApprovalTimeout duration from an escalation spec.
 // Returns the default approval timeout (1 hour) if the value is empty or invalid.
 // Logs a warning if the value is present but invalid.
-func ParseApprovalTimeout(spec v1alpha1.BreakglassEscalationSpec, log *zap.SugaredLogger) time.Duration {
+func ParseApprovalTimeout(spec breakglassv1alpha1.BreakglassEscalationSpec, log *zap.SugaredLogger) time.Duration {
 	const defaultApprovalTimeout = time.Hour
 	return parseDurationWithDefault(spec.ApprovalTimeout, defaultApprovalTimeout, "ApprovalTimeout", log)
 }
@@ -69,7 +69,7 @@ func parseDurationWithDefault(value string, defaultValue time.Duration, fieldNam
 		return defaultValue
 	}
 
-	d, err := v1alpha1.ParseDuration(value)
+	d, err := breakglassv1alpha1.ParseDuration(value)
 	if err != nil {
 		if log != nil {
 			log.Warnw("Invalid "+fieldName+" in spec; falling back to default",

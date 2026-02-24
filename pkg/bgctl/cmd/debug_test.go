@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -176,7 +176,7 @@ func setupMockDebugServer(t *testing.T) *httptest.Server {
 				TemplateRef:  "template-1",
 				Cluster:      "cluster-a",
 				RequestedBy:  "user@example.com",
-				State:        v1alpha1.DebugSessionStateActive,
+				State:        breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:     &startsAt,
 				ExpiresAt:    &expiresAt,
 				Participants: 2,
@@ -552,7 +552,7 @@ func TestDebugSessionCreateCommand_WithSetFlag(t *testing.T) {
 			}
 			// Return mock session
 			w.Header().Set("Content-Type", "application/json")
-			session := v1alpha1.DebugSession{
+			session := breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-session",
 					Namespace: "breakglass",

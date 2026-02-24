@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
@@ -150,17 +150,17 @@ func TestSendSessionApprovalEmail_NoMailAvailable(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	)
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:  "approver@example.com",
 			ExpiresAt: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		},
@@ -190,17 +190,17 @@ func TestSendSessionApprovalEmail_WithMailService(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithMailService(mockMailService)
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:  "approver@example.com",
 			ExpiresAt: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		},
@@ -233,18 +233,18 @@ func TestSendSessionApprovalEmail_WithScheduledTime(t *testing.T) {
 	).WithMailService(mockMailService)
 
 	scheduledTime := metav1.NewTime(time.Now().Add(2 * time.Hour))
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session-scheduled",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:               "user@example.com",
 			GrantedGroup:       "admin",
 			Cluster:            "test-cluster",
 			ScheduledStartTime: &scheduledTime,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:  "approver@example.com",
 			ExpiresAt: metav1.NewTime(time.Now().Add(4 * time.Hour)),
 		},
@@ -272,17 +272,17 @@ func TestSendSessionApprovalEmail_WithMailServiceDisabled(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithMailService(mockMailService)
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:  "approver@example.com",
 			ExpiresAt: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		},
@@ -308,17 +308,17 @@ func TestSendSessionRejectionEmail_NoMailAvailable(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	)
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:       "approver@example.com",
 			RejectedAt:     metav1.NewTime(time.Now()),
 			ApprovalReason: "Test rejection reason",
@@ -349,17 +349,17 @@ func TestSendSessionRejectionEmail_WithMailService(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithMailService(mockMailService)
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:       "approver@example.com",
 			RejectedAt:     metav1.NewTime(time.Now()),
 			ApprovalReason: "Test rejection reason",
@@ -392,17 +392,17 @@ func TestSendSessionRejectionEmail_WithMailServiceDisabled(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithMailService(mockMailService)
 
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:       "approver@example.com",
 			RejectedAt:     metav1.NewTime(time.Now()),
 			ApprovalReason: "Test rejection reason",
@@ -429,12 +429,12 @@ func TestEmitSessionExpiredAuditEvent_NoAuditService(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
@@ -462,12 +462,12 @@ func TestEmitSessionExpiredAuditEvent_AuditServiceDisabled(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithAuditService(mockAudit)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
@@ -497,12 +497,12 @@ func TestEmitSessionExpiredAuditEvent_TimeExpired(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithAuditService(mockAudit)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
@@ -534,12 +534,12 @@ func TestEmitSessionExpiredAuditEvent_ApprovalTimeout(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithAuditService(mockAudit)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "timeout-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "prod-cluster",
@@ -569,18 +569,18 @@ func TestEmitSessionAuditEvent_NoAuditService(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
@@ -605,18 +605,18 @@ func TestEmitSessionAuditEvent_AuditServiceDisabled(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithAuditService(mockAudit)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user@example.com",
 			GrantedGroup: "admin",
 			Cluster:      "test-cluster",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 
@@ -643,18 +643,18 @@ func TestEmitSessionAuditEvent_WithAuditService(t *testing.T) {
 		nil, "/config/config.yaml", nil, cli,
 	).WithAuditService(mockAudit)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "approved-session",
 			Namespace: "test-ns",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "requester@example.com",
 			GrantedGroup: "breakglass-admin",
 			Cluster:      "production",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
 

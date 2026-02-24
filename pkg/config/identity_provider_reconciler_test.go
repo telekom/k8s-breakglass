@@ -15,14 +15,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrltest "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // newTestScheme creates a scheme with v1alpha1 types registered for testing
 func newTestScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
-	err := v1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err, "failed to add v1alpha1 to scheme")
 	err = corev1.AddToScheme(scheme)
 	require.NoError(t, err, "failed to add corev1 to scheme")
@@ -84,12 +84,12 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 	scheme := newTestScheme(t)
 
 	// Create a test IdentityProvider
-	idp := &v1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-idp",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
-			OIDC: v1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -151,12 +151,12 @@ func TestIdentityProviderReconciler_ReconcileReloadError(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	scheme := newTestScheme(t)
 
-	idp := &v1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-idp",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
-			OIDC: v1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -195,12 +195,12 @@ func TestIdentityProviderReconciler_ReconcileWithMultipleIDPs(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	scheme := newTestScheme(t)
 
-	idp1 := &v1alpha1.IdentityProvider{
+	idp1 := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "idp-1",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
-			OIDC: v1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -208,12 +208,12 @@ func TestIdentityProviderReconciler_ReconcileWithMultipleIDPs(t *testing.T) {
 		},
 	}
 
-	idp2 := &v1alpha1.IdentityProvider{
+	idp2 := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "idp-2",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
-			OIDC: v1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -260,12 +260,12 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_NoProvider(t *testing.
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{}
-	idp.SetCondition(metav1.Condition{Type: string(v1alpha1.IdentityProviderConditionGroupSyncHealthy)})
+	idp := &breakglassv1alpha1.IdentityProvider{}
+	idp.SetCondition(metav1.Condition{Type: string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)})
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
 
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	assert.Nil(t, condition)
 }
 
@@ -274,14 +274,14 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_UnknownProvider(t *tes
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{
-		Spec: v1alpha1.IdentityProviderSpec{
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			GroupSyncProvider: "unknown",
 		},
 	}
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "UnknownProvider", condition.Reason)
@@ -292,14 +292,14 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_KeycloakMissing(t *tes
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{
-		Spec: v1alpha1.IdentityProviderSpec{
-			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 		},
 	}
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "KeycloakMissing", condition.Reason)
@@ -310,10 +310,10 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_KeycloakIncomplete(t *
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{
-		Spec: v1alpha1.IdentityProviderSpec{
-			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
-			Keycloak: &v1alpha1.KeycloakGroupSync{
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL:  "",
 				Realm:    "realm",
 				ClientID: "client",
@@ -322,7 +322,7 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_KeycloakIncomplete(t *
 	}
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "KeycloakIncomplete", condition.Reason)
@@ -333,10 +333,10 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_ClientSecretRefMissing
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{
-		Spec: v1alpha1.IdentityProviderSpec{
-			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
-			Keycloak: &v1alpha1.KeycloakGroupSync{
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL:  "https://kc.example.com",
 				Realm:    "realm",
 				ClientID: "client",
@@ -345,7 +345,7 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_ClientSecretRefMissing
 	}
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "ClientSecretRefInvalid", condition.Reason)
@@ -359,14 +359,14 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretNotFound(t *test
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{
-		Spec: v1alpha1.IdentityProviderSpec{
-			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
-			Keycloak: &v1alpha1.KeycloakGroupSync{
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL:  "https://kc.example.com",
 				Realm:    "realm",
 				ClientID: "client",
-				ClientSecretRef: v1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "missing-secret",
 					Namespace: "default",
 				},
@@ -375,7 +375,7 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretNotFound(t *test
 	}
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "SecretNotFound", condition.Reason)
@@ -393,14 +393,14 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretKeyMissing(t *te
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{
-		Spec: v1alpha1.IdentityProviderSpec{
-			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
-			Keycloak: &v1alpha1.KeycloakGroupSync{
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL:  "https://kc.example.com",
 				Realm:    "realm",
 				ClientID: "client",
-				ClientSecretRef: v1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "kc-secret",
 					Namespace: "default",
 					Key:       "value",
@@ -410,7 +410,7 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretKeyMissing(t *te
 	}
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "SecretKeyNotFound", condition.Reason)
@@ -428,14 +428,14 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_Healthy(t *testing.T) 
 		return nil
 	})
 
-	idp := &v1alpha1.IdentityProvider{
-		Spec: v1alpha1.IdentityProviderSpec{
-			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
-			Keycloak: &v1alpha1.KeycloakGroupSync{
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL:  "https://kc.example.com",
 				Realm:    "realm",
 				ClientID: "client",
-				ClientSecretRef: v1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "kc-secret",
 					Namespace: "default",
 					Key:       "value",
@@ -445,7 +445,7 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_Healthy(t *testing.T) 
 	}
 
 	reconciler.updateGroupSyncHealth(context.Background(), idp)
-	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionTrue, condition.Status)
 	assert.Equal(t, "GroupSyncOperational", condition.Reason)
@@ -491,12 +491,12 @@ func TestIdentityProviderReconciler_GetCachedIdentityProviders(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	scheme := newTestScheme(t)
 
-	idp := &v1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-idp",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
-			OIDC: v1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -526,12 +526,12 @@ func TestIdentityProviderReconciler_GetEnabledIdentityProviders(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	scheme := newTestScheme(t)
 
-	idp := &v1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-idp",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
-			OIDC: v1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -556,26 +556,26 @@ func TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache(t *testing.T) 
 	log := zap.NewNop().Sugar()
 	scheme := newTestScheme(t)
 
-	enabledIDP := &v1alpha1.IdentityProvider{
+	enabledIDP := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "enabled-idp",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
-			OIDC: v1alpha1.OIDCConfig{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
 		},
 	}
 
-	disabledIDP := &v1alpha1.IdentityProvider{
+	disabledIDP := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "disabled-idp",
 		},
-		Spec: v1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: true,
-			OIDC: v1alpha1.OIDCConfig{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth2.example.com",
 				ClientID:  "test-client-2",
 			},

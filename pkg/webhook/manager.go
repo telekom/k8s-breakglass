@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
@@ -112,37 +112,37 @@ func Setup(
 
 	// Register validating webhooks (conditionally based on enableValidatingWebhooks)
 	if enableValidatingWebhooks {
-		if err := registerWebhook(&v1alpha1.BreakglassSession{}, "BreakglassSession", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.BreakglassSession{}, "BreakglassSession", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.BreakglassEscalation{}, "BreakglassEscalation", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.BreakglassEscalation{}, "BreakglassEscalation", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.ClusterConfig{}, "ClusterConfig", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.ClusterConfig{}, "ClusterConfig", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.IdentityProvider{}, "IdentityProvider", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.IdentityProvider{}, "IdentityProvider", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.MailProvider{}, "MailProvider", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.MailProvider{}, "MailProvider", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.DenyPolicy{}, "DenyPolicy", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.DenyPolicy{}, "DenyPolicy", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.DebugSession{}, "DebugSession", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.DebugSession{}, "DebugSession", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.DebugSessionTemplate{}, "DebugSessionTemplate", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.DebugSessionTemplate{}, "DebugSessionTemplate", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.DebugPodTemplate{}, "DebugPodTemplate", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.DebugPodTemplate{}, "DebugPodTemplate", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.AuditConfig{}, "AuditConfig", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.AuditConfig{}, "AuditConfig", mgr, log); err != nil {
 			return err
 		}
-		if err := registerWebhook(&v1alpha1.DebugSessionClusterBinding{}, "DebugSessionClusterBinding", mgr, log); err != nil {
+		if err := registerWebhook(&breakglassv1alpha1.DebugSessionClusterBinding{}, "DebugSessionClusterBinding", mgr, log); err != nil {
 			return err
 		}
 

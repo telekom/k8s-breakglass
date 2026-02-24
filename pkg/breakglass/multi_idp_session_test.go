@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -12,15 +12,15 @@ import (
 // when neither escalation nor cluster have IDP restrictions
 func TestAllowIDPMismatch_Logic_HappyPath(t *testing.T) {
 	// Simulate: escalation with NO IDP restrictions
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{}, // Empty = no restrictions
 		},
 	}
 
 	// Simulate: cluster with NO IDP restrictions
-	clusterConfig := &v1alpha1.ClusterConfig{
-		Spec: v1alpha1.ClusterConfigSpec{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			IdentityProviderRefs: []string{}, // Empty = no restrictions
 		},
 	}
@@ -39,15 +39,15 @@ func TestAllowIDPMismatch_Logic_HappyPath(t *testing.T) {
 // when escalation has IDP restrictions
 func TestAllowIDPMismatch_Logic_WithEscalationRestriction(t *testing.T) {
 	// Simulate: escalation WITH IDP restrictions
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{"keycloak", "ldap"}, // Has restrictions
 		},
 	}
 
 	// Simulate: cluster with NO IDP restrictions
-	clusterConfig := &v1alpha1.ClusterConfig{
-		Spec: v1alpha1.ClusterConfigSpec{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			IdentityProviderRefs: []string{}, // Empty = no restrictions
 		},
 	}
@@ -66,15 +66,15 @@ func TestAllowIDPMismatch_Logic_WithEscalationRestriction(t *testing.T) {
 // when cluster has IDP restrictions
 func TestAllowIDPMismatch_Logic_WithClusterRestriction(t *testing.T) {
 	// Simulate: escalation with NO IDP restrictions
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{}, // Empty = no restrictions
 		},
 	}
 
 	// Simulate: cluster WITH IDP restrictions
-	clusterConfig := &v1alpha1.ClusterConfig{
-		Spec: v1alpha1.ClusterConfigSpec{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			IdentityProviderRefs: []string{"keycloak"}, // Has restrictions
 		},
 	}
@@ -93,15 +93,15 @@ func TestAllowIDPMismatch_Logic_WithClusterRestriction(t *testing.T) {
 // when both escalation AND cluster have IDP restrictions
 func TestAllowIDPMismatch_Logic_WithBothRestrictions(t *testing.T) {
 	// Simulate: escalation WITH IDP restrictions
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{"keycloak"}, // Has restrictions
 		},
 	}
 
 	// Simulate: cluster WITH IDP restrictions (different IDP)
-	clusterConfig := &v1alpha1.ClusterConfig{
-		Spec: v1alpha1.ClusterConfigSpec{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			IdentityProviderRefs: []string{"ldap"}, // Has restrictions
 		},
 	}
@@ -119,12 +119,12 @@ func TestAllowIDPMismatch_Logic_WithBothRestrictions(t *testing.T) {
 // TestSessionCreated_HasAllowIDPMismatchField_HappyPath tests that created session has AllowIDPMismatch field set
 func TestSessionCreated_HasAllowIDPMismatchField_HappyPath(t *testing.T) {
 	// Create a session as it would be created in the API
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:          "prod-cluster",
 			User:             "user@example.com",
 			GrantedGroup:     "admin",
@@ -140,12 +140,12 @@ func TestSessionCreated_HasAllowIDPMismatchField_HappyPath(t *testing.T) {
 // TestSessionCreated_WithIDPIssuer_HappyPath tests that session captures the authentication IDP issuer
 func TestSessionCreated_WithIDPIssuer_HappyPath(t *testing.T) {
 	// Create a session as it would be created during authentication
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "prod-cluster",
 			User:                   "user@example.com",
 			GrantedGroup:           "admin",
@@ -166,8 +166,8 @@ func TestSessionCreated_WithIDPIssuer_HappyPath(t *testing.T) {
 // when cluster manager is nil
 func TestDefaultAllowIDPMismatch_WhenClusterManagerNil_BadPath(t *testing.T) {
 	// Simulate: escalation with NO IDP restrictions
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{}, // No restrictions
 		},
 	}
@@ -187,8 +187,8 @@ func TestDefaultAllowIDPMismatch_WhenClusterManagerNil_BadPath(t *testing.T) {
 // TestDefaultAllowIDPMismatch_WhenClusterNotFound_BadPath tests graceful defaults when cluster doesn't exist
 func TestDefaultAllowIDPMismatch_WhenClusterNotFound_BadPath(t *testing.T) {
 	// Simulate: escalation with NO IDP restrictions
-	escalation := &v1alpha1.BreakglassEscalation{
-		Spec: v1alpha1.BreakglassEscalationSpec{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{}, // No restrictions
 		},
 	}
@@ -208,15 +208,15 @@ func TestDefaultAllowIDPMismatch_WhenClusterNotFound_BadPath(t *testing.T) {
 // TestMultiIDPApprovalFlow_RequestFromIDP1_ApprovedByIDP2 tests approval flow across IDPs
 func TestMultiIDPApprovalFlow_RequestFromIDP1_ApprovedByIDP2(t *testing.T) {
 	// Create escalation that allows both IDPs
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "multi-idp-escalation",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{"idp-1", "idp-2"},
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			ApproverGroupMembers: map[string][]string{
 				"admin": {
 					"user1@idp1.com", // From IDP-1
@@ -244,12 +244,12 @@ func TestMultiIDPApprovalFlow_RequestFromIDP1_ApprovedByIDP2(t *testing.T) {
 // TestMultiIDPApprovalFlow_SingleIDPBlocking tests that single IDP approval can be blocked
 func TestMultiIDPApprovalFlow_SingleIDPBlocking(t *testing.T) {
 	// Create escalation that allows only IDP-1
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "single-idp-escalation",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{"idp-1"}, // Only IDP-1
 		},
 	}
@@ -272,15 +272,15 @@ func TestMultiIDPApprovalFlow_SingleIDPBlocking(t *testing.T) {
 // TestMultiIDPEmailResolution_DeduplicatedList_HappyPath tests email resolution with deduplication
 func TestMultiIDPEmailResolution_DeduplicatedList_HappyPath(t *testing.T) {
 	// Create escalation with deduplicated members from multiple IDPs
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "multi-idp-escalation",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProviders: []string{"idp-1", "idp-2"},
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			// Deduplicated list of approvers (same user across IDPs appears once)
 			ApproverGroupMembers: map[string][]string{
 				"admin": {
@@ -320,12 +320,12 @@ func TestMultiIDPEmailResolution_DeduplicatedList_HappyPath(t *testing.T) {
 // TestMultiIDPEmailResolution_FullHierarchyPreserved_HappyPath tests hierarchy preservation
 func TestMultiIDPEmailResolution_FullHierarchyPreserved_HappyPath(t *testing.T) {
 	// Create escalation with preserved hierarchy
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "multi-idp-escalation",
 			Namespace: "default",
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			IDPGroupMemberships: map[string]map[string][]string{
 				"idp-1": {
 					"admin": {"user1@example.com", "user2@example.com"},
@@ -363,39 +363,39 @@ func TestMultiIDPEmailResolution_FullHierarchyPreserved_HappyPath(t *testing.T) 
 
 // TestGroupSyncStatus_Success_HappyPath tests successful group sync status
 func TestGroupSyncStatus_Success_HappyPath(t *testing.T) {
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
 	}
 	escalation.SetCondition(metav1.Condition{
-		Type:   string(v1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved),
+		Type:   string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved),
 		Status: metav1.ConditionTrue,
 		Reason: "GroupMembersResolved",
 	})
 
-	condition := escalation.GetCondition(string(v1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+	condition := escalation.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
 	assert.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionTrue, condition.Status)
 }
 
 // TestGroupSyncStatus_PartialFailure_HappyPath tests partial failure status
 func TestGroupSyncStatus_PartialFailure_HappyPath(t *testing.T) {
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
 	}
 	escalation.SetCondition(metav1.Condition{
-		Type:    string(v1alpha1.BreakglassEscalationConditionReady),
+		Type:    string(breakglassv1alpha1.BreakglassEscalationConditionReady),
 		Status:  metav1.ConditionFalse,
 		Reason:  "PartialFailure",
 		Message: "Some IDPs failed to resolve members",
 	})
 
-	condition := escalation.GetCondition(string(v1alpha1.BreakglassEscalationConditionReady))
+	condition := escalation.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionReady))
 	assert.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "PartialFailure", condition.Reason)
@@ -403,20 +403,20 @@ func TestGroupSyncStatus_PartialFailure_HappyPath(t *testing.T) {
 
 // TestGroupSyncStatus_CompleteFailed_HappyPath tests complete failure status
 func TestGroupSyncStatus_CompleteFailed_HappyPath(t *testing.T) {
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
 	}
 	escalation.SetCondition(metav1.Condition{
-		Type:    string(v1alpha1.BreakglassEscalationConditionReady),
+		Type:    string(breakglassv1alpha1.BreakglassEscalationConditionReady),
 		Status:  metav1.ConditionFalse,
 		Reason:  "CompleteFailed",
 		Message: "All IDPs failed to resolve members",
 	})
 
-	condition := escalation.GetCondition(string(v1alpha1.BreakglassEscalationConditionReady))
+	condition := escalation.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionReady))
 	assert.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "CompleteFailed", condition.Reason)

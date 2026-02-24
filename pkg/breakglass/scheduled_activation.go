@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	v1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
@@ -60,7 +60,7 @@ func (ssa *ScheduledSessionActivator) WithMailService(mailService MailEnqueuer, 
 // This allows the RBAC group to be applied and the session to become usable.
 func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 	// Use indexed query to fetch only sessions waiting for scheduled time
-	sessions, err := ssa.sessionManager.GetSessionsByState(context.Background(), v1.SessionStateWaitingForScheduledTime)
+	sessions, err := ssa.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStateWaitingForScheduledTime)
 	if err != nil {
 		ssa.log.Error("error listing sessions for scheduled activation", zap.String("error", err.Error()))
 		return
@@ -90,7 +90,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 			"now", now)
 
 		// Transition to Approved state
-		ses.Status.State = v1.SessionStateApproved
+		ses.Status.State = breakglassv1alpha1.SessionStateApproved
 		ses.Status.ActualStartTime = metav1.Now()
 
 		// Add condition for audit trail
@@ -128,7 +128,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 }
 
 // sendSessionActivatedEmail sends a notification when a scheduled session becomes active
-func (ssa *ScheduledSessionActivator) sendSessionActivatedEmail(session v1.BreakglassSession) {
+func (ssa *ScheduledSessionActivator) sendSessionActivatedEmail(session breakglassv1alpha1.BreakglassSession) {
 	if ssa.disableEmail || ssa.mailService == nil || !ssa.mailService.IsEnabled() {
 		return
 	}

@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/sprig/v3"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
@@ -64,12 +64,12 @@ func (m *AuxiliaryResourceManager) SetAuditManager(am *audit.Manager) {
 // Returns the list of deployed resource statuses.
 func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	ctx context.Context,
-	session *v1alpha1.DebugSession,
-	template *v1alpha1.DebugSessionTemplateSpec,
-	binding *v1alpha1.DebugSessionClusterBinding,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 	targetClient client.Client,
 	targetNamespace string,
-) ([]v1alpha1.AuxiliaryResourceStatus, error) {
+) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	if template == nil || len(template.AuxiliaryResources) == 0 {
 		return nil, nil
 	}
@@ -83,7 +83,7 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	// Build context for template rendering (including enabled resources list)
 	renderCtx := m.buildRenderContext(session, template, binding, targetNamespace, enabledResources)
 
-	var statuses []v1alpha1.AuxiliaryResourceStatus
+	var statuses []breakglassv1alpha1.AuxiliaryResourceStatus
 	var deployErrors []error
 
 	// Deploy resources that should be created before debug pods
@@ -102,7 +102,7 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 				"error", err)
 			deployErrors = append(deployErrors, err)
 
-			if auxRes.FailurePolicy == v1alpha1.AuxiliaryResourceFailurePolicyFail {
+			if auxRes.FailurePolicy == breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
 				metrics.AuxiliaryResourceDeployments.WithLabelValues(session.Spec.Cluster, auxRes.Category, "failure").Inc()
 				return statuses, fmt.Errorf("failed to deploy required auxiliary resource %s: %w", auxRes.Name, err)
 			}
@@ -123,7 +123,7 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 // CleanupAuxiliaryResources removes all auxiliary resources created for a session.
 func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 	ctx context.Context,
-	session *v1alpha1.DebugSession,
+	session *breakglassv1alpha1.DebugSession,
 	targetClient client.Client,
 ) error {
 	if len(session.Status.AuxiliaryResourceStatuses) == 0 {
@@ -163,7 +163,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 				continue
 			}
 
-			addlStatus := v1alpha1.AuxiliaryResourceStatus{
+			addlStatus := breakglassv1alpha1.AuxiliaryResourceStatus{
 				Name:         status.Name,
 				Category:     status.Category,
 				Kind:         addlRes.Kind,
@@ -199,10 +199,10 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 // filterEnabledResources determines which auxiliary resources should be deployed.
 func (m *AuxiliaryResourceManager) filterEnabledResources(
-	template *v1alpha1.DebugSessionTemplateSpec,
-	binding *v1alpha1.DebugSessionClusterBinding,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 	selectedByUser []string,
-) []v1alpha1.AuxiliaryResource {
+) []breakglassv1alpha1.AuxiliaryResource {
 	if template == nil {
 		return nil
 	}
@@ -244,7 +244,7 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 		userSelected[name] = true
 	}
 
-	var enabled []v1alpha1.AuxiliaryResource
+	var enabled []breakglassv1alpha1.AuxiliaryResource
 	for _, res := range template.AuxiliaryResources {
 		// Check if category is required
 		if requiredCategories[res.Category] {
@@ -277,21 +277,21 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 
 // buildRenderContext creates the context used for template rendering.
 func (m *AuxiliaryResourceManager) buildRenderContext(
-	session *v1alpha1.DebugSession,
-	template *v1alpha1.DebugSessionTemplateSpec,
-	binding *v1alpha1.DebugSessionClusterBinding,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 	targetNamespace string,
-	enabledResources []v1alpha1.AuxiliaryResource,
-) v1alpha1.AuxiliaryResourceContext {
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	enabledResources []breakglassv1alpha1.AuxiliaryResource,
+) breakglassv1alpha1.AuxiliaryResourceContext {
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:        session.Name,
 			Namespace:   session.Namespace,
 			Cluster:     session.Spec.Cluster,
 			RequestedBy: session.Spec.RequestedBy,
 			Reason:      session.Spec.Reason,
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   targetNamespace,
 			ClusterName: session.Spec.Cluster,
 		},
@@ -315,14 +315,14 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 	}
 
 	if template != nil {
-		ctx.Template = v1alpha1.AuxiliaryResourceTemplateContext{
+		ctx.Template = breakglassv1alpha1.AuxiliaryResourceTemplateContext{
 			Name:        session.Spec.TemplateRef,
 			DisplayName: template.DisplayName,
 		}
 	}
 
 	if binding != nil {
-		ctx.Binding = v1alpha1.AuxiliaryResourceBindingContext{
+		ctx.Binding = breakglassv1alpha1.AuxiliaryResourceBindingContext{
 			Name:      binding.Name,
 			Namespace: binding.Namespace,
 		}
@@ -343,8 +343,8 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 // buildVarsFromSession extracts user-provided variable values from session spec
 // and applies defaults from template definition.
 func (m *AuxiliaryResourceManager) buildVarsFromSession(
-	session *v1alpha1.DebugSession,
-	template *v1alpha1.DebugSessionTemplateSpec,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
 ) map[string]string {
 	vars := make(map[string]string)
 
@@ -413,11 +413,11 @@ func (m *AuxiliaryResourceManager) deployResource(
 	ctx context.Context,
 	targetClient client.Client,
 	targetNamespace string,
-	auxRes v1alpha1.AuxiliaryResource,
-	renderCtx v1alpha1.AuxiliaryResourceContext,
-	session *v1alpha1.DebugSession,
-) (v1alpha1.AuxiliaryResourceStatus, error) {
-	status := v1alpha1.AuxiliaryResourceStatus{
+	auxRes breakglassv1alpha1.AuxiliaryResource,
+	renderCtx breakglassv1alpha1.AuxiliaryResourceContext,
+	session *breakglassv1alpha1.DebugSession,
+) (breakglassv1alpha1.AuxiliaryResourceStatus, error) {
+	status := breakglassv1alpha1.AuxiliaryResourceStatus{
 		Name:     auxRes.Name,
 		Category: auxRes.Category,
 	}
@@ -550,7 +550,7 @@ func (m *AuxiliaryResourceManager) deployResource(
 			status.Namespace = obj.GetNamespace()
 		} else {
 			// Track additional resources from multi-document YAML
-			status.AdditionalResources = append(status.AdditionalResources, v1alpha1.AdditionalResourceRef{
+			status.AdditionalResources = append(status.AdditionalResources, breakglassv1alpha1.AdditionalResourceRef{
 				Kind:         obj.GetKind(),
 				APIVersion:   obj.GetAPIVersion(),
 				ResourceName: obj.GetName(),
@@ -573,7 +573,7 @@ func (m *AuxiliaryResourceManager) deployResource(
 }
 
 // renderTemplate renders a Go template with the given context.
-func (m *AuxiliaryResourceManager) renderTemplate(templateBytes []byte, ctx v1alpha1.AuxiliaryResourceContext) ([]byte, error) {
+func (m *AuxiliaryResourceManager) renderTemplate(templateBytes []byte, ctx breakglassv1alpha1.AuxiliaryResourceContext) ([]byte, error) {
 	// Convert context to map for template
 	ctxMap, err := toMap(ctx)
 	if err != nil {
@@ -612,8 +612,8 @@ func toMap(v interface{}) (map[string]interface{}, error) {
 func (m *AuxiliaryResourceManager) deleteResource(
 	ctx context.Context,
 	targetClient client.Client,
-	status v1alpha1.AuxiliaryResourceStatus,
-	session *v1alpha1.DebugSession,
+	status breakglassv1alpha1.AuxiliaryResourceStatus,
+	session *breakglassv1alpha1.DebugSession,
 ) error {
 	// Create unstructured object for deletion
 	obj := &unstructured.Unstructured{}
@@ -657,7 +657,7 @@ func (m *AuxiliaryResourceManager) deleteResource(
 }
 
 // ValidateAuxiliaryResources validates all auxiliary resources in a template.
-func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error {
+func ValidateAuxiliaryResources(resources []breakglassv1alpha1.AuxiliaryResource) []error {
 	var errs []error
 	seenNames := make(map[string]bool)
 	seenCategories := make(map[string][]string) // category -> resource names
@@ -694,14 +694,14 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 		if hasTemplateString {
 			renderer := NewTemplateRenderer()
 			// Use sample context for validation
-			sampleCtx := v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			sampleCtx := breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name:        "validation-session",
 					Namespace:   "breakglass-system",
 					Cluster:     "validation-cluster",
 					RequestedBy: "validator@example.com",
 				},
-				Target: v1alpha1.AuxiliaryResourceTargetContext{
+				Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 					Namespace:   "breakglass-debug",
 					ClusterName: "validation-cluster",
 				},
@@ -748,9 +748,9 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 
 		// Validate failure policy
 		switch res.FailurePolicy {
-		case "", v1alpha1.AuxiliaryResourceFailurePolicyFail,
-			v1alpha1.AuxiliaryResourceFailurePolicyIgnore,
-			v1alpha1.AuxiliaryResourceFailurePolicyWarn:
+		case "", breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+			breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore,
+			breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn:
 			// Valid
 		default:
 			errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid failurePolicy %q", i, res.FailurePolicy))
@@ -763,15 +763,15 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 // AddAuxiliaryResourceToDeployedResources tracks an auxiliary resource in the session's deployed resources.
 // This includes the primary resource and any additional resources from multi-document YAML templates.
 func AddAuxiliaryResourceToDeployedResources(
-	session *v1alpha1.DebugSession,
-	status v1alpha1.AuxiliaryResourceStatus,
+	session *breakglassv1alpha1.DebugSession,
+	status breakglassv1alpha1.AuxiliaryResourceStatus,
 ) {
 	if !status.Created {
 		return
 	}
 
 	// Helper to add a ref if not already present
-	addRef := func(ref v1alpha1.DeployedResourceRef) {
+	addRef := func(ref breakglassv1alpha1.DeployedResourceRef) {
 		for _, existing := range session.Status.DeployedResources {
 			if existing.Kind == ref.Kind &&
 				existing.Name == ref.Name &&
@@ -783,7 +783,7 @@ func AddAuxiliaryResourceToDeployedResources(
 	}
 
 	// Add primary resource
-	addRef(v1alpha1.DeployedResourceRef{
+	addRef(breakglassv1alpha1.DeployedResourceRef{
 		Kind:       status.Kind,
 		APIVersion: status.APIVersion,
 		Name:       status.ResourceName,
@@ -794,7 +794,7 @@ func AddAuxiliaryResourceToDeployedResources(
 
 	// Add additional resources from multi-document YAML templates
 	for _, addlRes := range status.AdditionalResources {
-		addRef(v1alpha1.DeployedResourceRef{
+		addRef(breakglassv1alpha1.DeployedResourceRef{
 			Kind:       addlRes.Kind,
 			APIVersion: addlRes.APIVersion,
 			Name:       addlRes.ResourceName,
@@ -809,7 +809,7 @@ func AddAuxiliaryResourceToDeployedResources(
 // using kstatus and updates the session status accordingly.
 func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 	ctx context.Context,
-	session *v1alpha1.DebugSession,
+	session *breakglassv1alpha1.DebugSession,
 	targetClient client.Client,
 ) (allReady bool, err error) {
 	if len(session.Status.AuxiliaryResourceStatuses) == 0 {
