@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func newTestAuxiliaryResourceManager() *AuxiliaryResourceManager {
@@ -63,8 +63,8 @@ func TestSetAuditManager(t *testing.T) {
 func TestFilterEnabledResources_NoneEnabledByDefault(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "netpol", Category: "network"},
 			{Name: "rbac", Category: "rbac"},
 		},
@@ -79,8 +79,8 @@ func TestFilterEnabledResources_NoneEnabledByDefault(t *testing.T) {
 func TestFilterEnabledResources_EnabledByDefault(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "netpol", Category: "network"},
 			{Name: "rbac", Category: "rbac"},
 		},
@@ -98,8 +98,8 @@ func TestFilterEnabledResources_EnabledByDefault(t *testing.T) {
 func TestFilterEnabledResources_RequiredCategory(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "netpol", Category: "network-isolation"},
 			{Name: "rbac", Category: "rbac"},
 		},
@@ -114,14 +114,14 @@ func TestFilterEnabledResources_RequiredCategory(t *testing.T) {
 func TestFilterEnabledResources_BindingOverrideEnables(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "netpol", Category: "network"},
 		},
 	}
 
-	binding := &v1alpha1.DebugSessionClusterBinding{
-		Spec: v1alpha1.DebugSessionClusterBindingSpec{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			AuxiliaryResourceOverrides: map[string]bool{
 				"network": true,
 			},
@@ -136,15 +136,15 @@ func TestFilterEnabledResources_BindingOverrideEnables(t *testing.T) {
 func TestFilterEnabledResources_BindingCannotDisableRequired(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "netpol", Category: "network-isolation"},
 		},
 		RequiredAuxiliaryResourceCategories: []string{"network-isolation"},
 	}
 
-	binding := &v1alpha1.DebugSessionClusterBinding{
-		Spec: v1alpha1.DebugSessionClusterBindingSpec{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			AuxiliaryResourceOverrides: map[string]bool{
 				"network-isolation": false, // Attempt to disable required category
 			},
@@ -159,8 +159,8 @@ func TestFilterEnabledResources_BindingCannotDisableRequired(t *testing.T) {
 func TestFilterEnabledResources_UserSelection(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "netpol", Category: "network"},
 			{Name: "monitoring", Category: "monitoring"},
 		},
@@ -181,12 +181,12 @@ func TestFilterEnabledResources_NilTemplate(t *testing.T) {
 func TestBuildRenderContext(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			RequestedBy: "user@example.com",
 			Cluster:     "prod-cluster",
 			Reason:      "Debugging issue",
@@ -194,18 +194,18 @@ func TestBuildRenderContext(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
 		DisplayName: "Test Template",
 	}
 
-	binding := &v1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-binding",
 			Namespace: "team-a",
 		},
 	}
 
-	enabledResources := []v1alpha1.AuxiliaryResource{
+	enabledResources := []breakglassv1alpha1.AuxiliaryResource{
 		{Name: "resource-1", Category: "network"},
 	}
 
@@ -223,12 +223,12 @@ func TestBuildRenderContext(t *testing.T) {
 func TestRenderTemplate_SimpleTemplate(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:   "debug-123",
 			Reason: "test reason",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace: "debug-ns",
 		},
 	}
@@ -247,8 +247,8 @@ namespace: "{{ .target.namespace }}"`)
 func TestRenderTemplate_WithSprigFunctions(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name: "debug-session-abc123",
 		},
 	}
@@ -269,7 +269,7 @@ default: "{{ .session.reason | default "no-reason" }}"`)
 func TestRenderTemplate_InvalidTemplate(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	ctx := v1alpha1.AuxiliaryResourceContext{}
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{}
 
 	// Invalid template syntax
 	tmpl := []byte(`{{ .session.name | unknownFunction }}`)
@@ -281,8 +281,8 @@ func TestRenderTemplate_InvalidTemplate(t *testing.T) {
 func TestRenderTemplate_MissingField(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{},
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{},
 	}
 
 	// Use lowercase JSON field names
@@ -297,7 +297,7 @@ namespace: "{{ .target.namespace }}"`)
 func TestDeployAuxiliaryResources_NilTemplate(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{}
+	session := &breakglassv1alpha1.DebugSession{}
 
 	statuses, err := mgr.DeployAuxiliaryResources(
 		context.Background(),
@@ -315,9 +315,9 @@ func TestDeployAuxiliaryResources_NilTemplate(t *testing.T) {
 func TestDeployAuxiliaryResources_EmptyResources(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{}
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{},
+	session := &breakglassv1alpha1.DebugSession{}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{},
 	}
 
 	statuses, err := mgr.DeployAuxiliaryResources(
@@ -336,9 +336,9 @@ func TestDeployAuxiliaryResources_EmptyResources(t *testing.T) {
 func TestCleanupAuxiliaryResources_NoResources(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{},
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{},
 		},
 	}
 
@@ -349,9 +349,9 @@ func TestCleanupAuxiliaryResources_NoResources(t *testing.T) {
 func TestCleanupAuxiliaryResources_AlreadyDeleted(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:    "netpol",
 					Created: true,
@@ -366,13 +366,13 @@ func TestCleanupAuxiliaryResources_AlreadyDeleted(t *testing.T) {
 }
 
 func TestAddAuxiliaryResourceToDeployedResources(t *testing.T) {
-	session := &v1alpha1.DebugSession{
-		Status: v1alpha1.DebugSessionStatus{
-			DeployedResources: []v1alpha1.DeployedResourceRef{},
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{},
 		},
 	}
 
-	status := v1alpha1.AuxiliaryResourceStatus{
+	status := breakglassv1alpha1.AuxiliaryResourceStatus{
 		Name:         "netpol",
 		Created:      true,
 		APIVersion:   "networking.k8s.io/v1",
@@ -391,13 +391,13 @@ func TestAddAuxiliaryResourceToDeployedResources(t *testing.T) {
 }
 
 func TestAddAuxiliaryResourceToDeployedResources_NotCreated(t *testing.T) {
-	session := &v1alpha1.DebugSession{
-		Status: v1alpha1.DebugSessionStatus{
-			DeployedResources: []v1alpha1.DeployedResourceRef{},
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{},
 		},
 	}
 
-	status := v1alpha1.AuxiliaryResourceStatus{
+	status := breakglassv1alpha1.AuxiliaryResourceStatus{
 		Name:    "netpol",
 		Created: false, // Not created
 	}
@@ -408,9 +408,9 @@ func TestAddAuxiliaryResourceToDeployedResources_NotCreated(t *testing.T) {
 }
 
 func TestAddAuxiliaryResourceToDeployedResources_Deduplication(t *testing.T) {
-	session := &v1alpha1.DebugSession{
-		Status: v1alpha1.DebugSessionStatus{
-			DeployedResources: []v1alpha1.DeployedResourceRef{
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{
 				{
 					Kind:      "NetworkPolicy",
 					Name:      "debug-netpol",
@@ -420,7 +420,7 @@ func TestAddAuxiliaryResourceToDeployedResources_Deduplication(t *testing.T) {
 		},
 	}
 
-	status := v1alpha1.AuxiliaryResourceStatus{
+	status := breakglassv1alpha1.AuxiliaryResourceStatus{
 		Name:         "netpol",
 		Created:      true,
 		Kind:         "NetworkPolicy",
@@ -434,14 +434,14 @@ func TestAddAuxiliaryResourceToDeployedResources_Deduplication(t *testing.T) {
 }
 
 func TestAddAuxiliaryResourceToDeployedResources_WithAdditionalResources(t *testing.T) {
-	session := &v1alpha1.DebugSession{
-		Status: v1alpha1.DebugSessionStatus{
-			DeployedResources: []v1alpha1.DeployedResourceRef{},
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{},
 		},
 	}
 
 	// Status with additional resources from multi-document YAML
-	status := v1alpha1.AuxiliaryResourceStatus{
+	status := breakglassv1alpha1.AuxiliaryResourceStatus{
 		Name:         "network-bundle",
 		Category:     "network",
 		Created:      true,
@@ -449,7 +449,7 @@ func TestAddAuxiliaryResourceToDeployedResources_WithAdditionalResources(t *test
 		APIVersion:   "networking.k8s.io/v1",
 		ResourceName: "debug-netpol",
 		Namespace:    "debug-ns",
-		AdditionalResources: []v1alpha1.AdditionalResourceRef{
+		AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 			{
 				Kind:         "ServiceAccount",
 				APIVersion:   "v1",
@@ -486,7 +486,7 @@ func TestAddAuxiliaryResourceToDeployedResources_WithAdditionalResources(t *test
 }
 
 func TestValidateAuxiliaryResources_ValidTemplate(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "netpol",
 			Category: "network",
@@ -499,7 +499,7 @@ func TestValidateAuxiliaryResources_ValidTemplate(t *testing.T) {
 }
 
 func TestValidateAuxiliaryResources_MissingName(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "", // Missing name
 			Category: "network",
@@ -513,7 +513,7 @@ func TestValidateAuxiliaryResources_MissingName(t *testing.T) {
 }
 
 func TestValidateAuxiliaryResources_MissingTemplate(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "test",
 			Category: "network",
@@ -539,7 +539,7 @@ func TestValidateAuxiliaryResources_ValidWithTemplateObject(t *testing.T) {
 		},
 	}
 
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "test",
 			Category: "config",
@@ -553,7 +553,7 @@ func TestValidateAuxiliaryResources_ValidWithTemplateObject(t *testing.T) {
 
 func TestValidateAuxiliaryResources_ValidWithTemplateString(t *testing.T) {
 	// Test that templateString is accepted
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:           "test",
 			Category:       "config",
@@ -566,7 +566,7 @@ func TestValidateAuxiliaryResources_ValidWithTemplateString(t *testing.T) {
 }
 
 func TestValidateAuxiliaryResources_DuplicateNames(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "same-name",
 			Category: "network",
@@ -585,7 +585,7 @@ func TestValidateAuxiliaryResources_DuplicateNames(t *testing.T) {
 }
 
 func TestValidateAuxiliaryResources_MissingAPIVersionInTemplate(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "test",
 			Category: "network",
@@ -599,7 +599,7 @@ func TestValidateAuxiliaryResources_MissingAPIVersionInTemplate(t *testing.T) {
 }
 
 func TestValidateAuxiliaryResources_MissingKindInTemplate(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "test",
 			Category: "network",
@@ -615,7 +615,7 @@ func TestValidateAuxiliaryResources_MissingKindInTemplate(t *testing.T) {
 func TestDeployResource_ConfigMap(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -624,19 +624,19 @@ func TestDeployResource_ConfigMap(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
 	}
 
 	// Use lowercase JSON field names in template
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:     "test-config",
 		Category: "configmap",
 		Template: runtime.RawExtension{Raw: []byte(`apiVersion: v1
@@ -648,13 +648,13 @@ data:
 		CreateBefore: true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 			Cluster:   "prod",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   "debug-ns",
 			ClusterName: "prod",
 		},
@@ -682,7 +682,7 @@ func TestDeployResource_WithTemplateObject(t *testing.T) {
 	// Test that Template.Object is correctly handled when deploying auxiliary resources
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -691,12 +691,12 @@ func TestDeployResource_WithTemplateObject(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
@@ -717,20 +717,20 @@ func TestDeployResource_WithTemplateObject(t *testing.T) {
 		},
 	}
 
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:         "test-object",
 		Category:     "configmap",
 		Template:     runtime.RawExtension{Object: cm},
 		CreateBefore: true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 			Cluster:   "prod",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   "debug-ns",
 			ClusterName: "prod",
 		},
@@ -758,7 +758,7 @@ func TestDeployResource_MultiDocumentYAML(t *testing.T) {
 	// Test that multi-document YAML templates correctly track all resources
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -767,12 +767,12 @@ func TestDeployResource_MultiDocumentYAML(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
@@ -801,20 +801,20 @@ type: Opaque
 stringData:
   password: test123`
 
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:           "multi-resource",
 		Category:       "config",
 		TemplateString: multiDocTemplate,
 		CreateBefore:   true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 			Cluster:   "prod",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   "debug-ns",
 			ClusterName: "prod",
 		},
@@ -857,7 +857,7 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 	// Test that cleanup deletes additional resources from multi-document YAML
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create the resources that will be cleaned up
 	cm1 := &corev1.ConfigMap{
@@ -881,16 +881,16 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "multi-resource",
 					Category:     "config",
@@ -899,7 +899,7 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 					APIVersion:   "v1",
 					ResourceName: "config-1",
 					Namespace:    "debug-ns",
-					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
@@ -1008,7 +1008,7 @@ func TestToMap_FuncFailsToMarshal(t *testing.T) {
 
 func TestRenderTemplate_EmptyTemplate(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	ctx := v1alpha1.AuxiliaryResourceContext{}
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{}
 
 	result, err := mgr.renderTemplate([]byte(""), ctx)
 	require.NoError(t, err)
@@ -1017,7 +1017,7 @@ func TestRenderTemplate_EmptyTemplate(t *testing.T) {
 
 func TestRenderTemplate_NilTemplate(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	ctx := v1alpha1.AuxiliaryResourceContext{}
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{}
 
 	result, err := mgr.renderTemplate(nil, ctx)
 	require.NoError(t, err)
@@ -1026,7 +1026,7 @@ func TestRenderTemplate_NilTemplate(t *testing.T) {
 
 func TestRenderTemplate_MalformedBraces(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	ctx := v1alpha1.AuxiliaryResourceContext{}
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{}
 
 	// Unclosed template braces
 	tmpl := []byte(`name: "{{ .session.name"`)
@@ -1037,7 +1037,7 @@ func TestRenderTemplate_MalformedBraces(t *testing.T) {
 
 func TestRenderTemplate_NestedInvalidSyntax(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	ctx := v1alpha1.AuxiliaryResourceContext{}
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{}
 
 	// Invalid nesting
 	tmpl := []byte(`{{ if .session.name }}{{ end {{ end }}`)
@@ -1052,14 +1052,14 @@ func TestRenderTemplate_NestedInvalidSyntax(t *testing.T) {
 
 func TestFilterEnabledResources_BindingAddsRequiredCategory(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "res1", Category: "cat1", Template: runtime.RawExtension{}},
 			{Name: "res2", Category: "cat2", Template: runtime.RawExtension{}},
 		},
 	}
-	binding := &v1alpha1.DebugSessionClusterBinding{
-		Spec: v1alpha1.DebugSessionClusterBindingSpec{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			RequiredAuxiliaryResourceCategories: []string{"cat1"},
 		},
 	}
@@ -1070,8 +1070,8 @@ func TestFilterEnabledResources_BindingAddsRequiredCategory(t *testing.T) {
 
 func TestFilterEnabledResources_DefaultEnabled(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "res1", Category: "cat1", Template: runtime.RawExtension{}},
 			{Name: "res2", Category: "cat2", Template: runtime.RawExtension{}},
 		},
@@ -1087,9 +1087,9 @@ func TestFilterEnabledResources_DefaultEnabled(t *testing.T) {
 
 func TestFilterEnabledResources_NilBinding(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	template := &v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
 		RequiredAuxiliaryResourceCategories: []string{"security"},
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "net-policy", Category: "security", Template: runtime.RawExtension{}},
 		},
 	}
@@ -1099,8 +1099,8 @@ func TestFilterEnabledResources_NilBinding(t *testing.T) {
 
 func TestFilterEnabledResources_EmptySelectedByUser(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
-	template := &v1alpha1.DebugSessionTemplateSpec{
-		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 			{Name: "res1", Category: "optional", Template: runtime.RawExtension{}},
 		},
 	}
@@ -1109,7 +1109,7 @@ func TestFilterEnabledResources_EmptySelectedByUser(t *testing.T) {
 }
 
 func TestValidateAuxiliaryResources_ValidTemplateString(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "test-pvc",
 			Category: "storage",
@@ -1131,7 +1131,7 @@ spec:
 }
 
 func TestValidateAuxiliaryResources_TemplateStringWithMultiDoc(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "test-resources",
 			Category: "storage",
@@ -1160,7 +1160,7 @@ data:
 }
 
 func TestValidateAuxiliaryResources_InvalidTemplateStringSyntax(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:     "test-invalid",
 			Category: "storage",
@@ -1177,7 +1177,7 @@ metadata:
 }
 
 func TestValidateAuxiliaryResources_MutuallyExclusiveTemplates(t *testing.T) {
-	auxResources := []v1alpha1.AuxiliaryResource{
+	auxResources := []breakglassv1alpha1.AuxiliaryResource{
 		{
 			Name:           "test-both",
 			Category:       "storage",
@@ -1196,22 +1196,22 @@ func TestBuildVarsFromSession(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		session  *v1alpha1.DebugSession
-		template *v1alpha1.DebugSessionTemplateSpec
+		session  *breakglassv1alpha1.DebugSession
+		template *breakglassv1alpha1.DebugSessionTemplateSpec
 		expected map[string]string
 	}{
 		{
 			name: "no variables",
-			session: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{},
+			session: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{},
 			},
-			template: &v1alpha1.DebugSessionTemplateSpec{},
+			template: &breakglassv1alpha1.DebugSessionTemplateSpec{},
 			expected: map[string]string{},
 		},
 		{
 			name: "user provided values",
-			session: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{
+			session: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					ExtraDeployValues: map[string]apiextensionsv1.JSON{
 						"pvcSize":      {Raw: []byte(`"50Gi"`)},
 						"createPvc":    {Raw: []byte(`true`)},
@@ -1219,7 +1219,7 @@ func TestBuildVarsFromSession(t *testing.T) {
 					},
 				},
 			},
-			template: &v1alpha1.DebugSessionTemplateSpec{},
+			template: &breakglassv1alpha1.DebugSessionTemplateSpec{},
 			expected: map[string]string{
 				"pvcSize":      "50Gi",
 				"createPvc":    "true",
@@ -1228,11 +1228,11 @@ func TestBuildVarsFromSession(t *testing.T) {
 		},
 		{
 			name: "defaults from template",
-			session: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{},
+			session: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{},
 			},
-			template: &v1alpha1.DebugSessionTemplateSpec{
-				ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			template: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 					{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
 					{Name: "enabled", Default: &apiextensionsv1.JSON{Raw: []byte(`false`)}},
 				},
@@ -1244,15 +1244,15 @@ func TestBuildVarsFromSession(t *testing.T) {
 		},
 		{
 			name: "user values override defaults",
-			session: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{
+			session: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					ExtraDeployValues: map[string]apiextensionsv1.JSON{
 						"pvcSize": {Raw: []byte(`"100Gi"`)}, // Override default
 					},
 				},
 			},
-			template: &v1alpha1.DebugSessionTemplateSpec{
-				ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			template: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 					{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
 					{Name: "enabled", Default: &apiextensionsv1.JSON{Raw: []byte(`true`)}},
 				},
@@ -1331,12 +1331,12 @@ func TestExtractJSONValue(t *testing.T) {
 func TestBuildRenderContext_VarsAndMetadata(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod-cluster",
 			RequestedBy: "user@example.com",
 			Reason:      "Testing",
@@ -1348,15 +1348,15 @@ func TestBuildRenderContext_VarsAndMetadata(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
 		DisplayName: "Test Template",
-		ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 			{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
 			{Name: "region", Default: &apiextensionsv1.JSON{Raw: []byte(`"eu-west-1"`)}},
 		},
 	}
 
-	enabledResources := []v1alpha1.AuxiliaryResource{
+	enabledResources := []breakglassv1alpha1.AuxiliaryResource{
 		{Name: "pvc"},
 		{Name: "config"},
 	}
@@ -1379,8 +1379,8 @@ func TestBuildRenderContext_VarsAndMetadata(t *testing.T) {
 func TestCheckAuxiliaryResourcesReadiness_NoResources(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{
-		Status: v1alpha1.DebugSessionStatus{
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
 			AuxiliaryResourceStatuses: nil, // No resources
 		},
 	}
@@ -1395,13 +1395,13 @@ func TestCheckAuxiliaryResourcesReadiness_AlreadyReady(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
 	readyAt := "2024-01-01T00:00:00Z"
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "test-cm",
 					Created:      true,
@@ -1425,13 +1425,13 @@ func TestCheckAuxiliaryResourcesReadiness_AlreadyReady(t *testing.T) {
 func TestCheckAuxiliaryResourcesReadiness_NotCreated(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:    "test-cm",
 					Created: false, // Not created
@@ -1450,13 +1450,13 @@ func TestCheckAuxiliaryResourcesReadiness_Deleted(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
 	deletedAt := "2024-01-01T00:00:00Z"
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "test-cm",
 					Created:      true,
@@ -1500,13 +1500,13 @@ func TestCheckAuxiliaryResourcesReadiness_ConfigMapReady(t *testing.T) {
 		Build()
 
 	mgr := newTestAuxiliaryResourceManager()
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "test-cm",
 					Created:      true,
@@ -1542,13 +1542,13 @@ func TestCheckAuxiliaryResourcesReadiness_ResourceNotFound(t *testing.T) {
 		Build()
 
 	mgr := newTestAuxiliaryResourceManager()
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "missing-cm",
 					Created:      true,
@@ -1591,13 +1591,13 @@ func TestCheckAuxiliaryResourcesReadiness_MixedStates(t *testing.T) {
 		Build()
 
 	mgr := newTestAuxiliaryResourceManager()
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "ready-cm",
 					Created:      true,
@@ -1703,7 +1703,7 @@ func TestDeployResource_MultiDocumentYAML_EmptyDocuments(t *testing.T) {
 	// Test that empty documents (whitespace only) are skipped
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1712,12 +1712,12 @@ func TestDeployResource_MultiDocumentYAML_EmptyDocuments(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
@@ -1742,20 +1742,20 @@ metadata:
 data:
   key2: value2`
 
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:           "empty-doc-test",
 		Category:       "config",
 		TemplateString: multiDocWithEmpty,
 		CreateBefore:   true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 			Cluster:   "prod",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   "debug-ns",
 			ClusterName: "prod",
 		},
@@ -1786,7 +1786,7 @@ func TestDeployResource_MultiDocumentYAML_InvalidSecondDocument(t *testing.T) {
 	// Test failure when second document is invalid YAML
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1795,12 +1795,12 @@ func TestDeployResource_MultiDocumentYAML_InvalidSecondDocument(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
@@ -1820,14 +1820,14 @@ metadata:
 name: invalid - no indentation
   nested: wrong`
 
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:           "invalid-doc-test",
 		Category:       "config",
 		TemplateString: invalidSecondDoc,
 		CreateBefore:   true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Labels:      map[string]string{},
 		Annotations: map[string]string{},
 	}
@@ -1851,7 +1851,7 @@ func TestDeployResource_MultiDocumentYAML_ConditionalAllExcluded(t *testing.T) {
 	// Test when all documents are conditionally excluded
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1860,12 +1860,12 @@ func TestDeployResource_MultiDocumentYAML_ConditionalAllExcluded(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
@@ -1886,14 +1886,14 @@ metadata:
   name: secret-1
 {{- end }}`
 
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:           "conditional-test",
 		Category:       "config",
 		TemplateString: conditionalTemplate,
 		CreateBefore:   true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Vars: map[string]string{
 			"createConfig": "false",
 			"createSecret": "false",
@@ -1923,7 +1923,7 @@ func TestDeployResource_MultiDocumentYAML_PartialConditional(t *testing.T) {
 	// Test when some documents are conditionally excluded
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1932,12 +1932,12 @@ func TestDeployResource_MultiDocumentYAML_PartialConditional(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
@@ -1965,14 +1965,14 @@ metadata:
 data:
   key: value`
 
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:           "partial-conditional-test",
 		Category:       "config",
 		TemplateString: conditionalTemplate,
 		CreateBefore:   true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Vars: map[string]string{
 			"createOptional": "false",
 		},
@@ -2002,7 +2002,7 @@ func TestDeployResource_NoTemplateDefinedError(t *testing.T) {
 	// Test error when neither templateString nor template is defined
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -2011,24 +2011,24 @@ func TestDeployResource_NoTemplateDefinedError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod",
 		},
 	}
 
 	// No template defined
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:     "no-template",
 		Category: "config",
 		// Neither TemplateString nor Template is set
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{}
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{}
 
 	status, err := mgr.deployResource(
 		context.Background(),
@@ -2048,7 +2048,7 @@ func TestDeployResource_TemplateRenderingError(t *testing.T) {
 	// Test error when template rendering fails
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -2057,24 +2057,24 @@ func TestDeployResource_TemplateRenderingError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod",
 		},
 	}
 
 	// Invalid template syntax
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:           "bad-template",
 		Category:       "config",
 		TemplateString: `{{ .invalid.syntax | unknownFunc }}`, // unknownFunc doesn't exist
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{}
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{}
 
 	status, err := mgr.deployResource(
 		context.Background(),
@@ -2094,7 +2094,7 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 	// Test cleanup when deleting one resource fails but others succeed
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Only create config-1 (config-2 and config-3 will fail to delete because they don't exist)
 	// But NotFound errors are handled gracefully
@@ -2113,16 +2113,16 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "multi-resource",
 					Category:     "config",
@@ -2131,7 +2131,7 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 					APIVersion:   "v1",
 					ResourceName: "config-1",
 					Namespace:    "debug-ns",
-					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
@@ -2164,7 +2164,7 @@ func TestCleanupAuxiliaryResources_SkipsAlreadyDeleted(t *testing.T) {
 	// Test that cleanup skips resources already marked as deleted
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -2174,16 +2174,16 @@ func TestCleanupAuxiliaryResources_SkipsAlreadyDeleted(t *testing.T) {
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
 	deletedAt := "2024-01-01T00:00:00Z"
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "already-deleted",
 					Category:     "config",
@@ -2194,7 +2194,7 @@ func TestCleanupAuxiliaryResources_SkipsAlreadyDeleted(t *testing.T) {
 					APIVersion:   "v1",
 					ResourceName: "config-1",
 					Namespace:    "debug-ns",
-					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
@@ -2248,13 +2248,13 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_AllReady(t *te
 		Build()
 
 	mgr := newTestAuxiliaryResourceManager()
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "multi-resource",
 					Created:      true,
@@ -2263,7 +2263,7 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_AllReady(t *te
 					APIVersion:   "v1",
 					ResourceName: "config-1",
 					Namespace:    "default",
-					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
@@ -2318,13 +2318,13 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_SomeNotReady(t
 		Build()
 
 	mgr := newTestAuxiliaryResourceManager()
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "multi-resource",
 					Created:      true,
@@ -2333,7 +2333,7 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_SomeNotReady(t
 					APIVersion:   "v1",
 					ResourceName: "config-1",
 					Namespace:    "default",
-					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
@@ -2371,13 +2371,13 @@ func TestCheckAuxiliaryResourcesReadiness_AdditionalResourceAlreadyDeleted(t *te
 		Build()
 
 	mgr := newTestAuxiliaryResourceManager()
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
 				{
 					Name:         "multi-resource",
 					Created:      true,
@@ -2386,7 +2386,7 @@ func TestCheckAuxiliaryResourcesReadiness_AdditionalResourceAlreadyDeleted(t *te
 					APIVersion:   "v1",
 					ResourceName: "config-1",
 					Namespace:    "default",
-					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
@@ -2410,7 +2410,7 @@ func TestDeployResource_MultiDocumentYAML_DifferentKinds(t *testing.T) {
 	// Test multi-document with different resource kinds
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -2419,12 +2419,12 @@ func TestDeployResource_MultiDocumentYAML_DifferentKinds(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
 
-	session := &v1alpha1.DebugSession{
+	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "prod",
 			TemplateRef: "test-template",
 		},
@@ -2451,14 +2451,14 @@ type: Opaque
 stringData:
   password: secret123`
 
-	auxRes := v1alpha1.AuxiliaryResource{
+	auxRes := breakglassv1alpha1.AuxiliaryResource{
 		Name:           "multi-kind-test",
 		Category:       "rbac",
 		TemplateString: multiKindTemplate,
 		CreateBefore:   true,
 	}
 
-	renderCtx := v1alpha1.AuxiliaryResourceContext{
+	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Labels:      map[string]string{"test": "label"},
 		Annotations: map[string]string{"test": "annotation"},
 	}

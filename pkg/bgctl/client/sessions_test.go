@@ -8,15 +8,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestSessionsList(t *testing.T) {
-	sessions := []v1alpha1.BreakglassSession{
+	sessions := []breakglassv1alpha1.BreakglassSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-1"},
-			Spec:       v1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 		},
 	}
 
@@ -47,9 +47,9 @@ func TestSessionsList(t *testing.T) {
 }
 
 func TestSessionsGet(t *testing.T) {
-	session := v1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
-		Spec:       v1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -87,9 +87,9 @@ func TestSessionsRequest(t *testing.T) {
 		require.Equal(t, "test-cluster", req.Cluster)
 		require.Equal(t, "admin", req.Group)
 
-		response := v1alpha1.BreakglassSession{
+		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-new"},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      req.Cluster,
 				GrantedGroup: req.Group,
 			},
@@ -121,10 +121,10 @@ func TestSessionsApprove(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		require.Equal(t, "approved for testing", req.Reason)
 
-		response := v1alpha1.BreakglassSession{
+		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State: v1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -137,7 +137,7 @@ func TestSessionsApprove(t *testing.T) {
 
 	result, err := client.Sessions().Approve(context.Background(), "session-123", "approved for testing")
 	require.NoError(t, err)
-	require.Equal(t, v1alpha1.SessionStateApproved, result.Status.State)
+	require.Equal(t, breakglassv1alpha1.SessionStateApproved, result.Status.State)
 }
 
 func TestSessionsReject(t *testing.T) {
@@ -149,10 +149,10 @@ func TestSessionsReject(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		require.Equal(t, "not authorized", req.Reason)
 
-		response := v1alpha1.BreakglassSession{
+		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State: v1alpha1.SessionStateRejected,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateRejected,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -165,7 +165,7 @@ func TestSessionsReject(t *testing.T) {
 
 	result, err := client.Sessions().Reject(context.Background(), "session-123", "not authorized")
 	require.NoError(t, err)
-	require.Equal(t, v1alpha1.SessionStateRejected, result.Status.State)
+	require.Equal(t, breakglassv1alpha1.SessionStateRejected, result.Status.State)
 }
 
 func TestSessionsWithdraw(t *testing.T) {
@@ -173,10 +173,10 @@ func TestSessionsWithdraw(t *testing.T) {
 		require.Equal(t, "/api/breakglassSessions/session-123/withdraw", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
 
-		response := v1alpha1.BreakglassSession{
+		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State: v1alpha1.SessionStateWithdrawn,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateWithdrawn,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -189,7 +189,7 @@ func TestSessionsWithdraw(t *testing.T) {
 
 	result, err := client.Sessions().Withdraw(context.Background(), "session-123")
 	require.NoError(t, err)
-	require.Equal(t, v1alpha1.SessionStateWithdrawn, result.Status.State)
+	require.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, result.Status.State)
 }
 
 func TestSessionsDrop(t *testing.T) {
@@ -197,10 +197,10 @@ func TestSessionsDrop(t *testing.T) {
 		require.Equal(t, "/api/breakglassSessions/session-123/drop", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
 
-		response := v1alpha1.BreakglassSession{
+		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State: v1alpha1.SessionStateExpired,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateExpired,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -213,7 +213,7 @@ func TestSessionsDrop(t *testing.T) {
 
 	result, err := client.Sessions().Drop(context.Background(), "session-123")
 	require.NoError(t, err)
-	require.Equal(t, v1alpha1.SessionStateExpired, result.Status.State)
+	require.Equal(t, breakglassv1alpha1.SessionStateExpired, result.Status.State)
 }
 
 func TestSessionsCancel(t *testing.T) {
@@ -221,10 +221,10 @@ func TestSessionsCancel(t *testing.T) {
 		require.Equal(t, "/api/breakglassSessions/session-123/cancel", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
 
-		response := v1alpha1.BreakglassSession{
+		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State: v1alpha1.SessionStateExpired,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateExpired,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -237,11 +237,11 @@ func TestSessionsCancel(t *testing.T) {
 
 	result, err := client.Sessions().Cancel(context.Background(), "session-123")
 	require.NoError(t, err)
-	require.Equal(t, v1alpha1.SessionStateExpired, result.Status.State)
+	require.Equal(t, breakglassv1alpha1.SessionStateExpired, result.Status.State)
 }
 
 func TestSessionsList_WithFilters(t *testing.T) {
-	sessions := []v1alpha1.BreakglassSession{
+	sessions := []breakglassv1alpha1.BreakglassSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-1"},
 		},

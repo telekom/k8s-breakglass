@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -47,42 +47,42 @@ func TestCreateScheme(t *testing.T) {
 
 	t.Run("scheme contains v1alpha1 types", func(t *testing.T) {
 		// Check that BreakglassSession is known to the scheme
-		gvk := v1alpha1.GroupVersion.WithKind("BreakglassSession")
+		gvk := breakglassv1alpha1.GroupVersion.WithKind("BreakglassSession")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize BreakglassSession")
 		}
 	})
 
 	t.Run("scheme contains IdentityProvider type", func(t *testing.T) {
-		gvk := v1alpha1.GroupVersion.WithKind("IdentityProvider")
+		gvk := breakglassv1alpha1.GroupVersion.WithKind("IdentityProvider")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize IdentityProvider")
 		}
 	})
 
 	t.Run("scheme contains ClusterConfig type", func(t *testing.T) {
-		gvk := v1alpha1.GroupVersion.WithKind("ClusterConfig")
+		gvk := breakglassv1alpha1.GroupVersion.WithKind("ClusterConfig")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize ClusterConfig")
 		}
 	})
 
 	t.Run("scheme contains BreakglassEscalation type", func(t *testing.T) {
-		gvk := v1alpha1.GroupVersion.WithKind("BreakglassEscalation")
+		gvk := breakglassv1alpha1.GroupVersion.WithKind("BreakglassEscalation")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize BreakglassEscalation")
 		}
 	})
 
 	t.Run("scheme contains DenyPolicy type", func(t *testing.T) {
-		gvk := v1alpha1.GroupVersion.WithKind("DenyPolicy")
+		gvk := breakglassv1alpha1.GroupVersion.WithKind("DenyPolicy")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize DenyPolicy")
 		}
 	})
 
 	t.Run("scheme contains MailProvider type", func(t *testing.T) {
-		gvk := v1alpha1.GroupVersion.WithKind("MailProvider")
+		gvk := breakglassv1alpha1.GroupVersion.WithKind("MailProvider")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize MailProvider")
 		}
@@ -124,7 +124,7 @@ func TestParseDuration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test the canonical ParseDuration in api/v1alpha1 package
-			got, err := v1alpha1.ParseDuration(tt.input)
+			got, err := breakglassv1alpha1.ParseDuration(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseDuration(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
 				return

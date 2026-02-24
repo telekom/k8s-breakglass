@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // mockFieldIndexer is a test double for client.FieldIndexer
@@ -169,12 +169,12 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
 	require.NoError(t, err)
 
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "test-user@example.com",
 			GrantedGroup: "admin-access",
@@ -189,7 +189,7 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 		assert.Equal(t, []string{"test-cluster"}, result)
 
 		// Test with empty cluster
-		emptySession := &v1alpha1.BreakglassSession{}
+		emptySession := &breakglassv1alpha1.BreakglassSession{}
 		result = fn(emptySession)
 		assert.Nil(t, result)
 	})
@@ -202,7 +202,7 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 		assert.Equal(t, []string{"test-user@example.com"}, result)
 
 		// Test with empty user
-		emptySession := &v1alpha1.BreakglassSession{}
+		emptySession := &breakglassv1alpha1.BreakglassSession{}
 		result = fn(emptySession)
 		assert.Nil(t, result)
 	})
@@ -215,7 +215,7 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 		assert.Equal(t, []string{"admin-access"}, result)
 
 		// Test with empty grantedGroup
-		emptySession := &v1alpha1.BreakglassSession{}
+		emptySession := &breakglassv1alpha1.BreakglassSession{}
 		result = fn(emptySession)
 		assert.Nil(t, result)
 	})
@@ -229,7 +229,7 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 		assert.Equal(t, []string{"test-session"}, result)
 
 		// Test with empty name
-		emptySession := &v1alpha1.BreakglassSession{}
+		emptySession := &breakglassv1alpha1.BreakglassSession{}
 		result = fn(emptySession)
 		assert.Nil(t, result)
 	})
@@ -243,17 +243,17 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
 	require.NoError(t, err)
 
-	debugSession := &v1alpha1.DebugSession{
+	debugSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "debug-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "debug-cluster",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			State: v1alpha1.DebugSessionStateActive,
-			Participants: []v1alpha1.DebugSessionParticipant{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{User: "user-a@example.com"},
 				{User: "user-b@example.com"},
 			},
@@ -267,7 +267,7 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 		result := fn(debugSession)
 		assert.Equal(t, []string{"debug-cluster"}, result)
 
-		empty := &v1alpha1.DebugSession{}
+		empty := &breakglassv1alpha1.DebugSession{}
 		result = fn(empty)
 		assert.Nil(t, result)
 	})
@@ -277,9 +277,9 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 		require.NotNil(t, fn)
 
 		result := fn(debugSession)
-		assert.Equal(t, []string{string(v1alpha1.DebugSessionStateActive)}, result)
+		assert.Equal(t, []string{string(breakglassv1alpha1.DebugSessionStateActive)}, result)
 
-		empty := &v1alpha1.DebugSession{}
+		empty := &breakglassv1alpha1.DebugSession{}
 		result = fn(empty)
 		assert.Nil(t, result)
 	})
@@ -291,7 +291,7 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 		result := fn(debugSession)
 		assert.ElementsMatch(t, []string{"user-a@example.com", "user-b@example.com"}, result)
 
-		empty := &v1alpha1.DebugSession{}
+		empty := &breakglassv1alpha1.DebugSession{}
 		result = fn(empty)
 		assert.Nil(t, result)
 	})
@@ -305,14 +305,14 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
 	require.NoError(t, err)
 
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "elevated-access",
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster-a", "cluster-b"},
 				Groups:   []string{"developers@example.com", "ops@example.com"},
 			},
@@ -328,7 +328,7 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b", "cluster-c"}, result)
 
 		// Test with nil escalation
-		result = fn(&v1alpha1.BreakglassEscalation{})
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
 		assert.Empty(t, result)
 	})
 
@@ -340,7 +340,7 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		assert.ElementsMatch(t, []string{"developers@example.com", "ops@example.com"}, result)
 
 		// Test with nil escalation
-		result = fn(&v1alpha1.BreakglassEscalation{})
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
 		assert.Nil(t, result)
 	})
 
@@ -352,7 +352,7 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		assert.Equal(t, []string{"elevated-access"}, result)
 
 		// Test with empty escalatedGroup
-		emptyEsc := &v1alpha1.BreakglassEscalation{}
+		emptyEsc := &breakglassv1alpha1.BreakglassEscalation{}
 		result = fn(emptyEsc)
 		assert.Nil(t, result)
 	})
@@ -375,12 +375,12 @@ func TestIndexerFunctions_ClusterConfig(t *testing.T) {
 	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
 	require.NoError(t, err)
 
-	clusterConfig := &v1alpha1.ClusterConfig{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster-config",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			ClusterID: "cluster-id-123",
 		},
 	}
@@ -393,7 +393,7 @@ func TestIndexerFunctions_ClusterConfig(t *testing.T) {
 		assert.Equal(t, []string{"cluster-id-123"}, result)
 
 		// Test with empty clusterID
-		emptyCC := &v1alpha1.ClusterConfig{}
+		emptyCC := &breakglassv1alpha1.ClusterConfig{}
 		result = fn(emptyCC)
 		assert.Nil(t, result)
 	})
@@ -408,7 +408,7 @@ func TestIndexerFunctions_WrongType(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a different object type that won't match type assertions
-	wrongObj := &v1alpha1.DenyPolicy{
+	wrongObj := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "wrong-type",
 		},
@@ -424,42 +424,42 @@ func TestIndexerFunctions_WrongType(t *testing.T) {
 func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 	// Test with a real fake client to ensure indexes work end-to-end
 	scheme := runtime.NewScheme()
-	err := v1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
 	// Create test objects
-	session := &v1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "indexed-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "indexed-cluster",
 			User:         "indexed-user@example.com",
 			GrantedGroup: "indexed-group",
 		},
 	}
 
-	escalation := &v1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "indexed-escalation",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "indexed-escalated-group",
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"indexed-cluster"},
 				Groups:   []string{"indexed-allowed-group"},
 			},
 		},
 	}
 
-	clusterConfig := &v1alpha1.ClusterConfig{
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "indexed-cluster-config",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			ClusterID: "indexed-cluster-id",
 		},
 	}
@@ -467,8 +467,8 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session, escalation, clusterConfig).
-		WithIndex(&v1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
-			if s, ok := obj.(*v1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
 				return []string{s.Spec.Cluster}
 			}
 			return nil
@@ -477,7 +477,7 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 
 	// Verify we can query by indexed field
 	ctx := context.Background()
-	var sessions v1alpha1.BreakglassSessionList
+	var sessions breakglassv1alpha1.BreakglassSessionList
 	err = cli.List(ctx, &sessions, client.MatchingFields{"spec.cluster": "indexed-cluster"})
 	require.NoError(t, err)
 	assert.Len(t, sessions.Items, 1)

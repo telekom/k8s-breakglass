@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	bgctlcmd "github.com/telekom/k8s-breakglass/pkg/bgctl/cmd"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
@@ -121,7 +121,7 @@ func TestCLIAuthWithTokenOverride(t *testing.T) {
 		output, err := tc.runCommandWithToken("escalation", "list", "-o", "json")
 		require.NoError(t, err, "Should list escalations with token override")
 
-		var escalations []v1alpha1.BreakglassEscalation
+		var escalations []breakglassv1alpha1.BreakglassEscalation
 		err = json.Unmarshal([]byte(output), &escalations)
 		require.NoError(t, err, "Should parse escalation list")
 		t.Logf("Listed %d escalations with token override", len(escalations))
@@ -404,7 +404,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		output, err := tc.runCommandWithToken("session", "list", "-o", "json")
 		require.NoError(t, err)
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &sessions)
 		require.NoError(t, err)
 		t.Logf("Found %d existing sessions", len(sessions))
@@ -420,7 +420,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err)
 
@@ -439,7 +439,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		output, err := tc.runCommandWithToken("session", "get", sessionName, "-o", "json")
 		require.NoError(t, err)
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err)
 		assert.Equal(t, sessionName, session.Name)
@@ -454,7 +454,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &sessions)
 		require.NoError(t, err)
 		for _, s := range sessions {
@@ -474,7 +474,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		output, err := tc.runCommandWithToken("session", "list", "--mine", "-o", "json")
 		require.NoError(t, err)
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &sessions)
 		require.NoError(t, err)
 		// All should be for our user
@@ -507,7 +507,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err)
 
@@ -551,7 +551,7 @@ func TestCLIEscalationCommands(t *testing.T) {
 		output, err := tc.runCommandWithToken("escalation", "list", "-o", "json")
 		require.NoError(t, err)
 
-		var escalations []v1alpha1.BreakglassEscalation
+		var escalations []breakglassv1alpha1.BreakglassEscalation
 		err = json.Unmarshal([]byte(output), &escalations)
 		require.NoError(t, err)
 		t.Logf("Found %d escalations", len(escalations))
@@ -567,7 +567,7 @@ func TestCLIEscalationCommands(t *testing.T) {
 		output, err := tc.runCommandWithToken("escalation", "list", "-o", "json")
 		require.NoError(t, err)
 
-		var escalations []v1alpha1.BreakglassEscalation
+		var escalations []breakglassv1alpha1.BreakglassEscalation
 		err = json.Unmarshal([]byte(output), &escalations)
 		require.NoError(t, err)
 
@@ -577,7 +577,7 @@ func TestCLIEscalationCommands(t *testing.T) {
 		output, err = tc.runCommandWithToken("escalation", "get", escName, "-o", "json")
 		require.NoError(t, err)
 
-		var esc v1alpha1.BreakglassEscalation
+		var esc breakglassv1alpha1.BreakglassEscalation
 		err = json.Unmarshal([]byte(output), &esc)
 		require.NoError(t, err)
 		assert.Equal(t, escName, esc.Name)
@@ -679,7 +679,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		output, err := tc.runCommandWithToken("debug", "pod-template", "list", "-o", "json")
 		require.NoError(t, err)
 
-		var templates []v1alpha1.DebugPodTemplate
+		var templates []breakglassv1alpha1.DebugPodTemplate
 		err = json.Unmarshal([]byte(output), &templates)
 		require.NoError(t, err)
 		t.Logf("Found %d debug pod templates", len(templates))
@@ -730,7 +730,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		)
 		require.NoError(t, err, "Debug session creation should succeed when templates are available")
 
-		var session v1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err)
 		sessionName := session.Name
@@ -882,7 +882,7 @@ func TestCLIListPagination(t *testing.T) {
 		output, err := tc.runCommandWithToken("session", "list", "--all", "-o", "json")
 		require.NoError(t, err)
 
-		var allSessions []v1alpha1.BreakglassSession
+		var allSessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &allSessions)
 		require.NoError(t, err)
 
@@ -890,7 +890,7 @@ func TestCLIListPagination(t *testing.T) {
 		output, err = tc.runCommandWithToken("session", "list", "--page", "1", "--page-size", "5", "-o", "json")
 		require.NoError(t, err)
 
-		var pagedSessions []v1alpha1.BreakglassSession
+		var pagedSessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &pagedSessions)
 		require.NoError(t, err)
 
@@ -1135,7 +1135,7 @@ func TestCLIEdgeCases(t *testing.T) {
 		if err != nil {
 			t.Logf("Request with all flags error: %v", err)
 		} else {
-			var session v1alpha1.BreakglassSession
+			var session breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err)
 			assert.NotEmpty(t, session.Name)
@@ -1159,7 +1159,7 @@ func TestCLIClusterOperations(t *testing.T) {
 		output, err := tc.runCommandWithToken("escalation", "list", "-o", "json")
 		require.NoError(t, err, "Should be able to list escalations")
 
-		var escalations []v1alpha1.BreakglassEscalation
+		var escalations []breakglassv1alpha1.BreakglassEscalation
 		err = json.Unmarshal([]byte(output), &escalations)
 		require.NoError(t, err, "Should parse escalations")
 
@@ -1229,7 +1229,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		output, err := runWithToken(requesterToken, "escalation", "list", "-o", "json")
 		require.NoError(t, err, "Requester should be able to list escalations")
 
-		var escalations []v1alpha1.BreakglassEscalation
+		var escalations []breakglassv1alpha1.BreakglassEscalation
 		err = json.Unmarshal([]byte(output), &escalations)
 		require.NoError(t, err, "Should parse escalation list")
 		t.Logf("Found %d escalations available", len(escalations))
@@ -1247,7 +1247,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		)
 		require.NoError(t, err, "Session request should succeed")
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err, "Should parse created session")
 		require.NotEmpty(t, session.Name, "Session should have a name")
@@ -1263,7 +1263,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		output, err := runWithToken(requesterToken, "session", "list", "--mine", "-o", "json")
 		require.NoError(t, err, "Should list my sessions")
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &sessions)
 		require.NoError(t, err, "Should parse session list")
 
@@ -1284,18 +1284,18 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 
 		// Poll until pending state
 		deadline := time.Now().Add(helpers.WaitForStateTimeout)
-		var lastState v1alpha1.BreakglassSessionState
+		var lastState breakglassv1alpha1.BreakglassSessionState
 
 		for time.Now().Before(deadline) {
 			output, err := runWithToken(requesterToken, "session", "get", sessionName, "-o", "json")
 			require.NoError(t, err, "Should get session")
 
-			var session v1alpha1.BreakglassSession
+			var session breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err, "Should parse session")
 
 			lastState = session.Status.State
-			if lastState == v1alpha1.SessionStatePending {
+			if lastState == breakglassv1alpha1.SessionStatePending {
 				t.Logf("Session %s reached Pending state", sessionName)
 				return
 			}
@@ -1320,18 +1320,18 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 
 		// Poll until approved state
 		deadline := time.Now().Add(helpers.WaitForStateTimeout)
-		var lastState v1alpha1.BreakglassSessionState
+		var lastState breakglassv1alpha1.BreakglassSessionState
 
 		for time.Now().Before(deadline) {
 			output, err := runWithToken(requesterToken, "session", "get", sessionName, "-o", "json")
 			require.NoError(t, err, "Should get session")
 
-			var session v1alpha1.BreakglassSession
+			var session breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err, "Should parse session")
 
 			lastState = session.Status.State
-			if lastState == v1alpha1.SessionStateApproved {
+			if lastState == breakglassv1alpha1.SessionStateApproved {
 				t.Logf("Session %s reached Approved state", sessionName)
 				require.NotEmpty(t, session.Status.Approvers, "Session should have approvers recorded")
 				t.Logf("Approved by: %v", session.Status.Approvers)
@@ -1358,7 +1358,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		)
 		require.NoError(t, err, "Should list approved sessions")
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &sessions)
 		require.NoError(t, err, "Should parse session list")
 
@@ -1366,7 +1366,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		for _, s := range sessions {
 			if s.Name == sessionName {
 				found = true
-				assert.Equal(t, v1alpha1.SessionStateApproved, s.Status.State)
+				assert.Equal(t, breakglassv1alpha1.SessionStateApproved, s.Status.State)
 				break
 			}
 		}
@@ -1395,15 +1395,15 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		output, err := runWithToken(requesterToken, "session", "get", sessionName, "-o", "json")
 		require.NoError(t, err, "Should get session")
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err, "Should parse session")
 
 		// Session should be in Approved state (or Expired if TTL is short)
-		validFinalStates := []v1alpha1.BreakglassSessionState{
-			v1alpha1.SessionStateApproved,
-			v1alpha1.SessionStateExpired,
-			v1alpha1.SessionStateWithdrawn,
+		validFinalStates := []breakglassv1alpha1.BreakglassSessionState{
+			breakglassv1alpha1.SessionStateApproved,
+			breakglassv1alpha1.SessionStateExpired,
+			breakglassv1alpha1.SessionStateWithdrawn,
 		}
 		found := false
 		for _, s := range validFinalStates {
@@ -1492,7 +1492,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		)
 		require.NoError(t, err, "Debug session creation should succeed when templates are available")
 
-		var session v1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err, "Should parse created debug session")
 		require.NotEmpty(t, session.Name, "Debug session should have a name")
@@ -1509,23 +1509,23 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		deadline := time.Now().Add(helpers.WaitForStateTimeout)
-		var lastState v1alpha1.DebugSessionState
+		var lastState breakglassv1alpha1.DebugSessionState
 
 		for time.Now().Before(deadline) {
 			output, err := runWithToken(requesterToken, "debug", "session", "get", sessionName, "-o", "json")
 			require.NoError(t, err, "Should get debug session")
 
-			var session v1alpha1.DebugSession
+			var session breakglassv1alpha1.DebugSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err, "Should parse debug session")
 
 			lastState = session.Status.State
-			if lastState == v1alpha1.DebugSessionStatePending {
+			if lastState == breakglassv1alpha1.DebugSessionStatePending {
 				t.Logf("Debug session %s reached Pending state (will require approval)", sessionName)
 				return
 			}
 			// Auto-approved - session went directly to Active or already past Pending
-			if lastState == v1alpha1.DebugSessionStateActive {
+			if lastState == breakglassv1alpha1.DebugSessionStateActive {
 				t.Logf("Debug session %s was auto-approved, now in %s state", sessionName, lastState)
 				wasAutoApproved = true
 				return
@@ -1554,18 +1554,18 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		deadline := time.Now().Add(helpers.WaitForStateTimeout)
-		var lastState v1alpha1.DebugSessionState
+		var lastState breakglassv1alpha1.DebugSessionState
 
 		for time.Now().Before(deadline) {
 			output, err := runWithToken(requesterToken, "debug", "session", "get", sessionName, "-o", "json")
 			require.NoError(t, err, "Should get debug session")
 
-			var session v1alpha1.DebugSession
+			var session breakglassv1alpha1.DebugSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err, "Should parse debug session")
 
 			lastState = session.Status.State
-			if lastState == v1alpha1.DebugSessionStateActive {
+			if lastState == breakglassv1alpha1.DebugSessionStateActive {
 				t.Logf("Debug session %s reached Active state", sessionName)
 				return
 			}
@@ -1592,18 +1592,18 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		deadline := time.Now().Add(helpers.WaitForStateTimeout)
-		var lastState v1alpha1.DebugSessionState
+		var lastState breakglassv1alpha1.DebugSessionState
 
 		for time.Now().Before(deadline) {
 			output, err := runWithToken(requesterToken, "debug", "session", "get", sessionName, "-o", "json")
 			require.NoError(t, err, "Should get debug session")
 
-			var session v1alpha1.DebugSession
+			var session breakglassv1alpha1.DebugSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err, "Should parse debug session")
 
 			lastState = session.Status.State
-			if lastState == v1alpha1.DebugSessionStateTerminated || lastState == v1alpha1.DebugSessionStateExpired {
+			if lastState == breakglassv1alpha1.DebugSessionStateTerminated || lastState == breakglassv1alpha1.DebugSessionStateExpired {
 				t.Logf("Debug session %s reached final state %s - lifecycle complete", sessionName, lastState)
 				return
 			}
@@ -1669,7 +1669,7 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 		)
 		require.NoError(t, err, "Session request should succeed")
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err, "Should parse created session")
 
@@ -1687,7 +1687,7 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 		output, err := runWithToken(approverToken, "session", "list", "--state", "pending", "-o", "json")
 		require.NoError(t, err, "Approver should list pending sessions")
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &sessions)
 		require.NoError(t, err, "Should parse session list")
 
@@ -1716,18 +1716,18 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
 		deadline := time.Now().Add(helpers.WaitForStateTimeout)
-		var lastState v1alpha1.BreakglassSessionState
+		var lastState breakglassv1alpha1.BreakglassSessionState
 
 		for time.Now().Before(deadline) {
 			output, err := runWithToken(requester1Token, "session", "get", sessionName, "-o", "json")
 			require.NoError(t, err, "Should get session")
 
-			var session v1alpha1.BreakglassSession
+			var session breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err, "Should parse session")
 
 			lastState = session.Status.State
-			if lastState == v1alpha1.SessionStateRejected {
+			if lastState == breakglassv1alpha1.SessionStateRejected {
 				t.Logf("Session %s reached Rejected state", sessionName)
 				return
 			}
@@ -1745,11 +1745,11 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 		output, err := runWithToken(requester1Token, "session", "get", sessionName, "-o", "json")
 		require.NoError(t, err, "Should get session")
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal([]byte(output), &session)
 		require.NoError(t, err, "Should parse session")
 
-		assert.Equal(t, v1alpha1.SessionStateRejected, session.Status.State,
+		assert.Equal(t, breakglassv1alpha1.SessionStateRejected, session.Status.State,
 			"Session should remain in rejected state")
 		t.Logf("Verified session %s is in Rejected state and cannot be used", sessionName)
 	})

@@ -14,25 +14,25 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestWriteSessionTable(t *testing.T) {
 	now := time.Now()
-	sessions := []v1alpha1.BreakglassSession{
+	sessions := []breakglassv1alpha1.BreakglassSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "session-1",
 				CreationTimestamp: metav1.NewTime(now.Add(-1 * time.Hour)),
 			},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster: "cluster-a",
 				User:    "user@example.com",
 			},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State:     v1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
 				ExpiresAt: metav1.NewTime(now.Add(1 * time.Hour)),
 			},
 		},
@@ -41,12 +41,12 @@ func TestWriteSessionTable(t *testing.T) {
 				Name:              "session-2",
 				CreationTimestamp: metav1.NewTime(now),
 			},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster: "cluster-b",
 				User:    "admin@example.com",
 			},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State: v1alpha1.SessionStatePending,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStatePending,
 			},
 		},
 	}
@@ -77,7 +77,7 @@ func TestWriteSessionTable(t *testing.T) {
 
 func TestWriteSessionTable_EmptyList(t *testing.T) {
 	buf := &bytes.Buffer{}
-	WriteSessionTable(buf, []v1alpha1.BreakglassSession{})
+	WriteSessionTable(buf, []breakglassv1alpha1.BreakglassSession{})
 
 	output := buf.String()
 	// Should still have header
@@ -89,19 +89,19 @@ func TestWriteSessionTable_EmptyList(t *testing.T) {
 
 func TestWriteSessionTableWide(t *testing.T) {
 	now := time.Now()
-	sessions := []v1alpha1.BreakglassSession{
+	sessions := []breakglassv1alpha1.BreakglassSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "session-1",
 				CreationTimestamp: metav1.NewTime(now),
 			},
-			Spec: v1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cluster-a",
 				User:         "user@example.com",
 				GrantedGroup: "admins",
 			},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State:     v1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
 				Approver:  "approver@example.com",
 				ExpiresAt: metav1.NewTime(now.Add(1 * time.Hour)),
 			},
@@ -120,16 +120,16 @@ func TestWriteSessionTableWide(t *testing.T) {
 }
 
 func TestWriteEscalationTable(t *testing.T) {
-	escalations := []v1alpha1.BreakglassEscalation{
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-1"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "cluster-admin",
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"prod-1", "prod-2"},
 					Groups:   []string{"developers"},
 				},
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Groups: []string{"security-team"},
 					Users:  []string{"lead@example.com"},
 				},
@@ -165,7 +165,7 @@ func TestWriteDebugSessionTable(t *testing.T) {
 			TemplateRef:  "debug-template",
 			Cluster:      "dev-cluster",
 			RequestedBy:  "developer@example.com",
-			State:        v1alpha1.DebugSessionStateActive,
+			State:        breakglassv1alpha1.DebugSessionStateActive,
 			StartsAt:     &startsAt,
 			ExpiresAt:    &expiresAt,
 			Participants: 2,
@@ -201,7 +201,7 @@ func TestWriteDebugSessionTableWide(t *testing.T) {
 			TemplateRef:  "debug-template",
 			Cluster:      "dev-cluster",
 			RequestedBy:  "developer@example.com",
-			State:        v1alpha1.DebugSessionStateActive,
+			State:        breakglassv1alpha1.DebugSessionStateActive,
 			StartsAt:     &startsAt,
 			ExpiresAt:    &expiresAt,
 			Participants: 2,
@@ -241,12 +241,12 @@ func TestWriteDebugSessionTableWide_WithAllowedPodOperations(t *testing.T) {
 			TemplateRef:  "debug-template",
 			Cluster:      "dev-cluster",
 			RequestedBy:  "developer@example.com",
-			State:        v1alpha1.DebugSessionStateActive,
+			State:        breakglassv1alpha1.DebugSessionStateActive,
 			StartsAt:     &startsAt,
 			ExpiresAt:    &expiresAt,
 			Participants: 2,
 			AllowedPods:  5,
-			AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+			AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
 				Exec:        &boolTrue,
 				Attach:      &boolFalse,
 				Logs:        &boolTrue,
@@ -272,7 +272,7 @@ func TestFormatAllowedPodOperations(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		ops      *v1alpha1.AllowedPodOperations
+		ops      *breakglassv1alpha1.AllowedPodOperations
 		expected string
 	}{
 		{
@@ -282,7 +282,7 @@ func TestFormatAllowedPodOperations(t *testing.T) {
 		},
 		{
 			name: "all enabled",
-			ops: &v1alpha1.AllowedPodOperations{
+			ops: &breakglassv1alpha1.AllowedPodOperations{
 				Exec:        &boolTrue,
 				Attach:      &boolTrue,
 				Logs:        &boolTrue,
@@ -292,7 +292,7 @@ func TestFormatAllowedPodOperations(t *testing.T) {
 		},
 		{
 			name: "all disabled",
-			ops: &v1alpha1.AllowedPodOperations{
+			ops: &breakglassv1alpha1.AllowedPodOperations{
 				Exec:        &boolFalse,
 				Attach:      &boolFalse,
 				Logs:        &boolFalse,
@@ -302,7 +302,7 @@ func TestFormatAllowedPodOperations(t *testing.T) {
 		},
 		{
 			name: "only exec enabled",
-			ops: &v1alpha1.AllowedPodOperations{
+			ops: &breakglassv1alpha1.AllowedPodOperations{
 				Exec:        &boolTrue,
 				Attach:      &boolFalse,
 				Logs:        &boolFalse,
@@ -312,7 +312,7 @@ func TestFormatAllowedPodOperations(t *testing.T) {
 		},
 		{
 			name: "only logs enabled",
-			ops: &v1alpha1.AllowedPodOperations{
+			ops: &breakglassv1alpha1.AllowedPodOperations{
 				Exec:        &boolFalse,
 				Attach:      &boolFalse,
 				Logs:        &boolTrue,
@@ -322,7 +322,7 @@ func TestFormatAllowedPodOperations(t *testing.T) {
 		},
 		{
 			name:     "empty struct uses defaults per field",
-			ops:      &v1alpha1.AllowedPodOperations{},
+			ops:      &breakglassv1alpha1.AllowedPodOperations{},
 			expected: "exec,attach,portforward",
 		},
 	}
@@ -342,7 +342,7 @@ func TestWriteDebugSessionTable_NilTimes(t *testing.T) {
 			TemplateRef: "template",
 			Cluster:     "cluster",
 			RequestedBy: "user@example.com",
-			State:       v1alpha1.DebugSessionStatePending,
+			State:       breakglassv1alpha1.DebugSessionStatePending,
 			StartsAt:    nil,
 			ExpiresAt:   nil,
 		},
@@ -524,7 +524,7 @@ func TestWriteTemplateClusterTable(t *testing.T) {
 						{BindingRef: client.BindingReference{Name: "binding-1", Namespace: "ns-1"}},
 						{BindingRef: client.BindingReference{Name: "binding-2", Namespace: "ns-2"}},
 					},
-					Constraints: &v1alpha1.DebugSessionConstraints{MaxDuration: "2h"},
+					Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "2h"},
 					Approval:    &client.ApprovalInfo{Required: true},
 				},
 			},
@@ -610,7 +610,7 @@ func TestWriteTemplateClusterTableWide(t *testing.T) {
 						{BindingRef: client.BindingReference{Name: "binding-2", Namespace: "ns-2"}},
 						{BindingRef: client.BindingReference{Name: "binding-3", Namespace: "ns-3"}},
 					},
-					Constraints:          &v1alpha1.DebugSessionConstraints{MaxDuration: "2h"},
+					Constraints:          &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "2h"},
 					NamespaceConstraints: &client.NamespaceConstraintsResponse{DefaultNamespace: "debug-ns"},
 					SchedulingOptions: &client.SchedulingOptionsResponse{
 						Required: true,
@@ -729,7 +729,7 @@ func TestWriteBindingOptionsTable(t *testing.T) {
 				{
 					BindingRef:           client.BindingReference{Name: "admin-binding", Namespace: "breakglass"},
 					DisplayName:          "Admin Access",
-					Constraints:          &v1alpha1.DebugSessionConstraints{MaxDuration: "1h"},
+					Constraints:          &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "1h"},
 					NamespaceConstraints: &client.NamespaceConstraintsResponse{DefaultNamespace: "admin-ns"},
 					SchedulingOptions: &client.SchedulingOptionsResponse{
 						Options: []client.SchedulingOptionResponse{{Name: "opt"}},

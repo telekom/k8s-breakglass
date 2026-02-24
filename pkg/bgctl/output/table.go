@@ -7,11 +7,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 )
 
-func WriteSessionTable(w io.Writer, sessions []v1alpha1.BreakglassSession) {
+func WriteSessionTable(w io.Writer, sessions []breakglassv1alpha1.BreakglassSession) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tUSER\tSTATE\tCREATED\tEXPIRES")
 	for _, s := range sessions {
@@ -25,7 +25,7 @@ func WriteSessionTable(w io.Writer, sessions []v1alpha1.BreakglassSession) {
 	_ = tw.Flush()
 }
 
-func WriteSessionTableWide(w io.Writer, sessions []v1alpha1.BreakglassSession) {
+func WriteSessionTableWide(w io.Writer, sessions []breakglassv1alpha1.BreakglassSession) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tUSER\tGROUP\tSTATE\tCREATED\tAPPROVER\tEXPIRES")
 	for _, s := range sessions {
@@ -39,7 +39,7 @@ func WriteSessionTableWide(w io.Writer, sessions []v1alpha1.BreakglassSession) {
 	_ = tw.Flush()
 }
 
-func WriteEscalationTable(w io.Writer, escs []v1alpha1.BreakglassEscalation) {
+func WriteEscalationTable(w io.Writer, escs []breakglassv1alpha1.BreakglassEscalation) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTERS\tALLOWED_GROUPS\tESCALATED_GROUP\tAPPROVERS")
 	for _, e := range escs {
@@ -85,7 +85,7 @@ func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSumma
 
 // formatAllowedPodOperations returns a short string representation of allowed pod operations.
 // Returns a comma-separated list of enabled operations (e.g., "exec,logs,attach").
-func formatAllowedPodOperations(ops *v1alpha1.AllowedPodOperations) string {
+func formatAllowedPodOperations(ops *breakglassv1alpha1.AllowedPodOperations) string {
 	if ops == nil {
 		// Default behavior when not specified: exec, attach, portforward enabled
 		return "exec,attach,portforward"

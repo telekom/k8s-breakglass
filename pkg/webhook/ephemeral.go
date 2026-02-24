@@ -10,16 +10,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 // DebugSessionHandler defines the interface for debug session operations
 type DebugSessionHandler interface {
-	FindActiveSession(ctx context.Context, user, cluster string) (*v1alpha1.DebugSession, error)
+	FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error)
 	ValidateEphemeralContainerRequest(
 		ctx context.Context,
-		ds *v1alpha1.DebugSession,
+		ds *breakglassv1alpha1.DebugSession,
 		namespace, podName, image string,
 		capabilities []string,
 		runAsNonRoot bool,

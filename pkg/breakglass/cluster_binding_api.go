@@ -23,7 +23,7 @@ import (
 	"sort"
 
 	"github.com/gin-gonic/gin"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
@@ -116,7 +116,7 @@ type ResolvedClusterInfo struct {
 
 // handleListClusterBindings returns a list of all cluster bindings
 func (c *ClusterBindingAPIController) handleListClusterBindings(ctx *gin.Context) {
-	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
 	if err := c.client.List(ctx, bindingList); err != nil {
 		c.log.Errorw("Failed to list cluster bindings", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list cluster bindings")
@@ -178,7 +178,7 @@ func (c *ClusterBindingAPIController) handleGetClusterBinding(ctx *gin.Context) 
 		return
 	}
 
-	binding := &v1alpha1.DebugSessionClusterBinding{}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: name}, binding); err != nil {
 		if apierrors.IsNotFound(err) {
 			apiresponses.RespondNotFoundSimple(ctx, fmt.Sprintf("cluster binding %s/%s not found", namespace, name))
@@ -201,7 +201,7 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 	}
 
 	// First get the ClusterConfig to access its labels
-	clusterConfig := &v1alpha1.ClusterConfig{}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
 		if apierrors.IsNotFound(err) {
 			apiresponses.RespondNotFoundSimple(ctx, fmt.Sprintf("cluster %s not found", clusterName))
@@ -213,7 +213,7 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 	}
 
 	// List all bindings
-	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
 	if err := c.client.List(ctx, bindingList); err != nil {
 		c.log.Errorw("Failed to list cluster bindings", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list cluster bindings")
@@ -240,7 +240,7 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 }
 
 // bindingMatchesCluster checks if a binding applies to the given cluster
-func (c *ClusterBindingAPIController) bindingMatchesCluster(binding *v1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *v1alpha1.ClusterConfig) bool {
+func (c *ClusterBindingAPIController) bindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *breakglassv1alpha1.ClusterConfig) bool {
 	// Check explicit cluster list
 	for _, cluster := range binding.Spec.Clusters {
 		if cluster == clusterName {
@@ -264,7 +264,7 @@ func (c *ClusterBindingAPIController) bindingMatchesCluster(binding *v1alpha1.De
 }
 
 // bindingToResponse converts a DebugSessionClusterBinding to API response
-func (c *ClusterBindingAPIController) bindingToResponse(binding *v1alpha1.DebugSessionClusterBinding) ClusterBindingResponse {
+func (c *ClusterBindingAPIController) bindingToResponse(binding *breakglassv1alpha1.DebugSessionClusterBinding) ClusterBindingResponse {
 	resp := ClusterBindingResponse{
 		Name:               binding.Name,
 		Namespace:          binding.Namespace,
@@ -319,21 +319,21 @@ func (c *ClusterBindingAPIController) bindingToResponse(binding *v1alpha1.DebugS
 
 // GetBindingsForCluster returns all bindings that apply to a specific cluster
 // This is a helper method for internal use
-func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context, clusterName string) ([]v1alpha1.DebugSessionClusterBinding, error) {
+func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context, clusterName string) ([]breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	// Get the ClusterConfig
-	clusterConfig := &v1alpha1.ClusterConfig{}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
 		return nil, fmt.Errorf("failed to get cluster config: %w", err)
 	}
 
 	// List all bindings
-	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
 	if err := c.client.List(ctx, bindingList); err != nil {
 		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
 	}
 
 	// Filter matching bindings
-	var matching []v1alpha1.DebugSessionClusterBinding
+	var matching []breakglassv1alpha1.DebugSessionClusterBinding
 	for _, binding := range bindingList.Items {
 		if c.bindingMatchesCluster(&binding, clusterName, clusterConfig) {
 			matching = append(matching, binding)
@@ -348,7 +348,7 @@ func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context,
 // - It is not disabled
 // - It has not expired (expiresAt is nil or in the future)
 // - It is effective (effectiveFrom is nil or in the past)
-func IsBindingActive(binding *v1alpha1.DebugSessionClusterBinding) bool {
+func IsBindingActive(binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
 	if binding.Spec.Disabled {
 		return false
 	}

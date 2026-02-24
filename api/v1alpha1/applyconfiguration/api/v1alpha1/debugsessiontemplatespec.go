@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	v1 "k8s.io/api/core/v1"
 )
 
@@ -24,7 +24,7 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	Description *string `json:"description,omitempty"`
 	// mode specifies the debug session mode: "workload", "kubectl-debug", or "hybrid".
 	// Defaults to "workload" for backward compatibility.
-	Mode *apiv1alpha1.DebugSessionTemplateMode `json:"mode,omitempty"`
+	Mode *breakglassv1alpha1.DebugSessionTemplateMode `json:"mode,omitempty"`
 	// podTemplateRef references a DebugPodTemplate for the pod specification.
 	// Required when mode is "workload" or "hybrid".
 	// The referenced template can itself contain {{ .Vars.* }} placeholders.
@@ -44,7 +44,7 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	ExtraDeployVariables []ExtraDeployVariableApplyConfiguration `json:"extraDeployVariables,omitempty"`
 	// workloadType specifies the type of workload to create (DaemonSet or Deployment).
 	// Required when mode is "workload" or "hybrid".
-	WorkloadType *apiv1alpha1.DebugWorkloadType `json:"workloadType,omitempty"`
+	WorkloadType *breakglassv1alpha1.DebugWorkloadType `json:"workloadType,omitempty"`
 	// replicas specifies the number of replicas for Deployment workloads.
 	// Defaults to 1. Ignored for DaemonSet workloads.
 	Replicas *int32 `json:"replicas,omitempty"`
@@ -161,7 +161,7 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithDescription(value strin
 // WithMode sets the Mode field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Mode field is set to the value of the last call.
-func (b *DebugSessionTemplateSpecApplyConfiguration) WithMode(value apiv1alpha1.DebugSessionTemplateMode) *DebugSessionTemplateSpecApplyConfiguration {
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithMode(value breakglassv1alpha1.DebugSessionTemplateMode) *DebugSessionTemplateSpecApplyConfiguration {
 	b.Mode = &value
 	return b
 }
@@ -206,7 +206,7 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithExtraDeployVariables(va
 // WithWorkloadType sets the WorkloadType field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the WorkloadType field is set to the value of the last call.
-func (b *DebugSessionTemplateSpecApplyConfiguration) WithWorkloadType(value apiv1alpha1.DebugWorkloadType) *DebugSessionTemplateSpecApplyConfiguration {
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithWorkloadType(value breakglassv1alpha1.DebugWorkloadType) *DebugSessionTemplateSpecApplyConfiguration {
 	b.WorkloadType = &value
 	return b
 }

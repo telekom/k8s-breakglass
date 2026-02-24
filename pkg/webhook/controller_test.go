@@ -20,7 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -32,33 +32,33 @@ import (
 
 var sessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	"spec.user": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 	},
 	"spec.grantedGroup": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
 }
 
 var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	"spec.cluster": func(o client.Object) []string {
-		ds := o.(*v1alpha1.DebugSession)
+		ds := o.(*breakglassv1alpha1.DebugSession)
 		if ds.Spec.Cluster == "" {
 			return nil
 		}
 		return []string{ds.Spec.Cluster}
 	},
 	"status.state": func(o client.Object) []string {
-		ds := o.(*v1alpha1.DebugSession)
+		ds := o.(*breakglassv1alpha1.DebugSession)
 		if ds.Status.State == "" {
 			return nil
 		}
 		return []string{string(ds.Status.State)}
 	},
 	"status.participants.user": func(o client.Object) []string {
-		ds := o.(*v1alpha1.DebugSession)
+		ds := o.(*breakglassv1alpha1.DebugSession)
 		if len(ds.Status.Participants) == 0 {
 			return nil
 		}
@@ -79,7 +79,7 @@ var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -128,7 +128,7 @@ func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 func TestHandleAuthorize_BodyTooLarge(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -154,17 +154,17 @@ func TestHandleAuthorize_BodyTooLarge(t *testing.T) {
 // Test that when RBAC denies and escalations exist the webhook returns allowed=false and a deny reason
 func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 	// Create a BreakglassEscalation that matches system:authenticated so escalation path exists
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-1"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Groups: []string{"system:authenticated"}, Clusters: []string{"test-cluster"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"system:authenticated"}, Clusters: []string{"test-cluster"}},
 			EscalatedGroup: "some-group",
 		},
 	}
 
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -219,17 +219,17 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 // impersonation permissions on the target cluster.
 func TestHandleAuthorize_ImpersonationError_TreatedAsDenied(t *testing.T) {
 	// Create a BreakglassEscalation that matches system:authenticated
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-oidc"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed:        v1alpha1.BreakglassEscalationAllowed{Groups: []string{"system:authenticated"}, Clusters: []string{"oidc-cluster"}},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"system:authenticated"}, Clusters: []string{"oidc-cluster"}},
 			EscalatedGroup: "oidc-admin-group",
 		},
 	}
 
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -307,20 +307,20 @@ func TestHandleAuthorize_ImpersonationError_TreatedAsDenied(t *testing.T) {
 // TestHandleAuthorize_MultiIDP_AllowedIDP tests that requests from allowed IDPs are approved
 func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 	// Create a BreakglassEscalation with IDP restrictions
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "multi-idp-esc",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Groups:   []string{"system:authenticated"},
 				Clusters: []string{"test-cluster"},
 			},
 			EscalatedGroup:           "admin-group",
 			AllowedIdentityProviders: []string{"idp-1", "idp-2"},
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			ApproverGroupMembers: map[string][]string{
 				"admin-group": {"user@example.com"},
 			},
@@ -329,7 +329,7 @@ func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -384,13 +384,13 @@ func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 // TestHandleAuthorize_MultiIDP_BlockedIDP tests that requests from disallowed IDPs are blocked
 func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 	// Create a BreakglassEscalation that only allows idp-1 and idp-2
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "multi-idp-esc",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Groups:   []string{"system:authenticated"},
 				Clusters: []string{"test-cluster"},
 			},
@@ -401,7 +401,7 @@ func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -454,20 +454,20 @@ func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 // TestHandleAuthorize_NoIDPRestriction_HappyPath tests that escalations without IDP restrictions are not affected
 func TestHandleAuthorize_NoIDPRestriction_HappyPath(t *testing.T) {
 	// Create a BreakglassEscalation WITHOUT IDP restrictions
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "legacy-esc",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			Allowed: v1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Groups:   []string{"system:authenticated"},
 				Clusters: []string{"test-cluster"},
 			},
 			EscalatedGroup: "admin-group",
 			// No AllowedIdentityProviders set - backward compatible
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			ApproverGroupMembers: map[string][]string{
 				"admin-group": {"user@example.com"},
 			},
@@ -476,7 +476,7 @@ func TestHandleAuthorize_NoIDPRestriction_HappyPath(t *testing.T) {
 
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 
@@ -539,7 +539,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 	tests := []struct {
 		name           string
 		sar            *authorizationv1.SubjectAccessReview
-		idps           []v1alpha1.IdentityProvider
+		idps           []breakglassv1alpha1.IdentityProvider
 		expectContains string
 	}{
 		{
@@ -566,10 +566,10 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 					},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer:      "https://keycloak.example.com/realms/test",
 						DisplayName: "My Keycloak",
 					},
@@ -587,10 +587,10 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 					},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer: "https://keycloak.example.com/realms/test",
 					},
 				},
@@ -609,10 +609,10 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 					User: "test-user",
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer:      "https://keycloak.example.com/realms/test",
 						DisplayName: "Test Keycloak",
 					},
@@ -630,10 +630,10 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 					},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer:      "https://keycloak.example.com/realms/test",
 						DisplayName: "Test Keycloak",
 					},
@@ -651,7 +651,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 					},
 				},
 			},
-			idps:           []v1alpha1.IdentityProvider{},
+			idps:           []breakglassv1alpha1.IdentityProvider{},
 			expectContains: "was issued by",
 		},
 		{
@@ -664,10 +664,10 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 					},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer:      "https://disabled.example.com/",
 						DisplayName: "Disabled Provider",
 						Disabled:    true,
@@ -675,7 +675,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 				},
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "enabled-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer:      "https://enabled.example.com/",
 						DisplayName: "Enabled Provider",
 					},
@@ -695,17 +695,17 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 				},
 			},
 		}
-		idps := []v1alpha1.IdentityProvider{
+		idps := []breakglassv1alpha1.IdentityProvider{
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-				Spec: v1alpha1.IdentityProviderSpec{
+				Spec: breakglassv1alpha1.IdentityProviderSpec{
 					Issuer:      "https://keycloak.example.com/realms/test",
 					DisplayName: "Keycloak Provider",
 				},
 			},
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "azure-idp"},
-				Spec: v1alpha1.IdentityProviderSpec{
+				Spec: breakglassv1alpha1.IdentityProviderSpec{
 					Issuer:      "https://login.microsoft.com/tenant",
 					DisplayName: "Azure AD",
 				},
@@ -788,16 +788,16 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 	tests := []struct {
 		name     string
 		issuer   string
-		esc      *v1alpha1.BreakglassEscalation
-		idps     []v1alpha1.IdentityProvider
+		esc      *breakglassv1alpha1.BreakglassEscalation
+		idps     []breakglassv1alpha1.IdentityProvider
 		expected bool
 	}{
 		{
 			name:   "no IDP restrictions - allows any",
 			issuer: "https://any.example.com/",
-			esc: &v1alpha1.BreakglassEscalation{
+			esc: &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					AllowedIdentityProvidersForRequests: nil,
 				},
 			},
@@ -806,9 +806,9 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 		{
 			name:   "IDP restrictions but no issuer provided - denied",
 			issuer: "",
-			esc: &v1alpha1.BreakglassEscalation{
+			esc: &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					AllowedIdentityProvidersForRequests: []string{"keycloak-idp"},
 				},
 			},
@@ -817,16 +817,16 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 		{
 			name:   "issuer matches allowed IDP",
 			issuer: "https://keycloak.example.com/realms/test",
-			esc: &v1alpha1.BreakglassEscalation{
+			esc: &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					AllowedIdentityProvidersForRequests: []string{"keycloak-idp"},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer: "https://keycloak.example.com/realms/test",
 					},
 				},
@@ -836,16 +836,16 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 		{
 			name:   "issuer matches IDP but IDP not in allowed list",
 			issuer: "https://keycloak.example.com/realms/test",
-			esc: &v1alpha1.BreakglassEscalation{
+			esc: &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					AllowedIdentityProvidersForRequests: []string{"other-idp"},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer: "https://keycloak.example.com/realms/test",
 					},
 				},
@@ -855,16 +855,16 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 		{
 			name:   "issuer doesn't match any IDP",
 			issuer: "https://unknown.example.com/",
-			esc: &v1alpha1.BreakglassEscalation{
+			esc: &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					AllowedIdentityProvidersForRequests: []string{"keycloak-idp"},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer: "https://keycloak.example.com/realms/test",
 					},
 				},
@@ -874,16 +874,16 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 		{
 			name:   "issuer matches disabled IDP - denied",
 			issuer: "https://keycloak.example.com/realms/test",
-			esc: &v1alpha1.BreakglassEscalation{
+			esc: &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					AllowedIdentityProvidersForRequests: []string{"keycloak-idp"},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer:   "https://keycloak.example.com/realms/test",
 						Disabled: true,
 					},
@@ -894,22 +894,22 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 		{
 			name:   "multiple IDPs - matches second one in allowed list",
 			issuer: "https://azure.example.com/",
-			esc: &v1alpha1.BreakglassEscalation{
+			esc: &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-				Spec: v1alpha1.BreakglassEscalationSpec{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					AllowedIdentityProvidersForRequests: []string{"keycloak-idp", "azure-idp"},
 				},
 			},
-			idps: []v1alpha1.IdentityProvider{
+			idps: []breakglassv1alpha1.IdentityProvider{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer: "https://keycloak.example.com/realms/test",
 					},
 				},
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "azure-idp"},
-					Spec: v1alpha1.IdentityProviderSpec{
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Issuer: "https://azure.example.com/",
 					},
 				},
@@ -959,9 +959,9 @@ func TestIsRequestFromAllowedIDP_FailClosed(t *testing.T) {
 		escalManager: escalMgr,
 	}
 
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
-		Spec: v1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			AllowedIdentityProvidersForRequests: []string{"keycloak-idp"},
 		},
 	}
@@ -992,7 +992,7 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 		username        string
 		clusterName     string
 		ra              *authorizationv1.ResourceAttributes
-		debugSessions   []v1alpha1.DebugSession
+		debugSessions   []breakglassv1alpha1.DebugSession
 		expectAllowed   bool
 		expectSession   string
 		expectReasonHas string
@@ -1050,7 +1050,7 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{},
+			debugSessions: []breakglassv1alpha1.DebugSession{},
 			expectAllowed: false,
 		},
 		{
@@ -1063,16 +1063,16 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-1", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "other-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "other-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 					},
 				},
 			},
@@ -1088,16 +1088,16 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-1", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStatePending,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStatePending,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 					},
 				},
 			},
@@ -1113,16 +1113,16 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "different-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-1", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 					},
 				},
 			},
@@ -1138,16 +1138,16 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-1", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 					},
 				},
 			},
@@ -1163,16 +1163,16 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-1", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 					},
 				},
 			},
@@ -1191,17 +1191,17 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-logs", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
-						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
 							Logs: boolPtr(true),
 						},
 					},
@@ -1221,17 +1221,17 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-no-logs", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
-						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
 							Logs: boolPtr(false),
 						},
 					},
@@ -1249,17 +1249,17 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-no-exec", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
-						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
 							Exec: boolPtr(false),
 							Logs: boolPtr(true),
 						},
@@ -1278,16 +1278,16 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-compat", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 						// AllowedPodOperations is nil - should use backward-compatible defaults
 					},
 				},
@@ -1306,17 +1306,17 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-attach", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
-						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
 							Attach: boolPtr(true),
 						},
 					},
@@ -1336,17 +1336,17 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
-			debugSessions: []v1alpha1.DebugSession{
+			debugSessions: []breakglassv1alpha1.DebugSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ds-logs-only", Namespace: "default"},
-					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
-					Status: v1alpha1.DebugSessionStatus{
-						State: v1alpha1.DebugSessionStateActive,
-						AllowedPods: []v1alpha1.AllowedPodRef{
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
-						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
-						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
 							Exec:        boolPtr(false),
 							Attach:      boolPtr(false),
 							Logs:        boolPtr(true),
@@ -1368,7 +1368,7 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 
 			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...)
 			for k, fn := range debugSessionIndexFnsWebhook {
-				builder = builder.WithIndex(&v1alpha1.DebugSession{}, k, fn)
+				builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
 			}
 			cli := builder.Build()
 			escalMgr := &breakglass.EscalationManager{Client: cli}
@@ -1875,8 +1875,8 @@ func TestWebhookController_FetchPodFromCluster_NilProvider(t *testing.T) {
 func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 	testCases := []struct {
 		name             string
-		sessions         []v1alpha1.BreakglassSession
-		escalations      []*v1alpha1.BreakglassEscalation
+		sessions         []breakglassv1alpha1.BreakglassSession
+		escalations      []*breakglassv1alpha1.BreakglassEscalation
 		expectOverrides  bool
 		expectedMaxScore *int
 		expectedExempt   []string
@@ -1889,7 +1889,7 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 		},
 		{
 			name: "session not approved",
-			sessions: []v1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "pending-session",
@@ -1898,16 +1898,16 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "BreakglassEscalation", Name: "my-escalation"},
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStatePending,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStatePending,
 					},
 				},
 			},
-			escalations: []*v1alpha1.BreakglassEscalation{
+			escalations: []*breakglassv1alpha1.BreakglassEscalation{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 							Enabled:         true,
 							MaxAllowedScore: intPtr(80),
 						},
@@ -1918,7 +1918,7 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 		},
 		{
 			name: "session approved with PodSecurityOverrides",
-			sessions: []v1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "active-session",
@@ -1927,16 +1927,16 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "BreakglassEscalation", Name: "my-escalation"},
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStateApproved,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStateApproved,
 					},
 				},
 			},
-			escalations: []*v1alpha1.BreakglassEscalation{
+			escalations: []*breakglassv1alpha1.BreakglassEscalation{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 							Enabled:         true,
 							MaxAllowedScore: intPtr(80),
 							ExemptFactors:   []string{"hostNetwork", "hostPID"},
@@ -1950,7 +1950,7 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 		},
 		{
 			name: "session approved but PodSecurityOverrides disabled",
-			sessions: []v1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "active-session",
@@ -1959,16 +1959,16 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "BreakglassEscalation", Name: "my-escalation"},
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStateApproved,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStateApproved,
 					},
 				},
 			},
-			escalations: []*v1alpha1.BreakglassEscalation{
+			escalations: []*breakglassv1alpha1.BreakglassEscalation{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 							Enabled:         false, // Disabled
 							MaxAllowedScore: intPtr(80),
 						},
@@ -1979,7 +1979,7 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 		},
 		{
 			name: "session approved but no PodSecurityOverrides in escalation",
-			sessions: []v1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "active-session",
@@ -1988,22 +1988,22 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "BreakglassEscalation", Name: "my-escalation"},
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStateApproved,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStateApproved,
 					},
 				},
 			},
-			escalations: []*v1alpha1.BreakglassEscalation{
+			escalations: []*breakglassv1alpha1.BreakglassEscalation{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
-					Spec:       v1alpha1.BreakglassEscalationSpec{},
+					Spec:       breakglassv1alpha1.BreakglassEscalationSpec{},
 				},
 			},
 			expectOverrides: false, // No overrides configured
 		},
 		{
 			name: "session approved but escalation not found",
-			sessions: []v1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "active-session",
@@ -2012,8 +2012,8 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "BreakglassEscalation", Name: "nonexistent-escalation"},
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStateApproved,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStateApproved,
 					},
 				},
 			},
@@ -2022,7 +2022,7 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 		},
 		{
 			name: "multiple sessions - first approved has overrides",
-			sessions: []v1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "first-session",
@@ -2031,8 +2031,8 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "BreakglassEscalation", Name: "first-esc"},
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStateApproved,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStateApproved,
 					},
 				},
 				{
@@ -2043,16 +2043,16 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "BreakglassEscalation", Name: "second-esc"},
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStateApproved,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStateApproved,
 					},
 				},
 			},
-			escalations: []*v1alpha1.BreakglassEscalation{
+			escalations: []*breakglassv1alpha1.BreakglassEscalation{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "first-esc", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 							Enabled:         true,
 							MaxAllowedScore: intPtr(60),
 						},
@@ -2060,8 +2060,8 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 				},
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "second-esc", Namespace: "default"},
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
 							Enabled:         true,
 							MaxAllowedScore: intPtr(90), // Higher but should not be used
 						},
@@ -2073,7 +2073,7 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 		},
 		{
 			name: "session with non-escalation owner reference",
-			sessions: []v1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "active-session",
@@ -2082,8 +2082,8 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 							{Kind: "SomeOtherKind", Name: "not-an-escalation"}, // Wrong kind
 						},
 					},
-					Status: v1alpha1.BreakglassSessionStatus{
-						State: v1alpha1.SessionStateApproved,
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State: breakglassv1alpha1.SessionStateApproved,
 					},
 				},
 			},
@@ -2145,7 +2145,7 @@ func TestGetPodSecurityOverridesFromSessions_NilEscalManager(t *testing.T) {
 		escalManager: nil, // No escalation manager
 	}
 
-	sessions := []v1alpha1.BreakglassSession{
+	sessions := []breakglassv1alpha1.BreakglassSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-session",
@@ -2154,8 +2154,8 @@ func TestGetPodSecurityOverridesFromSessions_NilEscalManager(t *testing.T) {
 					{Kind: "BreakglassEscalation", Name: "my-escalation"},
 				},
 			},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State: v1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved,
 			},
 		},
 	}
@@ -2253,15 +2253,15 @@ func TestFetchNamespaceLabels_NilCCProvider(t *testing.T) {
 // TestHandleAuthorize_DenyPolicyWithNamespaceLabels tests that namespace labels are used for deny policy evaluation.
 func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
 	// Create a DenyPolicy that uses SelectorTerms (label selectors)
-	denyPol := &v1alpha1.DenyPolicy{
+	denyPol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-prod"},
-		Spec: v1alpha1.DenyPolicySpec{
-			Rules: []v1alpha1.DenyRule{{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			Rules: []breakglassv1alpha1.DenyRule{{
 				Verbs:     []string{"delete"},
 				APIGroups: []string{""},
 				Resources: []string{"services"},
-				Namespaces: &v1alpha1.NamespaceFilter{
-					SelectorTerms: []v1alpha1.NamespaceSelectorTerm{{
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{
+					SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
 						MatchLabels: map[string]string{"env": "production"},
 					}},
 				},
@@ -2271,7 +2271,7 @@ func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
 
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(denyPol)
 	for k, fn := range sessionIndexFnsWebhook {
-		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
 	cli := builder.Build()
 

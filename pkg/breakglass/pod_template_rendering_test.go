@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -40,12 +40,12 @@ func TestBuildPodRenderContext(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "my-template",
 			RequestedBy:     "user@example.com",
@@ -57,18 +57,18 @@ func TestBuildPodRenderContext(t *testing.T) {
 				"replicaCount": {Raw: []byte(`3`)},
 			},
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			Approval: &v1alpha1.DebugSessionApproval{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			Approval: &breakglassv1alpha1.DebugSessionApproval{
 				ApprovedBy: "admin@example.com",
 				ApprovedAt: &metav1.Time{},
 			},
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Test Template",
-			ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{
 					Name:    "pvcSize",
 					Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)},
@@ -121,25 +121,25 @@ func TestBuildVarsFromSession_PodTemplate(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		ds           *v1alpha1.DebugSession
-		templateSpec *v1alpha1.DebugSessionTemplateSpec
+		ds           *breakglassv1alpha1.DebugSession
+		templateSpec *breakglassv1alpha1.DebugSessionTemplateSpec
 		want         map[string]string
 	}{
 		{
 			name: "no variables",
-			ds: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{},
+			ds: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{},
 			},
-			templateSpec: &v1alpha1.DebugSessionTemplateSpec{},
+			templateSpec: &breakglassv1alpha1.DebugSessionTemplateSpec{},
 			want:         map[string]string{},
 		},
 		{
 			name: "defaults only",
-			ds: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{},
+			ds: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{},
 			},
-			templateSpec: &v1alpha1.DebugSessionTemplateSpec{
-				ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			templateSpec: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 					{Name: "size", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
 					{Name: "enabled", Default: &apiextensionsv1.JSON{Raw: []byte(`true`)}},
 				},
@@ -151,15 +151,15 @@ func TestBuildVarsFromSession_PodTemplate(t *testing.T) {
 		},
 		{
 			name: "user values override defaults",
-			ds: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{
+			ds: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					ExtraDeployValues: map[string]apiextensionsv1.JSON{
 						"size": {Raw: []byte(`"50Gi"`)},
 					},
 				},
 			},
-			templateSpec: &v1alpha1.DebugSessionTemplateSpec{
-				ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			templateSpec: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 					{Name: "size", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
 				},
 			},
@@ -169,8 +169,8 @@ func TestBuildVarsFromSession_PodTemplate(t *testing.T) {
 		},
 		{
 			name: "various data types",
-			ds: &v1alpha1.DebugSession{
-				Spec: v1alpha1.DebugSessionSpec{
+			ds: &breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					ExtraDeployValues: map[string]apiextensionsv1.JSON{
 						"stringVal": {Raw: []byte(`"hello"`)},
 						"boolVal":   {Raw: []byte(`false`)},
@@ -180,7 +180,7 @@ func TestBuildVarsFromSession_PodTemplate(t *testing.T) {
 					},
 				},
 			},
-			templateSpec: &v1alpha1.DebugSessionTemplateSpec{},
+			templateSpec: &breakglassv1alpha1.DebugSessionTemplateSpec{},
 			want: map[string]string{
 				"stringVal": "hello",
 				"boolVal":   "false",
@@ -208,7 +208,7 @@ func TestRenderPodTemplateString(t *testing.T) {
 	tests := []struct {
 		name        string
 		templateStr string
-		ctx         v1alpha1.AuxiliaryResourceContext
+		ctx         breakglassv1alpha1.AuxiliaryResourceContext
 		wantSpec    corev1.PodSpec
 		wantErr     bool
 		errContains string
@@ -221,7 +221,7 @@ containers:
     image: busybox:latest
     command: ["sleep", "infinity"]
 `,
-			ctx: v1alpha1.AuxiliaryResourceContext{},
+			ctx: breakglassv1alpha1.AuxiliaryResourceContext{},
 			wantSpec: corev1.PodSpec{
 				Containers: []corev1.Container{
 					{
@@ -240,7 +240,7 @@ containers:
     image: {{ .vars.image }}
     command: ["sleep", "{{ .vars.sleepTime }}"]
 `,
-			ctx: v1alpha1.AuxiliaryResourceContext{
+			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"containerName": "my-container",
 					"image":         "alpine:3.18",
@@ -269,8 +269,8 @@ containers:
       - name: CLUSTER
         value: {{ .session.cluster | quote }}
 `,
-			ctx: v1alpha1.AuxiliaryResourceContext{
-				Session: v1alpha1.AuxiliaryResourceSessionContext{
+			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
+				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name:    "my-debug-session-12345",
 					Cluster: "production-cluster",
 				},
@@ -304,7 +304,7 @@ volumes:
       claimName: {{ .vars.pvcName }}
 {{- end }}
 `,
-			ctx: v1alpha1.AuxiliaryResourceContext{
+			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"mountPvc": "true",
 					"pvcName":  "test-pvc",
@@ -335,7 +335,7 @@ volumes:
 		{
 			name:        "invalid template syntax",
 			templateStr: `{{ .invalid.syntax`,
-			ctx:         v1alpha1.AuxiliaryResourceContext{},
+			ctx:         breakglassv1alpha1.AuxiliaryResourceContext{},
 			wantErr:     true,
 			errContains: "template rendering failed",
 		},
@@ -369,8 +369,8 @@ func TestRenderPodOverridesTemplate(t *testing.T) {
 	tests := []struct {
 		name          string
 		templateStr   string
-		ctx           v1alpha1.AuxiliaryResourceContext
-		wantOverrides *v1alpha1.DebugPodSpecOverrides
+		ctx           breakglassv1alpha1.AuxiliaryResourceContext
+		wantOverrides *breakglassv1alpha1.DebugPodSpecOverrides
 		wantErr       bool
 	}{
 		{
@@ -379,8 +379,8 @@ func TestRenderPodOverridesTemplate(t *testing.T) {
 hostNetwork: true
 hostPID: false
 `,
-			ctx: v1alpha1.AuxiliaryResourceContext{},
-			wantOverrides: &v1alpha1.DebugPodSpecOverrides{
+			ctx: breakglassv1alpha1.AuxiliaryResourceContext{},
+			wantOverrides: &breakglassv1alpha1.DebugPodSpecOverrides{
 				HostNetwork: &trueVal,
 				HostPID:     &falseVal,
 			},
@@ -393,13 +393,13 @@ hostNetwork: true
 {{- end }}
 hostPID: {{ .vars.enableHostPID }}
 `,
-			ctx: v1alpha1.AuxiliaryResourceContext{
+			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"enableHostNetwork": "true",
 					"enableHostPID":     "false",
 				},
 			},
-			wantOverrides: &v1alpha1.DebugPodSpecOverrides{
+			wantOverrides: &breakglassv1alpha1.DebugPodSpecOverrides{
 				HostNetwork: &trueVal,
 				HostPID:     &falseVal,
 			},
@@ -411,12 +411,12 @@ hostPID: {{ .vars.enableHostPID }}
 hostNetwork: true
 {{- end }}
 `,
-			ctx: v1alpha1.AuxiliaryResourceContext{
+			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"enableHostNetwork": "false",
 				},
 			},
-			wantOverrides: &v1alpha1.DebugPodSpecOverrides{},
+			wantOverrides: &breakglassv1alpha1.DebugPodSpecOverrides{},
 		},
 	}
 
@@ -445,7 +445,7 @@ func TestApplyPodOverridesStruct(t *testing.T) {
 	tests := []struct {
 		name      string
 		spec      corev1.PodSpec
-		overrides *v1alpha1.DebugPodSpecOverrides
+		overrides *breakglassv1alpha1.DebugPodSpecOverrides
 		wantSpec  corev1.PodSpec
 	}{
 		{
@@ -453,7 +453,7 @@ func TestApplyPodOverridesStruct(t *testing.T) {
 			spec: corev1.PodSpec{
 				HostNetwork: false,
 			},
-			overrides: &v1alpha1.DebugPodSpecOverrides{
+			overrides: &breakglassv1alpha1.DebugPodSpecOverrides{
 				HostNetwork: &trueVal,
 			},
 			wantSpec: corev1.PodSpec{
@@ -463,7 +463,7 @@ func TestApplyPodOverridesStruct(t *testing.T) {
 		{
 			name: "apply all overrides",
 			spec: corev1.PodSpec{},
-			overrides: &v1alpha1.DebugPodSpecOverrides{
+			overrides: &breakglassv1alpha1.DebugPodSpecOverrides{
 				HostNetwork: &trueVal,
 				HostPID:     &trueVal,
 				HostIPC:     &falseVal,
@@ -483,7 +483,7 @@ func TestApplyPodOverridesStruct(t *testing.T) {
 		{
 			name:      "empty overrides",
 			spec:      corev1.PodSpec{HostNetwork: true},
-			overrides: &v1alpha1.DebugPodSpecOverrides{},
+			overrides: &breakglassv1alpha1.DebugPodSpecOverrides{},
 			wantSpec:  corev1.PodSpec{HostNetwork: true},
 		},
 	}
@@ -503,12 +503,12 @@ func TestBuildPodSpec_WithTemplateString(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "fio-template",
 			RequestedBy:     "user@example.com",
@@ -520,8 +520,8 @@ func TestBuildPodSpec_WithTemplateString(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "FIO Storage Test",
 			PodTemplateString: `
 containers:
@@ -536,7 +536,7 @@ volumes:
     persistentVolumeClaim:
       claimName: pvc-{{ .session.name | trunc 8 }}
 `,
-			ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
 			},
 		},
@@ -568,12 +568,12 @@ func TestBuildPodSpec_WithOverridesTemplate(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "network-debug",
 			TargetNamespace: "target-ns",
@@ -583,10 +583,10 @@ func TestBuildPodSpec_WithOverridesTemplate(t *testing.T) {
 		},
 	}
 
-	podTemplate := &v1alpha1.DebugPodTemplate{
-		Spec: v1alpha1.DebugPodTemplateSpec{
-			Template: &v1alpha1.DebugPodSpec{
-				Spec: v1alpha1.DebugPodSpecInner{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "netshoot",
@@ -599,8 +599,8 @@ func TestBuildPodSpec_WithOverridesTemplate(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Network Debug",
 			PodOverridesTemplate: `
 {{- if eq .vars.enableHostNetwork "true" }}
@@ -608,7 +608,7 @@ hostNetwork: true
 hostPID: true
 {{- end }}
 `,
-			ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{Name: "enableHostNetwork", Default: &apiextensionsv1.JSON{Raw: []byte(`false`)}},
 			},
 		},
@@ -635,12 +635,12 @@ func TestBuildPodSpec_WithDebugPodTemplateTemplateString(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "production-cluster",
 			TemplateRef:     "dynamic-debug",
 			TargetNamespace: "target-ns",
@@ -653,11 +653,11 @@ func TestBuildPodSpec_WithDebugPodTemplateTemplateString(t *testing.T) {
 	}
 
 	// DebugPodTemplate with templateString instead of structured template
-	podTemplate := &v1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "dynamic-pod-template",
 		},
-		Spec: v1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			// Template is nil - using templateString instead
 			TemplateString: `
 containers:
@@ -683,8 +683,8 @@ containers:
 	}
 
 	// DebugSessionTemplate that references the DebugPodTemplate
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			// No PodTemplateString - will use the referenced podTemplate's templateString
 		},
 	}
@@ -720,29 +720,29 @@ func TestBuildPodSpec_DebugPodTemplateNeitherTemplateNorTemplateString(t *testin
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "test-cluster",
 			TemplateRef: "invalid-template",
 		},
 	}
 
 	// DebugPodTemplate with neither template nor templateString (invalid)
-	podTemplate := &v1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "invalid-pod-template",
 		},
-		Spec: v1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			// Both Template and TemplateString are nil/empty
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{},
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 	}
 
 	_, err := controller.buildPodSpec(ds, template, podTemplate)
@@ -756,12 +756,12 @@ func TestBuildPodSpec_OverridesDisabled(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "network-debug",
 			TargetNamespace: "target-ns",
@@ -771,10 +771,10 @@ func TestBuildPodSpec_OverridesDisabled(t *testing.T) {
 		},
 	}
 
-	podTemplate := &v1alpha1.DebugPodTemplate{
-		Spec: v1alpha1.DebugPodTemplateSpec{
-			Template: &v1alpha1.DebugPodSpec{
-				Spec: v1alpha1.DebugPodSpecInner{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
 					},
@@ -783,8 +783,8 @@ func TestBuildPodSpec_OverridesDisabled(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			PodOverridesTemplate: `
 {{- if eq .vars.enableHostNetwork "true" }}
 hostNetwork: true
@@ -841,7 +841,7 @@ containers:
     command: ["sleep", "infinity"]
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	// Should have a valid PodSpec
@@ -883,8 +883,8 @@ spec:
       storage: {{ .vars.pvcSize | default "10Gi" }}
 `
 
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name: "test-session",
 		},
 		Vars: map[string]string{
@@ -952,7 +952,7 @@ spec:
       storage: 10Gi
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	// Verify PodSpec
@@ -998,7 +998,7 @@ data:
   key: value
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	// Verify PodSpec
@@ -1016,7 +1016,7 @@ func TestRenderPodTemplateStringMultiDoc_EmptyTemplate(t *testing.T) {
 	}
 
 	// Empty template
-	_, err := controller.renderPodTemplateStringMultiDoc("", v1alpha1.AuxiliaryResourceContext{})
+	_, err := controller.renderPodTemplateStringMultiDoc("", breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
 }
@@ -1036,7 +1036,7 @@ data:
   key: value
 `
 
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing apiVersion or kind")
 }
@@ -1061,13 +1061,13 @@ data:
   requestedBy: {{ .session.requestedBy }}
 `
 
-	ctx := v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:        "very-long-session-name-12345",
 			Cluster:     "prod-cluster",
 			RequestedBy: "user@example.com",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace: "debug-ns",
 		},
 		Vars: map[string]string{
@@ -1115,7 +1115,7 @@ spec:
 `
 
 	// Test with PVC enabled
-	ctx := v1alpha1.AuxiliaryResourceContext{
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Vars: map[string]string{"createPVC": "true"},
 	}
 	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
@@ -1123,7 +1123,7 @@ spec:
 	assert.Len(t, result.AdditionalResources, 1)
 
 	// Test with PVC disabled
-	ctx = v1alpha1.AuxiliaryResourceContext{
+	ctx = breakglassv1alpha1.AuxiliaryResourceContext{
 		Vars: map[string]string{"createPVC": "false"},
 	}
 	result, err = controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
@@ -1137,12 +1137,12 @@ func TestBuildPodSpec_MultiDocReturnsAdditionalResources(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "storage-test",
 			RequestedBy:     "user@example.com",
@@ -1150,8 +1150,8 @@ func TestBuildPodSpec_MultiDocReturnsAdditionalResources(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Storage Test",
 			PodTemplateString: `containers:
   - name: fio
@@ -1198,26 +1198,26 @@ func TestBuildPodSpec_StructuredTemplateNoAdditionalResources(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "simple",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{},
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 	}
 
-	podTemplate := &v1alpha1.DebugPodTemplate{
-		Spec: v1alpha1.DebugPodTemplateSpec{
-			Template: &v1alpha1.DebugPodSpec{
-				Spec: v1alpha1.DebugPodSpecInner{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
 					},
@@ -1244,26 +1244,26 @@ func TestBuildPodSpec_DebugPodTemplateMultiDoc(t *testing.T) {
 		log: logger,
 	}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "with-pod-template",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			// No PodTemplateString - will use podTemplate's templateString
 		},
 	}
 
-	podTemplate := &v1alpha1.DebugPodTemplate{
-		Spec: v1alpha1.DebugPodTemplateSpec{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			TemplateString: `containers:
   - name: app
     image: app:latest
@@ -1332,7 +1332,7 @@ spec:
           add: ["NET_ADMIN", "NET_RAW"]
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	// Should extract PodSpec correctly
@@ -1378,7 +1378,7 @@ data:
   key: value
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	require.Len(t, result.PodSpec.Containers, 1)
@@ -1417,7 +1417,7 @@ spec:
               memory: "128Mi"
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	// Should return the full Deployment as Workload
@@ -1456,7 +1456,7 @@ spec:
           command: ["sleep", "infinity"]
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	require.NotNil(t, result.Workload)
@@ -1485,7 +1485,7 @@ spec:
           image: busybox
 `
 
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported manifest kind")
 	assert.Contains(t, err.Error(), "Job")
@@ -1504,7 +1504,7 @@ spec:
       emptyDir: {}
 `
 
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no containers")
 }
@@ -1519,7 +1519,7 @@ func TestRenderPodTemplateStringMultiDoc_BareSpecEmptyContainersError(t *testing
     emptyDir: {}
 `
 
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no containers")
 }
@@ -1565,7 +1565,7 @@ spec:
         type: DirectoryOrCreate
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	assert.Nil(t, result.Workload, "Pod manifests should not produce a workload")
@@ -1626,7 +1626,7 @@ spec:
         sizeLimit: {{ .vars.captureStorageGi | default "2" }}Gi
 `
 
-	ctx := v1alpha1.AuxiliaryResourceContext{
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Vars: map[string]string{
 			"captureStorageGi": "5",
 		},
@@ -1683,7 +1683,7 @@ spec:
         type: Directory
 `
 
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 
 	require.Len(t, result.PodSpec.Containers, 1)
@@ -1708,13 +1708,13 @@ func newBuildWorkloadController() *DebugSessionController {
 	return &DebugSessionController{log: zap.NewNop().Sugar()}
 }
 
-func newBuildWorkloadSession(name string) *v1alpha1.DebugSession {
-	return &v1alpha1.DebugSession{
+func newBuildWorkloadSession(name string) *breakglassv1alpha1.DebugSession {
+	return &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
@@ -1728,9 +1728,9 @@ func TestBuildWorkload_KindPodWrappedInDaemonSet(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("pod-to-ds")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: v1
 kind: Pod
 metadata:
@@ -1776,9 +1776,9 @@ func TestBuildWorkload_KindPodWrappedInDeployment(t *testing.T) {
 	ds := newBuildWorkloadSession("pod-to-deploy")
 
 	replicas := int32(3)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:     &replicas,
 			PodTemplateString: `apiVersion: v1
 kind: Pod
@@ -1805,9 +1805,9 @@ func TestBuildWorkload_FullDeploymentTemplate(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("full-deploy")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1858,9 +1858,9 @@ func TestBuildWorkload_FullDaemonSetTemplate(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("full-ds")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -1900,9 +1900,9 @@ func TestBuildWorkload_WorkloadTypeMismatch(t *testing.T) {
 	ds := newBuildWorkloadSession("mismatch")
 
 	// Template produces a DaemonSet but workloadType is Deployment
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -1933,9 +1933,9 @@ func TestBuildWorkload_FullDeploymentReplicasOverride(t *testing.T) {
 	ds := newBuildWorkloadSession("replicas-override")
 
 	overrideReplicas := int32(2)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:     &overrideReplicas,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
@@ -1968,10 +1968,10 @@ func TestBuildWorkload_FullDeploymentResourceQuotaExceeded(t *testing.T) {
 	ds := newBuildWorkloadSession("quota-exceed")
 
 	maxPods := int32(2)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
-			ResourceQuota: &v1alpha1.DebugResourceQuotaConfig{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
+			ResourceQuota: &breakglassv1alpha1.DebugResourceQuotaConfig{
 				MaxPods: &maxPods,
 			},
 			PodTemplateString: `apiVersion: apps/v1
@@ -2004,9 +2004,9 @@ func TestBuildWorkload_BareSpecBackwardCompatible(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("bare-spec")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `containers:
   - name: debug
     image: alpine:3.19
@@ -2033,20 +2033,20 @@ func TestBuildPodSpec_KindPodInSessionTemplate(t *testing.T) {
 	// Tests that buildPodSpec correctly handles kind: Pod in PodTemplateString
 	controller := newBuildWorkloadController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			PodTemplateString: `apiVersion: v1
 kind: Pod
 metadata:
@@ -2074,24 +2074,24 @@ func TestBuildPodSpec_KindPodInDebugPodTemplate(t *testing.T) {
 	// Tests that buildPodSpec handles kind: Pod in DebugPodTemplate.TemplateString
 	controller := newBuildWorkloadController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{},
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 	}
 
-	podTemplate := &v1alpha1.DebugPodTemplate{
-		Spec: v1alpha1.DebugPodTemplateSpec{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			TemplateString: `apiVersion: v1
 kind: Pod
 spec:
@@ -2123,7 +2123,7 @@ kind: Pod
 metadata:
   name: no-spec-pod
 `
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing 'spec'")
 	assert.Nil(t, result)
@@ -2140,7 +2140,7 @@ spec:
     - name: debug
       image: busybox:latest
 `
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Len(t, result.PodSpec.Containers, 1)
@@ -2166,7 +2166,7 @@ spec:
     spec:
       containers: []
 `
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "containers")
 	assert.Nil(t, result)
@@ -2190,7 +2190,7 @@ spec:
     spec:
       containers: []
 `
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "containers")
 	assert.Nil(t, result)
@@ -2201,7 +2201,7 @@ func TestRenderPodTemplateStringMultiDoc_InvalidYAML(t *testing.T) {
 
 	// Completely invalid YAML
 	templateStr := `{{{not valid yaml: [`
-	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2210,8 +2210,8 @@ func TestBuildWorkload_UnknownWorkloadType(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("unknown-type")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			WorkloadType: "StatefulSet", // unsupported type
 			PodTemplateString: `containers:
   - name: debug
@@ -2231,9 +2231,9 @@ func TestBuildWorkload_DeploymentNilReplicasDefaultsToOne(t *testing.T) {
 	ds := newBuildWorkloadSession("nil-replicas")
 
 	// Template without Replicas set (nil)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			// Replicas: nil — should default to 1
 			PodTemplateString: `containers:
   - name: debug
@@ -2254,9 +2254,9 @@ func TestBuildWorkload_RestartPolicyOverriddenForBareSpecDaemonSet(t *testing.T)
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("restart-override")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			// Bare PodSpec with RestartPolicy=Never (should be overridden to Always)
 			PodTemplateString: `containers:
   - name: debug
@@ -2278,15 +2278,15 @@ restartPolicy: Never
 func TestBuildWorkload_FullDeploymentWithSchedulingConstraints(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("sched-constraints")
-	ds.Spec.ResolvedSchedulingConstraints = &v1alpha1.SchedulingConstraints{
+	ds.Spec.ResolvedSchedulingConstraints = &breakglassv1alpha1.SchedulingConstraints{
 		NodeSelector: map[string]string{
 			"node-role.kubernetes.io/debug": "true",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -2323,9 +2323,9 @@ func TestBuildWorkload_FullDeploymentWithTolerations(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("tolerations")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			AdditionalTolerations: []corev1.Toleration{
 				{
 					Key:      "debug-node",
@@ -2377,9 +2377,9 @@ func TestBuildWorkload_FullDaemonSetWithSessionNodeSelector(t *testing.T) {
 		"kubernetes.io/hostname": "worker-01",
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -2416,11 +2416,11 @@ func TestBuildWorkload_FullDeploymentWithPodOverrides(t *testing.T) {
 	ds := newBuildWorkloadSession("pod-overrides")
 
 	hostNetTrue := true
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
-			PodOverrides: &v1alpha1.DebugPodOverrides{
-				Spec: &v1alpha1.DebugPodSpecOverrides{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
+			PodOverrides: &breakglassv1alpha1.DebugPodOverrides{
+				Spec: &breakglassv1alpha1.DebugPodSpecOverrides{
 					HostNetwork: &hostNetTrue,
 				},
 			},
@@ -2460,9 +2460,9 @@ func TestBuildWorkload_FullDeploymentLabelMerging(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("label-merge")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -2508,9 +2508,9 @@ func TestBuildWorkload_FullDaemonSetWithAffinityOverrides(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("affinity")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			AffinityOverrides: &corev1.Affinity{
 				NodeAffinity: &corev1.NodeAffinity{
 					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
@@ -2566,10 +2566,10 @@ func TestBuildWorkload_FullDeploymentWithResourceQuota(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("resource-quota")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
-			ResourceQuota: &v1alpha1.DebugResourceQuotaConfig{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
+			ResourceQuota: &breakglassv1alpha1.DebugResourceQuotaConfig{
 				EnforceResourceRequests: true,
 				EnforceResourceLimits:   true,
 			},
@@ -2605,9 +2605,9 @@ func TestBuildWorkload_FullDeploymentRestartPolicyEnforced(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("restart-enforce")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			// Full Deployment with RestartPolicy=Never (should be overridden)
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
@@ -2825,9 +2825,9 @@ func TestBuildWorkload_FullDaemonSetRestartPolicyOverride(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("ds-restart")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -2863,9 +2863,9 @@ func TestBuildWorkload_FullDeploymentNilReplicasDefaultsToOne(t *testing.T) {
 	ds := newBuildWorkloadSession("nil-replicas")
 
 	// Full Deployment template without replicas field
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			// Replicas not set on template.Spec either
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
@@ -2901,9 +2901,9 @@ func TestBuildWorkload_FullDeploymentWithAdditionalResources(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("deploy-extra")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -2945,9 +2945,9 @@ func TestBuildWorkload_FullDaemonSetLabelMerging(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("ds-labels")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -2997,9 +2997,9 @@ func TestBuildWorkload_SessionLabelsExcludeControllerOwned(t *testing.T) {
 		"custom-label":        "should-be-kept",
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
@@ -3026,9 +3026,9 @@ func TestBuildWorkload_WithBindingLabelsAndAnnotations(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("binding-labels")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			Labels: map[string]string{
 				"template-label": "from-template",
 			},
@@ -3042,8 +3042,8 @@ func TestBuildWorkload_WithBindingLabelsAndAnnotations(t *testing.T) {
 		},
 	}
 
-	binding := &v1alpha1.DebugSessionClusterBinding{
-		Spec: v1alpha1.DebugSessionClusterBindingSpec{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			Labels: map[string]string{
 				"binding-label": "from-binding",
 			},
@@ -3053,10 +3053,10 @@ func TestBuildWorkload_WithBindingLabelsAndAnnotations(t *testing.T) {
 		},
 	}
 
-	podTemplate := &v1alpha1.DebugPodTemplate{
-		Spec: v1alpha1.DebugPodTemplateSpec{
-			Template: &v1alpha1.DebugPodSpec{
-				Metadata: &v1alpha1.DebugPodMetadata{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Metadata: &breakglassv1alpha1.DebugPodMetadata{
 					Labels: map[string]string{
 						"podtemplate-label": "from-podtemplate",
 					},
@@ -3092,11 +3092,11 @@ func TestBuildWorkload_BareSpecDeploymentMaxPodsExceeded(t *testing.T) {
 
 	maxPods := int32(1)
 	replicas := int32(5)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:     &replicas,
-			ResourceQuota: &v1alpha1.DebugResourceQuotaConfig{
+			ResourceQuota: &breakglassv1alpha1.DebugResourceQuotaConfig{
 				MaxPods: &maxPods,
 			},
 			PodTemplateString: `containers:
@@ -3117,12 +3117,12 @@ func TestBuildWorkload_BareSpecDeploymentMaxPodsExceeded(t *testing.T) {
 func TestBuildPodSpec_PodTemplateStringTakesPriority(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "priority-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
@@ -3130,8 +3130,8 @@ func TestBuildPodSpec_PodTemplateStringTakesPriority(t *testing.T) {
 	}
 
 	// Template has both podTemplateString and podTemplate would be set
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			PodTemplateString: `containers:
   - name: from-template-string
     image: busybox:latest
@@ -3140,9 +3140,9 @@ func TestBuildPodSpec_PodTemplateStringTakesPriority(t *testing.T) {
 	}
 
 	// podTemplate exists but should be ignored since podTemplateString is set
-	podTemplate := &v1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pod-template"},
-		Spec: v1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			TemplateString: `containers:
   - name: from-pod-template
     image: alpine:latest
@@ -3159,20 +3159,20 @@ func TestBuildPodSpec_PodTemplateStringTakesPriority(t *testing.T) {
 func TestBuildPodSpec_NoPodTemplateStringNoPodTemplate(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "empty-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			// No podTemplateString
 		},
 	}
@@ -3187,12 +3187,12 @@ func TestBuildPodSpec_NoPodTemplateStringNoPodTemplate(t *testing.T) {
 func TestBuildPodSpec_WithAllThreePodOverrideFlags(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "overrides-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
@@ -3202,14 +3202,14 @@ func TestBuildPodSpec_WithAllThreePodOverrideFlags(t *testing.T) {
 	hostNet := true
 	hostPID := true
 	hostIPC := true
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
 `,
-			PodOverrides: &v1alpha1.DebugPodOverrides{
-				Spec: &v1alpha1.DebugPodSpecOverrides{
+			PodOverrides: &breakglassv1alpha1.DebugPodOverrides{
+				Spec: &breakglassv1alpha1.DebugPodSpecOverrides{
 					HostNetwork: &hostNet,
 					HostPID:     &hostPID,
 					HostIPC:     &hostIPC,
@@ -3230,15 +3230,15 @@ func TestBuildPodSpec_WithAllThreePodOverrideFlags(t *testing.T) {
 func TestBuildVarsFromSession_NilRawBytes(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
-		Spec: v1alpha1.DebugSessionSpec{
+	ds := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			ExtraDeployValues: map[string]apiextensionsv1.JSON{
 				"nullVar": {Raw: nil},
 			},
 		},
 	}
 
-	templateSpec := &v1alpha1.DebugSessionTemplateSpec{}
+	templateSpec := &breakglassv1alpha1.DebugSessionTemplateSpec{}
 
 	vars := controller.buildVarsFromSession(ds, templateSpec)
 	// Nil raw bytes should produce empty string
@@ -3248,12 +3248,12 @@ func TestBuildVarsFromSession_NilRawBytes(t *testing.T) {
 func TestBuildVarsFromSession_NilDefaultRawBytes(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
-		Spec: v1alpha1.DebugSessionSpec{},
+	ds := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{},
 	}
 
-	templateSpec := &v1alpha1.DebugSessionTemplateSpec{
-		ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+	templateSpec := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 			{
 				Name:    "varWithNilDefault",
 				Default: &apiextensionsv1.JSON{Raw: nil},
@@ -3270,15 +3270,15 @@ func TestBuildVarsFromSession_NilDefaultRawBytes(t *testing.T) {
 func TestBuildVarsFromSession_NestedJSONObject(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
-		Spec: v1alpha1.DebugSessionSpec{
+	ds := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			ExtraDeployValues: map[string]apiextensionsv1.JSON{
 				"nested": {Raw: []byte(`{"key":"value","num":123}`)},
 			},
 		},
 	}
 
-	templateSpec := &v1alpha1.DebugSessionTemplateSpec{}
+	templateSpec := &breakglassv1alpha1.DebugSessionTemplateSpec{}
 
 	vars := controller.buildVarsFromSession(ds, templateSpec)
 	// Nested JSON object falls through to raw string
@@ -3289,15 +3289,15 @@ func TestBuildVarsFromSession_NestedJSONObject(t *testing.T) {
 func TestBuildVarsFromSession_EmptyRawBytes(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
-		Spec: v1alpha1.DebugSessionSpec{
+	ds := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			ExtraDeployValues: map[string]apiextensionsv1.JSON{
 				"emptyVar": {Raw: []byte{}},
 			},
 		},
 	}
 
-	templateSpec := &v1alpha1.DebugSessionTemplateSpec{}
+	templateSpec := &breakglassv1alpha1.DebugSessionTemplateSpec{}
 
 	vars := controller.buildVarsFromSession(ds, templateSpec)
 	assert.Equal(t, "", vars["emptyVar"], "empty Raw bytes should produce empty string")
@@ -3306,8 +3306,8 @@ func TestBuildVarsFromSession_EmptyRawBytes(t *testing.T) {
 func TestBuildVarsFromSession_NilTemplateSpec(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
-		Spec: v1alpha1.DebugSessionSpec{
+	ds := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			ExtraDeployValues: map[string]apiextensionsv1.JSON{
 				"userVar": {Raw: []byte(`"hello"`)},
 			},
@@ -3322,15 +3322,15 @@ func TestBuildVarsFromSession_NilTemplateSpec(t *testing.T) {
 func TestBuildVarsFromSession_ArrayValue(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
-		Spec: v1alpha1.DebugSessionSpec{
+	ds := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			ExtraDeployValues: map[string]apiextensionsv1.JSON{
 				"tags": {Raw: []byte(`["tag1","tag2","tag3"]`)},
 			},
 		},
 	}
 
-	templateSpec := &v1alpha1.DebugSessionTemplateSpec{}
+	templateSpec := &breakglassv1alpha1.DebugSessionTemplateSpec{}
 	vars := controller.buildVarsFromSession(ds, templateSpec)
 	assert.Equal(t, "tag1,tag2,tag3", vars["tags"],
 		"string array should be joined with commas")
@@ -3341,12 +3341,12 @@ func TestBuildVarsFromSession_ArrayValue(t *testing.T) {
 func TestBuildPodRenderContext_EmptyRequestedBy(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ctx-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			RequestedBy:     "", // empty
@@ -3354,8 +3354,8 @@ func TestBuildPodRenderContext_EmptyRequestedBy(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Test Template",
 		},
 	}
@@ -3369,12 +3369,12 @@ func TestBuildPodRenderContext_EmptyRequestedBy(t *testing.T) {
 func TestBuildPodRenderContext_WithTemplateLabelsAndAnnotations(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ctx-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			RequestedBy:     "user@example.com",
@@ -3382,8 +3382,8 @@ func TestBuildPodRenderContext_WithTemplateLabelsAndAnnotations(t *testing.T) {
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Test Template",
 		},
 	}
@@ -3399,12 +3399,12 @@ func TestBuildPodRenderContext_WithTemplateLabelsAndAnnotations(t *testing.T) {
 func TestBuildPodRenderContext_ExtraDeployValuesWithoutTemplateVars(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "vars-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
@@ -3414,8 +3414,8 @@ func TestBuildPodRenderContext_ExtraDeployValuesWithoutTemplateVars(t *testing.T
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			// No ExtraDeployVariables defined — user-provided values should still be in Vars
 		},
 	}
@@ -3488,19 +3488,19 @@ func TestExtractJSONValueForPod_AdditionalCases(t *testing.T) {
 
 // ==================== Helper Functions ====================
 
-func newTestRenderContext() v1alpha1.AuxiliaryResourceContext {
-	return v1alpha1.AuxiliaryResourceContext{
-		Session: v1alpha1.AuxiliaryResourceSessionContext{
+func newTestRenderContext() breakglassv1alpha1.AuxiliaryResourceContext {
+	return breakglassv1alpha1.AuxiliaryResourceContext{
+		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 			Name:        "test-session",
 			Namespace:   "breakglass-system",
 			Cluster:     "test-cluster",
 			RequestedBy: "user@example.com",
 		},
-		Target: v1alpha1.AuxiliaryResourceTargetContext{
+		Target: breakglassv1alpha1.AuxiliaryResourceTargetContext{
 			Namespace:   "target-ns",
 			ClusterName: "test-cluster",
 		},
-		Template: v1alpha1.AuxiliaryResourceTemplateContext{
+		Template: breakglassv1alpha1.AuxiliaryResourceTemplateContext{
 			Name:        "test-template",
 			DisplayName: "Test Template",
 		},
@@ -3737,12 +3737,12 @@ func TestDeployPodTemplateResource_SetsNamespaceWhenEmpty(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -3764,12 +3764,12 @@ func TestDeployPodTemplateResource_PreservesExistingNamespace(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -3791,12 +3791,12 @@ func TestDeployPodTemplateResource_SetsLabels(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod-cluster",
 		},
 	}
@@ -3821,12 +3821,12 @@ func TestDeployPodTemplateResource_MergesExistingLabels(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -3854,12 +3854,12 @@ func TestDeployPodTemplateResource_SetsAnnotations(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -3882,12 +3882,12 @@ func TestDeployPodTemplateResource_MergesExistingAnnotations(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -3913,12 +3913,12 @@ func TestDeployPodTemplateResource_UpdatesSessionStatus(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -3958,12 +3958,12 @@ func TestDeployPodTemplateResource_MultipleResources(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -3994,12 +3994,12 @@ func TestDeployPodTemplateResource_NilLabelsAndAnnotations(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "test-cluster",
 		},
 	}
@@ -4031,9 +4031,9 @@ func TestBuildWorkload_DeploymentWithZeroReplicas(t *testing.T) {
 	ds := newBuildWorkloadSession("zero-replicas")
 
 	replicas := int32(0)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:     &replicas,
 			PodTemplateString: `containers:
   - name: debug
@@ -4056,8 +4056,8 @@ func TestBuildWorkload_EmptyWorkloadTypeDefaultsToDaemonSet(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("default-type")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			WorkloadType: "", // empty → should default to DaemonSet
 			PodTemplateString: `containers:
   - name: debug
@@ -4080,9 +4080,9 @@ func TestBuildWorkload_DaemonSetAnnotationsFromSession(t *testing.T) {
 		"session-annotation": "from-session",
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
@@ -4106,9 +4106,9 @@ func TestBuildWorkload_DeploymentAnnotationsFromSession(t *testing.T) {
 		"session-annotation": "deploy-from-session",
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
@@ -4128,9 +4128,9 @@ func TestBuildWorkload_WorkloadNameFormat(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("my-session")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
@@ -4152,9 +4152,9 @@ func TestBuildWorkload_BareSpecRestartPolicyAlreadyAlways(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("already-always")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `restartPolicy: Always
 containers:
   - name: debug
@@ -4175,9 +4175,9 @@ func TestBuildWorkload_BareSpecRestartPolicyNever(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("never-restart")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `restartPolicy: Never
 containers:
   - name: debug
@@ -4199,9 +4199,9 @@ func TestBuildWorkload_DeploymentSelectorMatchLabels(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("selector-test")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
@@ -4224,9 +4224,9 @@ func TestBuildWorkload_DaemonSetSelectorMatchLabels(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("ds-selector")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest
@@ -4251,9 +4251,9 @@ func TestBuildWorkload_FullDeploymentWithReplicasFromBoth(t *testing.T) {
 	ds := newBuildWorkloadSession("replicas-both")
 
 	dstReplicas := int32(3)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:     &dstReplicas,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
@@ -4292,11 +4292,11 @@ func TestBuildWorkload_FullDeploymentMaxPodsExceeded(t *testing.T) {
 
 	replicas := int32(5)
 	maxPods := int32(2)
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:     &replicas,
-			ResourceQuota: &v1alpha1.DebugResourceQuotaConfig{
+			ResourceQuota: &breakglassv1alpha1.DebugResourceQuotaConfig{
 				MaxPods: &maxPods,
 			},
 			PodTemplateString: `apiVersion: apps/v1
@@ -4329,9 +4329,9 @@ func TestBuildWorkload_FullDeploymentNameAndNamespaceOverridden(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("override-name")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -4369,9 +4369,9 @@ func TestBuildWorkload_FullDaemonSetNameAndNamespaceOverridden(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("ds-override")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -4406,9 +4406,9 @@ func TestBuildWorkload_FullDeploymentSelectorOverridden(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("selector-override")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDeployment,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodTemplateString: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -4443,9 +4443,9 @@ func TestBuildWorkload_FullDaemonSetSelectorOverridden(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("ds-selector-override")
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			WorkloadType: v1alpha1.DebugWorkloadDaemonSet,
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
 			PodTemplateString: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -4480,28 +4480,28 @@ spec:
 func TestBuildPodSpec_PodTemplateWithTemplateStringOnly(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pt-ts-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			// No PodTemplateString on DST
 		},
 	}
 
 	// PodTemplate with TemplateString
-	podTemplate := &v1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "pt-with-ts"},
-		Spec: v1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			TemplateString: `containers:
   - name: from-podtemplate-ts
     image: alpine:latest
@@ -4518,30 +4518,30 @@ func TestBuildPodSpec_PodTemplateWithTemplateStringOnly(t *testing.T) {
 func TestBuildPodSpec_PodTemplateWithStructuredTemplate(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pt-struct-test",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			// No PodTemplateString on DST
 		},
 	}
 
 	// PodTemplate with structured Template (not templateString)
-	podTemplate := &v1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "pt-structured"},
-		Spec: v1alpha1.DebugPodTemplateSpec{
-			Template: &v1alpha1.DebugPodSpec{
-				Spec: v1alpha1.DebugPodSpecInner{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:  "from-structured",
@@ -4562,20 +4562,20 @@ func TestBuildPodSpec_PodTemplateWithStructuredTemplate(t *testing.T) {
 func TestBuildPodSpec_ErrorFromRenderPodTemplateString(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "render-err",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
 		},
 	}
 
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			PodTemplateString: `{{ .undefined.field.chain }}`, // will fail execution
 		},
 	}
@@ -4588,12 +4588,12 @@ func TestBuildPodSpec_ErrorFromRenderPodTemplateString(t *testing.T) {
 func TestBuildPodSpec_PodOverridesTemplateString(t *testing.T) {
 	controller := newTestController()
 
-	ds := &v1alpha1.DebugSession{
+	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "overrides-ts",
 			Namespace: "breakglass-system",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:         "test-cluster",
 			TemplateRef:     "test-template",
 			TargetNamespace: "target-ns",
@@ -4601,8 +4601,8 @@ func TestBuildPodSpec_PodOverridesTemplateString(t *testing.T) {
 	}
 
 	hostNet := true
-	template := &v1alpha1.DebugSessionTemplate{
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			PodTemplateString: `containers:
   - name: debug
     image: busybox:latest

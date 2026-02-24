@@ -17,7 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -82,19 +82,19 @@ const (
 
 var sessionIndexFunctions = map[string]client.IndexerFunc{
 	"spec.user": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 	},
 	"spec.grantedGroup": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
+		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
 }
 
-func NewBreakglassSession(user, cluster, group string) v1alpha1.BreakglassSession {
-	return v1alpha1.BreakglassSession{
-		Spec: v1alpha1.BreakglassSessionSpec{
+func NewBreakglassSession(user, cluster, group string) breakglassv1alpha1.BreakglassSession {
+	return breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         user,
 			Cluster:      cluster,
 			GrantedGroup: group,
@@ -105,20 +105,20 @@ func NewBreakglassSession(user, cluster, group string) v1alpha1.BreakglassSessio
 func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 	ses := NewBreakglassSession("test", "test", "test")
 	ses.Name = fmt.Sprintf("%s-%s-a1", testGroupData.Clustername, testGroupData.GroupName)
-	ses.Status = v1alpha1.BreakglassSessionStatus{
+	ses.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		Conditions: []metav1.Condition{},
 	}
 
 	ses2 := NewBreakglassSession("test2", "test2", "test2")
 	ses2.Name = fmt.Sprintf("%s-%s-a2", testGroupData.Clustername, testGroupData.GroupName)
-	ses2.Status = v1alpha1.BreakglassSessionStatus{
+	ses2.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		Conditions:    []metav1.Condition{},
 		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
 	}
 
 	ses3 := NewBreakglassSession("testError", "testError", "testError")
 	ses3.Name = fmt.Sprintf("%s-%s-a3", testGroupData.Clustername, testGroupData.GroupName)
-	ses3.Status = v1alpha1.BreakglassSessionStatus{
+	ses3.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		Conditions:    []metav1.Condition{},
 		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
 	}
@@ -127,17 +127,17 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 		&ses,
 		&ses2,
 		&ses3,
-		&v1alpha1.BreakglassEscalation{
+		&breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "tester-allow-create-all",
 			},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{clusterNameWithEscalation},
 					Groups:   []string{"system:authenticated"},
 				},
 				EscalatedGroup: "breakglass-create-all",
-				Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{"approver@telekom.de"},
 				},
 			},
@@ -165,11 +165,11 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 		secretName := fmt.Sprintf("ccfg-secret-%s", clusterName)
 		objects = append(objects,
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"}, Data: map[string][]byte{"value": kcBytes}},
-			&v1alpha1.ClusterConfig{
+			&breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "default"},
-				Spec: v1alpha1.ClusterConfigSpec{
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
 					Tenant:              fmt.Sprintf("tenant-%s", clusterName),
-					KubeconfigSecretRef: &v1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"},
+					KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"},
 				},
 			},
 		)
@@ -443,7 +443,7 @@ func TestManagerError(t *testing.T) {
 			return c.List(ctx, list, opts...)
 		}
 		switch list.(type) {
-		case *v1alpha1.BreakglassSessionList, *v1alpha1.BreakglassEscalationList:
+		case *breakglassv1alpha1.BreakglassSessionList, *breakglassv1alpha1.BreakglassEscalationList:
 			return errors.New("IGNORE manager unit test error - simulated infrastructure failure")
 		}
 		return c.List(ctx, list, opts...)
@@ -470,15 +470,15 @@ func TestDenyPolicyGlobal(t *testing.T) {
 	controller := SetupController(nil)
 	controller.canDoFn = alwaysCanDo // would normally allow
 	// Create a global/cluster deny policy that matches the SAR verb/group/resource/namespace
-	pol := &v1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-pods-get"},
-		Spec: v1alpha1.DenyPolicySpec{
-			AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{testGroupData.Clustername}},
-			Rules: []v1alpha1.DenyRule{{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{testGroupData.Clustername}},
+			Rules: []breakglassv1alpha1.DenyRule{{
 				Verbs:      []string{"get"},
 				APIGroups:  []string{""},
 				Resources:  []string{"pods"},
-				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"test"}},
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"test"}},
 			}},
 		},
 	}
@@ -487,17 +487,17 @@ func TestDenyPolicyGlobal(t *testing.T) {
 	}
 
 	// Additional wildcard policy (any resource delete in any ns) to ensure non-matching when verb differs
-	pol2 := &v1alpha1.DenyPolicy{
+	pol2 := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-any-delete"},
-		Spec: v1alpha1.DenyPolicySpec{
-			AppliesTo: &v1alpha1.DenyPolicyScope{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			AppliesTo: &breakglassv1alpha1.DenyPolicyScope{
 				Clusters: []string{testGroupData.Clustername},
 			},
-			Rules: []v1alpha1.DenyRule{{
+			Rules: []breakglassv1alpha1.DenyRule{{
 				Verbs:      []string{"delete"},
 				APIGroups:  []string{"*"},
 				Resources:  []string{"*"},
-				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 			}},
 		},
 	}
@@ -533,14 +533,14 @@ func TestDenyPolicySessionScope(t *testing.T) {
 	// Create an active session for the target user/cluster so session-scoped policy can match
 	sessionName := "sess-deny-1"
 	now := time.Now()
-	activeSes := &v1alpha1.BreakglassSession{
+	activeSes := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: sessionName},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         testGroupData.Username,
 			Cluster:      testGroupData.Clustername,
 			GrantedGroup: "breakglass-create-all",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			ApprovedAt:    metav1.NewTime(now.Add(-1 * time.Minute)),
 			ExpiresAt:     metav1.NewTime(now.Add(30 * time.Minute)),
 			RetainedUntil: metav1.NewTime(now.Add(24 * time.Hour)),
@@ -549,15 +549,15 @@ func TestDenyPolicySessionScope(t *testing.T) {
 	if err := controller.escalManager.Create(context.Background(), activeSes); err != nil {
 		t.Fatalf("failed creating active session: %v", err)
 	}
-	pol := &v1alpha1.DenyPolicy{
+	pol := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-pods-get-session"},
-		Spec: v1alpha1.DenyPolicySpec{
-			AppliesTo: &v1alpha1.DenyPolicyScope{Sessions: []string{sessionName}},
-			Rules: []v1alpha1.DenyRule{{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Sessions: []string{sessionName}},
+			Rules: []breakglassv1alpha1.DenyRule{{
 				Verbs:      []string{"get"},
 				APIGroups:  []string{""},
-				Resources:  []string{"pods"},                                       // explicit resource
-				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"test*"}}, // wildcard namespace pattern
+				Resources:  []string{"pods"},                                                 // explicit resource
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"test*"}}, // wildcard namespace pattern
 			}},
 		},
 	}
@@ -595,7 +595,7 @@ func TestMissingRestConfigFallback(t *testing.T) {
 	// Replace client provider with one that always errors for GetRESTConfig / Get
 	controller.ccProvider = cluster.NewClientProvider(controller.escalManager.Client, controller.log)
 	// Delete existing ClusterConfig so provider.GetRESTConfig will fail authorization/lookup.
-	cfg := &v1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: testGroupData.Clustername, Namespace: "default"}}
+	cfg := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: testGroupData.Clustername, Namespace: "default"}}
 	_ = controller.escalManager.Delete(context.Background(), cfg)
 
 	engine := gin.New()
@@ -624,9 +624,9 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 	controller := SetupController(nil)
 
 	// Build a single active session that would be used for session SAR
-	ses := v1alpha1.BreakglassSession{
+	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "sess-sar-1"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			GrantedGroup: "breakglass-create-all",
 		},
 	}
@@ -645,7 +645,7 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 
 	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
 
-	allowed, grp, name, impersonated := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	allowed, grp, name, impersonated := controller.authorizeViaSessions(context.Background(), rc, []breakglassv1alpha1.BreakglassSession{ses}, sar, "test-cluster")
 	if !allowed {
 		t.Fatalf("expected session SAR to allow but it did not")
 	}
@@ -666,9 +666,9 @@ func TestAuthorizeViaSessions_WithIdentityProviderRecordsMetric(t *testing.T) {
 	metrics.EscalationIDPAuthorizationChecks.Reset()
 	defer metrics.EscalationIDPAuthorizationChecks.Reset()
 
-	ses := v1alpha1.BreakglassSession{
+	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "sess-idp-1"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			GrantedGroup:         "breakglass-create-all",
 			IdentityProviderName: "keycloak-prod",
 		},
@@ -686,7 +686,7 @@ func TestAuthorizeViaSessions_WithIdentityProviderRecordsMetric(t *testing.T) {
 
 	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
 
-	allowed, _, _, _ := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	allowed, _, _, _ := controller.authorizeViaSessions(context.Background(), rc, []breakglassv1alpha1.BreakglassSession{ses}, sar, "test-cluster")
 	if !allowed {
 		t.Fatalf("expected IDP session SAR to allow but it did not")
 	}
@@ -706,9 +706,9 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 	controller := SetupController(nil)
 
 	// Build a single active session
-	ses := v1alpha1.BreakglassSession{
+	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "sess-pref-1"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			GrantedGroup: "breakglass-create-all",
 		},
 	}
@@ -749,7 +749,7 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 	prefSAR := sar
 	prefSAR.Spec.Groups = []string{"oidc:breakglass-create-all"}
 
-	allowed, grp, name, impersonated := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, prefSAR, "test-cluster")
+	allowed, grp, name, impersonated := controller.authorizeViaSessions(context.Background(), rc, []breakglassv1alpha1.BreakglassSession{ses}, prefSAR, "test-cluster")
 	if !allowed {
 		t.Fatalf("expected prefixed session SAR to allow but it did not")
 	}
@@ -768,9 +768,9 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 func TestAuthorizeViaSessions_ErrorPath(t *testing.T) {
 	controller := SetupController(nil)
 
-	ses := v1alpha1.BreakglassSession{
+	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "sess-err-1"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			GrantedGroup: "breakglass-create-all",
 		},
 	}
@@ -783,7 +783,7 @@ func TestAuthorizeViaSessions_ErrorPath(t *testing.T) {
 
 	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
 
-	allowed, _, _, _ := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	allowed, _, _, _ := controller.authorizeViaSessions(context.Background(), rc, []breakglassv1alpha1.BreakglassSession{ses}, sar, "test-cluster")
 	if allowed {
 		t.Fatalf("expected session SAR to not allow when server errors")
 	}
@@ -797,8 +797,8 @@ func TestGetSessionsWithIDPMismatchInfo_Matching(t *testing.T) {
 	keycloakSession.Namespace = "default"
 	keycloakSession.Spec.IdentityProviderName = "keycloak"
 	keycloakSession.Spec.IdentityProviderIssuer = "https://keycloak.example.com"
-	keycloakSession.Status = v1alpha1.BreakglassSessionStatus{
-		State:         v1alpha1.SessionStateApproved,
+	keycloakSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
+		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
 		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
@@ -810,8 +810,8 @@ func TestGetSessionsWithIDPMismatchInfo_Matching(t *testing.T) {
 	ldapSession.Namespace = "default"
 	ldapSession.Spec.IdentityProviderName = "ldap"
 	ldapSession.Spec.IdentityProviderIssuer = "https://ldap.example.com"
-	ldapSession.Status = v1alpha1.BreakglassSessionStatus{
-		State:         v1alpha1.SessionStateApproved,
+	ldapSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
+		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
 		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
@@ -822,15 +822,15 @@ func TestGetSessionsWithIDPMismatchInfo_Matching(t *testing.T) {
 	flexibleSession.Name = "session-flexible"
 	flexibleSession.Namespace = "default"
 	flexibleSession.Spec.AllowIDPMismatch = true
-	flexibleSession.Status = v1alpha1.BreakglassSessionStatus{
-		State:         v1alpha1.SessionStateApproved,
+	flexibleSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
+		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
 		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
 	}
 
 	// Create a mock session manager that returns our sessions
-	allSessions := []v1alpha1.BreakglassSession{keycloakSession, ldapSession, flexibleSession}
+	allSessions := []breakglassv1alpha1.BreakglassSession{keycloakSession, ldapSession, flexibleSession}
 
 	// Create a mock SessionManager by wrapping the real one but stubbing the selector query
 	// For now, we'll directly test the filtering logic without the client
@@ -863,8 +863,8 @@ func TestGetSessionsWithIDPMismatchInfo_Matching(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Manually replicate the filtering logic from getSessionsWithIDPMismatchInfo
-			out := make([]v1alpha1.BreakglassSession, 0, len(allSessions))
-			idpMismatches := make([]v1alpha1.BreakglassSession, 0)
+			out := make([]breakglassv1alpha1.BreakglassSession, 0, len(allSessions))
+			idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
 			now := time.Now()
 
 			for _, s := range allSessions {
@@ -902,17 +902,17 @@ func TestAllowIDPMismatch_DisablesIDPFilter(t *testing.T) {
 	legacySession.Namespace = "default"
 	legacySession.Spec.AllowIDPMismatch = true
 	// No IdentityProviderName or IdentityProviderIssuer set
-	legacySession.Status = v1alpha1.BreakglassSessionStatus{
-		State:         v1alpha1.SessionStateApproved,
+	legacySession.Status = breakglassv1alpha1.BreakglassSessionStatus{
+		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
 		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
 	}
 
 	// Test the filtering logic directly without relying on client queries
-	sessions := []v1alpha1.BreakglassSession{legacySession}
-	out := make([]v1alpha1.BreakglassSession, 0, len(sessions))
-	idpMismatches := make([]v1alpha1.BreakglassSession, 0)
+	sessions := []breakglassv1alpha1.BreakglassSession{legacySession}
+	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
+	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
 	now := time.Now()
 	issuer := "https://keycloak.example.com" // Different issuer
 
@@ -949,8 +949,8 @@ func TestIDPMismatchErrorInfo(t *testing.T) {
 	keycloakSession.Namespace = "default"
 	keycloakSession.Spec.IdentityProviderName = "keycloak"
 	keycloakSession.Spec.IdentityProviderIssuer = "https://keycloak.example.com"
-	keycloakSession.Status = v1alpha1.BreakglassSessionStatus{
-		State:         v1alpha1.SessionStateApproved,
+	keycloakSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
+		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
 		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)),
@@ -961,17 +961,17 @@ func TestIDPMismatchErrorInfo(t *testing.T) {
 	ldapSession.Namespace = "default"
 	ldapSession.Spec.IdentityProviderName = "ldap"
 	ldapSession.Spec.IdentityProviderIssuer = "https://ldap.example.com"
-	ldapSession.Status = v1alpha1.BreakglassSessionStatus{
-		State:         v1alpha1.SessionStateApproved,
+	ldapSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
+		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
 		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
 		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)),
 	}
 
 	// Test the filtering logic directly
-	sessions := []v1alpha1.BreakglassSession{keycloakSession, ldapSession}
-	out := make([]v1alpha1.BreakglassSession, 0, len(sessions))
-	idpMismatches := make([]v1alpha1.BreakglassSession, 0)
+	sessions := []breakglassv1alpha1.BreakglassSession{keycloakSession, ldapSession}
+	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
+	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
 	now := time.Now()
 	issuer := "https://okta.example.com" // Different from both sessions
 
@@ -1022,9 +1022,9 @@ func TestIDPMismatchErrorInfo(t *testing.T) {
 func TestAuthorizeViaSessions_NonResourceAttributes(t *testing.T) {
 	controller := SetupController(nil)
 
-	ses := v1alpha1.BreakglassSession{
+	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "sess-nonresource-1"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			GrantedGroup: "breakglass-admin",
 		},
 	}
@@ -1063,7 +1063,7 @@ func TestAuthorizeViaSessions_NonResourceAttributes(t *testing.T) {
 	}
 
 	allowed, grp, name, _ := controller.authorizeViaSessions(
-		context.Background(), rc, []v1alpha1.BreakglassSession{ses}, nonResourceSAR, "test-cluster")
+		context.Background(), rc, []breakglassv1alpha1.BreakglassSession{ses}, nonResourceSAR, "test-cluster")
 
 	if !allowed {
 		t.Fatalf("expected NonResourceAttributes SAR to be allowed via session, but it was denied")
@@ -1092,9 +1092,9 @@ func TestAuthorizeViaSessions_NonResourceAttributes(t *testing.T) {
 func TestAuthorizeViaSessions_NilAttributes(t *testing.T) {
 	controller := SetupController(nil)
 
-	ses := v1alpha1.BreakglassSession{
+	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "sess-nil-attrs"},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			GrantedGroup: "breakglass-admin",
 		},
 	}
@@ -1106,7 +1106,7 @@ func TestAuthorizeViaSessions_NilAttributes(t *testing.T) {
 	}
 
 	allowed, _, _, _ := controller.authorizeViaSessions(
-		context.Background(), nil, []v1alpha1.BreakglassSession{ses}, nilSAR, "test-cluster")
+		context.Background(), nil, []breakglassv1alpha1.BreakglassSession{ses}, nilSAR, "test-cluster")
 
 	if allowed {
 		t.Fatalf("expected SAR with nil attributes to be rejected, but it was allowed")

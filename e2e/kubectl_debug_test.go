@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -46,23 +46,23 @@ func TestKubectlDebuggingMode(t *testing.T) {
 	// 1. Create a DebugSessionTemplate for kubectl-debug mode
 	templateName := "e2e-kubectl-debug-tmpl"
 
-	tmpl := &v1alpha1.DebugSessionTemplate{
+	tmpl := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: templateName,
 		},
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Kubectl Debug",
-			Mode:        v1alpha1.DebugSessionModeKubectlDebug,
-			Rules: v1alpha1.DebugSessionRules{
+			Mode:        breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			Rules: breakglassv1alpha1.DebugSessionRules{
 				AutoApprove: true,
 			},
-			KubectlDebug: &v1alpha1.KubectlDebugConfig{
-				EphemeralContainers: &v1alpha1.EphemeralContainerConfig{
+			KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+				EphemeralContainers: &breakglassv1alpha1.EphemeralContainerConfig{
 					Enabled:        true,
 					AllowedImages:  []string{"busybox", "alpine"},
 					RequireNonRoot: false,
 				},
-				NodeDebug: &v1alpha1.NodeDebugConfig{
+				NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
 					Enabled: true,
 				},
 			},
@@ -110,20 +110,20 @@ func TestKubectlDebuggingMode(t *testing.T) {
 		Reason:      "E2E Test Ephemeral",
 	})
 	require.NoError(t, err)
-	cleanup.Add(&v1alpha1.DebugSession{
+	cleanup.Add(&breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		v1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
 
 	t.Log("Debug session activated for kubectl-debug mode")
 
 	// 4. Verify session is active and has correct mode
-	var activeSession v1alpha1.DebugSession
+	var activeSession breakglassv1alpha1.DebugSession
 	err = cli.Get(ctx, client.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &activeSession)
 	require.NoError(t, err)
-	require.Equal(t, v1alpha1.DebugSessionStateActive, activeSession.Status.State)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, activeSession.Status.State)
 
 	t.Log("Kubectl debug mode test passed - session created and activated")
 }
@@ -142,22 +142,22 @@ func TestTerminalSharingMode(t *testing.T) {
 	// Create template with terminal sharing enabled
 	templateName := "e2e-terminal-sharing-tmpl"
 
-	tmpl := &v1alpha1.DebugSessionTemplate{
+	tmpl := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: templateName,
 		},
-		Spec: v1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "E2E Terminal Sharing",
-			Mode:            v1alpha1.DebugSessionModeWorkload,
-			WorkloadType:    v1alpha1.DebugWorkloadDeployment,
+			Mode:            breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			TargetNamespace: "default",
-			Rules: v1alpha1.DebugSessionRules{
+			Rules: breakglassv1alpha1.DebugSessionRules{
 				AutoApprove: true,
 			},
-			PodTemplateRef: &v1alpha1.DebugPodTemplateRef{
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateRef{
 				Name: "netshoot-base",
 			},
-			TerminalSharing: &v1alpha1.TerminalSharingConfig{
+			TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 				Enabled:         true,
 				Provider:        "tmux",
 				MaxParticipants: 5,
@@ -167,14 +167,14 @@ func TestTerminalSharingMode(t *testing.T) {
 	cleanup.Add(tmpl)
 
 	// Create base pod template
-	podTmpl := &v1alpha1.DebugPodTemplate{
+	podTmpl := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "netshoot-base",
 		},
-		Spec: v1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Netshoot Base",
-			Template: v1alpha1.DebugPodSpec{
-				Spec: v1alpha1.DebugPodSpecInner{
+			Template: breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -201,15 +201,15 @@ func TestTerminalSharingMode(t *testing.T) {
 		Reason:      "E2E Test Terminal Sharing",
 	})
 	require.NoError(t, err)
-	cleanup.Add(&v1alpha1.DebugSession{
+	cleanup.Add(&breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		v1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 	// Verify terminal sharing is configured in status
-	var activeSession v1alpha1.DebugSession
+	var activeSession breakglassv1alpha1.DebugSession
 	err = cli.Get(ctx, client.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &activeSession)
 	require.NoError(t, err)
 	require.NotNil(t, activeSession.Status.TerminalSharing, "Terminal sharing status should be set")

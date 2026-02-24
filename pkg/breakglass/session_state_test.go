@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -28,15 +28,15 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		session  v1alpha1.BreakglassSession
+		session  breakglassv1alpha1.BreakglassSession
 		expected bool
 		reason   string
 	}{
 		{
 			name: "withdrawn_session_not_active",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:         v1alpha1.SessionStateWithdrawn,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStateWithdrawn,
 					ExpiresAt:     metav1.NewTime(expiresAt),
 					ApprovedAt:    metav1.Time{}, // Not approved
 					RejectedAt:    metav1.Time{}, // Not rejected (empty)
@@ -48,9 +48,9 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 		},
 		{
 			name: "pending_session_active",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:         v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStatePending,
 					ExpiresAt:     metav1.NewTime(expiresAt),
 					ApprovedAt:    metav1.Time{}, // Not approved
 					RejectedAt:    metav1.Time{}, // Not rejected
@@ -62,9 +62,9 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 		},
 		{
 			name: "approved_session_active",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:         v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStateApproved,
 					ExpiresAt:     metav1.NewTime(expiresAt),
 					ApprovedAt:    metav1.NewTime(now),
 					RejectedAt:    metav1.Time{}, // Not rejected
@@ -76,9 +76,9 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 		},
 		{
 			name: "rejected_session_not_active",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:         v1alpha1.SessionStateRejected,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStateRejected,
 					ExpiresAt:     metav1.NewTime(expiresAt),
 					ApprovedAt:    metav1.Time{},
 					RejectedAt:    metav1.NewTime(now),
@@ -90,9 +90,9 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 		},
 		{
 			name: "expired_session_not_active",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:         v1alpha1.SessionStateApproved,           // Must be Approved to check ExpiresAt
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStateApproved, // Must be Approved to check ExpiresAt
 					ExpiresAt:     metav1.NewTime(now.Add(-1 * time.Hour)), // Expired
 					ApprovedAt:    metav1.NewTime(now.Add(-2 * time.Hour)), // Approved earlier
 					RejectedAt:    metav1.Time{},
@@ -104,9 +104,9 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 		},
 		{
 			name: "approval_timeout_not_active",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:         v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStatePending,
 					ExpiresAt:     metav1.NewTime(expiresAt),
 					TimeoutAt:     metav1.NewTime(now.Add(-1 * time.Hour)), // Already timed out
 					ApprovedAt:    metav1.Time{},
@@ -141,15 +141,15 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		session  v1alpha1.BreakglassSession
+		session  breakglassv1alpha1.BreakglassSession
 		expected bool
 		reason   string
 	}{
 		{
 			name: "withdrawn_NOT_pending_despite_timestamps",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateWithdrawn,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateWithdrawn,
 					ApprovedAt: metav1.Time{},                          // Not approved
 					RejectedAt: metav1.Time{},                          // Not rejected
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)), // Timeout in future
@@ -160,9 +160,9 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 		},
 		{
 			name: "pending_is_pending_approval",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -173,9 +173,9 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 		},
 		{
 			name: "approved_not_pending",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now),
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -186,9 +186,9 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 		},
 		{
 			name: "rejected_not_pending",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateRejected,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateRejected,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.NewTime(now),
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -199,9 +199,9 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 		},
 		{
 			name: "approval_timeout_not_pending",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)), // Already timed out
@@ -235,18 +235,18 @@ func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
 	now := time.Now()
 
 	// Simulate a user's previous session that was withdrawn
-	withdrawnSession := v1alpha1.BreakglassSession{
+	withdrawnSession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster-test-group-abc123",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "test-cluster",
 			User:         "user@test.com",
 			GrantedGroup: "test-group",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:         v1alpha1.SessionStateWithdrawn,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateWithdrawn,
 			ApprovedAt:    metav1.Time{}, // Never approved
 			RejectedAt:    metav1.Time{}, // Never rejected (empty)
 			ExpiresAt:     metav1.NewTime(now.Add(1 * time.Hour)),
@@ -262,8 +262,8 @@ func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
 	}
 
 	// Verify that filtering for active sessions would correctly exclude it
-	sessionList := []v1alpha1.BreakglassSession{withdrawnSession}
-	activeSessions := make([]v1alpha1.BreakglassSession, 0)
+	sessionList := []breakglassv1alpha1.BreakglassSession{withdrawnSession}
+	activeSessions := make([]breakglassv1alpha1.BreakglassSession, 0)
 	for _, s := range sessionList {
 		if IsSessionActive(s) {
 			activeSessions = append(activeSessions, s)
@@ -290,18 +290,18 @@ func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
 func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
 	now := time.Now()
 
-	sessions := []v1alpha1.BreakglassSession{
+	sessions := []breakglassv1alpha1.BreakglassSession{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "pending-session"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State:     v1alpha1.SessionStatePending,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
 				ExpiresAt: metav1.NewTime(now.Add(1 * time.Hour)),
 			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "withdrawn-session"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State:       v1alpha1.SessionStateWithdrawn,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:       breakglassv1alpha1.SessionStateWithdrawn,
 				WithdrawnAt: metav1.NewTime(now),
 				ExpiresAt:   metav1.NewTime(now.Add(1 * time.Hour)),
 				// Withdrawn is a terminal state - should not appear in pending or active
@@ -309,16 +309,16 @@ func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State:      v1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateApproved,
 				ApprovedAt: metav1.NewTime(now),
 				ExpiresAt:  metav1.NewTime(now.Add(1 * time.Hour)),
 			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "rejected-session"},
-			Status: v1alpha1.BreakglassSessionStatus{
-				State:      v1alpha1.SessionStateRejected,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateRejected,
 				RejectedAt: metav1.NewTime(now),
 				ExpiresAt:  metav1.NewTime(now.Add(1 * time.Hour)),
 			},
@@ -363,15 +363,15 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		session  v1alpha1.BreakglassSession
+		session  breakglassv1alpha1.BreakglassSession
 		expected bool
 		reason   string
 	}{
 		{
 			name: "session_with_no_expiry_set",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:     v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:     breakglassv1alpha1.SessionStatePending,
 					ExpiresAt: metav1.Time{}, // Zero value - never expires
 				},
 			},
@@ -380,10 +380,10 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "session_expires_exactly_now",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateApproved, // Must be Approved to check ExpiresAt
-					ExpiresAt:  metav1.NewTime(now),           // Expires right now
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateApproved, // Must be Approved to check ExpiresAt
+					ExpiresAt:  metav1.NewTime(now),                     // Expires right now
 					ApprovedAt: metav1.NewTime(now.Add(-1 * time.Hour)),
 				},
 			},
@@ -392,12 +392,12 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "session_scheduled_in_future",
-			session: v1alpha1.BreakglassSession{
-				Spec: v1alpha1.BreakglassSessionSpec{
+			session: breakglassv1alpha1.BreakglassSession{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					ScheduledStartTime: &metav1.Time{Time: now.Add(1 * time.Hour)},
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:     v1alpha1.SessionStateWaitingForScheduledTime,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:     breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 					ExpiresAt: metav1.NewTime(now.Add(2 * time.Hour)),
 				},
 			},
@@ -406,12 +406,12 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "session_scheduled_time_passed",
-			session: v1alpha1.BreakglassSession{
-				Spec: v1alpha1.BreakglassSessionSpec{
+			session: breakglassv1alpha1.BreakglassSession{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					ScheduledStartTime: &metav1.Time{Time: now.Add(-1 * time.Hour)},
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:     v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:     breakglassv1alpha1.SessionStatePending,
 					ExpiresAt: metav1.NewTime(now.Add(1 * time.Hour)),
 				},
 			},
@@ -420,12 +420,12 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "session_with_empty_scheduled_time",
-			session: v1alpha1.BreakglassSession{
-				Spec: v1alpha1.BreakglassSessionSpec{
+			session: breakglassv1alpha1.BreakglassSession{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					ScheduledStartTime: nil, // Not set
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:     v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:     breakglassv1alpha1.SessionStatePending,
 					ExpiresAt: metav1.NewTime(now.Add(1 * time.Hour)),
 				},
 			},
@@ -461,17 +461,17 @@ func TestRegressionScenario_409ConflictWithdrawnSession(t *testing.T) {
 	now := time.Now()
 
 	// Request A: A previous session the user made and then withdrew
-	requestA := v1alpha1.BreakglassSession{
+	requestA := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster-x-group-z-12345",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "cluster-x",
 			User:         "user-y",
 			GrantedGroup: "group-z",
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:         v1alpha1.SessionStateWithdrawn,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateWithdrawn,
 			ApprovedAt:    metav1.NewTime(now.Add(-30 * time.Minute)), // Was approved
 			RejectedAt:    metav1.Time{},                              // Never rejected
 			ExpiresAt:     metav1.NewTime(now.Add(30 * time.Minute)),
@@ -489,7 +489,7 @@ func TestRegressionScenario_409ConflictWithdrawnSession(t *testing.T) {
 	}
 
 	// Verify that the session state and timestamp configuration matches what we'd see in real scenario
-	if requestA.Status.State != v1alpha1.SessionStateWithdrawn {
+	if requestA.Status.State != breakglassv1alpha1.SessionStateWithdrawn {
 		t.Error("test setup error: session should be withdrawn")
 	}
 	if requestA.Status.ApprovedAt.IsZero() {
@@ -509,41 +509,41 @@ func TestRegressionScenario_409ConflictWithdrawnSession(t *testing.T) {
 // documents the logic: if EITHER condition is true, the API returns 409.
 //
 // Location: session_controller.go line 443
-// Code: if ses.Status.State == v1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero()
+// Code: if ses.Status.State == breakglassv1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero()
 func TestEdgeCase_ApprovedWithBothTimestamps(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
 		name             string
-		state            v1alpha1.BreakglassSessionState
+		state            breakglassv1alpha1.BreakglassSessionState
 		approvedAt       metav1.Time
 		expectedConflict bool
 		description      string
 	}{
 		{
 			name:             "both_state_and_timestamp_set",
-			state:            v1alpha1.SessionStateApproved,
+			state:            breakglassv1alpha1.SessionStateApproved,
 			approvedAt:       metav1.NewTime(now),
 			expectedConflict: true,
 			description:      "Normal approved session with both State and timestamp",
 		},
 		{
 			name:             "only_state_approved",
-			state:            v1alpha1.SessionStateApproved,
+			state:            breakglassv1alpha1.SessionStateApproved,
 			approvedAt:       metav1.Time{}, // Empty
 			expectedConflict: true,
 			description:      "Approved state is sufficient for 409 (defensive programming)",
 		},
 		{
 			name:             "only_timestamp_set",
-			state:            v1alpha1.SessionStatePending,
+			state:            breakglassv1alpha1.SessionStatePending,
 			approvedAt:       metav1.NewTime(now),
 			expectedConflict: true,
 			description:      "ApprovedAt timestamp alone is enough for 409 (state mismatch edge case)",
 		},
 		{
 			name:             "neither_set",
-			state:            v1alpha1.SessionStatePending,
+			state:            breakglassv1alpha1.SessionStatePending,
 			approvedAt:       metav1.Time{}, // Empty
 			expectedConflict: false,
 			description:      "Pending with no approval = not a conflict",
@@ -552,15 +552,15 @@ func TestEdgeCase_ApprovedWithBothTimestamps(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:      tt.state,
 					ApprovedAt: tt.approvedAt,
 				},
 			}
 
 			// Simulate the conflict check from line 443
-			isConflict := (session.Status.State == v1alpha1.SessionStateApproved || !session.Status.ApprovedAt.IsZero())
+			isConflict := (session.Status.State == breakglassv1alpha1.SessionStateApproved || !session.Status.ApprovedAt.IsZero())
 
 			if isConflict != tt.expectedConflict {
 				t.Errorf("Expected conflict=%v but got %v. %s", tt.expectedConflict, isConflict, tt.description)
@@ -582,9 +582,9 @@ func TestEdgeCase_ApprovalAfterRejection(t *testing.T) {
 
 	// Scenario: Session was rejected, then somehow becomes approvable again
 	// (This shouldn't happen due to terminal state checks, but the code explicitly clears it)
-	session := v1alpha1.BreakglassSession{
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:      v1alpha1.SessionStatePending,
+	session := breakglassv1alpha1.BreakglassSession{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStatePending,
 			RejectedAt: metav1.NewTime(now.Add(-1 * time.Hour)), // Previously rejected
 			ApprovedAt: metav1.Time{},                           // Not approved yet
 		},
@@ -593,7 +593,7 @@ func TestEdgeCase_ApprovalAfterRejection(t *testing.T) {
 	// Simulate approval clearing rejection (line 817)
 	session.Status.RejectedAt = metav1.Time{}
 	session.Status.ApprovedAt = metav1.Now()
-	session.Status.State = v1alpha1.SessionStateApproved
+	session.Status.State = breakglassv1alpha1.SessionStateApproved
 
 	// Verify clean state
 	if !session.Status.RejectedAt.IsZero() {
@@ -602,7 +602,7 @@ func TestEdgeCase_ApprovalAfterRejection(t *testing.T) {
 	if session.Status.ApprovedAt.IsZero() {
 		t.Error("ApprovedAt should be set after approval")
 	}
-	if session.Status.State != v1alpha1.SessionStateApproved {
+	if session.Status.State != breakglassv1alpha1.SessionStateApproved {
 		t.Errorf("State should be Approved, got %s", session.Status.State)
 	}
 
@@ -625,14 +625,14 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 	tests := []struct {
 		name          string
 		scheduledTime *metav1.Time
-		expectedState v1alpha1.BreakglassSessionState
+		expectedState breakglassv1alpha1.BreakglassSessionState
 		description   string
 		checkExpiry   func(time.Time, time.Time) bool // returns true if test passes
 	}{
 		{
 			name:          "scheduled_session_waits",
 			scheduledTime: &metav1.Time{Time: scheduledTime},
-			expectedState: v1alpha1.SessionStateWaitingForScheduledTime,
+			expectedState: breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			description:   "Session with scheduled time enters waiting state",
 			checkExpiry: func(expiresAt, scheduled time.Time) bool {
 				// Expiry should be ScheduledStartTime + validFor, NOT now + validFor
@@ -644,7 +644,7 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 		{
 			name:          "immediate_session_approved",
 			scheduledTime: nil, // No scheduled time
-			expectedState: v1alpha1.SessionStateApproved,
+			expectedState: breakglassv1alpha1.SessionStateApproved,
 			description:   "Session without scheduled time activates immediately",
 			checkExpiry: func(expiresAt, scheduled time.Time) bool {
 				// Expiry should be now + validFor (not from scheduled time)
@@ -656,25 +656,25 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Spec: v1alpha1.BreakglassSessionSpec{
+			session := breakglassv1alpha1.BreakglassSession{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					ScheduledStartTime: tt.scheduledTime,
 					MaxValidFor:        "1h",
 					RetainFor:          "168h",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
-					State: v1alpha1.SessionStatePending,
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
 				},
 			}
 
 			// Simulate approval logic
 			if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
-				session.Status.State = v1alpha1.SessionStateWaitingForScheduledTime
+				session.Status.State = breakglassv1alpha1.SessionStateWaitingForScheduledTime
 				session.Status.ExpiresAt = metav1.NewTime(session.Spec.ScheduledStartTime.Add(validFor))
 				session.Status.RetainedUntil = metav1.NewTime(session.Spec.ScheduledStartTime.Add(validFor).Add(retainFor))
 				session.Status.ActualStartTime = metav1.Time{}
 			} else {
-				session.Status.State = v1alpha1.SessionStateApproved
+				session.Status.State = breakglassv1alpha1.SessionStateApproved
 				session.Status.ExpiresAt = metav1.NewTime(now.Add(validFor))
 				session.Status.RetainedUntil = metav1.NewTime(now.Add(validFor).Add(retainFor))
 				session.Status.ActualStartTime = metav1.Now()
@@ -699,29 +699,29 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 // state checks.
 //
 // Location: session_controller.go line 789
-// Code: if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || ...
+// Code: if currState == breakglassv1alpha1.SessionStateRejected || currState == breakglassv1alpha1.SessionStateWithdrawn || ...
 //
 // This is critical: these states should be immutable once reached.
 func TestEdgeCase_RejectedAndWithdrawnAreTerminal(t *testing.T) {
-	terminalStates := []v1alpha1.BreakglassSessionState{
-		v1alpha1.SessionStateRejected,
-		v1alpha1.SessionStateWithdrawn,
-		v1alpha1.SessionStateExpired,
-		v1alpha1.SessionStateTimeout,
+	terminalStates := []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStateRejected,
+		breakglassv1alpha1.SessionStateWithdrawn,
+		breakglassv1alpha1.SessionStateExpired,
+		breakglassv1alpha1.SessionStateTimeout,
 	}
 
 	for _, terminalState := range terminalStates {
-		session := v1alpha1.BreakglassSession{
-			Status: v1alpha1.BreakglassSessionStatus{
+		session := breakglassv1alpha1.BreakglassSession{
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State: terminalState,
 			},
 		}
 
 		// Simulate the terminal state check (line 789)
-		isTerminal := (session.Status.State == v1alpha1.SessionStateRejected ||
-			session.Status.State == v1alpha1.SessionStateWithdrawn ||
-			session.Status.State == v1alpha1.SessionStateExpired ||
-			session.Status.State == v1alpha1.SessionStateTimeout)
+		isTerminal := (session.Status.State == breakglassv1alpha1.SessionStateRejected ||
+			session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
+			session.Status.State == breakglassv1alpha1.SessionStateExpired ||
+			session.Status.State == breakglassv1alpha1.SessionStateTimeout)
 
 		if !isTerminal {
 			t.Errorf("State %s should be terminal", terminalState)
@@ -753,9 +753,9 @@ func TestEdgeCase_ApprovalTimeoutCleared(t *testing.T) {
 	now := time.Now()
 
 	// Session with pending approval that will timeout
-	session := v1alpha1.BreakglassSession{
-		Status: v1alpha1.BreakglassSessionStatus{
-			State:     v1alpha1.SessionStatePending,
+	session := breakglassv1alpha1.BreakglassSession{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
 			TimeoutAt: metav1.NewTime(now.Add(1 * time.Hour)), // Will timeout in 1 hour
 		},
 	}
@@ -783,66 +783,66 @@ func TestEdgeCase_NonzeroTimestampsInDifferentContexts(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		session     v1alpha1.BreakglassSession
-		check       func(v1alpha1.BreakglassSession) bool
+		session     breakglassv1alpha1.BreakglassSession
+		check       func(breakglassv1alpha1.BreakglassSession) bool
 		description string
 	}{
 		{
 			name: "pending_no_timestamps",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.Time{},
 				},
 			},
-			check: func(s v1alpha1.BreakglassSession) bool {
+			check: func(s breakglassv1alpha1.BreakglassSession) bool {
 				return s.Status.ApprovedAt.IsZero() && s.Status.RejectedAt.IsZero() && s.Status.TimeoutAt.IsZero()
 			},
 			description: "Pending session should have empty timestamps",
 		},
 		{
 			name: "approved_with_timestamp",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now),
 					RejectedAt: metav1.Time{}, // Must be zero
 					TimeoutAt:  metav1.Time{}, // Must be zero
 				},
 			},
-			check: func(s v1alpha1.BreakglassSession) bool {
+			check: func(s breakglassv1alpha1.BreakglassSession) bool {
 				return !s.Status.ApprovedAt.IsZero() && s.Status.RejectedAt.IsZero() && s.Status.TimeoutAt.IsZero()
 			},
 			description: "Approved session must have ApprovedAt set and RejectedAt/TimeoutAt cleared",
 		},
 		{
 			name: "rejected_with_timestamp",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateRejected,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateRejected,
 					ApprovedAt: metav1.Time{}, // Must be zero
 					RejectedAt: metav1.NewTime(now),
 					TimeoutAt:  metav1.Time{}, // Must be zero
 				},
 			},
-			check: func(s v1alpha1.BreakglassSession) bool {
+			check: func(s breakglassv1alpha1.BreakglassSession) bool {
 				return s.Status.ApprovedAt.IsZero() && !s.Status.RejectedAt.IsZero() && s.Status.TimeoutAt.IsZero()
 			},
 			description: "Rejected session must have RejectedAt set and ApprovedAt/TimeoutAt cleared",
 		},
 		{
 			name: "withdrawn_no_rejection_timestamp",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateWithdrawn,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateWithdrawn,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{}, // KEY: Empty, not set!
 					TimeoutAt:  metav1.Time{},
 				},
 			},
-			check: func(s v1alpha1.BreakglassSession) bool {
+			check: func(s breakglassv1alpha1.BreakglassSession) bool {
 				// Withdrawn session has empty RejectedAt (this was the bug!)
 				return s.Status.RejectedAt.IsZero() && !IsSessionActive(s)
 			},
@@ -871,15 +871,15 @@ func TestEdgeCase_PendingVsApprovedConflictMessages(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		session         v1alpha1.BreakglassSession
+		session         breakglassv1alpha1.BreakglassSession
 		expectedMessage string
 		description     string
 	}{
 		{
 			name: "approved_session_conflict",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now),
 				},
 			},
@@ -888,9 +888,9 @@ func TestEdgeCase_PendingVsApprovedConflictMessages(t *testing.T) {
 		},
 		{
 			name: "pending_session_conflict",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:      v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)), // Still pending
@@ -907,7 +907,7 @@ func TestEdgeCase_PendingVsApprovedConflictMessages(t *testing.T) {
 			var message string
 
 			// Line 443: approved check
-			if tt.session.Status.State == v1alpha1.SessionStateApproved || !tt.session.Status.ApprovedAt.IsZero() {
+			if tt.session.Status.State == breakglassv1alpha1.SessionStateApproved || !tt.session.Status.ApprovedAt.IsZero() {
 				message = "already approved"
 			} else if IsSessionPendingApproval(tt.session) {
 				message = "already requested"
@@ -942,31 +942,31 @@ func TestEdgeCase_PendingVsApprovedConflictMessages(t *testing.T) {
 func TestRegressionFix_WithdrawnSessionsShouldNotHaveRejectedAtSet(t *testing.T) {
 	tests := []struct {
 		name                 string
-		state                v1alpha1.BreakglassSessionState
+		state                breakglassv1alpha1.BreakglassSessionState
 		expectedRejectedAtOk bool
 		description          string
 	}{
 		{
 			name:                 "withdrawn_session_must_have_empty_rejectedat",
-			state:                v1alpha1.SessionStateWithdrawn,
+			state:                breakglassv1alpha1.SessionStateWithdrawn,
 			expectedRejectedAtOk: true, // Should be empty (true = IsZero() returns true)
 			description:          "User-cancelled sessions must NOT have RejectedAt set",
 		},
 		{
 			name:                 "rejected_session_must_have_rejectedat_set",
-			state:                v1alpha1.SessionStateRejected,
+			state:                breakglassv1alpha1.SessionStateRejected,
 			expectedRejectedAtOk: false, // Should be set (false = IsZero() returns false)
 			description:          "Approver-rejected sessions MUST have RejectedAt set",
 		},
 		{
 			name:                 "approved_session_must_have_empty_rejectedat",
-			state:                v1alpha1.SessionStateApproved,
+			state:                breakglassv1alpha1.SessionStateApproved,
 			expectedRejectedAtOk: true, // Should be empty
 			description:          "Approved sessions must NOT have RejectedAt set",
 		},
 		{
 			name:                 "pending_session_must_have_empty_rejectedat",
-			state:                v1alpha1.SessionStatePending,
+			state:                breakglassv1alpha1.SessionStatePending,
 			expectedRejectedAtOk: true, // Should be empty
 			description:          "Pending sessions must NOT have RejectedAt set",
 		},
@@ -974,14 +974,14 @@ func TestRegressionFix_WithdrawnSessionsShouldNotHaveRejectedAtSet(t *testing.T)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var session v1alpha1.BreakglassSession
+			var session breakglassv1alpha1.BreakglassSession
 			session.Status.State = tt.state
 
 			switch tt.state {
-			case v1alpha1.SessionStateRejected:
+			case breakglassv1alpha1.SessionStateRejected:
 				// When rejected by approver, set RejectedAt
 				session.Status.RejectedAt = metav1.Now()
-			case v1alpha1.SessionStateWithdrawn, v1alpha1.SessionStateApproved, v1alpha1.SessionStatePending:
+			case breakglassv1alpha1.SessionStateWithdrawn, breakglassv1alpha1.SessionStateApproved, breakglassv1alpha1.SessionStatePending:
 				// When withdrawn, approved or pending by user, RejectedAt should be empty
 				session.Status.RejectedAt = metav1.Time{}
 			}
@@ -1006,31 +1006,31 @@ func TestRetainedUntilSetForAllTerminalStates(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		state       v1alpha1.BreakglassSessionState
+		state       breakglassv1alpha1.BreakglassSessionState
 		rejectedAt  bool // true if RejectedAt should be set (only for Rejected state)
 		description string
 	}{
 		{
 			name:        "rejected_state_has_retaineduntil_and_rejectedat",
-			state:       v1alpha1.SessionStateRejected,
+			state:       breakglassv1alpha1.SessionStateRejected,
 			rejectedAt:  true,
 			description: "Rejected sessions MUST have both RejectedAt and RetainedUntil set",
 		},
 		{
 			name:        "withdrawn_state_has_retaineduntil_no_rejectedat",
-			state:       v1alpha1.SessionStateWithdrawn,
+			state:       breakglassv1alpha1.SessionStateWithdrawn,
 			rejectedAt:  false,
 			description: "Withdrawn sessions MUST have RetainedUntil but NOT RejectedAt",
 		},
 		{
 			name:        "expired_state_has_retaineduntil_no_rejectedat",
-			state:       v1alpha1.SessionStateExpired,
+			state:       breakglassv1alpha1.SessionStateExpired,
 			rejectedAt:  false,
 			description: "Expired sessions MUST have RetainedUntil but NOT RejectedAt",
 		},
 		{
 			name:        "timeout_state_has_retaineduntil_no_rejectedat",
-			state:       v1alpha1.SessionStateTimeout,
+			state:       breakglassv1alpha1.SessionStateTimeout,
 			rejectedAt:  false,
 			description: "Timeout sessions MUST have RetainedUntil but NOT RejectedAt",
 		},
@@ -1038,21 +1038,21 @@ func TestRetainedUntilSetForAllTerminalStates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Spec: v1alpha1.BreakglassSessionSpec{
+			session := breakglassv1alpha1.BreakglassSession{
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					RetainFor: "24h",
 				},
-				Status: v1alpha1.BreakglassSessionStatus{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},
 			}
 
 			// Simulate what the controller should do for each state
 			switch tt.state {
-			case v1alpha1.SessionStateRejected:
+			case breakglassv1alpha1.SessionStateRejected:
 				session.Status.RejectedAt = metav1.Now()
 				session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
-			case v1alpha1.SessionStateWithdrawn, v1alpha1.SessionStateExpired, v1alpha1.SessionStateTimeout:
+			case breakglassv1alpha1.SessionStateWithdrawn, breakglassv1alpha1.SessionStateExpired, breakglassv1alpha1.SessionStateTimeout:
 				session.Status.RejectedAt = metav1.Time{}
 				session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 			}
@@ -1082,43 +1082,43 @@ func TestIsSessionActive_ExcludesAllTerminalStates(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		state    v1alpha1.BreakglassSessionState
+		state    breakglassv1alpha1.BreakglassSessionState
 		expected bool
 		reason   string
 	}{
 		{
 			name:     "rejected_is_not_active",
-			state:    v1alpha1.SessionStateRejected,
+			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
 			reason:   "Rejected sessions are terminal and should not be active",
 		},
 		{
 			name:     "withdrawn_is_not_active",
-			state:    v1alpha1.SessionStateWithdrawn,
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
 			expected: false,
 			reason:   "Withdrawn sessions are terminal and should not be active",
 		},
 		{
 			name:     "expired_is_not_active",
-			state:    v1alpha1.SessionStateExpired,
+			state:    breakglassv1alpha1.SessionStateExpired,
 			expected: false,
 			reason:   "Expired sessions are terminal and should not be active",
 		},
 		{
 			name:     "timeout_is_not_active",
-			state:    v1alpha1.SessionStateTimeout,
+			state:    breakglassv1alpha1.SessionStateTimeout,
 			expected: false,
 			reason:   "Timeout sessions are terminal and should not be active",
 		},
 		{
 			name:     "pending_is_active",
-			state:    v1alpha1.SessionStatePending,
+			state:    breakglassv1alpha1.SessionStatePending,
 			expected: true,
 			reason:   "Pending sessions are active and can be approved",
 		},
 		{
 			name:     "approved_is_active",
-			state:    v1alpha1.SessionStateApproved,
+			state:    breakglassv1alpha1.SessionStateApproved,
 			expected: true,
 			reason:   "Approved sessions are active",
 		},
@@ -1126,8 +1126,8 @@ func TestIsSessionActive_ExcludesAllTerminalStates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:         tt.state,
 					ExpiresAt:     metav1.NewTime(expiresAt),
 					RetainedUntil: metav1.NewTime(retainedUntil),
@@ -1135,7 +1135,7 @@ func TestIsSessionActive_ExcludesAllTerminalStates(t *testing.T) {
 			}
 
 			// Set appropriate timestamps based on state
-			if tt.state == v1alpha1.SessionStateApproved {
+			if tt.state == breakglassv1alpha1.SessionStateApproved {
 				session.Status.ApprovedAt = metav1.Now()
 			}
 
@@ -1161,7 +1161,7 @@ func TestStateIsUltimateAuthority(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		state          v1alpha1.BreakglassSessionState
+		state          breakglassv1alpha1.BreakglassSessionState
 		approvedAt     metav1.Time // Represents time of approval
 		expiresAt      metav1.Time // Represents time of expiration
 		withdrawnAt    metav1.Time // Represents time of withdrawal
@@ -1172,7 +1172,7 @@ func TestStateIsUltimateAuthority(t *testing.T) {
 	}{
 		{
 			name:           "rejected_overrides_valid_timestamps",
-			state:          v1alpha1.SessionStateRejected,
+			state:          breakglassv1alpha1.SessionStateRejected,
 			approvedAt:     metav1.NewTime(now.Add(-1 * time.Hour)), // Was approved long ago
 			expiresAt:      metav1.NewTime(now.Add(1 * time.Hour)),  // Won't expire for 1 hour
 			rejectedAt:     metav1.NewTime(now),                     // Just rejected
@@ -1182,7 +1182,7 @@ func TestStateIsUltimateAuthority(t *testing.T) {
 		},
 		{
 			name:           "withdrawn_overrides_valid_timestamps",
-			state:          v1alpha1.SessionStateWithdrawn,
+			state:          breakglassv1alpha1.SessionStateWithdrawn,
 			approvedAt:     metav1.NewTime(now.Add(-1 * time.Hour)), // Was approved long ago
 			expiresAt:      metav1.NewTime(now.Add(1 * time.Hour)),  // Won't expire for 1 hour
 			withdrawnAt:    metav1.NewTime(now),                     // Just withdrawn
@@ -1192,7 +1192,7 @@ func TestStateIsUltimateAuthority(t *testing.T) {
 		},
 		{
 			name:           "expired_overrides_approved_timestamp",
-			state:          v1alpha1.SessionStateExpired,
+			state:          breakglassv1alpha1.SessionStateExpired,
 			approvedAt:     metav1.NewTime(now.Add(-1 * time.Hour)), // Was approved long ago
 			expiresAt:      metav1.NewTime(now.Add(1 * time.Hour)),  // Timestamp suggests validity (but state is expired)
 			expectedValid:  false,
@@ -1201,14 +1201,14 @@ func TestStateIsUltimateAuthority(t *testing.T) {
 		},
 		{
 			name:           "timeout_overrides_pending_timestamp",
-			state:          v1alpha1.SessionStateTimeout,
+			state:          breakglassv1alpha1.SessionStateTimeout,
 			expectedValid:  false,
 			expectedActive: false,
 			description:    "ApprovalTimeout state makes session invalid",
 		},
 		{
 			name:           "pending_is_active_despite_expired_timestamp",
-			state:          v1alpha1.SessionStatePending,
+			state:          breakglassv1alpha1.SessionStatePending,
 			expiresAt:      metav1.NewTime(now.Add(-1 * time.Hour)), // Old timestamp (shouldn't matter for Pending)
 			expectedValid:  true,
 			expectedActive: true,
@@ -1216,7 +1216,7 @@ func TestStateIsUltimateAuthority(t *testing.T) {
 		},
 		{
 			name:           "approved_valid_with_current_timestamp",
-			state:          v1alpha1.SessionStateApproved,
+			state:          breakglassv1alpha1.SessionStateApproved,
 			approvedAt:     metav1.NewTime(now.Add(-1 * time.Hour)),
 			expiresAt:      metav1.NewTime(now.Add(1 * time.Hour)), // Won't expire for 1 hour
 			expectedValid:  true,
@@ -1227,8 +1227,8 @@ func TestStateIsUltimateAuthority(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:       tt.state,
 					ApprovedAt:  tt.approvedAt,
 					ExpiresAt:   tt.expiresAt,
@@ -1268,14 +1268,14 @@ func TestTimestampPreservationAcrossStateTransitions(t *testing.T) {
 	tests := []struct {
 		name         string
 		description  string
-		validateFunc func(t *testing.T, session v1alpha1.BreakglassSession)
+		validateFunc func(t *testing.T, session breakglassv1alpha1.BreakglassSession)
 	}{
 		{
 			name:        "approved_then_withdrawn_preserves_approvedat",
 			description: "Withdrawn session should preserve ApprovedAt, ExpiresAt timestamps from when it was approved",
-			validateFunc: func(t *testing.T, session v1alpha1.BreakglassSession) {
+			validateFunc: func(t *testing.T, session breakglassv1alpha1.BreakglassSession) {
 				// Simulate: Session started as Pending, was approved, then withdrawn
-				session.Status.State = v1alpha1.SessionStateWithdrawn
+				session.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 				session.Status.ApprovedAt = metav1.NewTime(baseTime.Add(-30 * time.Minute))
 				session.Status.WithdrawnAt = metav1.NewTime(baseTime)
 				session.Status.ExpiresAt = metav1.NewTime(baseTime.Add(30 * time.Minute))
@@ -1295,9 +1295,9 @@ func TestTimestampPreservationAcrossStateTransitions(t *testing.T) {
 		{
 			name:        "pending_then_rejected_has_rejectedat",
 			description: "Rejected session should have RejectedAt set (timestamps on Pending are empty)",
-			validateFunc: func(t *testing.T, session v1alpha1.BreakglassSession) {
+			validateFunc: func(t *testing.T, session breakglassv1alpha1.BreakglassSession) {
 				// Simulate: Session started as Pending, then rejected (no ApprovedAt needed)
-				session.Status.State = v1alpha1.SessionStateRejected
+				session.Status.State = breakglassv1alpha1.SessionStateRejected
 				session.Status.RejectedAt = metav1.NewTime(baseTime)
 
 				// Verify RejectedAt is set
@@ -1309,9 +1309,9 @@ func TestTimestampPreservationAcrossStateTransitions(t *testing.T) {
 		{
 			name:        "approved_then_expired_preserves_approvedat",
 			description: "Expired session should preserve ApprovedAt from approval time",
-			validateFunc: func(t *testing.T, session v1alpha1.BreakglassSession) {
+			validateFunc: func(t *testing.T, session breakglassv1alpha1.BreakglassSession) {
 				// Simulate: Session was approved, then expired
-				session.Status.State = v1alpha1.SessionStateExpired
+				session.Status.State = breakglassv1alpha1.SessionStateExpired
 				session.Status.ApprovedAt = metav1.NewTime(baseTime.Add(-1 * time.Hour))
 				session.Status.ExpiresAt = metav1.NewTime(baseTime) // Just expired
 
@@ -1328,7 +1328,7 @@ func TestTimestampPreservationAcrossStateTransitions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{}
+			session := breakglassv1alpha1.BreakglassSession{}
 			tt.validateFunc(t, session)
 		})
 	}
@@ -1341,42 +1341,42 @@ func TestWithdrawnAtSemantics(t *testing.T) {
 
 	tests := []struct {
 		name                  string
-		state                 v1alpha1.BreakglassSessionState
+		state                 breakglassv1alpha1.BreakglassSessionState
 		withdrawnAt           metav1.Time
 		shouldHaveWithdrawnAt bool
 		description           string
 	}{
 		{
 			name:                  "withdrawn_has_withdrawnat",
-			state:                 v1alpha1.SessionStateWithdrawn,
+			state:                 breakglassv1alpha1.SessionStateWithdrawn,
 			withdrawnAt:           metav1.NewTime(now),
 			shouldHaveWithdrawnAt: true,
 			description:           "Withdrawn sessions MUST have WithdrawnAt set",
 		},
 		{
 			name:                  "rejected_has_no_withdrawnat",
-			state:                 v1alpha1.SessionStateRejected,
+			state:                 breakglassv1alpha1.SessionStateRejected,
 			withdrawnAt:           metav1.Time{},
 			shouldHaveWithdrawnAt: false,
 			description:           "Rejected sessions should NOT have WithdrawnAt set",
 		},
 		{
 			name:                  "approved_has_no_withdrawnat",
-			state:                 v1alpha1.SessionStateApproved,
+			state:                 breakglassv1alpha1.SessionStateApproved,
 			withdrawnAt:           metav1.Time{},
 			shouldHaveWithdrawnAt: false,
 			description:           "Approved sessions should NOT have WithdrawnAt set",
 		},
 		{
 			name:                  "pending_has_no_withdrawnat",
-			state:                 v1alpha1.SessionStatePending,
+			state:                 breakglassv1alpha1.SessionStatePending,
 			withdrawnAt:           metav1.Time{},
 			shouldHaveWithdrawnAt: false,
 			description:           "Pending sessions should NOT have WithdrawnAt set",
 		},
 		{
 			name:                  "expired_has_no_withdrawnat",
-			state:                 v1alpha1.SessionStateExpired,
+			state:                 breakglassv1alpha1.SessionStateExpired,
 			withdrawnAt:           metav1.Time{},
 			shouldHaveWithdrawnAt: false,
 			description:           "Expired sessions should NOT have WithdrawnAt set",
@@ -1385,8 +1385,8 @@ func TestWithdrawnAtSemantics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:       tt.state,
 					WithdrawnAt: tt.withdrawnAt,
 				},
@@ -1418,15 +1418,15 @@ func TestIsSessionPendingApproval_WithdrawnSessionsExcluded(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		session  v1alpha1.BreakglassSession
+		session  breakglassv1alpha1.BreakglassSession
 		expected bool
 		reason   string
 	}{
 		{
 			name: "withdrawn_session_not_pending",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:       v1alpha1.SessionStateWithdrawn,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:       breakglassv1alpha1.SessionStateWithdrawn,
 					WithdrawnAt: metav1.NewTime(now.Add(-5 * time.Minute)),
 					ApprovedAt:  metav1.Time{},
 					RejectedAt:  metav1.Time{},
@@ -1438,9 +1438,9 @@ func TestIsSessionPendingApproval_WithdrawnSessionsExcluded(t *testing.T) {
 		},
 		{
 			name: "truly_pending_session",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:       v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:       breakglassv1alpha1.SessionStatePending,
 					WithdrawnAt: metav1.Time{}, // not withdrawn
 					ApprovedAt:  metav1.Time{}, // not approved
 					RejectedAt:  metav1.Time{}, // not rejected
@@ -1452,9 +1452,9 @@ func TestIsSessionPendingApproval_WithdrawnSessionsExcluded(t *testing.T) {
 		},
 		{
 			name: "pending_but_timed_out",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:       v1alpha1.SessionStatePending,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:       breakglassv1alpha1.SessionStatePending,
 					WithdrawnAt: metav1.Time{},
 					ApprovedAt:  metav1.Time{},
 					RejectedAt:  metav1.Time{},
@@ -1466,9 +1466,9 @@ func TestIsSessionPendingApproval_WithdrawnSessionsExcluded(t *testing.T) {
 		},
 		{
 			name: "rejected_session_not_pending",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:       v1alpha1.SessionStateRejected,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:       breakglassv1alpha1.SessionStateRejected,
 					WithdrawnAt: metav1.Time{},
 					ApprovedAt:  metav1.Time{},
 					RejectedAt:  metav1.NewTime(now.Add(-5 * time.Minute)), // rejected
@@ -1480,9 +1480,9 @@ func TestIsSessionPendingApproval_WithdrawnSessionsExcluded(t *testing.T) {
 		},
 		{
 			name: "approved_session_not_pending",
-			session: v1alpha1.BreakglassSession{
-				Status: v1alpha1.BreakglassSessionStatus{
-					State:       v1alpha1.SessionStateApproved,
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:       breakglassv1alpha1.SessionStateApproved,
 					WithdrawnAt: metav1.Time{},
 					ApprovedAt:  metav1.NewTime(now.Add(-5 * time.Minute)), // approved
 					RejectedAt:  metav1.Time{},

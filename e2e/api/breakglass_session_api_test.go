@@ -94,15 +94,15 @@ type BreakglassSessionRequest struct {
 
 // SessionSummary represents a session in list responses
 type SessionSummary struct {
-	Name      string                                 `json:"name"`
-	Namespace string                                 `json:"namespace"`
-	Cluster   string                                 `json:"cluster"`
-	User      string                                 `json:"user"`
-	Group     string                                 `json:"group"`
+	Name      string                                    `json:"name"`
+	Namespace string                                    `json:"namespace"`
+	Cluster   string                                    `json:"cluster"`
+	User      string                                    `json:"user"`
+	Group     string                                    `json:"group"`
 	State     breakglassv1alpha1.BreakglassSessionState `json:"state"`
-	Reason    string                                 `json:"reason,omitempty"`
-	CreatedAt metav1.Time                            `json:"createdAt"`
-	ExpiresAt *metav1.Time                           `json:"expiresAt,omitempty"`
+	Reason    string                                    `json:"reason,omitempty"`
+	CreatedAt metav1.Time                               `json:"createdAt"`
+	ExpiresAt *metav1.Time                              `json:"expiresAt,omitempty"`
 }
 
 // ListSessions lists all breakglass sessions
@@ -160,7 +160,7 @@ func (c *BreakglassSessionAPIClient) GetSession(ctx context.Context, t *testing.
 	// The API returns an envelope with session and approvalMeta
 	var envelope struct {
 		Session      breakglassv1alpha1.BreakglassSession `json:"session"`
-		ApprovalMeta interface{}                       `json:"approvalMeta"`
+		ApprovalMeta interface{}                          `json:"approvalMeta"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		// Fallback: try parsing as bare session object

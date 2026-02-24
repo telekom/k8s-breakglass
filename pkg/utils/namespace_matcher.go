@@ -19,18 +19,18 @@ package utils
 import (
 	"path/filepath"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // NamespaceMatcher provides namespace matching using patterns and label selectors.
 // It supports both glob-style pattern matching and Kubernetes-native label selection.
 type NamespaceMatcher struct {
-	filter *v1alpha1.NamespaceFilter
+	filter *breakglassv1alpha1.NamespaceFilter
 }
 
 // NewNamespaceMatcher creates a new NamespaceMatcher for the given filter.
 // If filter is nil, the matcher will match no namespaces.
-func NewNamespaceMatcher(filter *v1alpha1.NamespaceFilter) *NamespaceMatcher {
+func NewNamespaceMatcher(filter *breakglassv1alpha1.NamespaceFilter) *NamespaceMatcher {
 	return &NamespaceMatcher{filter: filter}
 }
 
@@ -117,7 +117,7 @@ func (m *NamespaceMatcher) matchesSelectorTerms(labels map[string]string) bool {
 
 // termMatches checks if a single selector term matches the labels.
 // All conditions within the term must match (AND semantics).
-func (m *NamespaceMatcher) termMatches(term v1alpha1.NamespaceSelectorTerm, labels map[string]string) bool {
+func (m *NamespaceMatcher) termMatches(term breakglassv1alpha1.NamespaceSelectorTerm, labels map[string]string) bool {
 	// Check matchLabels (all must match)
 	for key, value := range term.MatchLabels {
 		labelValue, exists := labels[key]
@@ -137,26 +137,26 @@ func (m *NamespaceMatcher) termMatches(term v1alpha1.NamespaceSelectorTerm, labe
 }
 
 // expressionMatches checks if a single expression matches the labels.
-func (m *NamespaceMatcher) expressionMatches(expr v1alpha1.NamespaceSelectorRequirement, labels map[string]string) bool {
+func (m *NamespaceMatcher) expressionMatches(expr breakglassv1alpha1.NamespaceSelectorRequirement, labels map[string]string) bool {
 	value, exists := labels[expr.Key]
 
 	switch expr.Operator {
-	case v1alpha1.NamespaceSelectorOpIn:
+	case breakglassv1alpha1.NamespaceSelectorOpIn:
 		if !exists {
 			return false
 		}
 		return contains(expr.Values, value)
 
-	case v1alpha1.NamespaceSelectorOpNotIn:
+	case breakglassv1alpha1.NamespaceSelectorOpNotIn:
 		if !exists {
 			return true // Key doesn't exist, so value is not in the set
 		}
 		return !contains(expr.Values, value)
 
-	case v1alpha1.NamespaceSelectorOpExists:
+	case breakglassv1alpha1.NamespaceSelectorOpExists:
 		return exists
 
-	case v1alpha1.NamespaceSelectorOpDoesNotExist:
+	case breakglassv1alpha1.NamespaceSelectorOpDoesNotExist:
 		return !exists
 
 	default:
@@ -184,7 +184,7 @@ type NamespaceAllowDenyMatcher struct {
 }
 
 // NewNamespaceAllowDenyMatcher creates a matcher with allow and deny filters.
-func NewNamespaceAllowDenyMatcher(allow, deny *v1alpha1.NamespaceFilter) *NamespaceAllowDenyMatcher {
+func NewNamespaceAllowDenyMatcher(allow, deny *breakglassv1alpha1.NamespaceFilter) *NamespaceAllowDenyMatcher {
 	return &NamespaceAllowDenyMatcher{
 		allow: NewNamespaceMatcher(allow),
 		deny:  NewNamespaceMatcher(deny),

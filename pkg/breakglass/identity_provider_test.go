@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 )
 
@@ -169,7 +169,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		claimType        v1alpha1.UserIdentifierClaimType
+		claimType        breakglassv1alpha1.UserIdentifierClaimType
 		email            string
 		username         string
 		userID           string
@@ -178,7 +178,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 	}{
 		{
 			name:             "Email claim - valid",
-			claimType:        v1alpha1.UserIdentifierClaimEmail,
+			claimType:        breakglassv1alpha1.UserIdentifierClaimEmail,
 			email:            "test@example.com",
 			username:         "testuser",
 			userID:           "sub-123",
@@ -187,7 +187,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 		},
 		{
 			name:             "Email claim - missing",
-			claimType:        v1alpha1.UserIdentifierClaimEmail,
+			claimType:        breakglassv1alpha1.UserIdentifierClaimEmail,
 			email:            "",
 			username:         "testuser",
 			userID:           "sub-123",
@@ -196,7 +196,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 		},
 		{
 			name:             "Preferred username claim - valid",
-			claimType:        v1alpha1.UserIdentifierClaimPreferredUsername,
+			claimType:        breakglassv1alpha1.UserIdentifierClaimPreferredUsername,
 			email:            "test@example.com",
 			username:         "testuser",
 			userID:           "sub-123",
@@ -205,7 +205,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 		},
 		{
 			name:             "Preferred username claim - missing",
-			claimType:        v1alpha1.UserIdentifierClaimPreferredUsername,
+			claimType:        breakglassv1alpha1.UserIdentifierClaimPreferredUsername,
 			email:            "test@example.com",
 			username:         "",
 			userID:           "sub-123",
@@ -214,7 +214,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 		},
 		{
 			name:             "Sub claim - valid",
-			claimType:        v1alpha1.UserIdentifierClaimSub,
+			claimType:        breakglassv1alpha1.UserIdentifierClaimSub,
 			email:            "test@example.com",
 			username:         "testuser",
 			userID:           "sub-123",
@@ -223,7 +223,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 		},
 		{
 			name:             "Sub claim - missing",
-			claimType:        v1alpha1.UserIdentifierClaimSub,
+			claimType:        breakglassv1alpha1.UserIdentifierClaimSub,
 			email:            "test@example.com",
 			username:         "testuser",
 			userID:           "",

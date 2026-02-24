@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestFindNewEphemeralContainers(t *testing.T) {
@@ -194,18 +194,18 @@ func TestIsRunAsNonRoot(t *testing.T) {
 
 // mockDebugHandler implements DebugSessionHandler for testing
 type mockDebugHandler struct {
-	session     *v1alpha1.DebugSession
+	session     *breakglassv1alpha1.DebugSession
 	findErr     error
 	validateErr error
 }
 
-func (m *mockDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*v1alpha1.DebugSession, error) {
+func (m *mockDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error) {
 	return m.session, m.findErr
 }
 
 func (m *mockDebugHandler) ValidateEphemeralContainerRequest(
 	ctx context.Context,
-	ds *v1alpha1.DebugSession,
+	ds *breakglassv1alpha1.DebugSession,
 	namespace, podName, image string,
 	capabilities []string,
 	runAsNonRoot bool,
@@ -244,10 +244,10 @@ func (m *mockDecoder) DecodeRaw(rawObj runtime.RawExtension, into runtime.Object
 func TestEphemeralContainerWebhook_Handle(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
-	validSession := &v1alpha1.DebugSession{
+	validSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-		Status: v1alpha1.DebugSessionStatus{
-			State: v1alpha1.DebugSessionStateActive,
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
 		},
 	}
 
@@ -259,7 +259,7 @@ func TestEphemeralContainerWebhook_Handle(t *testing.T) {
 		oldPod         *corev1.Pod
 		decodeErr      error
 		oldDecodeErr   error
-		session        *v1alpha1.DebugSession
+		session        *breakglassv1alpha1.DebugSession
 		findErr        error
 		validateErr    error
 		expectAllowed  bool

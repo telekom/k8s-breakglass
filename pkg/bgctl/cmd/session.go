@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/output"
 )
@@ -234,7 +234,7 @@ func newSessionGetCommand() *cobra.Command {
 			}
 			format := output.Format(rt.OutputFormat())
 			if format == output.FormatTable {
-				output.WriteSessionTable(rt.Writer(), []v1alpha1.BreakglassSession{*session})
+				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
 			return output.WriteObject(rt.Writer(), format, session)
@@ -283,7 +283,7 @@ func newSessionRequestCommand() *cobra.Command {
 			}
 			format := output.Format(rt.OutputFormat())
 			if format == output.FormatTable {
-				output.WriteSessionTable(rt.Writer(), []v1alpha1.BreakglassSession{*session})
+				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
 			return output.WriteObject(rt.Writer(), format, session)
@@ -321,7 +321,7 @@ func newSessionApproveCommand() *cobra.Command {
 			}
 			format := output.Format(rt.OutputFormat())
 			if format == output.FormatTable {
-				output.WriteSessionTable(rt.Writer(), []v1alpha1.BreakglassSession{*session})
+				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
 			return output.WriteObject(rt.Writer(), format, session)
@@ -352,7 +352,7 @@ func newSessionRejectCommand() *cobra.Command {
 			}
 			format := output.Format(rt.OutputFormat())
 			if format == output.FormatTable {
-				output.WriteSessionTable(rt.Writer(), []v1alpha1.BreakglassSession{*session})
+				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
 			return output.WriteObject(rt.Writer(), format, session)
@@ -382,7 +382,7 @@ func newSessionWithdrawCommand() *cobra.Command {
 			}
 			format := output.Format(rt.OutputFormat())
 			if format == output.FormatTable {
-				output.WriteSessionTable(rt.Writer(), []v1alpha1.BreakglassSession{*session})
+				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
 			return output.WriteObject(rt.Writer(), format, session)
@@ -410,7 +410,7 @@ func newSessionDropCommand() *cobra.Command {
 			}
 			format := output.Format(rt.OutputFormat())
 			if format == output.FormatTable {
-				output.WriteSessionTable(rt.Writer(), []v1alpha1.BreakglassSession{*session})
+				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
 			return output.WriteObject(rt.Writer(), format, session)
@@ -438,7 +438,7 @@ func newSessionCancelCommand() *cobra.Command {
 			}
 			format := output.Format(rt.OutputFormat())
 			if format == output.FormatTable {
-				output.WriteSessionTable(rt.Writer(), []v1alpha1.BreakglassSession{*session})
+				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
 			return output.WriteObject(rt.Writer(), format, session)

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,18 +26,18 @@ type DebugSessionListOptions struct {
 }
 
 type DebugSessionSummary struct {
-	Name                 string                         `json:"name"`
-	TemplateRef          string                         `json:"templateRef"`
-	Cluster              string                         `json:"cluster"`
-	RequestedBy          string                         `json:"requestedBy"`
-	State                v1alpha1.DebugSessionState     `json:"state"`
-	StatusMessage        string                         `json:"statusMessage,omitempty"`
-	StartsAt             *metav1.Time                   `json:"startsAt,omitempty"`
-	ExpiresAt            *metav1.Time                   `json:"expiresAt,omitempty"`
-	Participants         int                            `json:"participants"`
-	IsParticipant        bool                           `json:"isParticipant"`
-	AllowedPods          int                            `json:"allowedPods"`
-	AllowedPodOperations *v1alpha1.AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+	Name                 string                                   `json:"name"`
+	TemplateRef          string                                   `json:"templateRef"`
+	Cluster              string                                   `json:"cluster"`
+	RequestedBy          string                                   `json:"requestedBy"`
+	State                breakglassv1alpha1.DebugSessionState     `json:"state"`
+	StatusMessage        string                                   `json:"statusMessage,omitempty"`
+	StartsAt             *metav1.Time                             `json:"startsAt,omitempty"`
+	ExpiresAt            *metav1.Time                             `json:"expiresAt,omitempty"`
+	Participants         int                                      `json:"participants"`
+	IsParticipant        bool                                     `json:"isParticipant"`
+	AllowedPods          int                                      `json:"allowedPods"`
+	AllowedPodOperations *breakglassv1alpha1.AllowedPodOperations `json:"allowedPodOperations,omitempty"`
 }
 
 type DebugSessionListResponse struct {
@@ -49,7 +49,7 @@ type DebugSessionListResponse struct {
 // The DebugSession is embedded to match the server API which returns the session
 // at the root level (not wrapped in a "debugSession" field).
 type DebugSessionDetailResponse struct {
-	v1alpha1.DebugSession
+	breakglassv1alpha1.DebugSession
 }
 
 type CreateDebugSessionRequest struct {
@@ -122,7 +122,7 @@ func (s *DebugSessionService) List(ctx context.Context, opts DebugSessionListOpt
 	return &resp, nil
 }
 
-func (s *DebugSessionService) Get(ctx context.Context, name, namespace string) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Get(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSession, error) {
 	endpoint := fmt.Sprintf("api/debugSessions/%s", url.PathEscape(name))
 	if namespace != "" {
 		endpoint = endpoint + "?namespace=" + url.QueryEscape(namespace)
@@ -134,7 +134,7 @@ func (s *DebugSessionService) Get(ctx context.Context, name, namespace string) (
 	return &resp.DebugSession, nil
 }
 
-func (s *DebugSessionService) Create(ctx context.Context, req CreateDebugSessionRequest) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Create(ctx context.Context, req CreateDebugSessionRequest) (*breakglassv1alpha1.DebugSession, error) {
 	endpoint := "api/debugSessions"
 	var resp DebugSessionDetailResponse
 	if err := s.client.do(ctx, http.MethodPost, endpoint, req, &resp); err != nil {
@@ -143,35 +143,35 @@ func (s *DebugSessionService) Create(ctx context.Context, req CreateDebugSession
 	return &resp.DebugSession, nil
 }
 
-func (s *DebugSessionService) Join(ctx context.Context, name, role, namespace string) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Join(ctx context.Context, name, role, namespace string) (*breakglassv1alpha1.DebugSession, error) {
 	payload := JoinDebugSessionRequest{Role: role}
 	return s.action(ctx, name, "join", namespace, payload)
 }
 
-func (s *DebugSessionService) Leave(ctx context.Context, name, namespace string) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Leave(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSession, error) {
 	return s.action(ctx, name, "leave", namespace, nil)
 }
 
-func (s *DebugSessionService) Renew(ctx context.Context, name, extendBy, namespace string) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Renew(ctx context.Context, name, extendBy, namespace string) (*breakglassv1alpha1.DebugSession, error) {
 	payload := RenewDebugSessionRequest{ExtendBy: extendBy}
 	return s.action(ctx, name, "renew", namespace, payload)
 }
 
-func (s *DebugSessionService) Terminate(ctx context.Context, name, namespace string) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Terminate(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSession, error) {
 	return s.action(ctx, name, "terminate", namespace, nil)
 }
 
-func (s *DebugSessionService) Approve(ctx context.Context, name, reason, namespace string) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Approve(ctx context.Context, name, reason, namespace string) (*breakglassv1alpha1.DebugSession, error) {
 	payload := ApprovalRequest{Reason: reason}
 	return s.action(ctx, name, "approve", namespace, payload)
 }
 
-func (s *DebugSessionService) Reject(ctx context.Context, name, reason, namespace string) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) Reject(ctx context.Context, name, reason, namespace string) (*breakglassv1alpha1.DebugSession, error) {
 	payload := ApprovalRequest{Reason: reason}
 	return s.action(ctx, name, "reject", namespace, payload)
 }
 
-func (s *DebugSessionService) action(ctx context.Context, name, action, namespace string, payload any) (*v1alpha1.DebugSession, error) {
+func (s *DebugSessionService) action(ctx context.Context, name, action, namespace string, payload any) (*breakglassv1alpha1.DebugSession, error) {
 	endpoint := fmt.Sprintf("api/debugSessions/%s/%s", url.PathEscape(name), action)
 	if namespace != "" {
 		endpoint = endpoint + "?namespace=" + url.QueryEscape(namespace)
@@ -225,19 +225,19 @@ type DebugTemplateService struct {
 
 // DebugSessionTemplateSummary represents a template summary from the API
 type DebugSessionTemplateSummary struct {
-	Name                  string                            `json:"name"`
-	DisplayName           string                            `json:"displayName"`
-	Description           string                            `json:"description,omitempty"`
-	Mode                  v1alpha1.DebugSessionTemplateMode `json:"mode"`
-	WorkloadType          v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
-	PodTemplateRef        string                            `json:"podTemplateRef,omitempty"`
-	TargetNamespace       string                            `json:"targetNamespace,omitempty"`
-	Constraints           *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	AllowedClusters       []string                          `json:"allowedClusters,omitempty"`
-	AllowedGroups         []string                          `json:"allowedGroups,omitempty"`
-	RequiresApproval      bool                              `json:"requiresApproval"`
-	HasAvailableClusters  bool                              `json:"hasAvailableClusters"`            // True if at least one cluster is available
-	AvailableClusterCount int                               `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
+	Name                  string                                      `json:"name"`
+	DisplayName           string                                      `json:"displayName"`
+	Description           string                                      `json:"description,omitempty"`
+	Mode                  breakglassv1alpha1.DebugSessionTemplateMode `json:"mode"`
+	WorkloadType          breakglassv1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
+	PodTemplateRef        string                                      `json:"podTemplateRef,omitempty"`
+	TargetNamespace       string                                      `json:"targetNamespace,omitempty"`
+	Constraints           *breakglassv1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	AllowedClusters       []string                                    `json:"allowedClusters,omitempty"`
+	AllowedGroups         []string                                    `json:"allowedGroups,omitempty"`
+	RequiresApproval      bool                                        `json:"requiresApproval"`
+	HasAvailableClusters  bool                                        `json:"hasAvailableClusters"`            // True if at least one cluster is available
+	AvailableClusterCount int                                         `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
 
 // DebugTemplateListResponse represents the API response for template list
@@ -288,38 +288,38 @@ type TemplateClustersResponse struct {
 // AvailableClusterDetail represents a cluster with resolved constraints for a template.
 // When multiple bindings match a cluster, BindingOptions contains all available options.
 type AvailableClusterDetail struct {
-	Name                          string                            `json:"name"`
-	DisplayName                   string                            `json:"displayName,omitempty"`
-	Environment                   string                            `json:"environment,omitempty"`
-	Location                      string                            `json:"location,omitempty"`
-	Site                          string                            `json:"site,omitempty"`
-	Tenant                        string                            `json:"tenant,omitempty"`
-	BindingRef                    *BindingReference                 `json:"bindingRef,omitempty"`     // Default/primary binding (backward compat)
-	BindingOptions                []BindingOption                   `json:"bindingOptions,omitempty"` // All available binding options
-	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
-	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
-	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
-	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
-	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
-	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
-	Status                        *ClusterStatusInfo                `json:"status,omitempty"`
+	Name                          string                                      `json:"name"`
+	DisplayName                   string                                      `json:"displayName,omitempty"`
+	Environment                   string                                      `json:"environment,omitempty"`
+	Location                      string                                      `json:"location,omitempty"`
+	Site                          string                                      `json:"site,omitempty"`
+	Tenant                        string                                      `json:"tenant,omitempty"`
+	BindingRef                    *BindingReference                           `json:"bindingRef,omitempty"`     // Default/primary binding (backward compat)
+	BindingOptions                []BindingOption                             `json:"bindingOptions,omitempty"` // All available binding options
+	Constraints                   *breakglassv1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	SchedulingConstraints         *SchedulingConstraintsSummary               `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary                       `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                                    `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                               `json:"approval,omitempty"`
+	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 
 // BindingOption represents a single binding option with its resolved configuration
 type BindingOption struct {
-	BindingRef                    BindingReference                  `json:"bindingRef"`
-	DisplayName                   string                            `json:"displayName,omitempty"`
-	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
-	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
-	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
-	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
-	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
-	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
-	RequestReason                 *ReasonConfigInfo                 `json:"requestReason,omitempty"`
-	ApprovalReason                *ReasonConfigInfo                 `json:"approvalReason,omitempty"`
-	Notification                  *NotificationConfigInfo           `json:"notification,omitempty"`
+	BindingRef                    BindingReference                            `json:"bindingRef"`
+	DisplayName                   string                                      `json:"displayName,omitempty"`
+	Constraints                   *breakglassv1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	SchedulingConstraints         *SchedulingConstraintsSummary               `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary                       `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                                    `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                               `json:"approval,omitempty"`
+	RequestReason                 *ReasonConfigInfo                           `json:"requestReason,omitempty"`
+	ApprovalReason                *ReasonConfigInfo                           `json:"approvalReason,omitempty"`
+	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -472,9 +472,9 @@ func (d *DebugPodTemplateService) List(ctx context.Context) (*DebugPodTemplateLi
 	return &resp, nil
 }
 
-func (d *DebugPodTemplateService) Get(ctx context.Context, name string) (*v1alpha1.DebugPodTemplate, error) {
+func (d *DebugPodTemplateService) Get(ctx context.Context, name string) (*breakglassv1alpha1.DebugPodTemplate, error) {
 	endpoint := fmt.Sprintf("api/debugSessions/podTemplates/%s", url.PathEscape(name))
-	var template v1alpha1.DebugPodTemplate
+	var template breakglassv1alpha1.DebugPodTemplate
 	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &template); err != nil {
 		return nil, err
 	}

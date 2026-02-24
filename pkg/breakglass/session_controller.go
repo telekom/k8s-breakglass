@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -132,17 +132,17 @@ type AuditEmitter interface {
 // IsSessionPendingApproval returns true if the session is in Pending state (state-first validation)
 // State takes absolute priority over timestamps. Terminal states (Rejected, Withdrawn, Expired, Timeout)
 // are never pending, regardless of timestamp values.
-func IsSessionPendingApproval(session v1alpha1.BreakglassSession) bool {
+func IsSessionPendingApproval(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check STATE FIRST - terminal states are never pending
-	if session.Status.State == v1alpha1.SessionStateRejected ||
-		session.Status.State == v1alpha1.SessionStateWithdrawn ||
-		session.Status.State == v1alpha1.SessionStateExpired ||
-		session.Status.State == v1alpha1.SessionStateTimeout {
+	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
+		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
+		session.Status.State == breakglassv1alpha1.SessionStateExpired ||
+		session.Status.State == breakglassv1alpha1.SessionStateTimeout {
 		return false
 	}
 
 	// CRITICAL: Only Pending state is pending (not WaitingForScheduledTime or Approved)
-	if session.Status.State != v1alpha1.SessionStatePending {
+	if session.Status.State != breakglassv1alpha1.SessionStatePending {
 		return false
 	}
 
@@ -351,7 +351,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	approversByGroup := make(map[string][]string)
 	allApprovers := []string{} // Deduplicated list of all approvers for filtering
 	selectedDenyPolicies := []string{}
-	var matchedEsc *v1alpha1.BreakglassEscalation
+	var matchedEsc *breakglassv1alpha1.BreakglassEscalation
 
 	reqLog.Debugw("Starting approver resolution from escalations",
 		"escalationCount", len(possibleEscals),
@@ -551,13 +551,13 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	// Determine the user identifier claim.
 	// This ensures the session's spec.User matches what the spoke cluster's OIDC sends in SAR.
 	// Priority: ClusterConfig > Global config
-	var userIdentifierClaim v1alpha1.UserIdentifierClaimType
+	var userIdentifierClaim breakglassv1alpha1.UserIdentifierClaimType
 	if globalCfg != nil {
 		userIdentifierClaim = globalCfg.GetUserIdentifierClaim()
 	}
 
 	// Check ClusterConfig for per-cluster override
-	var clusterConfig *v1alpha1.ClusterConfig
+	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	if wc.clusterConfigManager != nil {
 		var ccErr error
 		clusterConfig, ccErr = wc.clusterConfigManager.GetClusterConfigByName(ctx, request.Clustername)
@@ -617,7 +617,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		dropK8sInternalFieldsSession(&ses)
 
 		// Approved session -> explicit "already approved" error
-		if ses.Status.State == v1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero() {
+		if ses.Status.State == breakglassv1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero() {
 			c.JSON(http.StatusConflict, gin.H{"error": "already approved", "session": ses})
 			return
 		}
@@ -647,7 +647,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		"requestedCluster", request.Clustername)
 
 	// Initialize session spec and populate duration fields from matched escalation when available
-	spec := v1alpha1.BreakglassSessionSpec{
+	spec := breakglassv1alpha1.BreakglassSessionSpec{
 		Cluster:        request.Clustername,
 		User:           userIdentifier, // Use the identifier based on ClusterConfig's userIdentifierClaim
 		GrantedGroup:   request.GroupName,
@@ -710,7 +710,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		// Validate and apply custom duration if provided
 		if request.Duration > 0 {
 			// Parse max allowed duration from string (e.g., "1h", "3600s", "7d")
-			d, err := v1alpha1.ParseDuration(matchedEsc.Spec.MaxValidFor)
+			d, err := breakglassv1alpha1.ParseDuration(matchedEsc.Spec.MaxValidFor)
 			if err != nil {
 				reqLog.Warnw("Failed to parse MaxValidFor duration", "error", err, "value", matchedEsc.Spec.MaxValidFor)
 				apiresponses.RespondInternalError(c, "parse escalation duration configuration", err, reqLog)
@@ -762,7 +762,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		}
 	}
 
-	bs := v1alpha1.BreakglassSession{Spec: spec}
+	bs := breakglassv1alpha1.BreakglassSession{Spec: spec}
 	// Add labels to sessions so label selectors can operate when field indices are unavailable
 	if bs.Labels == nil {
 		bs.Labels = map[string]string{}
@@ -780,7 +780,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		// This allows other components (webhook/controller) to resolve the escalation
 		// via the session's OwnerReferences.
 		bs.OwnerReferences = []metav1.OwnerReference{{
-			APIVersion: v1alpha1.GroupVersion.String(),
+			APIVersion: breakglassv1alpha1.GroupVersion.String(),
 			Kind:       "BreakglassEscalation",
 			Name:       matchedEsc.Name,
 			UID:        matchedEsc.UID,
@@ -855,15 +855,15 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	// Compute retained-until at creation so sessions always expose when they will be cleaned up.
 	retainFor := ParseRetainFor(spec, reqLog)
 
-	bs.Status = v1alpha1.BreakglassSessionStatus{
+	bs.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		RetainedUntil: metav1.NewTime(time.Now().Add(retainFor)),
 		TimeoutAt:     metav1.NewTime(time.Now().Add(approvalTimeout)), // Approval timeout
-		State:         v1alpha1.SessionStatePending,
+		State:         breakglassv1alpha1.SessionStatePending,
 		Conditions: []metav1.Condition{{
-			Type:               string(v1alpha1.SessionConditionTypeIdle),
+			Type:               string(breakglassv1alpha1.SessionConditionTypeIdle),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
-			Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+			Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            fmt.Sprintf("User %q requested session.", username),
 		}},
 	}
@@ -980,7 +980,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	c.JSON(http.StatusCreated, bs)
 }
 
-func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition v1alpha1.BreakglassSessionConditionType) {
+func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition breakglassv1alpha1.BreakglassSessionConditionType) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 
@@ -1028,9 +1028,9 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// If the session already has the same last condition, return conflict to avoid repeated transitions.
 	if lastCondition.Type == string(sesCondition) {
 		c.JSON(http.StatusConflict, struct {
-			Error   string                     `json:"error"`
-			Code    string                     `json:"code"`
-			Session v1alpha1.BreakglassSession `json:"session"`
+			Error   string                               `json:"error"`
+			Code    string                               `json:"code"`
+			Session breakglassv1alpha1.BreakglassSession `json:"session"`
 		}{
 			Error:   "session already in requested state",
 			Code:    "CONFLICT",
@@ -1045,12 +1045,12 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	//   (Rejected, Withdrawn, Expired, Timeout). Approved is intentionally not part of that list
 	//   because approved sessions may later transition to expired/dropped by owner or canceled by approver.
 	currState := bs.Status.State
-	if sesCondition == v1alpha1.SessionConditionTypeApproved || sesCondition == v1alpha1.SessionConditionTypeRejected {
-		if currState != v1alpha1.SessionStatePending {
+	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved || sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+		if currState != breakglassv1alpha1.SessionStatePending {
 			c.JSON(http.StatusBadRequest, struct {
-				Error   string                     `json:"error"`
-				Code    string                     `json:"code"`
-				Session v1alpha1.BreakglassSession `json:"session"`
+				Error   string                               `json:"error"`
+				Code    string                               `json:"code"`
+				Session breakglassv1alpha1.BreakglassSession `json:"session"`
 			}{
 				Error:   fmt.Sprintf("session must be pending to perform %s; current state: %s", sesCondition, currState),
 				Code:    "BAD_REQUEST",
@@ -1059,11 +1059,11 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			return
 		}
 	} else {
-		if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || currState == v1alpha1.SessionStateExpired || currState == v1alpha1.SessionStateTimeout {
+		if currState == breakglassv1alpha1.SessionStateRejected || currState == breakglassv1alpha1.SessionStateWithdrawn || currState == breakglassv1alpha1.SessionStateExpired || currState == breakglassv1alpha1.SessionStateTimeout {
 			c.JSON(http.StatusBadRequest, struct {
-				Error   string                     `json:"error"`
-				Code    string                     `json:"code"`
-				Session v1alpha1.BreakglassSession `json:"session"`
+				Error   string                               `json:"error"`
+				Code    string                               `json:"code"`
+				Session breakglassv1alpha1.BreakglassSession `json:"session"`
 			}{
 				Error:   fmt.Sprintf("session is in terminal state %s and cannot be modified", currState),
 				Code:    "BAD_REQUEST",
@@ -1077,7 +1077,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// Allow the session requester to reject their own pending session. For reject actions only,
 	// if the caller is the original requester and the session is still pending, bypass the approver check.
 	allowOwnerReject := false
-	if sesCondition == v1alpha1.SessionConditionTypeRejected {
+	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
 		if requesterEmail, err := wc.identityProvider.GetEmail(c); err == nil {
 			if requesterEmail == bs.Spec.User && IsSessionPendingApproval(bs) {
 				allowOwnerReject = true
@@ -1111,7 +1111,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	}
 
 	switch sesCondition {
-	case v1alpha1.SessionConditionTypeApproved:
+	case breakglassv1alpha1.SessionConditionTypeApproved:
 		// Clear any previous rejection timestamp so the approved state is canonical.
 		bs.Status.RejectedAt = metav1.Time{}
 		bs.Status.ApprovedAt = metav1.Now()
@@ -1128,7 +1128,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		if bs.Spec.ScheduledStartTime != nil && !bs.Spec.ScheduledStartTime.IsZero() {
 			// Scheduled session: enter WaitingForScheduledTime state
 			// RBAC group will NOT be applied until activation time is reached
-			bs.Status.State = v1alpha1.SessionStateWaitingForScheduledTime
+			bs.Status.State = breakglassv1alpha1.SessionStateWaitingForScheduledTime
 			// Calculate expiry and retention from ScheduledStartTime, not from now
 			bs.Status.ExpiresAt = metav1.NewTime(bs.Spec.ScheduledStartTime.Add(validFor))
 			bs.Status.RetainedUntil = metav1.NewTime(bs.Spec.ScheduledStartTime.Add(validFor).Add(retainFor))
@@ -1141,7 +1141,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			)
 		} else {
 			// Immediate session: activate now (original behavior)
-			bs.Status.State = v1alpha1.SessionStateApproved
+			bs.Status.State = breakglassv1alpha1.SessionStateApproved
 			bs.Status.ActualStartTime = metav1.Now() // For consistency
 			// Calculate expiry and retention from now
 			bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(validFor))
@@ -1163,11 +1163,11 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		if strings.TrimSpace(approverPayload.Reason) != "" {
 			bs.Status.ApprovalReason = approverPayload.Reason
 		}
-	case v1alpha1.SessionConditionTypeRejected:
+	case breakglassv1alpha1.SessionConditionTypeRejected:
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		// Only set state and rejection-specific timestamp.
 		bs.Status.RejectedAt = metav1.Now()
-		bs.Status.State = v1alpha1.SessionStateRejected
+		bs.Status.State = breakglassv1alpha1.SessionStateRejected
 		bs.Status.ReasonEnded = "rejected"
 
 		// Set RetainedUntil for rejected sessions
@@ -1184,7 +1184,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		if strings.TrimSpace(approverPayload.Reason) != "" {
 			bs.Status.ApprovalReason = approverPayload.Reason
 		}
-	case v1alpha1.SessionConditionTypeIdle:
+	case breakglassv1alpha1.SessionConditionTypeIdle:
 		reqLog.Error("error setting session status to idle which should be only initial state")
 		apiresponses.RespondBadRequest(c, "cannot set session status to idle (initial state only)")
 		return
@@ -1199,7 +1199,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		Type:               string(sesCondition),
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: metav1.Now(),
-		Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+		Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 		Message:            fmt.Sprintf("User %q set session to %s", username, sesCondition),
 	})
 
@@ -1225,7 +1225,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 
 	// Track metrics for session lifecycle events
 	switch sesCondition {
-	case v1alpha1.SessionConditionTypeApproved:
+	case breakglassv1alpha1.SessionConditionTypeApproved:
 		metrics.SessionApproved.WithLabelValues(bs.Spec.Cluster).Inc()
 		// Track if session was approved with specific IDP
 		if bs.Spec.IdentityProviderName != "" {
@@ -1243,7 +1243,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		if !wc.disableEmail && bs.Spec.User != "" && (wc.mailService != nil && wc.mailService.IsEnabled() || wc.mailQueue != nil) {
 			wc.sendSessionApprovalEmail(reqLog, bs)
 		}
-	case v1alpha1.SessionConditionTypeRejected:
+	case breakglassv1alpha1.SessionConditionTypeRejected:
 		metrics.SessionRejected.WithLabelValues(bs.Spec.Cluster).Inc()
 		// Emit audit event for session rejection
 		wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRejected, &bs, approver, "Session rejected")
@@ -1261,7 +1261,7 @@ func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Co
 	username,
 	clustername,
 	group string,
-) (v1alpha1.BreakglassSession, error) {
+) (breakglassv1alpha1.BreakglassSession, error) {
 	selector := fields.SelectorFromSet(
 		fields.Set{
 			"spec.cluster":      clustername,
@@ -1273,10 +1273,10 @@ func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Co
 	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
 	if err != nil {
 		wc.log.Error("Failed to list sessions for getActiveBreakglassSession", zap.Error(err))
-		return v1alpha1.BreakglassSession{}, fmt.Errorf("failed to list sessions: %w", err)
+		return breakglassv1alpha1.BreakglassSession{}, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	validSessions := make([]v1alpha1.BreakglassSession, 0, len(sessions))
+	validSessions := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	for _, ses := range sessions {
 		if !IsSessionActive(ses) {
 			continue
@@ -1287,7 +1287,7 @@ func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Co
 
 	if len(validSessions) == 0 {
 		wc.log.Infow("No active breakglass session found", "user", username, "cluster", clustername, "group", group)
-		return v1alpha1.BreakglassSession{}, ErrSessionNotFound
+		return breakglassv1alpha1.BreakglassSession{}, ErrSessionNotFound
 	} else if len(validSessions) > 1 {
 		wc.log.Error("There is more than a single active breakglass session; this should not happen",
 			zap.Int("num_sessions", len(validSessions)),
@@ -1313,7 +1313,7 @@ func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Co
 // Returns nil if the session can be created, or an error describing the limit violation.
 func (wc *BreakglassSessionController) checkSessionLimits(
 	ctx context.Context,
-	escalation *v1alpha1.BreakglassEscalation,
+	escalation *breakglassv1alpha1.BreakglassEscalation,
 	idpName string,
 	userIdentifier string,
 	userGroups []string,
@@ -1361,7 +1361,7 @@ func (wc *BreakglassSessionController) checkSessionLimits(
 		return nil
 	}
 
-	idp := &v1alpha1.IdentityProvider{}
+	idp := &breakglassv1alpha1.IdentityProvider{}
 	if err := wc.sessionManager.Client.Get(ctx, client.ObjectKey{Name: idpName}, idp); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Warnw("IdentityProvider not found — session limits cannot be enforced; verify the IDP resource exists",
@@ -1464,7 +1464,7 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 // Optimized: only lists sessions in states that can be active (Pending, Approved) instead of all sessions.
 func (wc *BreakglassSessionController) checkTotalSessionCount(
 	ctx context.Context,
-	escalation *v1alpha1.BreakglassEscalation,
+	escalation *breakglassv1alpha1.BreakglassEscalation,
 	limit int32,
 	source string,
 	log *zap.SugaredLogger,
@@ -1472,11 +1472,11 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	// Optimization: only list sessions in potentially active states (Pending and Approved)
 	// rather than listing all sessions and filtering out terminal states.
 	// This reduces data transfer from etcd significantly in clusters with many expired sessions.
-	pendingSessions, err := wc.sessionManager.GetSessionsByState(ctx, v1alpha1.SessionStatePending)
+	pendingSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStatePending)
 	if err != nil {
 		return fmt.Errorf("failed to list pending sessions: %w", err)
 	}
-	approvedSessions, err := wc.sessionManager.GetSessionsByState(ctx, v1alpha1.SessionStateApproved)
+	approvedSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateApproved)
 	if err != nil {
 		return fmt.Errorf("failed to list approved sessions: %w", err)
 	}
@@ -1520,11 +1520,11 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 }
 
 func (wc *BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
-	wc.setSessionStatus(c, v1alpha1.SessionConditionTypeApproved)
+	wc.setSessionStatus(c, breakglassv1alpha1.SessionConditionTypeApproved)
 }
 
 func (wc *BreakglassSessionController) handleRejectBreakglassSession(c *gin.Context) {
-	wc.setSessionStatus(c, v1alpha1.SessionConditionTypeRejected)
+	wc.setSessionStatus(c, breakglassv1alpha1.SessionConditionTypeRejected)
 }
 
 // handleGetBreakglassSessionStatus handles GET /status for breakglass session
@@ -1559,14 +1559,14 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		canApprove := wc.isSessionApprover(c, ses)
 		alreadyActive := IsSessionActive(ses)
 		valid := true
-		if IsSessionExpired(ses) || ses.Status.State == v1alpha1.SessionStateWithdrawn || ses.Status.State == v1alpha1.SessionStateRejected {
+		if IsSessionExpired(ses) || ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn || ses.Status.State == breakglassv1alpha1.SessionStateRejected {
 			valid = false
 		}
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
 		return
 	}
 
-	var sessions []v1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	var err error
 	if clusterQ != "" || userQ != "" || groupQ != "" {
 		// Build field selector from provided params
@@ -1620,7 +1620,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 	}
 
-	filtered := make([]v1alpha1.BreakglassSession, 0, len(sessions))
+	filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	for _, ses := range sessions {
 		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers)
 		var isApprover bool
@@ -1689,7 +1689,7 @@ type SessionApprovalMeta struct {
 
 // EnrichedSessionResponse wraps a session with additional metadata from the escalation config
 type EnrichedSessionResponse struct {
-	v1alpha1.BreakglassSession
+	breakglassv1alpha1.BreakglassSession
 	// ApprovalReason contains the escalation's approval reason configuration (if any)
 	// Now sourced from session.Spec.ApprovalReasonConfig (snapshot at creation time)
 	ApprovalReason *ReasonConfigInfo `json:"approvalReason,omitempty"`
@@ -1697,7 +1697,7 @@ type EnrichedSessionResponse struct {
 
 // enrichSessionsWithApprovalReason adds the approvalReason config from the session's stored snapshot.
 // Sessions now store reason configs at creation time, so no escalation lookup is needed.
-func (wc *BreakglassSessionController) enrichSessionsWithApprovalReason(_ context.Context, sessions []v1alpha1.BreakglassSession, _ *zap.SugaredLogger) []EnrichedSessionResponse {
+func (wc *BreakglassSessionController) enrichSessionsWithApprovalReason(_ context.Context, sessions []breakglassv1alpha1.BreakglassSession, _ *zap.SugaredLogger) []EnrichedSessionResponse {
 	result := make([]EnrichedSessionResponse, 0, len(sessions))
 
 	for i := range sessions {
@@ -1723,7 +1723,7 @@ func (wc *BreakglassSessionController) enrichSessionsWithApprovalReason(_ contex
 }
 
 // getSessionApprovalMeta determines the user's authorization status for a session
-func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, session v1alpha1.BreakglassSession) SessionApprovalMeta {
+func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, session breakglassv1alpha1.BreakglassSession) SessionApprovalMeta {
 	reqLog := system.GetReqLogger(c, wc.log)
 	meta := SessionApprovalMeta{
 		SessionState: string(session.Status.State),
@@ -1742,31 +1742,31 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 
 	// Check session state first
 	switch session.Status.State {
-	case v1alpha1.SessionStateApproved:
+	case breakglassv1alpha1.SessionStateApproved:
 		meta.StateMessage = "This session has already been approved"
 		if session.Status.Approver != "" {
 			meta.StateMessage += " by " + session.Status.Approver
 		}
 		return meta
-	case v1alpha1.SessionStateRejected:
+	case breakglassv1alpha1.SessionStateRejected:
 		meta.StateMessage = "This session has already been rejected"
 		if session.Status.Approver != "" {
 			meta.StateMessage += " by " + session.Status.Approver
 		}
 		return meta
-	case v1alpha1.SessionStateWithdrawn:
+	case breakglassv1alpha1.SessionStateWithdrawn:
 		meta.StateMessage = "This session has been withdrawn by the requester"
 		return meta
-	case v1alpha1.SessionStateExpired:
+	case breakglassv1alpha1.SessionStateExpired:
 		meta.StateMessage = "This session has expired"
 		return meta
-	case v1alpha1.SessionStateTimeout:
+	case breakglassv1alpha1.SessionStateTimeout:
 		meta.StateMessage = "This session has timed out waiting for approval"
 		return meta
 	}
 
 	// Session is pending - check if user can approve
-	if session.Status.State != v1alpha1.SessionStatePending {
+	if session.Status.State != breakglassv1alpha1.SessionStatePending {
 		meta.DenialReason = fmt.Sprintf("Session is in unexpected state: %s", session.Status.State)
 		return meta
 	}
@@ -1788,7 +1788,7 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 	}
 
 	// Requester can always reject their own pending session (withdraw equivalent)
-	if meta.IsRequester && session.Status.State == v1alpha1.SessionStatePending {
+	if meta.IsRequester && session.Status.State == breakglassv1alpha1.SessionStatePending {
 		meta.CanReject = true
 	}
 
@@ -1877,7 +1877,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	// IMPORTANT: Do NOT clear existing timestamps (ApprovedAt, ExpiresAt, etc.)
 	// We want to preserve history. Only set state and withdrawal-specific timestamp.
 	bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
-	bs.Status.State = v1alpha1.SessionStateWithdrawn
+	bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 	// short reason for UI
 	bs.Status.ReasonEnded = "withdrawn"
 	// clear approver info for withdrawn sessions
@@ -1889,10 +1889,10 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
-		Type:               string(v1alpha1.SessionConditionTypeCanceled),
+		Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: metav1.Now(),
-		Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+		Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 		Message:            "Session withdrawn by requester",
 	})
 
@@ -1946,16 +1946,16 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	}
 
 	// If approved -> mark as Expired and set RetainedUntil appropriately (owner requested termination)
-	if bs.Status.State == v1alpha1.SessionStateApproved && !bs.Status.ApprovedAt.IsZero() {
+	if bs.Status.State == breakglassv1alpha1.SessionStateApproved && !bs.Status.ApprovedAt.IsZero() {
 		// Approved session dropped - transition to Expired
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		bs.Status.ExpiresAt = metav1.NewTime(time.Now())
-		bs.Status.State = v1alpha1.SessionStateExpired
+		bs.Status.State = breakglassv1alpha1.SessionStateExpired
 		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
-			Type:               string(v1alpha1.SessionConditionTypeExpired),
+			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
-			Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+			Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            "Session dropped by owner",
 		})
 		bs.Status.ReasonEnded = "dropped"
@@ -1967,7 +1967,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		// Pending or other state -> behave like withdraw
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
-		bs.Status.State = v1alpha1.SessionStateWithdrawn
+		bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 		bs.Status.Approver = ""
 		bs.Status.Approvers = nil
 
@@ -1976,10 +1976,10 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
-			Type:               string(v1alpha1.SessionConditionTypeCanceled),
+			Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
-			Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+			Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            "Session dropped by owner",
 		})
 		bs.Status.ReasonEnded = "withdrawn"
@@ -2029,7 +2029,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	}
 
 	// Only allow cancellation of active/approved sessions
-	if bs.Status.State != v1alpha1.SessionStateApproved || bs.Status.ApprovedAt.IsZero() {
+	if bs.Status.State != breakglassv1alpha1.SessionStateApproved || bs.Status.ApprovedAt.IsZero() {
 		apiresponses.RespondBadRequest(c, "Session is not active/approved and cannot be canceled by approver")
 		return
 	}
@@ -2037,7 +2037,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	// Transition to expired immediately
 	// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 	bs.Status.ExpiresAt = metav1.NewTime(time.Now())
-	bs.Status.State = v1alpha1.SessionStateExpired
+	bs.Status.State = breakglassv1alpha1.SessionStateExpired
 
 	// Set RetainedUntil for expired sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
@@ -2052,10 +2052,10 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	}
 
 	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
-		Type:               string(v1alpha1.SessionConditionTypeExpired),
+		Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: metav1.Now(),
-		Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+		Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 		Message:            "Session canceled by approver",
 	})
 	bs.Status.ReasonEnded = "canceled"
@@ -2159,12 +2159,12 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%d seconds", secs)
 }
 
-func (wc *BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession,
+func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.BreakglassSession,
 	requestEmail,
 	requestUsername string,
 	approvers []string,
 	approverGroupsToShow []string, // The specific approver group(s) to display in this email
-	matchedEscalation *v1alpha1.BreakglassEscalation,
+	matchedEscalation *breakglassv1alpha1.BreakglassEscalation,
 ) error {
 	// Guard: validate approvers list
 	if len(approvers) == 0 {
@@ -2199,7 +2199,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.Breakglass
 		// Calculate expiry time from scheduled start time using spec.MaxValidFor
 		expiryTime := bs.Spec.ScheduledStartTime.Time
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := breakglassv1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				expiryTime = bs.Spec.ScheduledStartTime.Add(d)
 				formattedDurationStr = formatDuration(d)
 			}
@@ -2212,7 +2212,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.Breakglass
 	} else {
 		// Immediate session: calculate duration from MaxValidFor
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := breakglassv1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				formattedDurationStr = formatDuration(d)
 				calculatedExpiresAtStr = time.Now().Add(d).Format("2006-01-02 15:04:05 MST")
 			}
@@ -2235,7 +2235,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.Breakglass
 	if bs.Spec.ScheduledStartTime != nil {
 		expiryTime = bs.Spec.ScheduledStartTime.Time
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := breakglassv1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				expiryTime = bs.Spec.ScheduledStartTime.Add(d)
 			}
 		} else {
@@ -2245,7 +2245,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.Breakglass
 		// Immediate session
 		expiryTime = time.Now()
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := breakglassv1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				expiryTime = time.Now().Add(d)
 			}
 		} else {
@@ -2383,11 +2383,11 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.Breakglass
 // being notified on behalf of.
 func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 	log *zap.SugaredLogger,
-	bs v1alpha1.BreakglassSession,
+	bs breakglassv1alpha1.BreakglassSession,
 	requestEmail, requestUsername string,
 	filteredApprovers []string,
 	approversByGroup map[string][]string, // map[groupName][]approverEmails
-	matchedEscalation *v1alpha1.BreakglassEscalation,
+	matchedEscalation *breakglassv1alpha1.BreakglassEscalation,
 ) {
 	if matchedEscalation == nil {
 		log.Warnw("Cannot send emails by group: matched escalation is nil", "session", bs.Name)
@@ -2473,7 +2473,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 	log *zap.SugaredLogger,
 	approvers []string,
-	escalation *v1alpha1.BreakglassEscalation,
+	escalation *breakglassv1alpha1.BreakglassEscalation,
 ) []string {
 	log.Debugw("filterExcludedNotificationRecipients called",
 		"approverCount", len(approvers),
@@ -2581,7 +2581,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 	log *zap.SugaredLogger,
 	approvers []string,
-	escalation *v1alpha1.BreakglassEscalation,
+	escalation *breakglassv1alpha1.BreakglassEscalation,
 ) []string {
 	hiddenFromUICount := 0
 	if escalation != nil {
@@ -2689,7 +2689,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 
 // checkApprovalAuthorization performs a detailed check of whether the current user can approve/reject a session.
 // It returns an ApprovalCheckResult with specific denial reasons instead of a simple boolean.
-func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context, session v1alpha1.BreakglassSession) ApprovalCheckResult {
+func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context, session breakglassv1alpha1.BreakglassSession) ApprovalCheckResult {
 	reqLog := system.GetReqLogger(c, wc.log)
 
 	email, err := wc.identityProvider.GetEmail(c)
@@ -2876,13 +2876,13 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 
 // isSessionApprover returns true if the current user is authorized to approve/reject the session.
 // For detailed denial reasons, use checkApprovalAuthorization instead.
-func (wc *BreakglassSessionController) isSessionApprover(c *gin.Context, session v1alpha1.BreakglassSession) bool {
+func (wc *BreakglassSessionController) isSessionApprover(c *gin.Context, session breakglassv1alpha1.BreakglassSession) bool {
 	result := wc.checkApprovalAuthorization(c, session)
 	return result.Allowed
 }
 
 // IsSessionRetained checks if a session should be removed (retainedUntil passed)
-func IsSessionRetained(session v1alpha1.BreakglassSession) bool {
+func IsSessionRetained(session breakglassv1alpha1.BreakglassSession) bool {
 	if session.Status.RetainedUntil.IsZero() {
 		return false
 	}
@@ -2928,28 +2928,28 @@ func matchesAuthIdentifier(value string, identifiers []string) bool {
 }
 
 // IsSessionRejected returns true if session is in Rejected state (state-first validation)
-func IsSessionRejected(session v1alpha1.BreakglassSession) bool {
+func IsSessionRejected(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check STATE FIRST - state is the ultimate truth
-	return session.Status.State == v1alpha1.SessionStateRejected
+	return session.Status.State == breakglassv1alpha1.SessionStateRejected
 }
 
 // IsSessionWithdrawn returns true if session is in Withdrawn state (state-first validation)
-func IsSessionWithdrawn(session v1alpha1.BreakglassSession) bool {
+func IsSessionWithdrawn(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check STATE FIRST - state is the ultimate truth
-	return session.Status.State == v1alpha1.SessionStateWithdrawn
+	return session.Status.State == breakglassv1alpha1.SessionStateWithdrawn
 }
 
 // IsSessionExpired returns true if session is in Expired state OR (state is Approved AND ExpiresAt passed).
 // State-first: Check terminal Expired state first, then timestamp for Approved state.
-func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
+func IsSessionExpired(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check STATE FIRST
 	// If state is explicitly Expired, it is definitely expired
-	if session.Status.State == v1alpha1.SessionStateExpired {
+	if session.Status.State == breakglassv1alpha1.SessionStateExpired {
 		return true
 	}
 
 	// For Approved state, check if the timestamp has passed (timestamp is secondary check)
-	if session.Status.State == v1alpha1.SessionStateApproved {
+	if session.Status.State == breakglassv1alpha1.SessionStateApproved {
 		return !session.Status.ExpiresAt.Time.IsZero() && time.Now().After(session.Status.ExpiresAt.Time)
 	}
 
@@ -2958,19 +2958,19 @@ func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
 	return false
 }
 
-func IsSessionValid(session v1alpha1.BreakglassSession) bool {
+func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
 	// Even if timestamps suggest validity, terminal states are never valid.
-	if session.Status.State == v1alpha1.SessionStateRejected ||
-		session.Status.State == v1alpha1.SessionStateWithdrawn ||
-		session.Status.State == v1alpha1.SessionStateExpired ||
-		session.Status.State == v1alpha1.SessionStateTimeout {
+	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
+		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
+		session.Status.State == breakglassv1alpha1.SessionStateExpired ||
+		session.Status.State == breakglassv1alpha1.SessionStateTimeout {
 		return false
 	}
 
 	// Session is not valid if it's in WaitingForScheduledTime state
 	// (i.e., scheduled but not yet activated)
-	if session.Status.State == v1alpha1.SessionStateWaitingForScheduledTime {
+	if session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime {
 		return false
 	}
 
@@ -2983,7 +2983,7 @@ func IsSessionValid(session v1alpha1.BreakglassSession) bool {
 
 	// Only now check if it has expired based on ExpiresAt timestamp
 	// But only for approved sessions (which should have ExpiresAt set)
-	if session.Status.State == v1alpha1.SessionStateApproved && IsSessionExpired(session) {
+	if session.Status.State == breakglassv1alpha1.SessionStateApproved && IsSessionExpired(session) {
 		return false
 	}
 
@@ -2993,12 +2993,12 @@ func IsSessionValid(session v1alpha1.BreakglassSession) bool {
 // IsSessionActive returns if session can be approved or was already approved
 // A session is active if it's valid and not in a terminal state.
 // State is the primary determinant; timestamps are secondary validators.
-func IsSessionActive(session v1alpha1.BreakglassSession) bool {
+func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
-	if session.Status.State == v1alpha1.SessionStateRejected ||
-		session.Status.State == v1alpha1.SessionStateWithdrawn ||
-		session.Status.State == v1alpha1.SessionStateExpired ||
-		session.Status.State == v1alpha1.SessionStateTimeout {
+	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
+		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
+		session.Status.State == breakglassv1alpha1.SessionStateExpired ||
+		session.Status.State == breakglassv1alpha1.SessionStateTimeout {
 		return false
 	}
 
@@ -3009,7 +3009,7 @@ func IsSessionActive(session v1alpha1.BreakglassSession) bool {
 // isOwnedByEscalation checks if a session is owned by the given escalation by matching
 // the owner reference UID. This ensures sessions from different escalations that grant
 // the same group are counted separately.
-func isOwnedByEscalation(session *v1alpha1.BreakglassSession, escalation *v1alpha1.BreakglassEscalation) bool {
+func isOwnedByEscalation(session *breakglassv1alpha1.BreakglassSession, escalation *breakglassv1alpha1.BreakglassEscalation) bool {
 	for _, ownerRef := range session.GetOwnerReferences() {
 		if ownerRef.UID == escalation.UID {
 			return true
@@ -3092,7 +3092,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 }
 
 // sendSessionApprovalEmail sends an approval notification to the requester
-func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
+func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session breakglassv1alpha1.BreakglassSession) {
 	// Check if mail is available (either via service or legacy queue)
 	mailEnabled := (wc.mailService != nil && wc.mailService.IsEnabled()) || wc.mailQueue != nil
 	if !mailEnabled {
@@ -3177,7 +3177,7 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 }
 
 // sendSessionRejectionEmail sends a rejection notification to the requester
-func (wc *BreakglassSessionController) sendSessionRejectionEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
+func (wc *BreakglassSessionController) sendSessionRejectionEmail(log *zap.SugaredLogger, session breakglassv1alpha1.BreakglassSession) {
 	// Check if mail is available (either via service or legacy queue)
 	mailEnabled := (wc.mailService != nil && wc.mailService.IsEnabled()) || wc.mailQueue != nil
 	if !mailEnabled {
@@ -3262,7 +3262,7 @@ func (b *BreakglassSessionController) WithAuditService(auditService AuditEmitter
 }
 
 // emitSessionAuditEvent emits an audit event for session lifecycle changes
-func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *v1alpha1.BreakglassSession, user string, message string) {
+func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *breakglassv1alpha1.BreakglassSession, user string, message string) {
 	if b.auditService == nil || !b.auditService.IsEnabled() {
 		return
 	}
@@ -3295,7 +3295,7 @@ func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context,
 }
 
 // emitSessionExpiredAuditEvent emits an audit event when a session expires
-func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.Context, session *v1alpha1.BreakglassSession, reason string) {
+func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.Context, session *breakglassv1alpha1.BreakglassSession, reason string) {
 	if b.auditService == nil || !b.auditService.IsEnabled() {
 		return
 	}
@@ -3343,7 +3343,7 @@ func (b *BreakglassSessionController) Handlers() []gin.HandlerFunc {
 }
 
 // dropK8sInternalFields removes K8s internal fields from BreakglassSession for API response
-func dropK8sInternalFieldsSession(s *v1alpha1.BreakglassSession) {
+func dropK8sInternalFieldsSession(s *breakglassv1alpha1.BreakglassSession) {
 	if s == nil {
 		return
 	}
@@ -3356,14 +3356,14 @@ func dropK8sInternalFieldsSession(s *v1alpha1.BreakglassSession) {
 	}
 }
 
-func dropK8sInternalFieldsSessionList(list []v1alpha1.BreakglassSession) []v1alpha1.BreakglassSession {
+func dropK8sInternalFieldsSessionList(list []breakglassv1alpha1.BreakglassSession) []breakglassv1alpha1.BreakglassSession {
 	for i := range list {
 		dropK8sInternalFieldsSession(&list[i])
 	}
 	return list
 }
 
-type sessionStatePredicate func(v1alpha1.BreakglassSession) bool
+type sessionStatePredicate func(breakglassv1alpha1.BreakglassSession) bool
 
 func parseBoolQuery(value string, defaultVal bool) bool {
 	if value == "" {
@@ -3415,36 +3415,36 @@ func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
 		case "all":
 			return nil
 		case "pending":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
-				return session.Status.State == v1alpha1.SessionStatePending
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
+				return session.Status.State == breakglassv1alpha1.SessionStatePending
 			})
 		case "approved":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
-				return session.Status.State == v1alpha1.SessionStateApproved
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
+				return session.Status.State == breakglassv1alpha1.SessionStateApproved
 			})
 		case "rejected":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
 				return IsSessionRejected(session)
 			})
 		case "withdrawn":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
 				return IsSessionWithdrawn(session)
 			})
 		case "expired":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
 				return IsSessionExpired(session)
 			})
 		case "timeout", "approvaltimeout":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
-				return session.Status.State == v1alpha1.SessionStateTimeout
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
+				return session.Status.State == breakglassv1alpha1.SessionStateTimeout
 			})
 		case "active":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
 				return IsSessionActive(session)
 			})
 		case "waitingforscheduledtime", "waiting", "scheduled":
-			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
-				return session.Status.State == v1alpha1.SessionStateWaitingForScheduledTime
+			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
+				return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
 			})
 		default:
 			continue
@@ -3453,7 +3453,7 @@ func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
 	return predicates
 }
 
-func userHasApprovedSession(session v1alpha1.BreakglassSession, email string) bool {
+func userHasApprovedSession(session breakglassv1alpha1.BreakglassSession, email string) bool {
 	if email == "" {
 		return false
 	}

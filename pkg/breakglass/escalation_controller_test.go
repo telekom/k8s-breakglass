@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestBreakglassEscalationController_BasePath(t *testing.T) {
@@ -73,7 +73,7 @@ func TestNewBreakglassEscalationController(t *testing.T) {
 }
 
 func TestDropK8sInternalFieldsEscalationStripsMetadataAndStatus(t *testing.T) {
-	esc := &v1alpha1.BreakglassEscalation{
+	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			UID:             types.UID("12345"),
 			ResourceVersion: "9001",
@@ -84,7 +84,7 @@ func TestDropK8sInternalFieldsEscalationStripsMetadataAndStatus(t *testing.T) {
 				"visible": "keep",
 			},
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			ApproverGroupMembers: map[string][]string{"ops": {"alice", "bob"}},
 			IDPGroupMemberships: map[string]map[string][]string{
 				"azure": {

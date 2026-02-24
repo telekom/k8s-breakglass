@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	bgctlcmd "github.com/telekom/k8s-breakglass/pkg/bgctl/cmd"
 )
@@ -159,7 +159,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			return
 		}
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		if err := json.Unmarshal([]byte(output), &sessions); err != nil {
 			t.Logf("Warning: Failed to parse sessions for cleanup: %v", err)
 			return
@@ -173,12 +173,12 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			// Only match on group and cluster - let the user be whatever the requester's identity is
 			if s.Spec.GrantedGroup == group && s.Spec.Cluster == cluster {
 				switch s.Status.State {
-				case v1alpha1.SessionStateApproved:
+				case breakglassv1alpha1.SessionStateApproved:
 					t.Logf("Dropping existing approved session: %s", s.Name)
 					if _, err := runAsRequester("session", "drop", s.Name); err != nil {
 						t.Logf("Warning: Failed to drop session %s: %v", s.Name, err)
 					}
-				case v1alpha1.SessionStatePending:
+				case breakglassv1alpha1.SessionStatePending:
 					t.Logf("Withdrawing existing pending session: %s", s.Name)
 					if _, err := runAsRequester("session", "withdraw", s.Name); err != nil {
 						t.Logf("Warning: Failed to withdraw session %s: %v", s.Name, err)
@@ -227,7 +227,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			}
 			require.NoError(t, err, "Requester should create session")
 
-			var session v1alpha1.BreakglassSession
+			var session breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err, "Should parse session")
 
@@ -245,11 +245,11 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 				output, err := runAsRequester("session", "get", sessionName, "-o", "json")
 				require.NoError(t, err)
 
-				var session v1alpha1.BreakglassSession
+				var session breakglassv1alpha1.BreakglassSession
 				err = json.Unmarshal([]byte(output), &session)
 				require.NoError(t, err)
 
-				if session.Status.State == v1alpha1.SessionStatePending {
+				if session.Status.State == breakglassv1alpha1.SessionStatePending {
 					t.Logf("Session %s is Pending", sessionName)
 					return
 				}
@@ -291,11 +291,11 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 				output, err := runAsRequester("session", "get", sessionName, "-o", "json")
 				require.NoError(t, err)
 
-				var session v1alpha1.BreakglassSession
+				var session breakglassv1alpha1.BreakglassSession
 				err = json.Unmarshal([]byte(output), &session)
 				require.NoError(t, err)
 
-				if session.Status.State == v1alpha1.SessionStateApproved {
+				if session.Status.State == breakglassv1alpha1.SessionStateApproved {
 					t.Logf("Session %s is Approved", sessionName)
 					assert.NotEmpty(t, session.Status.Approvers, "Approvers should be recorded")
 					return
@@ -320,7 +320,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			)
 			require.NoError(t, err, "Should list approved sessions")
 
-			var sessions []v1alpha1.BreakglassSession
+			var sessions []breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &sessions)
 			require.NoError(t, err)
 
@@ -377,7 +377,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			}
 			require.NoError(t, err, "Requester should create session")
 
-			var session v1alpha1.BreakglassSession
+			var session breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &session)
 			require.NoError(t, err)
 
@@ -395,11 +395,11 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 				output, err := runAsRequester("session", "get", rejectedSessionName, "-o", "json")
 				require.NoError(t, err)
 
-				var session v1alpha1.BreakglassSession
+				var session breakglassv1alpha1.BreakglassSession
 				err = json.Unmarshal([]byte(output), &session)
 				require.NoError(t, err)
 
-				if session.Status.State == v1alpha1.SessionStatePending {
+				if session.Status.State == breakglassv1alpha1.SessionStatePending {
 					return
 				}
 				time.Sleep(helpers.PollInterval)
@@ -428,11 +428,11 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 				output, err := runAsRequester("session", "get", rejectedSessionName, "-o", "json")
 				require.NoError(t, err)
 
-				var session v1alpha1.BreakglassSession
+				var session breakglassv1alpha1.BreakglassSession
 				err = json.Unmarshal([]byte(output), &session)
 				require.NoError(t, err)
 
-				if session.Status.State == v1alpha1.SessionStateRejected {
+				if session.Status.State == breakglassv1alpha1.SessionStateRejected {
 					t.Logf("Session %s is Rejected", rejectedSessionName)
 					return
 				}
@@ -455,7 +455,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			var sessions []v1alpha1.BreakglassSession
+			var sessions []breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &sessions)
 			require.NoError(t, err)
 
@@ -477,7 +477,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			output, err := runAsRequester("session", "list", "--mine", "-o", "json")
 			require.NoError(t, err, "Requester should list their sessions")
 
-			var sessions []v1alpha1.BreakglassSession
+			var sessions []breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &sessions)
 			require.NoError(t, err)
 			t.Logf("Requester has %d sessions", len(sessions))
@@ -488,7 +488,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			output, err := runAsApprover("session", "list", "-o", "json")
 			require.NoError(t, err, "Approver should list all sessions")
 
-			var sessions []v1alpha1.BreakglassSession
+			var sessions []breakglassv1alpha1.BreakglassSession
 			err = json.Unmarshal([]byte(output), &sessions)
 			require.NoError(t, err)
 			t.Logf("Approver sees %d sessions", len(sessions))
@@ -503,7 +503,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			require.NoError(t, err)
 
 			// Both should see escalations (may differ based on group membership)
-			var escalations1, escalations2 []v1alpha1.BreakglassEscalation
+			var escalations1, escalations2 []breakglassv1alpha1.BreakglassEscalation
 			_ = json.Unmarshal([]byte(output1), &escalations1)
 			_ = json.Unmarshal([]byte(output2), &escalations2)
 

@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -24,7 +24,7 @@ type BreakglassEscalationController struct {
 }
 
 // dropK8sInternalFieldsEscalation removes K8s internal fields from BreakglassEscalation for API response
-func dropK8sInternalFieldsEscalation(e *v1alpha1.BreakglassEscalation) {
+func dropK8sInternalFieldsEscalation(e *breakglassv1alpha1.BreakglassEscalation) {
 	if e == nil {
 		return
 	}
@@ -39,7 +39,7 @@ func dropK8sInternalFieldsEscalation(e *v1alpha1.BreakglassEscalation) {
 	e.Status.IDPGroupMemberships = nil
 }
 
-func dropK8sInternalFieldsEscalationList(list []v1alpha1.BreakglassEscalation) []v1alpha1.BreakglassEscalation {
+func dropK8sInternalFieldsEscalationList(list []breakglassv1alpha1.BreakglassEscalation) []breakglassv1alpha1.BreakglassEscalation {
 	for i := range list {
 		dropK8sInternalFieldsEscalation(&list[i])
 	}
@@ -117,7 +117,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	reqLog.With("escalationCount", len(escalations)).Debug("Successfully fetched escalations from manager")
 
 	// Policy: hide "read-only" escalation if user already possesses the read-only group (no privilege gain)
-	filtered := make([]v1alpha1.BreakglassEscalation, 0, len(escalations))
+	filtered := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
 	userGroupSet := map[string]struct{}{}
 	for _, g := range userGroups {
 		userGroupSet[g] = struct{}{}
@@ -143,7 +143,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	}
 
 	// Return full objects including (future) status with approverGroupMembers for UI
-	response := make([]v1alpha1.BreakglassEscalation, 0, len(filtered))
+	response := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(filtered))
 	response = append(response, filtered...)
 
 	// Filter out hidden groups from the response - they should not be visible to users in the UI
@@ -217,7 +217,7 @@ func NewBreakglassEscalationController(log *zap.SugaredLogger,
 }
 
 // isEscalationReady checks if an escalation has Ready=True condition.
-func isEscalationReady(esc *v1alpha1.BreakglassEscalation) bool {
+func isEscalationReady(esc *breakglassv1alpha1.BreakglassEscalation) bool {
 	for _, cond := range esc.Status.Conditions {
 		if cond.Type == "Ready" && cond.Status == metav1.ConditionTrue {
 			return true

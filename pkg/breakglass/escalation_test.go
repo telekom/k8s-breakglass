@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap"
 )
@@ -59,7 +59,7 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 	testCases := []struct {
 		TestName             string
 		Filter               breakglass.EscalationFiltering
-		Escalations          []v1alpha1.BreakglassEscalation
+		Escalations          []breakglassv1alpha1.BreakglassEscalation
 		ExpectedOutputGroups []string
 		ErrExpected          bool
 	}{
@@ -72,22 +72,22 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				UserGroupExtract: extractGroups,
 			},
 
-			Escalations: []v1alpha1.BreakglassEscalation{
-				{Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Escalations: []breakglassv1alpha1.BreakglassEscalation{
+				{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
 						Groups:   []string{SampleBaseGroup},
 					},
 					EscalatedGroup: SampleEscalationGroup,
-					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{},
 				}},
-				{Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+				{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
 						Groups:   []string{SampleBaseGroup},
 					},
 					EscalatedGroup: SampleEscalationGroup,
-					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{},
 				}},
 			},
 			ExpectedOutputGroups: []string{SampleEscalationGroup, SampleEscalationGroup},
@@ -104,38 +104,38 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				},
 			},
 
-			Escalations: []v1alpha1.BreakglassEscalation{
-				{Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Escalations: []breakglassv1alpha1.BreakglassEscalation{
+				{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
 						Groups:   []string{SampleBaseGroup, "other_group"},
 					},
 					EscalatedGroup: SampleEscalationGroup,
-					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{},
 				}},
-				{Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+				{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
 						Groups:   []string{"other_group"},
 					},
 					EscalatedGroup: "escalation_2",
-					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{},
 				}},
-				{Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+				{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
 						Groups:   []string{"third_group"},
 					},
 					EscalatedGroup: SampleEscalationGroup,
-					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{},
 				}},
-				{Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+				{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
 						Groups:   []string{"other_group", "yet_another"},
 					},
 					EscalatedGroup: "escalation_3",
-					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{},
 				}},
 			},
 			ExpectedOutputGroups: []string{SampleEscalationGroup, "escalation_2", "escalation_3"},
@@ -152,14 +152,14 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				},
 			},
 
-			Escalations: []v1alpha1.BreakglassEscalation{
-				{Spec: v1alpha1.BreakglassEscalationSpec{
-					Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Escalations: []breakglassv1alpha1.BreakglassEscalation{
+				{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
 						Groups:   []string{SampleBaseGroup},
 					},
 					EscalatedGroup: SampleEscalationGroup,
-					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{},
 				}},
 			},
 			ExpectedOutputGroups: []string{},
@@ -225,8 +225,8 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 	testCases := []struct {
 		TestName                     string
 		Filter                       breakglass.EscalationFiltering
-		Escalations                  []v1alpha1.BreakglassEscalation
-		InputSessions                []v1alpha1.BreakglassSession
+		Escalations                  []breakglassv1alpha1.BreakglassEscalation
+		InputSessions                []breakglassv1alpha1.BreakglassSession
 		ExpectedOutputSessionsGroups []string
 		ErrExpected                  bool
 	}{
@@ -240,16 +240,16 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 					return []string{"admins1"}, nil
 				},
 			},
-			Escalations: []v1alpha1.BreakglassEscalation{
+			Escalations: []breakglassv1alpha1.BreakglassEscalation{
 				// test_group -> escalation1 for sample user aprovable by name
 				{
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{SampleUserData.Clustername},
 							Groups:   []string{"test_group"},
 						},
 						EscalatedGroup: "escalation1",
-						Approvers: v1alpha1.BreakglassEscalationApprovers{
+						Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 							Users:  []string{SampleApproverData.Username},
 							Groups: []string{},
 						},
@@ -257,13 +257,13 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 				},
 				// test_group2 -> escalation2 for sample user approvable by group admins1
 				{
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{SampleUserData.Clustername},
 							Groups:   []string{"test_group2"},
 						},
 						EscalatedGroup: "escalation2",
-						Approvers: v1alpha1.BreakglassEscalationApprovers{
+						Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 							Users:  []string{},
 							Groups: []string{"admins1"},
 						},
@@ -271,43 +271,43 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 				},
 				// test_group3 -> escalation3 for sample user approvable by group admins2
 				{
-					Spec: v1alpha1.BreakglassEscalationSpec{
-						Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{SampleApproverData.Clustername},
 							Groups:   []string{"test_group3"},
 						},
 						EscalatedGroup: "escalation3",
-						Approvers: v1alpha1.BreakglassEscalationApprovers{
+						Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 							Users:  []string{},
 							Groups: []string{"admins2"},
 						},
 					},
 				},
 			},
-			InputSessions: []v1alpha1.BreakglassSession{
+			InputSessions: []breakglassv1alpha1.BreakglassSession{
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation1",
 					},
 				},
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation10",
 					},
 				},
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation2",
 					},
 				},
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation3",
@@ -326,31 +326,31 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 					return []string{"admins1"}, nil
 				},
 			},
-			Escalations: []v1alpha1.BreakglassEscalation{},
-			InputSessions: []v1alpha1.BreakglassSession{
+			Escalations: []breakglassv1alpha1.BreakglassEscalation{},
+			InputSessions: []breakglassv1alpha1.BreakglassSession{
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation1",
 					},
 				},
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation10",
 					},
 				},
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation2",
 					},
 				},
 				{
-					Spec: v1alpha1.BreakglassSessionSpec{
+					Spec: breakglassv1alpha1.BreakglassSessionSpec{
 						Cluster:      SampleApproverData.Clustername,
 						User:         SampleUserData.Username,
 						GrantedGroup: "escalation3",

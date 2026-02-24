@@ -16,17 +16,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestEscalationsList(t *testing.T) {
-	escalations := []v1alpha1.BreakglassEscalation{
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-1"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "admin",
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-a", "cluster-b"},
 					Groups:   []string{"developers"},
 				},
@@ -34,9 +34,9 @@ func TestEscalationsList(t *testing.T) {
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-2"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "viewer",
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-c"},
 					Groups:   []string{"readers"},
 				},
@@ -64,16 +64,16 @@ func TestEscalationsList(t *testing.T) {
 }
 
 func TestEscalationsGet(t *testing.T) {
-	escalations := []v1alpha1.BreakglassEscalation{
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-1"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "admin",
 			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-2"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "viewer",
 			},
 		},
@@ -101,7 +101,7 @@ func TestEscalationsGet(t *testing.T) {
 }
 
 func TestEscalationsGet_NotFound(t *testing.T) {
-	escalations := []v1alpha1.BreakglassEscalation{
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-1"},
 		},
@@ -122,19 +122,19 @@ func TestEscalationsGet_NotFound(t *testing.T) {
 }
 
 func TestEscalationsListClusters(t *testing.T) {
-	escalations := []v1alpha1.BreakglassEscalation{
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-1"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-a", "cluster-b"},
 				},
 			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "escalation-2"},
-			Spec: v1alpha1.BreakglassEscalationSpec{
-				Allowed: v1alpha1.BreakglassEscalationAllowed{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-b", "cluster-c"}, // cluster-b is duplicate
 				},
 			},
@@ -162,7 +162,7 @@ func TestEscalationsListClusters(t *testing.T) {
 func TestEscalationsListClusters_Empty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]v1alpha1.BreakglassEscalation{})
+		_ = json.NewEncoder(w).Encode([]breakglassv1alpha1.BreakglassEscalation{})
 	}))
 	defer server.Close()
 

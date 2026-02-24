@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
@@ -53,14 +53,14 @@ func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderI
 }
 
 // FindActiveSession finds an active debug session for the user/cluster
-func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*v1alpha1.DebugSession, error) {
-	var list v1alpha1.DebugSessionList
+func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error) {
+	var list breakglassv1alpha1.DebugSessionList
 	listOpts := make([]ctrlclient.ListOption, 0, 3)
 	if cluster != "" && indexer.IsIndexRegistered("DebugSession", "spec.cluster") {
 		listOpts = append(listOpts, ctrlclient.MatchingFields{"spec.cluster": cluster})
 	}
 	if indexer.IsIndexRegistered("DebugSession", "status.state") {
-		listOpts = append(listOpts, ctrlclient.MatchingFields{"status.state": string(v1alpha1.DebugSessionStateActive)})
+		listOpts = append(listOpts, ctrlclient.MatchingFields{"status.state": string(breakglassv1alpha1.DebugSessionStateActive)})
 	}
 	if user != "" && indexer.IsIndexRegistered("DebugSession", "status.participants.user") {
 		listOpts = append(listOpts, ctrlclient.MatchingFields{"status.participants.user": user})
@@ -75,7 +75,7 @@ func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, clust
 		if cluster != "" && ds.Spec.Cluster != cluster {
 			continue
 		}
-		if ds.Status.State != v1alpha1.DebugSessionStateActive {
+		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 			continue
 		}
 		// Check expiration just in case status is stale
@@ -96,7 +96,7 @@ func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, clust
 // ValidateEphemeralContainerRequest validates an ephemeral container injection request
 func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 	ctx context.Context,
-	ds *v1alpha1.DebugSession,
+	ds *breakglassv1alpha1.DebugSession,
 	namespace, podName, image string,
 	capabilities []string,
 	runAsNonRoot bool,
@@ -148,7 +148,7 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 // InjectEphemeralContainer injects an ephemeral debug container into a pod
 func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	ctx context.Context,
-	ds *v1alpha1.DebugSession,
+	ds *breakglassv1alpha1.DebugSession,
 	namespace, podName, containerName, image string,
 	command []string,
 	securityContext *corev1.SecurityContext,
@@ -200,12 +200,12 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	// Track the injected container in session status
 	now := metav1.Now()
 	if ds.Status.KubectlDebugStatus == nil {
-		ds.Status.KubectlDebugStatus = &v1alpha1.KubectlDebugStatus{}
+		ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
 	}
 
 	ds.Status.KubectlDebugStatus.EphemeralContainersInjected = append(
 		ds.Status.KubectlDebugStatus.EphemeralContainersInjected,
-		v1alpha1.EphemeralContainerRef{
+		breakglassv1alpha1.EphemeralContainerRef{
 			PodName:       podName,
 			Namespace:     namespace,
 			ContainerName: containerName,
@@ -224,7 +224,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		}
 	}
 	if !podAlreadyAllowed {
-		ds.Status.AllowedPods = append(ds.Status.AllowedPods, v1alpha1.AllowedPodRef{
+		ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
 			Namespace: namespace,
 			Name:      podName,
 			Ready:     true,
@@ -237,7 +237,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 // CreatePodCopy creates a debug copy of a pod
 func (h *KubectlDebugHandler) CreatePodCopy(
 	ctx context.Context,
-	ds *v1alpha1.DebugSession,
+	ds *breakglassv1alpha1.DebugSession,
 	originalNamespace, originalPodName string,
 	debugImage string,
 	user string,
@@ -335,7 +335,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	if ttl == "" {
 		ttl = "2h"
 	}
-	ttlDuration, err := v1alpha1.ParseDuration(ttl)
+	ttlDuration, err := breakglassv1alpha1.ParseDuration(ttl)
 	if err != nil {
 		ttlDuration = 2 * time.Hour
 	}
@@ -344,12 +344,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	// Track the copied pod in session status
 	now := metav1.Now()
 	if ds.Status.KubectlDebugStatus == nil {
-		ds.Status.KubectlDebugStatus = &v1alpha1.KubectlDebugStatus{}
+		ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
 	}
 
 	ds.Status.KubectlDebugStatus.CopiedPods = append(
 		ds.Status.KubectlDebugStatus.CopiedPods,
-		v1alpha1.CopiedPodRef{
+		breakglassv1alpha1.CopiedPodRef{
 			OriginalPod:       originalPodName,
 			OriginalNamespace: originalNamespace,
 			CopyName:          copyName,
@@ -360,7 +360,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	)
 
 	// Add to allowed pods
-	ds.Status.AllowedPods = append(ds.Status.AllowedPods, v1alpha1.AllowedPodRef{
+	ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
 		Namespace: targetNs,
 		Name:      copyName,
 		Ready:     false, // Will be updated by reconciler
@@ -376,7 +376,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 // CreateNodeDebugPod creates a debug pod on a specific node
 func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	ctx context.Context,
-	ds *v1alpha1.DebugSession,
+	ds *breakglassv1alpha1.DebugSession,
 	nodeName string,
 	user string,
 ) (*corev1.Pod, error) {
@@ -506,14 +506,14 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 
 	// Add to allowed pods and deployed resources
-	ds.Status.AllowedPods = append(ds.Status.AllowedPods, v1alpha1.AllowedPodRef{
+	ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
 		Namespace: namespace,
 		Name:      podName,
 		NodeName:  nodeName,
 		Ready:     false, // Will be updated by reconciler
 	})
 
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion: "v1",
 		Kind:       "Pod",
 		Name:       podName,
@@ -528,7 +528,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 }
 
 // CleanupKubectlDebugResources cleans up kubectl-debug resources
-func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, ds *v1alpha1.DebugSession) error {
+func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	if ds.Status.KubectlDebugStatus == nil {
 		return nil
 	}
@@ -561,7 +561,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 
 // Helper functions
 
-func (h *KubectlDebugHandler) isNamespaceAllowed(namespace string, allowed, denied *v1alpha1.NamespaceFilter) bool {
+func (h *KubectlDebugHandler) isNamespaceAllowed(namespace string, allowed, denied *breakglassv1alpha1.NamespaceFilter) bool {
 	// Use NamespaceAllowDenyMatcher for combined allow/deny logic
 	matcher := utils.NewNamespaceAllowDenyMatcher(allowed, denied)
 	return matcher.IsAllowed(namespace)

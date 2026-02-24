@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // IdentityProviderSpecApplyConfiguration represents a declarative configuration of the IdentityProviderSpec type for use
@@ -22,7 +22,7 @@ type IdentityProviderSpecApplyConfiguration struct {
 	OIDC *OIDCConfigApplyConfiguration `json:"oidc,omitempty"`
 	// GroupSyncProvider specifies which provider to use for group synchronization (optional)
 	// If not set, group synchronization is disabled
-	GroupSyncProvider *apiv1alpha1.GroupSyncProvider `json:"groupSyncProvider,omitempty"`
+	GroupSyncProvider *breakglassv1alpha1.GroupSyncProvider `json:"groupSyncProvider,omitempty"`
 	// Keycloak holds Keycloak-specific configuration for group synchronization
 	// Required when groupSyncProvider is "Keycloak"
 	Keycloak *KeycloakGroupSyncApplyConfiguration `json:"keycloak,omitempty"`
@@ -61,7 +61,7 @@ func (b *IdentityProviderSpecApplyConfiguration) WithOIDC(value *OIDCConfigApply
 // WithGroupSyncProvider sets the GroupSyncProvider field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the GroupSyncProvider field is set to the value of the last call.
-func (b *IdentityProviderSpecApplyConfiguration) WithGroupSyncProvider(value apiv1alpha1.GroupSyncProvider) *IdentityProviderSpecApplyConfiguration {
+func (b *IdentityProviderSpecApplyConfiguration) WithGroupSyncProvider(value breakglassv1alpha1.GroupSyncProvider) *IdentityProviderSpecApplyConfiguration {
 	b.GroupSyncProvider = &value
 	return b
 }

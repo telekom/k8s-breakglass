@@ -26,42 +26,42 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestFindActiveSession(t *testing.T) {
 	scheme := newKubectlTestScheme()
 
-	activeSession := &v1alpha1.DebugSession{
+	activeSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "active-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.DebugSessionSpec{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "test-cluster",
 			RequestedBy: "user@example.com",
 		},
-		Status: v1alpha1.DebugSessionStatus{
-			State: v1alpha1.DebugSessionStateActive,
-			Participants: []v1alpha1.DebugSessionParticipant{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{User: "user@example.com"},
 			},
 		},
 	}
 
-	otherSession := &v1alpha1.DebugSession{
+	otherSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"},
-		Spec:       v1alpha1.DebugSessionSpec{Cluster: "other-cluster"},
-		Status:     v1alpha1.DebugSessionStatus{State: v1alpha1.DebugSessionStateActive},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "other-cluster"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
 	}
 
-	expiredSession := &v1alpha1.DebugSession{
+	expiredSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "expired", Namespace: "default"},
-		Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "user@example.com"},
-		Status: v1alpha1.DebugSessionStatus{
-			State:     v1alpha1.DebugSessionStateActive,
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "user@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
 			ExpiresAt: &metav1.Time{Time: time.Now().Add(-1 * time.Hour)},
-			Participants: []v1alpha1.DebugSessionParticipant{
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{User: "user@example.com"},
 			},
 		},

@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	bgctlcmd "github.com/telekom/k8s-breakglass/pkg/bgctl/cmd"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
@@ -98,7 +98,7 @@ func TestCLIMultiCluster(t *testing.T) {
 		err := root.Execute()
 		require.NoError(t, err)
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal(buf.Bytes(), &session)
 		require.NoError(t, err)
 
@@ -126,7 +126,7 @@ func TestCLIMultiCluster(t *testing.T) {
 		err := root.Execute()
 		require.NoError(t, err)
 
-		var session v1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal(buf.Bytes(), &session)
 		require.NoError(t, err)
 
@@ -147,7 +147,7 @@ func TestCLIMultiCluster(t *testing.T) {
 		err := root.Execute()
 		require.NoError(t, err)
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal(buf.Bytes(), &sessions)
 		require.NoError(t, err)
 
@@ -182,7 +182,7 @@ func TestCLIMultiCluster(t *testing.T) {
 		err := root.Execute()
 		require.NoError(t, err)
 
-		var sessions []v1alpha1.BreakglassSession
+		var sessions []breakglassv1alpha1.BreakglassSession
 		err = json.Unmarshal(buf.Bytes(), &sessions)
 		require.NoError(t, err)
 
@@ -223,7 +223,7 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 		err := root.Execute()
 		require.NoError(t, err)
 
-		var templates []v1alpha1.DebugSessionTemplate
+		var templates []breakglassv1alpha1.DebugSessionTemplate
 		err = json.Unmarshal(buf.Bytes(), &templates)
 		require.NoError(t, err)
 
@@ -236,7 +236,7 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 	t.Run("request debug session on spoke-a", func(t *testing.T) {
 		// Ensure we have a debug template - fixtures must be loaded in E2E setup
 		hubClient := helpers.GetClientForCluster(t, mcConfig.HubKubeconfig)
-		var templates v1alpha1.DebugSessionTemplateList
+		var templates breakglassv1alpha1.DebugSessionTemplateList
 		err := hubClient.List(ctx, &templates, client.InNamespace(helpers.GetTestNamespace()))
 		require.NoError(t, err, "Should list debug templates")
 		require.NotEmpty(t, templates.Items, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
@@ -260,7 +260,7 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 		err = root.Execute()
 		require.NoError(t, err)
 
-		var session v1alpha1.DebugSession
+		var session breakglassv1alpha1.DebugSession
 		err = json.Unmarshal(buf.Bytes(), &session)
 		require.NoError(t, err)
 
