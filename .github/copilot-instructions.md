@@ -250,13 +250,13 @@ session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 require.NoError(t, err)
 
 // Add to cleanup (need to create minimal object for cleanup helper)
-cleanup.Add(&telekomv1alpha1.BreakglassSession{
+cleanup.Add(&breakglassv1alpha1.BreakglassSession{
     ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 })
 
 // Wait for expected state
 helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, 
-    telekomv1alpha1.SessionStatePending, 30*time.Second)
+    breakglassv1alpha1.SessionStatePending, 30*time.Second)
 
 // Approve via API (if needed)
 err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
