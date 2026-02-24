@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -63,7 +63,7 @@ func TestControllerConcurrentUpdates(t *testing.T) {
 				// Stagger the start to create more realistic concurrent update patterns
 				time.Sleep(time.Duration(idx*10) * time.Millisecond)
 
-				var esc telekomv1alpha1.BreakglassEscalation
+				var esc breakglassv1alpha1.BreakglassEscalation
 				err := cli.Get(ctx, types.NamespacedName{
 					Name:      escalation.Name,
 					Namespace: namespace,
@@ -127,7 +127,7 @@ func TestControllerReconcileIdempotency(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	t.Run("MultipleGetsReturnSameState", func(t *testing.T) {
-		var esc1, esc2 telekomv1alpha1.BreakglassEscalation
+		var esc1, esc2 breakglassv1alpha1.BreakglassEscalation
 
 		err := cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &esc1)
 		require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestControllerReconcileIdempotency(t *testing.T) {
 	})
 
 	t.Run("NoOpUpdateDoesNotChangeResourceVersion", func(t *testing.T) {
-		var esc telekomv1alpha1.BreakglassEscalation
+		var esc breakglassv1alpha1.BreakglassEscalation
 		err := cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &esc)
 		require.NoError(t, err)
 		originalRV := esc.ResourceVersion
@@ -184,7 +184,7 @@ func TestControllerFinalizerBehavior(t *testing.T) {
 
 		time.Sleep(2 * time.Second)
 
-		var deleted telekomv1alpha1.BreakglassEscalation
+		var deleted breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &deleted)
 		assert.Error(t, err, "Resource should be deleted")
 		t.Logf("FINALIZER-001: Resource without finalizer deleted immediately")

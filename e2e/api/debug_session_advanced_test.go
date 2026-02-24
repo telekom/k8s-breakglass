@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -46,15 +46,15 @@ func TestDebugPodTemplateAdvanced(t *testing.T) {
 		runAsUser := int64(1000)
 		runAsGroup := int64(1000)
 
-		template := &telekomv1alpha1.DebugPodTemplate{
+		template := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-pod-security"),
 				Labels: helpers.E2ELabelsWithFeature("security-context"),
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Security-Hardened Pod",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						SecurityContext: &corev1.PodSecurityContext{
 							RunAsNonRoot: &runAsNonRoot,
 							RunAsUser:    &runAsUser,
@@ -74,7 +74,7 @@ func TestDebugPodTemplateAdvanced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create security-hardened pod template")
 
-		var fetched telekomv1alpha1.DebugPodTemplate
+		var fetched breakglassv1alpha1.DebugPodTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Template.Spec.SecurityContext)
@@ -84,15 +84,15 @@ func TestDebugPodTemplateAdvanced(t *testing.T) {
 	})
 
 	t.Run("TemplateWithVolumes", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugPodTemplate{
+		template := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-pod-volumes"),
 				Labels: helpers.E2ELabelsWithFeature("volumes"),
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Pod with Volumes",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						Volumes: []corev1.Volume{
 							{
 								Name: "config-volume",
@@ -121,7 +121,7 @@ func TestDebugPodTemplateAdvanced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create pod template with volumes")
 
-		var fetched telekomv1alpha1.DebugPodTemplate
+		var fetched breakglassv1alpha1.DebugPodTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.Template.Spec.Volumes, 1)
@@ -143,15 +143,15 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create a pod template first
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-base-pod"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Base Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:  "debug",
@@ -167,16 +167,16 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 	require.NoError(t, err, "Failed to create base pod template")
 
 	t.Run("TemplateWithConstraints", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-constrained"),
 				Labels: helpers.E2ELabelsWithFeature("constraints"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:    "Constrained Session",
 				Description:    "Session template with strict constraints",
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration:           "2h",
 					DefaultDuration:       "30m",
 					AllowRenewal:          ptrBool(true),
@@ -189,7 +189,7 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create constrained session template")
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Constraints)
@@ -201,20 +201,20 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 	})
 
 	t.Run("TemplateWithApprovers", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-with-approvers"),
 				Labels: helpers.E2ELabelsWithFeature("approvers"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:    "Session with Approvers",
 				Description:    "Session template requiring approval",
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Clusters: []string{clusterName, "dev-cluster"},
 					Groups:   []string{"developers"},
 				},
-				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Users:  []string{helpers.TestUsers.DebugSessionApprover.Email},
 					Groups: []string{"sre-team"},
 				},
@@ -224,7 +224,7 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create session template with approvers")
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Approvers)
@@ -234,16 +234,16 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 	})
 
 	t.Run("TemplateWithTerminalSharing", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-collab"),
 				Labels: helpers.E2ELabelsWithFeature("collaboration"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:    "Collaborative Session",
 				Description:    "Session template with terminal sharing enabled",
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
-				TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
+				TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 					Enabled:         true,
 					Provider:        "tmux",
 					MaxParticipants: 5,
@@ -254,7 +254,7 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create collaborative session template")
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.TerminalSharing)
@@ -279,15 +279,15 @@ func TestDebugSessionCRUD(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create prerequisites: pod template and session template
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-debug-pod"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "CRUD Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:  "debug",
@@ -302,15 +302,15 @@ func TestDebugSessionCRUD(t *testing.T) {
 	err := cli.Create(ctx, podTemplate)
 	require.NoError(t, err)
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-debug-session-tmpl"),
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:    "CRUD Test Template",
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName},
 				Groups:   helpers.TestUsers.DebugSessionRequester.Groups,
 			},
@@ -333,12 +333,12 @@ func TestDebugSessionCRUD(t *testing.T) {
 		require.NoError(t, err, "Failed to create DebugSession via API")
 
 		// Add to cleanup
-		var sessionToCleanup telekomv1alpha1.DebugSession
+		var sessionToCleanup breakglassv1alpha1.DebugSession
 		errGet := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &sessionToCleanup)
 		require.NoError(t, errGet)
 		cleanup.Add(&sessionToCleanup)
 
-		var fetched telekomv1alpha1.DebugSession
+		var fetched breakglassv1alpha1.DebugSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, sessionTemplate.Name, fetched.Spec.TemplateRef)

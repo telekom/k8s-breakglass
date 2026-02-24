@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 var (
@@ -35,7 +35,7 @@ var (
 
 func init() {
 	fixtureScheme = runtime.NewScheme()
-	_ = telekomv1alpha1.AddToScheme(fixtureScheme)
+	_ = breakglassv1alpha1.AddToScheme(fixtureScheme)
 	fixtureDecoder = serializer.NewCodecFactory(fixtureScheme).UniversalDeserializer()
 }
 
@@ -66,7 +66,7 @@ func FixturesDir() string {
 //
 // Example:
 //
-//	escalation := helpers.LoadFixture[*telekomv1alpha1.BreakglassEscalation](t, "escalations/pod-debug.yaml")
+//	escalation := helpers.LoadFixture[*breakglassv1alpha1.BreakglassEscalation](t, "escalations/pod-debug.yaml")
 func LoadFixture[T client.Object](t *testing.T, relativePath string) T {
 	t.Helper()
 
@@ -94,7 +94,7 @@ func LoadFixture[T client.Object](t *testing.T, relativePath string) T {
 //
 // Example:
 //
-//	escalation := helpers.LoadFixtureWithName[*telekomv1alpha1.BreakglassEscalation](
+//	escalation := helpers.LoadFixtureWithName[*breakglassv1alpha1.BreakglassEscalation](
 //	    t, "escalations/pod-debug.yaml", helpers.GenerateUniqueName("test"))
 func LoadFixtureWithName[T client.Object](t *testing.T, relativePath, name string) T {
 	t.Helper()
@@ -119,7 +119,7 @@ func LoadFixtureWithNamespace[T client.Object](t *testing.T, relativePath, names
 // Example:
 //
 //	escalation := helpers.LoadFixtureCustomized(t, "escalations/pod-debug.yaml",
-//	    func(e *telekomv1alpha1.BreakglassEscalation) {
+//	    func(e *breakglassv1alpha1.BreakglassEscalation) {
 //	        e.Name = helpers.GenerateUniqueName("test")
 //	        e.Spec.Allowed.Clusters = []string{"my-cluster"}
 //	    })

@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -112,13 +112,13 @@ func TestMetricsSessionLifecycleCounters(t *testing.T) {
 			Reason:  "Metrics test",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to be pending
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Verify metric incremented
 		afterMetrics, err := helpers.FetchMetrics(ctx)

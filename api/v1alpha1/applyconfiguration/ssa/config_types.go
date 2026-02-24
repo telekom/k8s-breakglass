@@ -19,13 +19,13 @@ package ssa
 import (
 	"context"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ApplyIdentityProviderStatus applies a status update to an IdentityProvider using native SSA.
-func ApplyIdentityProviderStatus(ctx context.Context, c client.Client, idp *telekomv1alpha1.IdentityProvider) error {
+func ApplyIdentityProviderStatus(ctx context.Context, c client.Client, idp *breakglassv1alpha1.IdentityProvider) error {
 	applyConfig := ac.IdentityProvider(idp.Name, idp.Namespace).
 		WithStatus(IdentityProviderStatusFrom(&idp.Status))
 
@@ -33,7 +33,7 @@ func ApplyIdentityProviderStatus(ctx context.Context, c client.Client, idp *tele
 }
 
 // ApplyClusterConfigStatus applies a status update to a ClusterConfig using native SSA.
-func ApplyClusterConfigStatus(ctx context.Context, c client.Client, cc *telekomv1alpha1.ClusterConfig) error {
+func ApplyClusterConfigStatus(ctx context.Context, c client.Client, cc *breakglassv1alpha1.ClusterConfig) error {
 	applyConfig := ac.ClusterConfig(cc.Name, cc.Namespace).
 		WithStatus(ClusterConfigStatusFrom(&cc.Status))
 
@@ -41,7 +41,7 @@ func ApplyClusterConfigStatus(ctx context.Context, c client.Client, cc *telekomv
 }
 
 // ApplyMailProviderStatus applies a status update to a MailProvider using native SSA.
-func ApplyMailProviderStatus(ctx context.Context, c client.Client, mp *telekomv1alpha1.MailProvider) error {
+func ApplyMailProviderStatus(ctx context.Context, c client.Client, mp *breakglassv1alpha1.MailProvider) error {
 	applyConfig := ac.MailProvider(mp.Name, mp.Namespace).
 		WithStatus(MailProviderStatusFrom(&mp.Status))
 
@@ -49,7 +49,7 @@ func ApplyMailProviderStatus(ctx context.Context, c client.Client, mp *telekomv1
 }
 
 // ApplyAuditConfigStatus applies a status update to an AuditConfig using native SSA.
-func ApplyAuditConfigStatus(ctx context.Context, c client.Client, auditCfg *telekomv1alpha1.AuditConfig) error {
+func ApplyAuditConfigStatus(ctx context.Context, c client.Client, auditCfg *breakglassv1alpha1.AuditConfig) error {
 	applyConfig := ac.AuditConfig(auditCfg.Name, auditCfg.Namespace).
 		WithStatus(AuditConfigStatusFrom(&auditCfg.Status))
 
@@ -57,7 +57,7 @@ func ApplyAuditConfigStatus(ctx context.Context, c client.Client, auditCfg *tele
 }
 
 // IdentityProviderStatusFrom converts an IdentityProviderStatus to its ApplyConfiguration.
-func IdentityProviderStatusFrom(status *telekomv1alpha1.IdentityProviderStatus) *ac.IdentityProviderStatusApplyConfiguration {
+func IdentityProviderStatusFrom(status *breakglassv1alpha1.IdentityProviderStatus) *ac.IdentityProviderStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -76,7 +76,7 @@ func IdentityProviderStatusFrom(status *telekomv1alpha1.IdentityProviderStatus) 
 }
 
 // ClusterConfigStatusFrom converts a ClusterConfigStatus to its ApplyConfiguration.
-func ClusterConfigStatusFrom(status *telekomv1alpha1.ClusterConfigStatus) *ac.ClusterConfigStatusApplyConfiguration {
+func ClusterConfigStatusFrom(status *breakglassv1alpha1.ClusterConfigStatus) *ac.ClusterConfigStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -95,7 +95,7 @@ func ClusterConfigStatusFrom(status *telekomv1alpha1.ClusterConfigStatus) *ac.Cl
 }
 
 // MailProviderStatusFrom converts a MailProviderStatus to its ApplyConfiguration.
-func MailProviderStatusFrom(status *telekomv1alpha1.MailProviderStatus) *ac.MailProviderStatusApplyConfiguration {
+func MailProviderStatusFrom(status *breakglassv1alpha1.MailProviderStatus) *ac.MailProviderStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -124,7 +124,7 @@ func MailProviderStatusFrom(status *telekomv1alpha1.MailProviderStatus) *ac.Mail
 }
 
 // AuditConfigStatusFrom converts an AuditConfigStatus to its ApplyConfiguration.
-func AuditConfigStatusFrom(status *telekomv1alpha1.AuditConfigStatus) *ac.AuditConfigStatusApplyConfiguration {
+func AuditConfigStatusFrom(status *breakglassv1alpha1.AuditConfigStatus) *ac.AuditConfigStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -161,7 +161,7 @@ func AuditConfigStatusFrom(status *telekomv1alpha1.AuditConfigStatus) *ac.AuditC
 }
 
 // AuditSinkStatusFrom converts an AuditSinkStatus to its ApplyConfiguration.
-func AuditSinkStatusFrom(status *telekomv1alpha1.AuditSinkStatus) *ac.AuditSinkStatusApplyConfiguration {
+func AuditSinkStatusFrom(status *breakglassv1alpha1.AuditSinkStatus) *ac.AuditSinkStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}

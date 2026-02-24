@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -41,18 +41,18 @@ func TestMailProviderCRUD(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("CreateMailProvider", func(t *testing.T) {
-		provider := &telekomv1alpha1.MailProvider{
+		provider := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-provider"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
+			Spec: breakglassv1alpha1.MailProviderSpec{
 				DisplayName: "E2E Test Mail Provider",
-				SMTP: telekomv1alpha1.SMTPConfig{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.example.com",
 					Port: 587,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "noreply@example.com",
 					Name:    "Breakglass System",
 				},
@@ -62,7 +62,7 @@ func TestMailProviderCRUD(t *testing.T) {
 		err := cli.Create(ctx, provider)
 		require.NoError(t, err, "Failed to create MailProvider")
 
-		var fetched telekomv1alpha1.MailProvider
+		var fetched breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "smtp.example.com", fetched.Spec.SMTP.Host)
@@ -74,11 +74,11 @@ func TestMailProviderCRUD(t *testing.T) {
 
 	t.Run("CreateDefaultMailProvider", func(t *testing.T) {
 		// Check if a default MailProvider already exists and temporarily unset default
-		var existingProviders telekomv1alpha1.MailProviderList
+		var existingProviders breakglassv1alpha1.MailProviderList
 		err := cli.List(ctx, &existingProviders)
 		require.NoError(t, err)
 
-		var originalDefault *telekomv1alpha1.MailProvider
+		var originalDefault *breakglassv1alpha1.MailProvider
 		for i := range existingProviders.Items {
 			if existingProviders.Items[i].Spec.Default {
 				originalDefault = &existingProviders.Items[i]
@@ -92,7 +92,7 @@ func TestMailProviderCRUD(t *testing.T) {
 				// The webhook uses a cached reader with its own sync cycle (typically ~1s)
 				// We need to wait long enough for the informer to pick up the change
 				require.Eventually(t, func() bool {
-					var refreshed telekomv1alpha1.MailProvider
+					var refreshed breakglassv1alpha1.MailProvider
 					if err := cli.Get(ctx, types.NamespacedName{Name: originalDefault.Name, Namespace: originalDefault.Namespace}, &refreshed); err != nil {
 						return false
 					}
@@ -110,7 +110,7 @@ func TestMailProviderCRUD(t *testing.T) {
 		defer func() {
 			if originalDefault != nil {
 				// Re-fetch to get latest version to avoid conflict
-				var restored telekomv1alpha1.MailProvider
+				var restored breakglassv1alpha1.MailProvider
 				if err := cli.Get(ctx, types.NamespacedName{Name: originalDefault.Name, Namespace: originalDefault.Namespace}, &restored); err == nil {
 					restored.Spec.Default = true
 					if err := cli.Update(ctx, &restored); err != nil {
@@ -122,19 +122,19 @@ func TestMailProviderCRUD(t *testing.T) {
 			}
 		}()
 
-		provider := &telekomv1alpha1.MailProvider{
+		provider := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-default"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
+			Spec: breakglassv1alpha1.MailProviderSpec{
 				DisplayName: "Default Mail Provider",
 				Default:     true,
-				SMTP: telekomv1alpha1.SMTPConfig{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.default.example.com",
 					Port: 465,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "breakglass@example.com",
 					Name:    "Default Sender",
 				},
@@ -144,7 +144,7 @@ func TestMailProviderCRUD(t *testing.T) {
 		err = cli.Create(ctx, provider)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.MailProvider
+		var fetched breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
 		assert.True(t, fetched.Spec.Default)
@@ -177,7 +177,7 @@ func TestNotificationExclusions(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with notification exclusions")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.NotificationExclusions)
@@ -198,7 +198,7 @@ func TestNotificationExclusions(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with group notification exclusions")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.NotificationExclusions)
@@ -232,7 +232,7 @@ func TestApproversHiddenFromUI(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with hidden approvers")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.Approvers.HiddenFromUI, 2)
@@ -265,7 +265,7 @@ func TestApproverGroups(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with approver groups")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.Approvers.Groups, 3)
@@ -298,7 +298,7 @@ func TestRequestReasonConfiguration(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with mandatory reason")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.RequestReason)

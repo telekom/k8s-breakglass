@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -50,7 +50,7 @@ func TestEscalationLifecycle(t *testing.T) {
 		s.MustCreateResource(escalation)
 
 		// Verify it can be fetched
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: escalation.Name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get BreakglassEscalation")
 		require.Equal(t, "e2e-test-group", fetched.Spec.EscalatedGroup)
@@ -60,7 +60,7 @@ func TestEscalationLifecycle(t *testing.T) {
 	t.Run("UpdateEscalation", func(t *testing.T) {
 		// Use retry to handle optimistic locking conflicts
 		err := helpers.RetryWithBackoff(s.Ctx, 3, 100*time.Millisecond, func() error {
-			var escalation telekomv1alpha1.BreakglassEscalation
+			var escalation breakglassv1alpha1.BreakglassEscalation
 			if err := s.Client.Get(s.Ctx, types.NamespacedName{Name: "e2e-test-escalation-lifecycle", Namespace: s.Namespace}, &escalation); err != nil {
 				return err
 			}
@@ -72,14 +72,14 @@ func TestEscalationLifecycle(t *testing.T) {
 		require.NoError(t, err, "Failed to update BreakglassEscalation after retries")
 
 		// Verify the update
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = s.Client.Get(s.Ctx, types.NamespacedName{Name: "e2e-test-escalation-lifecycle", Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err)
 		require.Equal(t, "8h", fetched.Spec.MaxValidFor)
 	})
 
 	t.Run("DeleteEscalation", func(t *testing.T) {
-		var escalation telekomv1alpha1.BreakglassEscalation
+		var escalation breakglassv1alpha1.BreakglassEscalation
 		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: "e2e-test-escalation-lifecycle", Namespace: s.Namespace}, &escalation)
 		require.NoError(t, err)
 
@@ -87,7 +87,7 @@ func TestEscalationLifecycle(t *testing.T) {
 		require.NoError(t, err, "Failed to delete BreakglassEscalation")
 
 		// Verify deletion
-		err = helpers.WaitForResourceDeleted(s.Ctx, s.Client, types.NamespacedName{Name: escalation.Name, Namespace: s.Namespace}, &telekomv1alpha1.BreakglassEscalation{}, helpers.WaitForStateTimeout)
+		err = helpers.WaitForResourceDeleted(s.Ctx, s.Client, types.NamespacedName{Name: escalation.Name, Namespace: s.Namespace}, &breakglassv1alpha1.BreakglassEscalation{}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Escalation was not deleted")
 	})
 }
@@ -97,18 +97,18 @@ func TestEscalationValidation(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("RejectMissingEscalatedGroup", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      s.GenerateName("e2e-test-invalid-no-group"),
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				// Missing EscalatedGroup
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-a"},
 				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},
@@ -119,20 +119,20 @@ func TestEscalationValidation(t *testing.T) {
 	})
 
 	t.Run("RejectApprovalTimeoutGreaterThanMaxValidFor", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      s.GenerateName("e2e-test-invalid-timeout"),
 				Namespace: s.Namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:  "test-group",
 				MaxValidFor:     "1h",
 				ApprovalTimeout: "2h", // Greater than MaxValidFor - invalid
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-a"},
 				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},

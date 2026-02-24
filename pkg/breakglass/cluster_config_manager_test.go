@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -15,7 +15,7 @@ func TestGetClusterConfigByName(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("found", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "default"},
 		}
 		cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()
@@ -38,10 +38,10 @@ func TestGetClusterConfigByName(t *testing.T) {
 	})
 
 	t.Run("duplicate cluster configs returns error", func(t *testing.T) {
-		cc1 := &telekomv1alpha1.ClusterConfig{
+		cc1 := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "namespace1"},
 		}
-		cc2 := &telekomv1alpha1.ClusterConfig{
+		cc2 := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "namespace2"},
 		}
 		cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc1, cc2).Build()
@@ -60,7 +60,7 @@ func TestClusterConfigManager_GetClusterConfigInNamespace(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("found in specified namespace", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "test-ns"},
 		}
 		cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()
@@ -74,7 +74,7 @@ func TestClusterConfigManager_GetClusterConfigInNamespace(t *testing.T) {
 	})
 
 	t.Run("not found in different namespace", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "other-ns"},
 		}
 		cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()

@@ -34,12 +34,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
 func init() {
-	_ = telekomv1alpha1.AddToScheme(scheme.Scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme.Scheme)
 }
 
 // HubSpokeTestSuite tests hub-and-spoke multi-cluster topology with real Kind clusters.
@@ -112,7 +112,7 @@ func (s *HubSpokeTestSuite) TestClusterConfigsRegistered() {
 
 	for _, clusterName := range clusters {
 		t.Run(fmt.Sprintf("Cluster_%s", clusterName), func(t *testing.T) {
-			var cc telekomv1alpha1.ClusterConfig
+			var cc breakglassv1alpha1.ClusterConfig
 			err := s.hubClient.Get(s.ctx, client.ObjectKey{
 				Namespace: namespace,
 				Name:      clusterName,
@@ -134,7 +134,7 @@ func (s *HubSpokeTestSuite) TestIdentityProvidersConfigured() {
 	t := s.T()
 
 	t.Run("MainIDP", func(t *testing.T) {
-		var idp telekomv1alpha1.IdentityProvider
+		var idp breakglassv1alpha1.IdentityProvider
 		err := s.hubClient.Get(s.ctx, client.ObjectKey{
 			Name: "main-idp",
 		}, &idp)
@@ -146,7 +146,7 @@ func (s *HubSpokeTestSuite) TestIdentityProvidersConfigured() {
 	})
 
 	t.Run("ContractorsIDP", func(t *testing.T) {
-		var idp telekomv1alpha1.IdentityProvider
+		var idp breakglassv1alpha1.IdentityProvider
 		err := s.hubClient.Get(s.ctx, client.ObjectKey{
 			Name: "contractors-idp",
 		}, &idp)
@@ -196,7 +196,7 @@ func (s *HubSpokeTestSuite) TestEscalationClusterScoping() {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var esc telekomv1alpha1.BreakglassEscalation
+			var esc breakglassv1alpha1.BreakglassEscalation
 			err := s.hubClient.Get(s.ctx, client.ObjectKey{
 				Namespace: namespace,
 				Name:      tc.escalationName,
@@ -228,7 +228,7 @@ func (s *HubSpokeTestSuite) TestDenyPolicyScoping() {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("DenyPolicyExists", func(t *testing.T) {
-		var dpList telekomv1alpha1.DenyPolicyList
+		var dpList breakglassv1alpha1.DenyPolicyList
 		err := s.hubClient.List(s.ctx, &dpList, client.InNamespace(namespace))
 		require.NoError(t, err)
 
@@ -304,7 +304,7 @@ func (s *HubSpokeTestSuite) TestSessionCreationForDifferentClusters() {
 				require.NoError(t, err, "Session creation should succeed for %s", tc.cluster)
 
 				// Verify session was created
-				var fetched telekomv1alpha1.BreakglassSession
+				var fetched breakglassv1alpha1.BreakglassSession
 				err = s.hubClient.Get(s.ctx, client.ObjectKey{
 					Namespace: namespace,
 					Name:      session.Name,
@@ -341,7 +341,7 @@ func (s *HubSpokeTestSuite) TestCrossClusterSessionVisibility() {
 
 	// Wait for client cache to sync and verify all sessions are visible
 	require.Eventually(t, func() bool {
-		var sessionList telekomv1alpha1.BreakglassSessionList
+		var sessionList breakglassv1alpha1.BreakglassSessionList
 		err := s.hubClient.List(s.ctx, &sessionList, client.InNamespace(namespace), client.MatchingLabels{
 			"test": testLabel,
 		})

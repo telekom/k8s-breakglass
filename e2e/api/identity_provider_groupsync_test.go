@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -31,23 +31,23 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("KeycloakGroupSyncConfig", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   s.GenerateName("e2e-idp-keycloak-sync"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://keycloak.example.com/realms/test",
 					ClientID:  "breakglass-ui",
 				},
-				GroupSyncProvider: telekomv1alpha1.GroupSyncProviderKeycloak,
-				Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 					BaseURL:  "https://keycloak.example.com",
 					Realm:    "test",
 					ClientID: "breakglass-client",
 					CacheTTL: "5m",
-					ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      "keycloak-secret",
 						Namespace: "breakglass-system",
 						Key:       "client-secret",
@@ -57,7 +57,7 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 		}
 		s.MustCreateResource(idp)
 
-		assert.Equal(t, telekomv1alpha1.GroupSyncProviderKeycloak, idp.Spec.GroupSyncProvider)
+		assert.Equal(t, breakglassv1alpha1.GroupSyncProviderKeycloak, idp.Spec.GroupSyncProvider)
 		assert.NotNil(t, idp.Spec.Keycloak)
 		assert.Equal(t, "https://keycloak.example.com", idp.Spec.Keycloak.BaseURL)
 		assert.Equal(t, "test", idp.Spec.Keycloak.Realm)
@@ -66,24 +66,24 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 	})
 
 	t.Run("KeycloakGroupSyncWithRequestTimeout", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   s.GenerateName("e2e-idp-keycloak-timeout"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://keycloak.example.com/realms/timeout-test",
 					ClientID:  "breakglass-ui",
 				},
-				GroupSyncProvider: telekomv1alpha1.GroupSyncProviderKeycloak,
-				Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 					BaseURL:        "https://keycloak.example.com",
 					Realm:          "timeout-test",
 					ClientID:       "breakglass-client",
 					RequestTimeout: "30s",
 					CacheTTL:       "10m",
-					ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      "keycloak-secret",
 						Namespace: "breakglass-system",
 						Key:       "client-secret",
@@ -98,23 +98,23 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 	})
 
 	t.Run("KeycloakGroupSyncWithInsecureSkipVerify", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   s.GenerateName("e2e-idp-keycloak-insecure"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://keycloak.example.com/realms/insecure-test",
 					ClientID:  "breakglass-ui",
 				},
-				GroupSyncProvider: telekomv1alpha1.GroupSyncProviderKeycloak,
-				Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 					BaseURL:            "https://keycloak.example.com",
 					Realm:              "insecure-test",
 					ClientID:           "breakglass-client",
 					InsecureSkipVerify: true,
-					ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      "keycloak-secret",
 						Namespace: "breakglass-system",
 						Key:       "client-secret",
@@ -134,7 +134,7 @@ func TestIdentityProviderOIDCConfig(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("OIDCConfigFields", func(t *testing.T) {
-		oidcConfig := telekomv1alpha1.OIDCConfig{
+		oidcConfig := breakglassv1alpha1.OIDCConfig{
 			Authority:            "https://auth.example.com",
 			ClientID:             "breakglass-ui",
 			JWKSEndpoint:         "https://auth.example.com/.well-known/jwks.json",
@@ -153,8 +153,8 @@ func TestGroupSyncProviderEnum(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("GroupSyncProviderKeycloak", func(t *testing.T) {
-		provider := telekomv1alpha1.GroupSyncProviderKeycloak
-		assert.Equal(t, telekomv1alpha1.GroupSyncProvider("Keycloak"), provider)
+		provider := breakglassv1alpha1.GroupSyncProviderKeycloak
+		assert.Equal(t, breakglassv1alpha1.GroupSyncProvider("Keycloak"), provider)
 		t.Logf("GROUPSYNC-004: GroupSyncProviderKeycloak value is 'Keycloak'")
 	})
 

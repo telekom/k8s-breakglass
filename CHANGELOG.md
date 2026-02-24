@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Standardized import alias** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Renamed `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files for consistency with the module path
+- **Added `importas` linter rule** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Configured `importas` in `.golangci.yml` with `no-unaliased: true` to enforce the canonical `breakglassv1alpha1` alias
+- **Removed duplicate scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Deleted dead-code `pkg/config/scheme.go`
+
 ### Added
 
+- **Package-level godoc** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Added missing godoc comments to all exported types and functions in `api/v1alpha1/`
 - **ValidatingAdmissionPolicy Phase 1 — Warn mode** ([#315](https://github.com/telekom/k8s-breakglass/issues/315)): Added a kustomize Component at `config/components/vap/` deploying ValidatingAdmissionPolicy resources (K8s 1.30+) alongside existing webhooks. Covers BreakglassSession (required fields, spec immutability, state transitions), BreakglassEscalation (approvers, identifier format, duplicate detection, IDP exclusivity), ClusterConfig (auth config exclusivity, duplicates), and IdentityProvider (OIDC/HTTPS requirements, Keycloak conditional). All bindings use Warn+Audit mode — no requests are blocked. Documentation at `docs/validating-admission-policy.md`.
 - **Round displayed request durations** ([#399](https://github.com/telekom/k8s-breakglass/issues/399)): Added `formatDurationRounded()`, `formatDurationFromSecondsRounded()`, and `formatRoundedSeconds()` to the `useDuration` composable. Durations >= 1h are rounded to the nearest 5 minutes, durations >= 1m are rounded to the nearest minute, and durations < 1m show exact seconds. Applied to the Approval Modal and Pending Approvals views.
 - **Persist Session Browser filters across tab switches** ([#400](https://github.com/telekom/k8s-breakglass/issues/400)): Filter settings in the Session Browser are now backed by a Pinia store with `sessionStorage` persistence. Filters survive tab/view navigation and page reloads within the same browser tab. Includes schema versioning for graceful migration and 8 unit tests.

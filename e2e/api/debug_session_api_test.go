@@ -36,7 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -77,7 +77,7 @@ type DebugSessionSummary struct {
 	TemplateRef   string                            `json:"templateRef"`
 	Cluster       string                            `json:"cluster"`
 	RequestedBy   string                            `json:"requestedBy"`
-	State         telekomv1alpha1.DebugSessionState `json:"state"`
+	State         breakglassv1alpha1.DebugSessionState `json:"state"`
 	StartsAt      *metav1.Time                      `json:"startsAt,omitempty"`
 	ExpiresAt     *metav1.Time                      `json:"expiresAt,omitempty"`
 	Participants  int                               `json:"participants"`
@@ -257,7 +257,7 @@ func (c *DebugSessionAPIClient) ListDebugSessions(ctx context.Context, t *testin
 }
 
 // GetDebugSession retrieves a specific debug session by name
-func (c *DebugSessionAPIClient) GetDebugSession(ctx context.Context, t *testing.T, name string) (*telekomv1alpha1.DebugSession, error) {
+func (c *DebugSessionAPIClient) GetDebugSession(ctx context.Context, t *testing.T, name string) (*breakglassv1alpha1.DebugSession, error) {
 	path := fmt.Sprintf("%s/%s", debugSessionsBasePath, name)
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -272,7 +272,7 @@ func (c *DebugSessionAPIClient) GetDebugSession(ctx context.Context, t *testing.
 
 	// The API wraps the response in DebugSessionDetailResponse which embeds DebugSession
 	var result struct {
-		telekomv1alpha1.DebugSession
+		breakglassv1alpha1.DebugSession
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse debug session: %w", err)
@@ -286,7 +286,7 @@ func (c *DebugSessionAPIClient) GetDebugSession(ctx context.Context, t *testing.
 }
 
 // CreateDebugSession creates a new debug session via the API
-func (c *DebugSessionAPIClient) CreateDebugSession(ctx context.Context, t *testing.T, req DebugSessionCreateRequest) (*telekomv1alpha1.DebugSession, int, error) {
+func (c *DebugSessionAPIClient) CreateDebugSession(ctx context.Context, t *testing.T, req DebugSessionCreateRequest) (*breakglassv1alpha1.DebugSession, int, error) {
 	resp, err := c.doRequest(ctx, http.MethodPost, debugSessionsBasePath, req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create debug session: %w", err)
@@ -303,7 +303,7 @@ func (c *DebugSessionAPIClient) CreateDebugSession(ctx context.Context, t *testi
 	}
 
 	var result struct {
-		telekomv1alpha1.DebugSession
+		breakglassv1alpha1.DebugSession
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("failed to parse debug session: %w", err)
@@ -665,15 +665,15 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-api-session")
 
 	// Create pod template
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("api-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "API Test Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -689,15 +689,15 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 	require.NoError(t, cli.Create(ctx, podTemplate), "Failed to create pod template")
 
 	// Create session template
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("api-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:    "API Test Session Template",
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Allowed:        &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Allowed:        &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -705,18 +705,18 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 
 	// Create cluster binding so the template has available clusters and is visible in API
 	bindingName := helpers.GenerateUniqueName("e2e-api-binding")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: helpers.GetTestNamespace(),
 			Labels:    helpers.E2ELabelsWithFeature("api-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: sessionTemplateName,
 			},
 			Clusters: []string{helpers.GetTestClusterName()},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups: []string{"*"},
 			},
 		},
@@ -815,15 +815,15 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-create-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-create-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Create Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -838,22 +838,22 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Create Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "2h",
 				DefaultDuration: "30m",
 				AllowRenewal:    ptrBool(true),
 				MaxRenewals:     ptrInt32(3),
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -861,16 +861,16 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 	// Create binding to allow the template on this cluster
 	bindingName := helpers.GenerateUniqueName("e2e-create-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: helpers.GetTestNamespace(),
 			Labels:    helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -905,7 +905,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 		t.Logf("Created debug session: %s", createdSessionName)
 
 		// Add to cleanup - create a reference for later deletion
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: createdSessionName, Namespace: namespace},
 		})
 	})
@@ -954,15 +954,15 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-join-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-join-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Join Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -974,20 +974,20 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Join Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 				Enabled:         true,
 				MaxParticipants: 3,
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -995,16 +995,16 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 
 	// Create binding to allow the template on this cluster
 	bindingName := helpers.GenerateUniqueName("e2e-join-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: helpers.GetTestNamespace(),
 			Labels:    helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -1031,14 +1031,14 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	t.Logf("Created debug session via API: %s", session.Name)
 
 	// Add to cleanup
-	var sessionToCleanup telekomv1alpha1.DebugSession
+	var sessionToCleanup breakglassv1alpha1.DebugSession
 	errGet := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &sessionToCleanup)
 	require.NoError(t, errGet)
 	cleanup.Add(&sessionToCleanup)
 
 	// Wait for session to become Active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 	t.Log("Debug session is now Active")
 
 	sessionName := session.Name
@@ -1093,15 +1093,15 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-term-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-term-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Terminate Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -1113,16 +1113,16 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Terminate Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Allowed:         &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Allowed:         &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -1130,16 +1130,16 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 
 	// Create binding to allow the template on this cluster
 	bindingName := helpers.GenerateUniqueName("e2e-term-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: helpers.GetTestNamespace(),
 			Labels:    helpers.E2ETestLabels(),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -1166,14 +1166,14 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	t.Logf("Created debug session via API: %s", session.Name)
 
 	// Add to cleanup
-	var sessionToCleanup telekomv1alpha1.DebugSession
+	var sessionToCleanup breakglassv1alpha1.DebugSession
 	errGet := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &sessionToCleanup)
 	require.NoError(t, errGet)
 	cleanup.Add(&sessionToCleanup)
 
 	// Wait for session to become Active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 	t.Log("Debug session is now Active")
 
 	sessionName := session.Name
@@ -1194,7 +1194,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 		// Verify session is terminated
 		if status == http.StatusOK || status == http.StatusNoContent {
 			time.Sleep(time.Second)
-			var updated telekomv1alpha1.DebugSession
+			var updated breakglassv1alpha1.DebugSession
 			err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &updated)
 			if err == nil {
 				t.Logf("Session state after termination: %s", updated.Status.State)
@@ -1255,24 +1255,24 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 	client := NewDebugSessionAPIClient(token)
 
 	// Create a test template
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-template-clusters-test",
 			Labels: map[string]string{
 				"e2e-test": "template-clusters",
 			},
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Template Clusters Test",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{helpers.GetTestClusterName()},
 				Groups:   []string{"*"},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
 			},
@@ -1290,44 +1290,44 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 	}()
 
 	// Create a cluster binding for this template with comprehensive settings
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-clusters-test-binding",
 			Namespace: namespace,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: template.Name,
 			},
 			Clusters:    []string{helpers.GetTestClusterName()},
 			DisplayName: "E2E Test Cluster Access",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups: []string{"*"},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "2h",
 				DefaultDuration: "30m",
 			},
 			// Add namespace constraints to test namespace editability
-			NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+			NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 				DefaultNamespace:   "default",
 				AllowUserNamespace: true,
-				AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+				AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 					Patterns: []string{"debug-*", "test-*"},
 				},
 			},
 			// Add impersonation config
-			Impersonation: &telekomv1alpha1.ImpersonationConfig{
-				ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+			Impersonation: &breakglassv1alpha1.ImpersonationConfig{
+				ServiceAccountRef: &breakglassv1alpha1.ServiceAccountReference{
 					Name:      "debug-sa",
 					Namespace: "system",
 				},
 			},
 			// Add approvers to test approval flow
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 				Groups: []string{"approvers-group"},
 				Users:  []string{"debug-session-approver@example.com"},
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Groups: []string{"debug-session-test-group"},
 				},
 			},
@@ -1358,7 +1358,7 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 	// Note: ResolvedClusters may be empty if ClusterConfig doesn't exist for the cluster,
 	// so we check for either templates or clusters being resolved
 	require.Eventually(t, func() bool {
-		var updatedBinding telekomv1alpha1.DebugSessionClusterBinding
+		var updatedBinding breakglassv1alpha1.DebugSessionClusterBinding
 		if err := cli.Get(ctx, types.NamespacedName{Name: binding.Name, Namespace: namespace}, &updatedBinding); err != nil {
 			return false
 		}
@@ -1515,15 +1515,15 @@ func TestDebugSessionAPITemplateAvailability(t *testing.T) {
 
 	// Create a pod template (prerequisite)
 	podTemplateName := helpers.GenerateUniqueName("e2e-avail-pod")
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("availability-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Availability Test Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -1536,14 +1536,14 @@ func TestDebugSessionAPITemplateAvailability(t *testing.T) {
 
 	// Create a template WITH a binding (available)
 	availableTemplateName := helpers.GenerateUniqueName("e2e-available")
-	availableTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	availableTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   availableTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("availability-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:    "Available Template",
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 		},
 	}
 	cleanup.Add(availableTemplate)
@@ -1551,16 +1551,16 @@ func TestDebugSessionAPITemplateAvailability(t *testing.T) {
 
 	// Create binding for the available template
 	availableBindingName := helpers.GenerateUniqueName("e2e-avail-bind")
-	availableBinding := &telekomv1alpha1.DebugSessionClusterBinding{
+	availableBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      availableBindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("availability-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: availableTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: availableTemplateName},
 			Clusters:    []string{helpers.GetTestClusterName()},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(availableBinding)
@@ -1568,14 +1568,14 @@ func TestDebugSessionAPITemplateAvailability(t *testing.T) {
 
 	// Create a template WITHOUT a binding (unavailable)
 	unavailableTemplateName := helpers.GenerateUniqueName("e2e-unavailable")
-	unavailableTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	unavailableTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   unavailableTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("availability-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:    "Unavailable Template (No Clusters)",
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 		},
 	}
 	cleanup.Add(unavailableTemplate)
@@ -1712,7 +1712,7 @@ func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
 
 	// Try to get the test cluster and check its labels
 	// If ClusterConfig doesn't exist, skip this test as cluster selector matching requires a ClusterConfig
-	var testCluster telekomv1alpha1.ClusterConfig
+	var testCluster breakglassv1alpha1.ClusterConfig
 	err := cli.Get(ctx, types.NamespacedName{
 		Name:      clusterName,
 		Namespace: namespace,
@@ -1725,15 +1725,15 @@ func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
 
 	// Create pod template
 	podTemplateName := helpers.GenerateUniqueName("e2e-selector-pod")
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("selector-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Selector Test Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -1746,15 +1746,15 @@ func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
 
 	// Create session template
 	selectorTemplateName := helpers.GenerateUniqueName("e2e-selector-tmpl")
-	selectorTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	selectorTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   selectorTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("selector-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:    "Selector Test Template",
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Allowed:        &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Allowed:        &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(selectorTemplate)
@@ -1762,21 +1762,21 @@ func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
 
 	// Create binding with cluster selector that MATCHES test cluster
 	matchingBindingName := helpers.GenerateUniqueName("e2e-match-bind")
-	matchingBinding := &telekomv1alpha1.DebugSessionClusterBinding{
+	matchingBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      matchingBindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("selector-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: selectorTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: selectorTemplateName},
 			// Use ClusterSelector with e2e label that should be on test cluster
 			ClusterSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"e2e-test": "true", // Standard e2e label
 				},
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(matchingBinding)
@@ -1990,15 +1990,15 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-approve-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-approve-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("approval-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Approval Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -2009,15 +2009,15 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("approval-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Approval Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -2025,17 +2025,17 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 
 	// Create binding with approvers
 	bindingName := helpers.GenerateUniqueName("e2e-approve-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("approval-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 				Groups: helpers.TestUsers.DebugSessionApprover.Groups,
 			},
 		},
@@ -2070,13 +2070,13 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, createStatus)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to be pending approval
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
 
 		// Requester cannot approve their own session
 		status, _ := requesterClient.ApproveDebugSession(ctx, t, session.Name, "Self-approve attempt")
@@ -2090,8 +2090,8 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		time.Sleep(time.Second)
 		updatedSession, err := requesterClient.GetDebugSession(ctx, t, session.Name)
 		require.NoError(t, err)
-		assert.True(t, updatedSession.Status.State == telekomv1alpha1.DebugSessionStateActive ||
-			updatedSession.Status.State == telekomv1alpha1.DebugSessionStatePending,
+		assert.True(t, updatedSession.Status.State == breakglassv1alpha1.DebugSessionStateActive ||
+			updatedSession.Status.State == breakglassv1alpha1.DebugSessionStatePending,
 			"Session should be active or pending after approval, got: %s", updatedSession.Status.State)
 	})
 
@@ -2109,13 +2109,13 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, createStatus)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to be pending approval
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
 
 		// Approver can reject
 		status, err := approverClient.RejectDebugSession(ctx, t, session.Name, "Insufficient justification")
@@ -2125,7 +2125,7 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		time.Sleep(time.Second)
 		updatedSession, err := requesterClient.GetDebugSession(ctx, t, session.Name)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State,
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State,
 			"Session should be terminated after rejection")
 	})
 
@@ -2157,15 +2157,15 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-renew-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-renew-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("renew-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Renew Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -2176,22 +2176,22 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("renew-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Renew Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "30m",
 				AllowRenewal:    ptrBool(true),
 				MaxRenewals:     ptrInt32(3),
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -2199,16 +2199,16 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 
 	// Create binding
 	bindingName := helpers.GenerateUniqueName("e2e-renew-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("renew-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -2238,13 +2238,13 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, createStatus)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		// Get the original expiry time
 		originalSession, err := apiClient.GetDebugSession(ctx, t, session.Name)
@@ -2287,13 +2287,13 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		// Try to renew with invalid duration
 		status, err := apiClient.RenewDebugSession(ctx, t, session.Name, "invalid-duration")
@@ -2316,16 +2316,16 @@ func TestDebugSessionAPIGetTemplateAndPodTemplate(t *testing.T) {
 
 	// Create a pod template
 	podTemplateName := helpers.GenerateUniqueName("e2e-get-pod")
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("get-template-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Get Pod Template Test",
 			Description: "Test pod template for retrieval",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 						{Name: "tools", Image: "alpine:latest", Command: []string{"sleep", "infinity"}},
@@ -2339,20 +2339,20 @@ func TestDebugSessionAPIGetTemplateAndPodTemplate(t *testing.T) {
 
 	// Create a session template
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-get-session")
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("get-template-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:    "Get Session Template Test",
 			Description:    "Test session template for retrieval",
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "2h",
 				DefaultDuration: "30m",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -2360,16 +2360,16 @@ func TestDebugSessionAPIGetTemplateAndPodTemplate(t *testing.T) {
 
 	// Create binding so template is visible
 	bindingName := helpers.GenerateUniqueName("e2e-get-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("get-template-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{helpers.GetTestClusterName()},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -2477,7 +2477,7 @@ func TestDebugSessionAPIListFiltering(t *testing.T) {
 		require.NotNil(t, result)
 
 		// Count sessions by state
-		stateCounts := make(map[telekomv1alpha1.DebugSessionState]int)
+		stateCounts := make(map[breakglassv1alpha1.DebugSessionState]int)
 		for _, s := range result.Sessions {
 			stateCounts[s.State]++
 		}
@@ -2648,15 +2648,15 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 
 	// Create pod template for kubectl-debug mode
 	podTemplateName := helpers.GenerateUniqueName("e2e-kubectl-pod")
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("kubectl-debug-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Kubectl Debug Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -2669,30 +2669,30 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 
 	// Create session template with kubectl-debug mode
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-kubectl-session")
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("kubectl-debug-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Kubectl Debug Test Session",
-			Mode:            telekomv1alpha1.DebugSessionModeKubectlDebug,
+			Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
-				EphemeralContainers: &telekomv1alpha1.EphemeralContainersConfig{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+				EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 					Enabled:       true,
 					AllowedImages: []string{"busybox:*", "alpine:*"},
 				},
-				NodeDebug: &telekomv1alpha1.NodeDebugConfig{
+				NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
 					Enabled:       true,
 					AllowedImages: []string{"busybox:*", "alpine:*"},
 				},
-				PodCopy: &telekomv1alpha1.PodCopyConfig{
+				PodCopy: &breakglassv1alpha1.PodCopyConfig{
 					Enabled: true,
 				},
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -2700,16 +2700,16 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 
 	// Create binding
 	bindingName := helpers.GenerateUniqueName("e2e-kubectl-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("kubectl-debug-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -2738,13 +2738,13 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, createStatus)
 	require.NotNil(t, session)
 
-	cleanup.Add(&telekomv1alpha1.DebugSession{
+	cleanup.Add(&breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
 	// Wait for session to become active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 	sessionName := session.Name
 
@@ -2866,15 +2866,15 @@ func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
 
 	// Create pod template (normal workload mode)
 	podTemplateName := helpers.GenerateUniqueName("e2e-normal-pod")
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("normal-mode-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Normal Mode Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -2887,17 +2887,17 @@ func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
 
 	// Create session template with normal workload mode (NOT kubectl-debug)
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-normal-session")
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("normal-mode-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Normal Mode Session",
-			Mode:            telekomv1alpha1.DebugSessionModeWorkload, // NOT kubectl-debug
+			Mode:            breakglassv1alpha1.DebugSessionModeWorkload, // NOT kubectl-debug
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Allowed:         &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Allowed:         &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -2905,16 +2905,16 @@ func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
 
 	// Create binding
 	bindingName := helpers.GenerateUniqueName("e2e-normal-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("normal-mode-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -2941,13 +2941,13 @@ func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, createStatus)
 	require.NotNil(t, session)
 
-	cleanup.Add(&telekomv1alpha1.DebugSession{
+	cleanup.Add(&breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
 	// Wait for session to become active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 	sessionName := session.Name
 
@@ -3004,15 +3004,15 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-joinperm-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-joinperm-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("join-perm-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Join Perm Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -3023,20 +3023,20 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("join-perm-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Join Perm Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 				Enabled:         true,
 				MaxParticipants: 2, // Limit to test max participants
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -3044,16 +3044,16 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 
 	// Create binding
 	bindingName := helpers.GenerateUniqueName("e2e-joinperm-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("join-perm-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -3082,13 +3082,13 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, session)
 
-	cleanup.Add(&telekomv1alpha1.DebugSession{
+	cleanup.Add(&breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
 	// Wait for session to become active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 	sessionName := session.Name
 
@@ -3135,13 +3135,13 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, terminatedSession)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: terminatedSession.Name, Namespace: terminatedSession.Namespace},
 		})
 
 		// Wait for session to become active then terminate
 		helpers.WaitForDebugSessionState(t, ctx, cli, terminatedSession.Name, terminatedSession.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		terminateStatus, _ := requesterClient.TerminateDebugSession(ctx, t, terminatedSession.Name)
 		require.True(t, terminateStatus == http.StatusOK || terminateStatus == http.StatusNoContent)
@@ -3177,15 +3177,15 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-renew-perm-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-renew-perm-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("renew-perm-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Renewal Perm Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -3196,22 +3196,22 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("renew-perm-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Renewal Perm Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "30m",
 				AllowRenewal:    ptrBool(true),
 				MaxRenewals:     ptrInt32(2), // Limited renewals for testing
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -3219,16 +3219,16 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 
 	// Create binding
 	bindingName := helpers.GenerateUniqueName("e2e-renew-perm-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("renew-perm-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -3258,13 +3258,13 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		// Non-owner tries to renew
 		status, err := approverClient.RenewDebugSession(ctx, t, session.Name, "30m")
@@ -3275,21 +3275,21 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 	t.Run("RenewPendingSession", func(t *testing.T) {
 		// Create template that requires approval
 		approvalTemplateName := helpers.GenerateUniqueName("e2e-renew-approval")
-		approvalTemplate := &telekomv1alpha1.DebugSessionTemplate{
+		approvalTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   approvalTemplateName,
 				Labels: helpers.E2ELabelsWithFeature("renew-perm-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Renewal Approval Test",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration:     "4h",
 					DefaultDuration: "30m",
 					AllowRenewal:    ptrBool(true),
 				},
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 			},
 		}
 		cleanup.Add(approvalTemplate)
@@ -3297,17 +3297,17 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 
 		// Create binding with approvers
 		approvalBindingName := helpers.GenerateUniqueName("e2e-renew-app-bind")
-		approvalBinding := &telekomv1alpha1.DebugSessionClusterBinding{
+		approvalBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      approvalBindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("renew-perm-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: approvalTemplateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: approvalTemplateName},
 				Clusters:    []string{clusterName},
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
-				Approvers:   &telekomv1alpha1.DebugSessionApprovers{Groups: helpers.TestUsers.DebugSessionApprover.Groups},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Groups: helpers.TestUsers.DebugSessionApprover.Groups},
 			},
 		}
 		cleanup.Add(approvalBinding)
@@ -3325,13 +3325,13 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to be pending approval
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
 
 		// Try to renew pending session
 		status, err := requesterClient.RenewDebugSession(ctx, t, session.Name, "30m")
@@ -3351,13 +3351,13 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to become active then terminate
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		terminateStatus, _ := requesterClient.TerminateDebugSession(ctx, t, session.Name)
 		require.True(t, terminateStatus == http.StatusOK || terminateStatus == http.StatusNoContent)
@@ -3382,13 +3382,13 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		// Try to renew by amount that would exceed max duration
 		status, err := requesterClient.RenewDebugSession(ctx, t, session.Name, "2h")
@@ -3406,12 +3406,12 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		status, err := requesterClient.RenewDebugSession(ctx, t, session.Name, "0m")
 		t.Logf("Renew with zero duration: status=%d, err=%v", status, err)
@@ -3428,12 +3428,12 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		status, err := requesterClient.RenewDebugSession(ctx, t, session.Name, "-30m")
 		t.Logf("Renew with negative duration: status=%d, err=%v", status, err)
@@ -3461,15 +3461,15 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-filter-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-filter-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("filter-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Filter Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -3480,15 +3480,15 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("filter-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Filter Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -3496,16 +3496,16 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 
 	// Create binding
 	bindingName := helpers.GenerateUniqueName("e2e-filter-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("filter-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(binding)
@@ -3531,13 +3531,13 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, session)
 
-	cleanup.Add(&telekomv1alpha1.DebugSession{
+	cleanup.Add(&breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
 	// Wait for session to become active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 	t.Run("FilterByCluster", func(t *testing.T) {
 		result, err := apiClient.ListDebugSessionsWithFilters(ctx, t, map[string]string{
@@ -3564,27 +3564,27 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 
 	t.Run("FilterByState", func(t *testing.T) {
 		result, err := apiClient.ListDebugSessionsWithFilters(ctx, t, map[string]string{
-			"state": string(telekomv1alpha1.DebugSessionStateActive),
+			"state": string(breakglassv1alpha1.DebugSessionStateActive),
 		})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
 		// All returned sessions should be active
 		for _, s := range result.Sessions {
-			assert.Equal(t, telekomv1alpha1.DebugSessionStateActive, s.State, "All sessions should be Active")
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, s.State, "All sessions should be Active")
 		}
 		t.Logf("Filter by state 'Active': found %d sessions", result.Total)
 	})
 
 	t.Run("FilterByTerminatedState", func(t *testing.T) {
 		result, err := apiClient.ListDebugSessionsWithFilters(ctx, t, map[string]string{
-			"state": string(telekomv1alpha1.DebugSessionStateTerminated),
+			"state": string(breakglassv1alpha1.DebugSessionStateTerminated),
 		})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
 		for _, s := range result.Sessions {
-			assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, s.State)
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, s.State)
 		}
 		t.Logf("Filter by state 'Terminated': found %d sessions", result.Total)
 	})
@@ -3620,7 +3620,7 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 	t.Run("CombinedFilters", func(t *testing.T) {
 		result, err := apiClient.ListDebugSessionsWithFilters(ctx, t, map[string]string{
 			"cluster": clusterName,
-			"state":   string(telekomv1alpha1.DebugSessionStateActive),
+			"state":   string(breakglassv1alpha1.DebugSessionStateActive),
 			"mine":    "true",
 		})
 		require.NoError(t, err)
@@ -3628,7 +3628,7 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 
 		for _, s := range result.Sessions {
 			assert.Equal(t, clusterName, s.Cluster)
-			assert.Equal(t, telekomv1alpha1.DebugSessionStateActive, s.State)
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, s.State)
 			assert.Equal(t, helpers.TestUsers.DebugSessionRequester.Username, s.RequestedBy)
 		}
 		t.Logf("Combined filters: found %d sessions", result.Total)
@@ -3653,15 +3653,15 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 
 	// Create pod template
 	podTemplateName := helpers.GenerateUniqueName("e2e-optparam-pod")
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("opt-param-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Optional Param Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -3674,23 +3674,23 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 
 	// Create session template with namespace constraints and scheduling options
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-optparam-session")
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("opt-param-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Optional Param Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
 				Required: false,
-				Options: []telekomv1alpha1.SchedulingOption{
+				Options: []breakglassv1alpha1.SchedulingOption{
 					{Name: "standard", DisplayName: "Standard Scheduling", Default: true},
 					{Name: "priority", DisplayName: "Priority Scheduling"},
 				},
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -3698,20 +3698,20 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 
 	// Create binding with namespace constraints
 	bindingName := helpers.GenerateUniqueName("e2e-optparam-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("opt-param-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
-			NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 				DefaultNamespace:   "default",
 				AllowUserNamespace: true,
-				AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+				AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 					Patterns: []string{"debug-*", "test-*", "default"},
 				},
 			},
@@ -3744,7 +3744,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, status)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
@@ -3772,7 +3772,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, status)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
@@ -3797,7 +3797,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, status)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
@@ -3836,7 +3836,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		session, status, err := apiClient.CreateDebugSession(ctx, t, req)
 		t.Logf("Create with long reason: status=%d, err=%v", status, err)
 		if status == http.StatusCreated && session != nil {
-			cleanup.Add(&telekomv1alpha1.DebugSession{
+			cleanup.Add(&breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 			})
 			// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
@@ -3856,7 +3856,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		t.Logf("Create with empty reason: status=%d, err=%v", status, err)
 		// Empty reason might be allowed or rejected depending on template config
 		if status == http.StatusCreated && session != nil {
-			cleanup.Add(&telekomv1alpha1.DebugSession{
+			cleanup.Add(&breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 			})
 		}
@@ -3883,15 +3883,15 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 	podTemplateName := helpers.GenerateUniqueName("e2e-authz-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-authz-session")
 
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("authz-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Authorization Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -3902,22 +3902,22 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 	cleanup.Add(podTemplate)
 	require.NoError(t, cli.Create(ctx, podTemplate))
 
-	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("authz-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Authorization Test Session",
 			TargetNamespace: "default",
-			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
 				AllowRenewal:    ptrBool(true),
 				MaxRenewals:     ptrInt32(3),
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 		},
 	}
 	cleanup.Add(sessionTemplate)
@@ -3925,17 +3925,17 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 
 	// Create binding with approvers
 	bindingName := helpers.GenerateUniqueName("e2e-authz-bind")
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindingName,
 			Namespace: namespace,
 			Labels:    helpers.E2ELabelsWithFeature("authz-test"),
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: sessionTemplateName},
 			Clusters:    []string{clusterName},
-			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
-			Approvers:   &telekomv1alpha1.DebugSessionApprovers{Groups: helpers.TestUsers.DebugSessionApprover.Groups},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+			Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Groups: helpers.TestUsers.DebugSessionApprover.Groups},
 		},
 	}
 	cleanup.Add(binding)
@@ -3964,13 +3964,13 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending approval state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
 
 		// Requester tries to self-approve
 		status, err := requesterClient.ApproveDebugSession(ctx, t, session.Name, "Self-approve")
@@ -3988,20 +3988,20 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending approval and approve
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
 
 		approveStatus, _ := approverClient.ApproveDebugSession(ctx, t, session.Name, "Approved")
 		require.Equal(t, http.StatusOK, approveStatus)
 
 		// Wait for active state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		// Approver (non-owner) tries to terminate
 		status, err := approverClient.TerminateDebugSession(ctx, t, session.Name)
@@ -4019,20 +4019,20 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending approval and approve
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
 
 		approveStatus, _ := approverClient.ApproveDebugSession(ctx, t, session.Name, "Approved")
 		require.Equal(t, http.StatusOK, approveStatus)
 
 		// Wait for active state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 		// Approver (non-owner) tries to renew
 		status, err := approverClient.RenewDebugSession(ctx, t, session.Name, "30m")
@@ -4050,13 +4050,13 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending approval state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+			breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
 
 		// Requester tries to self-reject
 		status, err := requesterClient.RejectDebugSession(ctx, t, session.Name, "Self-reject")
@@ -4075,7 +4075,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
@@ -4101,7 +4101,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
@@ -4129,15 +4129,15 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 	// Create pod template
 	podTemplateName := helpers.GenerateUniqueName("e2e-binding-auth-pod")
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("binding-auth-test"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Binding Auth Test Pod",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
 					},
@@ -4159,15 +4159,15 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 	t.Run("BindingGrantsClusterAccess", func(t *testing.T) {
 		// Create a template WITHOUT Allowed.Clusters - it relies entirely on bindings
 		templateName := helpers.GenerateUniqueName("e2e-no-allowed-tmpl")
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   templateName,
 				Labels: helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Binding-Only Auth Template",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 				// NO Allowed field - access must come from binding
 			},
 		}
@@ -4176,16 +4176,16 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 		// Create binding that grants access to the test cluster
 		bindingName := helpers.GenerateUniqueName("e2e-grant-bind")
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      bindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: templateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: templateName},
 				Clusters:    []string{clusterName}, // Explicitly grant access to test cluster
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 			},
 		}
 		cleanup.Add(binding)
@@ -4205,7 +4205,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, status)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 		t.Logf("Session created via binding authorization: %s", session.Name)
@@ -4214,15 +4214,15 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 	t.Run("BindingWithClusterSelectorGrantsAccess", func(t *testing.T) {
 		// Create a template WITHOUT Allowed.Clusters
 		templateName := helpers.GenerateUniqueName("e2e-selector-tmpl")
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   templateName,
 				Labels: helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Selector Binding Template",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 				// NO Allowed field
 			},
 		}
@@ -4232,16 +4232,16 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		// Create binding with ClusterSelector that matches the test cluster's labels
 		// The E2E test cluster has label "e2e-test=true" added by kind-setup-single.sh
 		bindingName := helpers.GenerateUniqueName("e2e-selector-bind")
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      bindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: templateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: templateName},
 				Clusters:    []string{clusterName}, // Use explicit cluster name since ClusterSelector requires labels
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 			},
 		}
 		cleanup.Add(binding)
@@ -4261,7 +4261,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, status)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 		t.Logf("Session created via binding selector: %s", session.Name)
@@ -4270,15 +4270,15 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 	t.Run("NoBindingDeniesAccess", func(t *testing.T) {
 		// Create a template WITHOUT Allowed.Clusters and NO binding
 		templateName := helpers.GenerateUniqueName("e2e-nobind-tmpl")
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   templateName,
 				Labels: helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "No Binding Template",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 				// NO Allowed field and NO binding - should be denied
 			},
 		}
@@ -4304,15 +4304,15 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 	t.Run("BindingToWrongClusterDeniesAccess", func(t *testing.T) {
 		// Create a template WITHOUT Allowed.Clusters
 		templateName := helpers.GenerateUniqueName("e2e-wrongclust-tmpl")
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   templateName,
 				Labels: helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Wrong Cluster Template",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 			},
 		}
 		cleanup.Add(template)
@@ -4320,16 +4320,16 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 		// Create binding that grants access to a DIFFERENT cluster
 		bindingName := helpers.GenerateUniqueName("e2e-wrong-bind")
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      bindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: templateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: templateName},
 				Clusters:    []string{"some-other-cluster-that-doesnt-exist"}, // Wrong cluster
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 			},
 		}
 		cleanup.Add(binding)
@@ -4353,15 +4353,15 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 	t.Run("DisabledBindingDeniesAccess", func(t *testing.T) {
 		// Create a template WITHOUT Allowed.Clusters
 		templateName := helpers.GenerateUniqueName("e2e-disabled-tmpl")
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   templateName,
 				Labels: helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Disabled Binding Template",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 			},
 		}
 		cleanup.Add(template)
@@ -4369,16 +4369,16 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 		// Create a DISABLED binding
 		bindingName := helpers.GenerateUniqueName("e2e-disabled-bind")
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      bindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: templateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: templateName},
 				Clusters:    []string{clusterName},
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 				Disabled:    true, // Binding is disabled
 			},
 		}
@@ -4403,15 +4403,15 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 	t.Run("MultipleBindingsOneValid", func(t *testing.T) {
 		// Create a template WITHOUT Allowed.Clusters
 		templateName := helpers.GenerateUniqueName("e2e-multi-tmpl")
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   templateName,
 				Labels: helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Multi Binding Template",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 			},
 		}
 		cleanup.Add(template)
@@ -4419,16 +4419,16 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 		// Create disabled binding
 		disabledBindingName := helpers.GenerateUniqueName("e2e-multi-dis")
-		disabledBinding := &telekomv1alpha1.DebugSessionClusterBinding{
+		disabledBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      disabledBindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: templateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: templateName},
 				Clusters:    []string{clusterName},
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 				Disabled:    true,
 			},
 		}
@@ -4437,16 +4437,16 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 		// Create wrong cluster binding
 		wrongBindingName := helpers.GenerateUniqueName("e2e-multi-wrong")
-		wrongBinding := &telekomv1alpha1.DebugSessionClusterBinding{
+		wrongBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      wrongBindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: templateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: templateName},
 				Clusters:    []string{"wrong-cluster"},
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 			},
 		}
 		cleanup.Add(wrongBinding)
@@ -4454,16 +4454,16 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 		// Create valid binding
 		validBindingName := helpers.GenerateUniqueName("e2e-multi-valid")
-		validBinding := &telekomv1alpha1.DebugSessionClusterBinding{
+		validBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      validBindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &telekomv1alpha1.TemplateReference{Name: templateName},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: templateName},
 				Clusters:    []string{clusterName}, // Correct cluster
-				Allowed:     &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 			},
 		}
 		cleanup.Add(validBinding)
@@ -4483,7 +4483,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, status)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 		t.Logf("Session created via valid binding among multiple: %s", session.Name)
@@ -4492,7 +4492,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 	t.Run("TemplateSelectorBinding", func(t *testing.T) {
 		// Create a template with labels but WITHOUT Allowed.Clusters
 		templateName := helpers.GenerateUniqueName("e2e-selector-auth")
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: templateName,
 				Labels: map[string]string{
@@ -4500,10 +4500,10 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 					"template-type": "selector-test",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Selector Auth Template",
 				TargetNamespace: "default",
-				PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				PodTemplateRef:  &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
 			},
 		}
 		cleanup.Add(template)
@@ -4511,20 +4511,20 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 
 		// Create binding using templateSelector instead of templateRef
 		bindingName := helpers.GenerateUniqueName("e2e-selector-bind")
-		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      bindingName,
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("binding-auth-test"),
 			},
-			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				TemplateSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
 						"template-type": "selector-test",
 					},
 				},
 				Clusters: []string{clusterName},
-				Allowed:  &telekomv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Allowed:  &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
 			},
 		}
 		cleanup.Add(binding)
@@ -4544,7 +4544,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, status)
 		require.NotNil(t, session)
 
-		cleanup.Add(&telekomv1alpha1.DebugSession{
+		cleanup.Add(&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 		t.Logf("Session created via templateSelector binding: %s", session.Name)

@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -49,7 +49,7 @@ func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Helper to create unique escalation for each sub-test to avoid 409 conflicts
-	createEscalation := func(t *testing.T, suffix string) (*telekomv1alpha1.BreakglassEscalation, string) {
+	createEscalation := func(t *testing.T, suffix string) (*breakglassv1alpha1.BreakglassEscalation, string) {
 		testGroup := helpers.GenerateUniqueName("audit-" + suffix)
 		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-audit-esc-"+suffix), namespace).
 			WithEscalatedGroup(testGroup).
@@ -75,15 +75,15 @@ func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
 			Reason:  "Audit trail test - creation",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Verify session has creation metadata
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
 
@@ -112,22 +112,22 @@ func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
 			Reason:  "Audit trail test - approval",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Approve session
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err)
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify approval is recorded
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
 
@@ -155,7 +155,7 @@ func TestAuditEventActorIdentity(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Helper to create unique escalation for each sub-test to avoid 409 conflicts
-	createEscalation := func(t *testing.T, suffix string) (*telekomv1alpha1.BreakglassEscalation, string) {
+	createEscalation := func(t *testing.T, suffix string) (*breakglassv1alpha1.BreakglassEscalation, string) {
 		testGroup := helpers.GenerateUniqueName("actor-" + suffix)
 		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-actor-esc-"+suffix), namespace).
 			WithEscalatedGroup(testGroup).
@@ -182,14 +182,14 @@ func TestAuditEventActorIdentity(t *testing.T) {
 			Reason:  "Actor identity test",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
 
@@ -213,20 +213,20 @@ func TestAuditEventActorIdentity(t *testing.T) {
 			Reason:  "Approver identity test",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err)
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
 
@@ -271,16 +271,16 @@ func TestAuditTimestampAccuracy(t *testing.T) {
 			Reason:  "Timestamp test",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		afterCreate := time.Now()
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
 

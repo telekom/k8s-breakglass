@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -41,19 +41,19 @@ func TestAuditSinkConfigurations(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("LogSinkConfiguration", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-log-sink"),
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "log-sink",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Level: "info",
 						},
 					},
@@ -65,26 +65,26 @@ func TestAuditSinkConfigurations(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Len(t, auditConfig.Spec.Sinks, 1)
-		assert.Equal(t, telekomv1alpha1.AuditSinkTypeLog, auditConfig.Spec.Sinks[0].Type)
+		assert.Equal(t, breakglassv1alpha1.AuditSinkTypeLog, auditConfig.Spec.Sinks[0].Type)
 		assert.NotNil(t, auditConfig.Spec.Sinks[0].Log)
 		assert.Equal(t, "info", auditConfig.Spec.Sinks[0].Log.Level)
 		t.Logf("AUDIT-001: Created AuditConfig with Log sink: %s", auditConfig.Name)
 	})
 
 	t.Run("WebhookSinkConfiguration", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-webhook-sink"),
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "webhook-sink",
-						Type: telekomv1alpha1.AuditSinkTypeWebhook,
-						Webhook: &telekomv1alpha1.WebhookSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+						Webhook: &breakglassv1alpha1.WebhookSinkSpec{
 							URL: "https://audit-webhook.example.com/events",
 							Headers: map[string]string{
 								"X-Audit-Source": "breakglass",
@@ -99,26 +99,26 @@ func TestAuditSinkConfigurations(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Len(t, auditConfig.Spec.Sinks, 1)
-		assert.Equal(t, telekomv1alpha1.AuditSinkTypeWebhook, auditConfig.Spec.Sinks[0].Type)
+		assert.Equal(t, breakglassv1alpha1.AuditSinkTypeWebhook, auditConfig.Spec.Sinks[0].Type)
 		assert.NotNil(t, auditConfig.Spec.Sinks[0].Webhook)
 		assert.Equal(t, "https://audit-webhook.example.com/events", auditConfig.Spec.Sinks[0].Webhook.URL)
 		t.Logf("AUDIT-002: Created AuditConfig with Webhook sink: %s", auditConfig.Name)
 	})
 
 	t.Run("KafkaSinkConfiguration", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-kafka-sink"),
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "kafka-sink",
-						Type: telekomv1alpha1.AuditSinkTypeKafka,
-						Kafka: &telekomv1alpha1.KafkaSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKafka,
+						Kafka: &breakglassv1alpha1.KafkaSinkSpec{
 							Brokers: []string{"kafka-1.example.com:9092", "kafka-2.example.com:9092"},
 							Topic:   "breakglass-audit-events",
 						},
@@ -131,7 +131,7 @@ func TestAuditSinkConfigurations(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Len(t, auditConfig.Spec.Sinks, 1)
-		assert.Equal(t, telekomv1alpha1.AuditSinkTypeKafka, auditConfig.Spec.Sinks[0].Type)
+		assert.Equal(t, breakglassv1alpha1.AuditSinkTypeKafka, auditConfig.Spec.Sinks[0].Type)
 		assert.NotNil(t, auditConfig.Spec.Sinks[0].Kafka)
 		assert.Len(t, auditConfig.Spec.Sinks[0].Kafka.Brokers, 2)
 		assert.Equal(t, "breakglass-audit-events", auditConfig.Spec.Sinks[0].Kafka.Topic)
@@ -139,19 +139,19 @@ func TestAuditSinkConfigurations(t *testing.T) {
 	})
 
 	t.Run("KubernetesEventSinkConfiguration", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-k8s-sink"),
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name:       "k8s-events-sink",
-						Type:       telekomv1alpha1.AuditSinkTypeKubernetes,
-						Kubernetes: &telekomv1alpha1.KubernetesSinkSpec{},
+						Type:       breakglassv1alpha1.AuditSinkTypeKubernetes,
+						Kubernetes: &breakglassv1alpha1.KubernetesSinkSpec{},
 					},
 				},
 			},
@@ -161,7 +161,7 @@ func TestAuditSinkConfigurations(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Len(t, auditConfig.Spec.Sinks, 1)
-		assert.Equal(t, telekomv1alpha1.AuditSinkTypeKubernetes, auditConfig.Spec.Sinks[0].Type)
+		assert.Equal(t, breakglassv1alpha1.AuditSinkTypeKubernetes, auditConfig.Spec.Sinks[0].Type)
 		assert.NotNil(t, auditConfig.Spec.Sinks[0].Kubernetes)
 		t.Logf("AUDIT-004: Created AuditConfig with Kubernetes Events sink: %s", auditConfig.Name)
 	})
@@ -179,41 +179,41 @@ func TestAuditConfigMultipleSinks(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("AllSinksEnabled", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-all-sinks"),
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "log-sink",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Level: "debug",
 						},
 					},
 					{
 						Name: "webhook-sink",
-						Type: telekomv1alpha1.AuditSinkTypeWebhook,
-						Webhook: &telekomv1alpha1.WebhookSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+						Webhook: &breakglassv1alpha1.WebhookSinkSpec{
 							URL: "https://audit.example.com/events",
 						},
 					},
 					{
 						Name: "kafka-sink",
-						Type: telekomv1alpha1.AuditSinkTypeKafka,
-						Kafka: &telekomv1alpha1.KafkaSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKafka,
+						Kafka: &breakglassv1alpha1.KafkaSinkSpec{
 							Brokers: []string{"kafka.example.com:9092"},
 							Topic:   "audit-events",
 						},
 					},
 					{
 						Name:       "k8s-sink",
-						Type:       telekomv1alpha1.AuditSinkTypeKubernetes,
-						Kubernetes: &telekomv1alpha1.KubernetesSinkSpec{},
+						Type:       breakglassv1alpha1.AuditSinkTypeKubernetes,
+						Kubernetes: &breakglassv1alpha1.KubernetesSinkSpec{},
 					},
 				},
 			},
@@ -239,19 +239,19 @@ func TestAuditSinkEventTypeFiltering(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("SinkWithEventTypeFilter", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-event-filter"),
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "filtered-log-sink",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Level: "info",
 						},
 						EventTypes: []string{"session.created", "session.approved", "session.rejected"},
@@ -268,19 +268,19 @@ func TestAuditSinkEventTypeFiltering(t *testing.T) {
 	})
 
 	t.Run("SinkWithMinSeverity", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-severity"),
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "critical-only-sink",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
-						Log: &telekomv1alpha1.LogSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
+						Log: &breakglassv1alpha1.LogSinkSpec{
 							Level: "info",
 						},
 						MinSeverity: "critical",
@@ -302,11 +302,11 @@ func TestAuditSinkTypes(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AllSinkTypesDocumented", func(t *testing.T) {
-		sinkTypes := []telekomv1alpha1.AuditSinkType{
-			telekomv1alpha1.AuditSinkTypeLog,
-			telekomv1alpha1.AuditSinkTypeWebhook,
-			telekomv1alpha1.AuditSinkTypeKafka,
-			telekomv1alpha1.AuditSinkTypeKubernetes,
+		sinkTypes := []breakglassv1alpha1.AuditSinkType{
+			breakglassv1alpha1.AuditSinkTypeLog,
+			breakglassv1alpha1.AuditSinkTypeWebhook,
+			breakglassv1alpha1.AuditSinkTypeKafka,
+			breakglassv1alpha1.AuditSinkTypeKubernetes,
 		}
 
 		for _, st := range sinkTypes {
@@ -321,7 +321,7 @@ func TestKafkaSinkAdvancedConfig(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("KafkaSinkWithBatching", func(t *testing.T) {
-		kafkaSink := telekomv1alpha1.KafkaSinkSpec{
+		kafkaSink := breakglassv1alpha1.KafkaSinkSpec{
 			Brokers:             []string{"broker-1:9092", "broker-2:9092"},
 			Topic:               "audit-events",
 			BatchSize:           100,
@@ -337,10 +337,10 @@ func TestKafkaSinkAdvancedConfig(t *testing.T) {
 	})
 
 	t.Run("KafkaSinkWithTLS", func(t *testing.T) {
-		kafkaSink := telekomv1alpha1.KafkaSinkSpec{
+		kafkaSink := breakglassv1alpha1.KafkaSinkSpec{
 			Brokers: []string{"broker:9092"},
 			Topic:   "audit-events",
-			TLS: &telekomv1alpha1.KafkaTLSSpec{
+			TLS: &breakglassv1alpha1.KafkaTLSSpec{
 				Enabled:            true,
 				InsecureSkipVerify: false,
 			},
@@ -351,12 +351,12 @@ func TestKafkaSinkAdvancedConfig(t *testing.T) {
 	})
 
 	t.Run("KafkaSinkWithSASL", func(t *testing.T) {
-		kafkaSink := telekomv1alpha1.KafkaSinkSpec{
+		kafkaSink := breakglassv1alpha1.KafkaSinkSpec{
 			Brokers: []string{"broker:9092"},
 			Topic:   "audit-events",
-			SASL: &telekomv1alpha1.KafkaSASLSpec{
+			SASL: &breakglassv1alpha1.KafkaSASLSpec{
 				Mechanism: "SCRAM-SHA-512",
-				CredentialsSecretRef: telekomv1alpha1.SecretKeySelector{
+				CredentialsSecretRef: breakglassv1alpha1.SecretKeySelector{
 					Name: "kafka-sasl-creds",
 				},
 			},
@@ -371,9 +371,9 @@ func TestWebhookSinkAdvancedConfig(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("WebhookWithAuthSecret", func(t *testing.T) {
-		webhookSink := telekomv1alpha1.WebhookSinkSpec{
+		webhookSink := breakglassv1alpha1.WebhookSinkSpec{
 			URL: "https://audit.example.com/events",
-			AuthSecretRef: &telekomv1alpha1.SecretKeySelector{
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
 				Name:      "webhook-auth-secret",
 				Namespace: "breakglass-system",
 			},
@@ -384,7 +384,7 @@ func TestWebhookSinkAdvancedConfig(t *testing.T) {
 	})
 
 	t.Run("WebhookWithCustomHeaders", func(t *testing.T) {
-		webhookSink := telekomv1alpha1.WebhookSinkSpec{
+		webhookSink := breakglassv1alpha1.WebhookSinkSpec{
 			URL: "https://audit.example.com/events",
 			Headers: map[string]string{
 				"X-API-Key":     "my-api-key",
@@ -396,7 +396,7 @@ func TestWebhookSinkAdvancedConfig(t *testing.T) {
 	})
 
 	t.Run("WebhookWithBatchSize", func(t *testing.T) {
-		webhookSink := telekomv1alpha1.WebhookSinkSpec{
+		webhookSink := breakglassv1alpha1.WebhookSinkSpec{
 			URL:       "https://audit.example.com/events",
 			BatchSize: 10,
 		}

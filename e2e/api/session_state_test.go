@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -68,18 +68,18 @@ func TestSessionStateHappyPath(t *testing.T) {
 
 	// Step 2: Approve session (should transition to Approved)
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	t.Log("Session approved")
 
 	// Verify timestamps are set
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
 	assert.False(t, fetched.Status.ApprovedAt.IsZero(), "ApprovedAt should be set")
 	assert.False(t, fetched.Status.ExpiresAt.IsZero(), "ExpiresAt should be set")
 
 	// Step 3: Wait for expiry (30s validity)
 	t.Log("Waiting for session to expire...")
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateExpired, helpers.WaitForConditionTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateExpired, helpers.WaitForConditionTimeout)
 	t.Log("Session expired")
 }
 
@@ -121,12 +121,12 @@ func TestSessionStateRejected(t *testing.T) {
 	// Reject session with reason
 	rejectionReason := "Request denied due to security policy"
 	require.NoError(t, approverClient.RejectSessionViaAPI(ctx, t, session.Name, namespace, rejectionReason))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
 
 	// Verify rejection details
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
-	assert.Equal(t, telekomv1alpha1.SessionStateRejected, fetched.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateRejected, fetched.Status.State)
 	assert.False(t, fetched.Status.RejectedAt.IsZero(), "RejectedAt should be set")
 }
 
@@ -166,12 +166,12 @@ func TestSessionStateWithdrawn(t *testing.T) {
 
 	// Requester withdraws the session
 	require.NoError(t, requesterClient.WithdrawSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateWithdrawn, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateWithdrawn, helpers.WaitForStateTimeout)
 
 	// Verify withdrawal details
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
-	assert.Equal(t, telekomv1alpha1.SessionStateWithdrawn, fetched.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, fetched.Status.State)
 	assert.False(t, fetched.Status.WithdrawnAt.IsZero(), "WithdrawnAt should be set")
 }
 
@@ -212,7 +212,7 @@ func TestSessionStateApprovalTimeout(t *testing.T) {
 
 	// Wait for timeout (30s + buffer)
 	t.Log("Waiting for approval timeout...")
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateTimeout, helpers.WaitForConditionTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateTimeout, helpers.WaitForConditionTimeout)
 	t.Log("Session timed out")
 }
 
@@ -252,15 +252,15 @@ func TestSessionStateCancelled(t *testing.T) {
 	cleanup.Add(session)
 
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Cancel the active session
 	require.NoError(t, approverClient.CancelSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
 
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
-	assert.Equal(t, telekomv1alpha1.SessionStateExpired, fetched.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, fetched.Status.State)
 }
 
 // TestSessionStateDropped tests SS-006: Active → Dropped (owner drops)
@@ -299,15 +299,15 @@ func TestSessionStateDropped(t *testing.T) {
 	cleanup.Add(session)
 
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Drop the session (using the requester - session owner)
 	require.NoError(t, requesterClient.DropSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
 
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
-	assert.Equal(t, telekomv1alpha1.SessionStateExpired, fetched.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, fetched.Status.State)
 }
 
 // TestSessionStateScheduledStart tests SS-007: Pending → WaitingForScheduledTime → Active
@@ -354,15 +354,15 @@ func TestSessionStateScheduledStart(t *testing.T) {
 	// Verify session is waiting for scheduled time after approval
 	t.Log("Verifying session is in WaitingForScheduledTime or Approved state...")
 	// Wait for state transition using condition helper
-	fetched := helpers.WaitForSessionStateAny(t, ctx, cli, session.Name, namespace, []telekomv1alpha1.BreakglassSessionState{
-		telekomv1alpha1.SessionStateApproved,
-		telekomv1alpha1.SessionStateWaitingForScheduledTime,
+	fetched := helpers.WaitForSessionStateAny(t, ctx, cli, session.Name, namespace, []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStateApproved,
+		breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 	}, 10*time.Second)
 
 	t.Logf("Session state after approval with scheduled time: %s", fetched.Status.State)
 	// Session should be Approved or WaitingForScheduledTime
-	require.True(t, fetched.Status.State == telekomv1alpha1.SessionStateApproved ||
-		fetched.Status.State == telekomv1alpha1.SessionStateWaitingForScheduledTime,
+	require.True(t, fetched.Status.State == breakglassv1alpha1.SessionStateApproved ||
+		fetched.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 		"Session should be Approved or WaitingForScheduledTime, got: %s", fetched.Status.State)
 }
 
@@ -506,7 +506,7 @@ func TestInvalidStateTransitions(t *testing.T) {
 
 		// First approval should succeed
 		require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Second approval should be idempotent or fail
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
@@ -536,7 +536,7 @@ func TestInvalidStateTransitions(t *testing.T) {
 
 		// First reject
 		require.NoError(t, approverClient.RejectSessionViaAPI(ctx, t, session.Name, namespace, "Testing rejection"))
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
 
 		// Then try to approve - should fail
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
@@ -565,7 +565,7 @@ func TestInvalidStateTransitions(t *testing.T) {
 
 		// First approve
 		require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Then try to withdraw - should fail (use drop instead for approved sessions)
 		err = requesterClient.WithdrawSessionViaAPI(ctx, t, session.Name, namespace)

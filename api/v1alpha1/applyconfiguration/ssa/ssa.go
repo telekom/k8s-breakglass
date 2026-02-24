@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"strings"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -94,7 +94,7 @@ func applyStatusViaUnstructured(ctx context.Context, c client.Client, applyConfi
 }
 
 // ApplyBreakglassSessionStatus applies a status update to a BreakglassSession using native SSA.
-func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session *telekomv1alpha1.BreakglassSession) error {
+func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) error {
 	applyConfig := ac.BreakglassSession(session.Name, session.Namespace).
 		WithStatus(BreakglassSessionStatusFrom(&session.Status))
 
@@ -102,7 +102,7 @@ func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session 
 }
 
 // ApplyDebugSessionStatus applies a status update to a DebugSession using native SSA.
-func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *telekomv1alpha1.DebugSession) error {
+func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
 	applyConfig := ac.DebugSession(session.Name, session.Namespace).
 		WithStatus(DebugSessionStatusFrom(&session.Status))
 
@@ -110,7 +110,7 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *tele
 }
 
 // ApplyBreakglassEscalationStatus applies a status update to a BreakglassEscalation using native SSA.
-func ApplyBreakglassEscalationStatus(ctx context.Context, c client.Client, escalation *telekomv1alpha1.BreakglassEscalation) error {
+func ApplyBreakglassEscalationStatus(ctx context.Context, c client.Client, escalation *breakglassv1alpha1.BreakglassEscalation) error {
 	applyConfig := ac.BreakglassEscalation(escalation.Name, escalation.Namespace).
 		WithStatus(BreakglassEscalationStatusFrom(&escalation.Status))
 
@@ -119,7 +119,7 @@ func ApplyBreakglassEscalationStatus(ctx context.Context, c client.Client, escal
 
 // ApplyDenyPolicyStatus applies a status update to a DenyPolicy using native SSA.
 // Note: DenyPolicy is cluster-scoped, so we pass empty namespace.
-func ApplyDenyPolicyStatus(ctx context.Context, c client.Client, policy *telekomv1alpha1.DenyPolicy) error {
+func ApplyDenyPolicyStatus(ctx context.Context, c client.Client, policy *breakglassv1alpha1.DenyPolicy) error {
 	applyConfig := ac.DenyPolicy(policy.Name, "").
 		WithStatus(DenyPolicyStatusFrom(&policy.Status))
 
@@ -128,7 +128,7 @@ func ApplyDenyPolicyStatus(ctx context.Context, c client.Client, policy *telekom
 
 // ApplyDebugSessionTemplateStatus applies a status update to a DebugSessionTemplate using native SSA.
 // Note: DebugSessionTemplate is cluster-scoped, so we pass empty namespace.
-func ApplyDebugSessionTemplateStatus(ctx context.Context, c client.Client, template *telekomv1alpha1.DebugSessionTemplate) error {
+func ApplyDebugSessionTemplateStatus(ctx context.Context, c client.Client, template *breakglassv1alpha1.DebugSessionTemplate) error {
 	applyConfig := ac.DebugSessionTemplate(template.Name, "").
 		WithStatus(DebugSessionTemplateStatusFrom(&template.Status))
 
@@ -137,7 +137,7 @@ func ApplyDebugSessionTemplateStatus(ctx context.Context, c client.Client, templ
 
 // ApplyDebugPodTemplateStatus applies a status update to a DebugPodTemplate using native SSA.
 // Note: DebugPodTemplate is cluster-scoped, so we pass empty namespace.
-func ApplyDebugPodTemplateStatus(ctx context.Context, c client.Client, template *telekomv1alpha1.DebugPodTemplate) error {
+func ApplyDebugPodTemplateStatus(ctx context.Context, c client.Client, template *breakglassv1alpha1.DebugPodTemplate) error {
 	applyConfig := ac.DebugPodTemplate(template.Name, "").
 		WithStatus(DebugPodTemplateStatusFrom(&template.Status))
 
@@ -145,7 +145,7 @@ func ApplyDebugPodTemplateStatus(ctx context.Context, c client.Client, template 
 }
 
 // ApplyDebugSessionClusterBindingStatus applies a status update to a DebugSessionClusterBinding using native SSA.
-func ApplyDebugSessionClusterBindingStatus(ctx context.Context, c client.Client, binding *telekomv1alpha1.DebugSessionClusterBinding) error {
+func ApplyDebugSessionClusterBindingStatus(ctx context.Context, c client.Client, binding *breakglassv1alpha1.DebugSessionClusterBinding) error {
 	applyConfig := ac.DebugSessionClusterBinding(binding.Name, binding.Namespace).
 		WithStatus(DebugSessionClusterBindingStatusFrom(&binding.Status))
 
@@ -159,7 +159,7 @@ func ApplyViaUnstructured(ctx context.Context, c client.Client, applyConfig runt
 }
 
 // BreakglassSessionStatusFrom converts a BreakglassSessionStatus to its ApplyConfiguration.
-func BreakglassSessionStatusFrom(status *telekomv1alpha1.BreakglassSessionStatus) *ac.BreakglassSessionStatusApplyConfiguration {
+func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionStatus) *ac.BreakglassSessionStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -220,7 +220,7 @@ func BreakglassSessionStatusFrom(status *telekomv1alpha1.BreakglassSessionStatus
 }
 
 // DebugSessionStatusFrom converts a DebugSessionStatus to its ApplyConfiguration.
-func DebugSessionStatusFrom(status *telekomv1alpha1.DebugSessionStatus) *ac.DebugSessionStatusApplyConfiguration {
+func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.DebugSessionStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -304,7 +304,7 @@ func DebugSessionStatusFrom(status *telekomv1alpha1.DebugSessionStatus) *ac.Debu
 }
 
 // BreakglassEscalationStatusFrom converts a BreakglassEscalationStatus to its ApplyConfiguration.
-func BreakglassEscalationStatusFrom(status *telekomv1alpha1.BreakglassEscalationStatus) *ac.BreakglassEscalationStatusApplyConfiguration {
+func BreakglassEscalationStatusFrom(status *breakglassv1alpha1.BreakglassEscalationStatus) *ac.BreakglassEscalationStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -335,7 +335,7 @@ func BreakglassEscalationStatusFrom(status *telekomv1alpha1.BreakglassEscalation
 }
 
 // DenyPolicyStatusFrom converts a DenyPolicyStatus to its ApplyConfiguration.
-func DenyPolicyStatusFrom(status *telekomv1alpha1.DenyPolicyStatus) *ac.DenyPolicyStatusApplyConfiguration {
+func DenyPolicyStatusFrom(status *breakglassv1alpha1.DenyPolicyStatus) *ac.DenyPolicyStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -356,7 +356,7 @@ func DenyPolicyStatusFrom(status *telekomv1alpha1.DenyPolicyStatus) *ac.DenyPoli
 }
 
 // DebugSessionTemplateStatusFrom converts a DebugSessionTemplateStatus to its ApplyConfiguration.
-func DebugSessionTemplateStatusFrom(status *telekomv1alpha1.DebugSessionTemplateStatus) *ac.DebugSessionTemplateStatusApplyConfiguration {
+func DebugSessionTemplateStatusFrom(status *breakglassv1alpha1.DebugSessionTemplateStatus) *ac.DebugSessionTemplateStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -382,7 +382,7 @@ func DebugSessionTemplateStatusFrom(status *telekomv1alpha1.DebugSessionTemplate
 }
 
 // DebugPodTemplateStatusFrom converts a DebugPodTemplateStatus to its ApplyConfiguration.
-func DebugPodTemplateStatusFrom(status *telekomv1alpha1.DebugPodTemplateStatus) *ac.DebugPodTemplateStatusApplyConfiguration {
+func DebugPodTemplateStatusFrom(status *breakglassv1alpha1.DebugPodTemplateStatus) *ac.DebugPodTemplateStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -403,7 +403,7 @@ func DebugPodTemplateStatusFrom(status *telekomv1alpha1.DebugPodTemplateStatus) 
 }
 
 // DebugSessionClusterBindingStatusFrom converts a DebugSessionClusterBindingStatus to its ApplyConfiguration.
-func DebugSessionClusterBindingStatusFrom(status *telekomv1alpha1.DebugSessionClusterBindingStatus) *ac.DebugSessionClusterBindingStatusApplyConfiguration {
+func DebugSessionClusterBindingStatusFrom(status *breakglassv1alpha1.DebugSessionClusterBindingStatus) *ac.DebugSessionClusterBindingStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
@@ -470,7 +470,7 @@ func ConditionFrom(c *metav1.Condition) *metav1ac.ConditionApplyConfiguration {
 }
 
 // DebugSessionApprovalFrom converts a DebugSessionApproval to its ApplyConfiguration.
-func DebugSessionApprovalFrom(a *telekomv1alpha1.DebugSessionApproval) *ac.DebugSessionApprovalApplyConfiguration {
+func DebugSessionApprovalFrom(a *breakglassv1alpha1.DebugSessionApproval) *ac.DebugSessionApprovalApplyConfiguration {
 	if a == nil {
 		return nil
 	}
@@ -497,7 +497,7 @@ func DebugSessionApprovalFrom(a *telekomv1alpha1.DebugSessionApproval) *ac.Debug
 }
 
 // DebugSessionParticipantFrom converts a DebugSessionParticipant to its ApplyConfiguration.
-func DebugSessionParticipantFrom(p *telekomv1alpha1.DebugSessionParticipant) *ac.DebugSessionParticipantApplyConfiguration {
+func DebugSessionParticipantFrom(p *breakglassv1alpha1.DebugSessionParticipant) *ac.DebugSessionParticipantApplyConfiguration {
 	if p == nil {
 		return nil
 	}
@@ -520,7 +520,7 @@ func DebugSessionParticipantFrom(p *telekomv1alpha1.DebugSessionParticipant) *ac
 }
 
 // TerminalSharingStatusFrom converts a TerminalSharingStatus to its ApplyConfiguration.
-func TerminalSharingStatusFrom(t *telekomv1alpha1.TerminalSharingStatus) *ac.TerminalSharingStatusApplyConfiguration {
+func TerminalSharingStatusFrom(t *breakglassv1alpha1.TerminalSharingStatus) *ac.TerminalSharingStatusApplyConfiguration {
 	if t == nil {
 		return nil
 	}
@@ -538,7 +538,7 @@ func TerminalSharingStatusFrom(t *telekomv1alpha1.TerminalSharingStatus) *ac.Ter
 }
 
 // DeployedResourceRefFrom converts a DeployedResourceRef to its ApplyConfiguration.
-func DeployedResourceRefFrom(r *telekomv1alpha1.DeployedResourceRef) *ac.DeployedResourceRefApplyConfiguration {
+func DeployedResourceRefFrom(r *breakglassv1alpha1.DeployedResourceRef) *ac.DeployedResourceRefApplyConfiguration {
 	if r == nil {
 		return nil
 	}
@@ -555,7 +555,7 @@ func DeployedResourceRefFrom(r *telekomv1alpha1.DeployedResourceRef) *ac.Deploye
 }
 
 // AllowedPodRefFrom converts an AllowedPodRef to its ApplyConfiguration.
-func AllowedPodRefFrom(p *telekomv1alpha1.AllowedPodRef) *ac.AllowedPodRefApplyConfiguration {
+func AllowedPodRefFrom(p *breakglassv1alpha1.AllowedPodRef) *ac.AllowedPodRefApplyConfiguration {
 	if p == nil {
 		return nil
 	}
@@ -578,7 +578,7 @@ func AllowedPodRefFrom(p *telekomv1alpha1.AllowedPodRef) *ac.AllowedPodRefApplyC
 }
 
 // PodContainerStatusFrom converts a PodContainerStatus to its ApplyConfiguration.
-func PodContainerStatusFrom(s *telekomv1alpha1.PodContainerStatus) *ac.PodContainerStatusApplyConfiguration {
+func PodContainerStatusFrom(s *breakglassv1alpha1.PodContainerStatus) *ac.PodContainerStatusApplyConfiguration {
 	if s == nil {
 		return nil
 	}
@@ -601,7 +601,7 @@ func PodContainerStatusFrom(s *telekomv1alpha1.PodContainerStatus) *ac.PodContai
 }
 
 // KubectlDebugStatusFrom converts a KubectlDebugStatus to its ApplyConfiguration.
-func KubectlDebugStatusFrom(k *telekomv1alpha1.KubectlDebugStatus) *ac.KubectlDebugStatusApplyConfiguration {
+func KubectlDebugStatusFrom(k *breakglassv1alpha1.KubectlDebugStatus) *ac.KubectlDebugStatusApplyConfiguration {
 	if k == nil {
 		return nil
 	}
@@ -618,7 +618,7 @@ func KubectlDebugStatusFrom(k *telekomv1alpha1.KubectlDebugStatus) *ac.KubectlDe
 }
 
 // EphemeralContainerRefFrom converts an EphemeralContainerRef to its ApplyConfiguration.
-func EphemeralContainerRefFrom(e *telekomv1alpha1.EphemeralContainerRef) *ac.EphemeralContainerRefApplyConfiguration {
+func EphemeralContainerRefFrom(e *breakglassv1alpha1.EphemeralContainerRef) *ac.EphemeralContainerRefApplyConfiguration {
 	if e == nil {
 		return nil
 	}
@@ -634,7 +634,7 @@ func EphemeralContainerRefFrom(e *telekomv1alpha1.EphemeralContainerRef) *ac.Eph
 }
 
 // CopiedPodRefFrom converts a CopiedPodRef to its ApplyConfiguration.
-func CopiedPodRefFrom(c *telekomv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyConfiguration {
+func CopiedPodRefFrom(c *breakglassv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyConfiguration {
 	if c == nil {
 		return nil
 	}
@@ -653,7 +653,7 @@ func CopiedPodRefFrom(c *telekomv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyConf
 }
 
 // DebugSessionTemplateSpecFrom converts a DebugSessionTemplateSpec to its ApplyConfiguration.
-func DebugSessionTemplateSpecFrom(t *telekomv1alpha1.DebugSessionTemplateSpec) *ac.DebugSessionTemplateSpecApplyConfiguration {
+func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec) *ac.DebugSessionTemplateSpecApplyConfiguration {
 	if t == nil {
 		return nil
 	}
@@ -716,7 +716,7 @@ func DebugSessionTemplateSpecFrom(t *telekomv1alpha1.DebugSessionTemplateSpec) *
 }
 
 // DebugPodTemplateReferenceFrom converts a DebugPodTemplateReference to its ApplyConfiguration.
-func DebugPodTemplateReferenceFrom(r *telekomv1alpha1.DebugPodTemplateReference) *ac.DebugPodTemplateReferenceApplyConfiguration {
+func DebugPodTemplateReferenceFrom(r *breakglassv1alpha1.DebugPodTemplateReference) *ac.DebugPodTemplateReferenceApplyConfiguration {
 	if r == nil {
 		return nil
 	}
@@ -724,7 +724,7 @@ func DebugPodTemplateReferenceFrom(r *telekomv1alpha1.DebugPodTemplateReference)
 }
 
 // ResolvedBindingRefFrom converts a ResolvedBindingRef to its ApplyConfiguration.
-func ResolvedBindingRefFrom(r *telekomv1alpha1.ResolvedBindingRef) *ac.ResolvedBindingRefApplyConfiguration {
+func ResolvedBindingRefFrom(r *breakglassv1alpha1.ResolvedBindingRef) *ac.ResolvedBindingRefApplyConfiguration {
 	if r == nil {
 		return nil
 	}
@@ -738,7 +738,7 @@ func ResolvedBindingRefFrom(r *telekomv1alpha1.ResolvedBindingRef) *ac.ResolvedB
 }
 
 // DebugPodOverridesFrom converts a DebugPodOverrides to its ApplyConfiguration.
-func DebugPodOverridesFrom(o *telekomv1alpha1.DebugPodOverrides) *ac.DebugPodOverridesApplyConfiguration {
+func DebugPodOverridesFrom(o *breakglassv1alpha1.DebugPodOverrides) *ac.DebugPodOverridesApplyConfiguration {
 	if o == nil {
 		return nil
 	}
@@ -750,7 +750,7 @@ func DebugPodOverridesFrom(o *telekomv1alpha1.DebugPodOverrides) *ac.DebugPodOve
 }
 
 // DebugPodSpecOverridesFrom converts a DebugPodSpecOverrides to its ApplyConfiguration.
-func DebugPodSpecOverridesFrom(s *telekomv1alpha1.DebugPodSpecOverrides) *ac.DebugPodSpecOverridesApplyConfiguration {
+func DebugPodSpecOverridesFrom(s *breakglassv1alpha1.DebugPodSpecOverrides) *ac.DebugPodSpecOverridesApplyConfiguration {
 	if s == nil {
 		return nil
 	}
@@ -771,7 +771,7 @@ func DebugPodSpecOverridesFrom(s *telekomv1alpha1.DebugPodSpecOverrides) *ac.Deb
 }
 
 // DebugContainerOverrideFrom converts a DebugContainerOverride to its ApplyConfiguration.
-func DebugContainerOverrideFrom(c *telekomv1alpha1.DebugContainerOverride) *ac.DebugContainerOverrideApplyConfiguration {
+func DebugContainerOverrideFrom(c *breakglassv1alpha1.DebugContainerOverride) *ac.DebugContainerOverrideApplyConfiguration {
 	if c == nil {
 		return nil
 	}
@@ -789,7 +789,7 @@ func DebugContainerOverrideFrom(c *telekomv1alpha1.DebugContainerOverride) *ac.D
 }
 
 // KubectlDebugConfigFrom converts a KubectlDebugConfig to its ApplyConfiguration.
-func KubectlDebugConfigFrom(k *telekomv1alpha1.KubectlDebugConfig) *ac.KubectlDebugConfigApplyConfiguration {
+func KubectlDebugConfigFrom(k *breakglassv1alpha1.KubectlDebugConfig) *ac.KubectlDebugConfigApplyConfiguration {
 	if k == nil {
 		return nil
 	}
@@ -807,7 +807,7 @@ func KubectlDebugConfigFrom(k *telekomv1alpha1.KubectlDebugConfig) *ac.KubectlDe
 }
 
 // EphemeralContainersConfigFrom converts an EphemeralContainersConfig to its ApplyConfiguration.
-func EphemeralContainersConfigFrom(e *telekomv1alpha1.EphemeralContainersConfig) *ac.EphemeralContainersConfigApplyConfiguration {
+func EphemeralContainersConfigFrom(e *breakglassv1alpha1.EphemeralContainersConfig) *ac.EphemeralContainersConfigApplyConfiguration {
 	if e == nil {
 		return nil
 	}
@@ -833,7 +833,7 @@ func EphemeralContainersConfigFrom(e *telekomv1alpha1.EphemeralContainersConfig)
 }
 
 // NamespaceFilterFrom converts a NamespaceFilter to its ApplyConfiguration.
-func NamespaceFilterFrom(n *telekomv1alpha1.NamespaceFilter) *ac.NamespaceFilterApplyConfiguration {
+func NamespaceFilterFrom(n *breakglassv1alpha1.NamespaceFilter) *ac.NamespaceFilterApplyConfiguration {
 	if n == nil {
 		return nil
 	}
@@ -848,7 +848,7 @@ func NamespaceFilterFrom(n *telekomv1alpha1.NamespaceFilter) *ac.NamespaceFilter
 }
 
 // NamespaceSelectorTermFrom converts a NamespaceSelectorTerm to its ApplyConfiguration.
-func NamespaceSelectorTermFrom(t *telekomv1alpha1.NamespaceSelectorTerm) *ac.NamespaceSelectorTermApplyConfiguration {
+func NamespaceSelectorTermFrom(t *breakglassv1alpha1.NamespaceSelectorTerm) *ac.NamespaceSelectorTermApplyConfiguration {
 	if t == nil {
 		return nil
 	}
@@ -863,7 +863,7 @@ func NamespaceSelectorTermFrom(t *telekomv1alpha1.NamespaceSelectorTerm) *ac.Nam
 }
 
 // NamespaceSelectorRequirementFrom converts a NamespaceSelectorRequirement to its ApplyConfiguration.
-func NamespaceSelectorRequirementFrom(r *telekomv1alpha1.NamespaceSelectorRequirement) *ac.NamespaceSelectorRequirementApplyConfiguration {
+func NamespaceSelectorRequirementFrom(r *breakglassv1alpha1.NamespaceSelectorRequirement) *ac.NamespaceSelectorRequirementApplyConfiguration {
 	if r == nil {
 		return nil
 	}
@@ -877,7 +877,7 @@ func NamespaceSelectorRequirementFrom(r *telekomv1alpha1.NamespaceSelectorRequir
 }
 
 // NodeDebugConfigFrom converts a NodeDebugConfig to its ApplyConfiguration.
-func NodeDebugConfigFrom(n *telekomv1alpha1.NodeDebugConfig) *ac.NodeDebugConfigApplyConfiguration {
+func NodeDebugConfigFrom(n *breakglassv1alpha1.NodeDebugConfig) *ac.NodeDebugConfigApplyConfiguration {
 	if n == nil {
 		return nil
 	}
@@ -897,7 +897,7 @@ func NodeDebugConfigFrom(n *telekomv1alpha1.NodeDebugConfig) *ac.NodeDebugConfig
 }
 
 // HostNamespacesConfigFrom converts a HostNamespacesConfig to its ApplyConfiguration.
-func HostNamespacesConfigFrom(h *telekomv1alpha1.HostNamespacesConfig) *ac.HostNamespacesConfigApplyConfiguration {
+func HostNamespacesConfigFrom(h *breakglassv1alpha1.HostNamespacesConfig) *ac.HostNamespacesConfigApplyConfiguration {
 	if h == nil {
 		return nil
 	}
@@ -908,7 +908,7 @@ func HostNamespacesConfigFrom(h *telekomv1alpha1.HostNamespacesConfig) *ac.HostN
 }
 
 // PodCopyConfigFrom converts a PodCopyConfig to its ApplyConfiguration.
-func PodCopyConfigFrom(p *telekomv1alpha1.PodCopyConfig) *ac.PodCopyConfigApplyConfiguration {
+func PodCopyConfigFrom(p *breakglassv1alpha1.PodCopyConfig) *ac.PodCopyConfigApplyConfiguration {
 	if p == nil {
 		return nil
 	}
@@ -925,7 +925,7 @@ func PodCopyConfigFrom(p *telekomv1alpha1.PodCopyConfig) *ac.PodCopyConfigApplyC
 }
 
 // DebugSessionAllowedFrom converts a DebugSessionAllowed to its ApplyConfiguration.
-func DebugSessionAllowedFrom(a *telekomv1alpha1.DebugSessionAllowed) *ac.DebugSessionAllowedApplyConfiguration {
+func DebugSessionAllowedFrom(a *breakglassv1alpha1.DebugSessionAllowed) *ac.DebugSessionAllowedApplyConfiguration {
 	if a == nil {
 		return nil
 	}
@@ -943,7 +943,7 @@ func DebugSessionAllowedFrom(a *telekomv1alpha1.DebugSessionAllowed) *ac.DebugSe
 }
 
 // DebugSessionApproversFrom converts a DebugSessionApprovers to its ApplyConfiguration.
-func DebugSessionApproversFrom(a *telekomv1alpha1.DebugSessionApprovers) *ac.DebugSessionApproversApplyConfiguration {
+func DebugSessionApproversFrom(a *breakglassv1alpha1.DebugSessionApprovers) *ac.DebugSessionApproversApplyConfiguration {
 	if a == nil {
 		return nil
 	}
@@ -961,7 +961,7 @@ func DebugSessionApproversFrom(a *telekomv1alpha1.DebugSessionApprovers) *ac.Deb
 }
 
 // AutoApproveConfigFrom converts an AutoApproveConfig to its ApplyConfiguration.
-func AutoApproveConfigFrom(a *telekomv1alpha1.AutoApproveConfig) *ac.AutoApproveConfigApplyConfiguration {
+func AutoApproveConfigFrom(a *breakglassv1alpha1.AutoApproveConfig) *ac.AutoApproveConfigApplyConfiguration {
 	if a == nil {
 		return nil
 	}
@@ -976,7 +976,7 @@ func AutoApproveConfigFrom(a *telekomv1alpha1.AutoApproveConfig) *ac.AutoApprove
 }
 
 // DebugSessionConstraintsFrom converts a DebugSessionConstraints to its ApplyConfiguration.
-func DebugSessionConstraintsFrom(c *telekomv1alpha1.DebugSessionConstraints) *ac.DebugSessionConstraintsApplyConfiguration {
+func DebugSessionConstraintsFrom(c *breakglassv1alpha1.DebugSessionConstraints) *ac.DebugSessionConstraintsApplyConfiguration {
 	if c == nil {
 		return nil
 	}
@@ -1000,7 +1000,7 @@ func DebugSessionConstraintsFrom(c *telekomv1alpha1.DebugSessionConstraints) *ac
 }
 
 // TerminalSharingConfigFrom converts a TerminalSharingConfig to its ApplyConfiguration.
-func TerminalSharingConfigFrom(t *telekomv1alpha1.TerminalSharingConfig) *ac.TerminalSharingConfigApplyConfiguration {
+func TerminalSharingConfigFrom(t *breakglassv1alpha1.TerminalSharingConfig) *ac.TerminalSharingConfigApplyConfiguration {
 	if t == nil {
 		return nil
 	}
@@ -1015,7 +1015,7 @@ func TerminalSharingConfigFrom(t *telekomv1alpha1.TerminalSharingConfig) *ac.Ter
 }
 
 // DebugSessionAuditConfigFrom converts a DebugSessionAuditConfig to its ApplyConfiguration.
-func DebugSessionAuditConfigFrom(a *telekomv1alpha1.DebugSessionAuditConfig) *ac.DebugSessionAuditConfigApplyConfiguration {
+func DebugSessionAuditConfigFrom(a *breakglassv1alpha1.DebugSessionAuditConfig) *ac.DebugSessionAuditConfigApplyConfiguration {
 	if a == nil {
 		return nil
 	}
@@ -1034,7 +1034,7 @@ func DebugSessionAuditConfigFrom(a *telekomv1alpha1.DebugSessionAuditConfig) *ac
 }
 
 // AuditDestinationFrom converts an AuditDestination to its ApplyConfiguration.
-func AuditDestinationFrom(d *telekomv1alpha1.AuditDestination) *ac.AuditDestinationApplyConfiguration {
+func AuditDestinationFrom(d *breakglassv1alpha1.AuditDestination) *ac.AuditDestinationApplyConfiguration {
 	if d == nil {
 		return nil
 	}

@@ -40,7 +40,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -77,7 +77,7 @@ func TestAllowedApproverDomainsFeature(t *testing.T) {
 		require.NoError(t, err, "Failed to create escalation with AllowedApproverDomains")
 
 		// Verify AllowedApproverDomains was persisted
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.AllowedApproverDomains, 2)
@@ -101,7 +101,7 @@ func TestAllowedApproverDomainsFeature(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with single AllowedApproverDomain")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.AllowedApproverDomains, 1)
@@ -140,7 +140,7 @@ func TestMandatoryApprovalReasonFeature(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with mandatory ApprovalReason")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.ApprovalReason)
@@ -164,7 +164,7 @@ func TestMandatoryApprovalReasonFeature(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with optional ApprovalReason")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.ApprovalReason)
@@ -189,16 +189,16 @@ func TestDebugSessionModesFeature(t *testing.T) {
 
 	// First create a pod template for the session templates to reference
 	podTemplateName := "e2e-modes-test-pod"
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
 			Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Debug Modes Test Pod",
 			Description: "Pod template for testing debug session modes",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -215,19 +215,19 @@ func TestDebugSessionModesFeature(t *testing.T) {
 	require.NoError(t, err, "Failed to create pod template")
 
 	t.Run("WorkloadMode", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-workload-mode",
 				Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Workload Mode Template",
 				Description: "Tests workload mode deployment",
-				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: podTemplateName,
 				},
-				WorkloadType:    telekomv1alpha1.DebugWorkloadDaemonSet,
+				WorkloadType:    breakglassv1alpha1.DebugWorkloadDaemonSet,
 				TargetNamespace: "default",
 			},
 		}
@@ -235,33 +235,33 @@ func TestDebugSessionModesFeature(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create workload mode template")
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionModeWorkload, fetched.Spec.Mode)
-		assert.Equal(t, telekomv1alpha1.DebugWorkloadDaemonSet, fetched.Spec.WorkloadType)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionModeWorkload, fetched.Spec.Mode)
+		assert.Equal(t, breakglassv1alpha1.DebugWorkloadDaemonSet, fetched.Spec.WorkloadType)
 		t.Logf("Verified: Workload mode with DaemonSet works")
 	})
 
 	t.Run("KubectlDebugMode", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-kubectl-debug-mode",
 				Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Kubectl Debug Mode Template",
 				Description:     "Tests kubectl-debug mode",
-				Mode:            telekomv1alpha1.DebugSessionModeKubectlDebug,
+				Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
 				TargetNamespace: "default",
-				KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
-					EphemeralContainers: &telekomv1alpha1.EphemeralContainersConfig{
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 						Enabled: true,
 					},
-					NodeDebug: &telekomv1alpha1.NodeDebugConfig{
+					NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
 						Enabled: true,
 					},
-					PodCopy: &telekomv1alpha1.PodCopyConfig{
+					PodCopy: &breakglassv1alpha1.PodCopyConfig{
 						Enabled: true,
 					},
 				},
@@ -271,10 +271,10 @@ func TestDebugSessionModesFeature(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create kubectl-debug mode template")
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionModeKubectlDebug, fetched.Spec.Mode)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionModeKubectlDebug, fetched.Spec.Mode)
 		require.NotNil(t, fetched.Spec.KubectlDebug)
 		assert.True(t, fetched.Spec.KubectlDebug.EphemeralContainers.Enabled)
 		assert.True(t, fetched.Spec.KubectlDebug.NodeDebug.Enabled)
@@ -283,22 +283,22 @@ func TestDebugSessionModesFeature(t *testing.T) {
 	})
 
 	t.Run("HybridMode", func(t *testing.T) {
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-hybrid-mode",
 				Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Hybrid Mode Template",
 				Description: "Tests hybrid mode (workload + kubectl-debug)",
-				Mode:        telekomv1alpha1.DebugSessionModeHybrid,
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Mode:        breakglassv1alpha1.DebugSessionModeHybrid,
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: podTemplateName,
 				},
-				WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+				WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 				TargetNamespace: "default",
-				KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
-					EphemeralContainers: &telekomv1alpha1.EphemeralContainersConfig{
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 						Enabled: true,
 					},
 				},
@@ -308,11 +308,11 @@ func TestDebugSessionModesFeature(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err, "Failed to create hybrid mode template")
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionModeHybrid, fetched.Spec.Mode)
-		assert.Equal(t, telekomv1alpha1.DebugWorkloadDeployment, fetched.Spec.WorkloadType)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionModeHybrid, fetched.Spec.Mode)
+		assert.Equal(t, breakglassv1alpha1.DebugWorkloadDeployment, fetched.Spec.WorkloadType)
 		require.NotNil(t, fetched.Spec.KubectlDebug)
 		t.Logf("Verified: Hybrid mode with Deployment and ephemeral containers works")
 	})
@@ -343,7 +343,7 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create cluster-scoped policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -361,7 +361,7 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create tenant-scoped policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -379,7 +379,7 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create session-scoped policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -398,7 +398,7 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create multi-scope policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -452,7 +452,7 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 		err = cli.Create(ctx, config)
 		require.NoError(t, err, "Failed to create ClusterConfig with QPS/Burst")
 
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.QPS)
@@ -491,7 +491,7 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 		err = cli.Create(ctx, config)
 		require.NoError(t, err, "Failed to create ClusterConfig with tags")
 
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "prod-eu-west-1", fetched.Spec.ClusterID)
@@ -534,7 +534,7 @@ func TestEscalationTimeoutConfigFeature(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with timeout config")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "4h", fetched.Spec.MaxValidFor)
@@ -563,18 +563,18 @@ func TestMailProviderSelectionFeature(t *testing.T) {
 
 	t.Run("EscalationWithMailProviderRef", func(t *testing.T) {
 		// First create a MailProvider
-		mailProvider := &telekomv1alpha1.MailProvider{
+		mailProvider := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-escalation-mail-provider",
 				Labels: helpers.E2ELabelsWithFeature("mail-provider"),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
+			Spec: breakglassv1alpha1.MailProviderSpec{
 				DisplayName: "E2E Test Mail Provider",
-				SMTP: telekomv1alpha1.SMTPConfig{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.example.com",
 					Port: 587,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "breakglass@example.com",
 					Name:    "Breakglass System",
 				},
@@ -599,7 +599,7 @@ func TestMailProviderSelectionFeature(t *testing.T) {
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with MailProvider")
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "e2e-escalation-mail-provider", fetched.Spec.MailProvider)
@@ -622,16 +622,16 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("PrimaryIdentityProvider", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-primary-idp",
 				Labels: helpers.E2ELabelsWithFeature("multi-idp"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				Primary:     true,
 				DisplayName: "Primary Corporate OIDC",
 				Issuer:      "https://auth-corp.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://auth-corp.example.com",
 					ClientID:  "breakglass-ui",
 				},
@@ -641,7 +641,7 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 		err := cli.Create(ctx, idp)
 		require.NoError(t, err, "Failed to create primary IdentityProvider")
 
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 		assert.True(t, fetched.Spec.Primary)
@@ -650,16 +650,16 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 	})
 
 	t.Run("SecondaryIdentityProvider", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-secondary-idp",
 				Labels: helpers.E2ELabelsWithFeature("multi-idp"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				Primary:     false,
 				DisplayName: "Keycloak Provider",
 				Issuer:      "https://keycloak.example.com/realms/master",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://keycloak.example.com",
 					ClientID:  "breakglass-ui-keycloak",
 				},
@@ -669,7 +669,7 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 		err := cli.Create(ctx, idp)
 		require.NoError(t, err, "Failed to create secondary IdentityProvider")
 
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 		assert.False(t, fetched.Spec.Primary)
@@ -693,23 +693,23 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("AuditConfigWithKafkaSink", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-kafka",
 				Labels: helpers.E2ELabelsWithFeature("audit-kafka"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Queue: &telekomv1alpha1.AuditQueueConfig{
+				Queue: &breakglassv1alpha1.AuditQueueConfig{
 					Size:       100000,
 					Workers:    5,
 					DropOnFull: true,
 				},
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "kafka-primary",
-						Type: telekomv1alpha1.AuditSinkTypeKafka,
-						Kafka: &telekomv1alpha1.KafkaSinkSpec{
+						Type: breakglassv1alpha1.AuditSinkTypeKafka,
+						Kafka: &breakglassv1alpha1.KafkaSinkSpec{
 							Brokers: []string{"kafka-0:9093", "kafka-1:9093"},
 							Topic:   "breakglass-audit",
 						},
@@ -721,13 +721,13 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with Kafka sink")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		assert.True(t, fetched.Spec.Enabled)
 		require.Len(t, fetched.Spec.Sinks, 1)
 		assert.Equal(t, "kafka-primary", fetched.Spec.Sinks[0].Name)
-		assert.Equal(t, telekomv1alpha1.AuditSinkTypeKafka, fetched.Spec.Sinks[0].Type)
+		assert.Equal(t, breakglassv1alpha1.AuditSinkTypeKafka, fetched.Spec.Sinks[0].Type)
 		require.NotNil(t, fetched.Spec.Sinks[0].Kafka)
 		assert.Len(t, fetched.Spec.Sinks[0].Kafka.Brokers, 2)
 		assert.Equal(t, "breakglass-audit", fetched.Spec.Sinks[0].Kafka.Topic)
@@ -736,17 +736,17 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 	})
 
 	t.Run("AuditConfigWithLogSink", func(t *testing.T) {
-		auditConfig := &telekomv1alpha1.AuditConfig{
+		auditConfig := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-log",
 				Labels: helpers.E2ELabelsWithFeature("audit-log"),
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{
+			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
-				Sinks: []telekomv1alpha1.AuditSinkConfig{
+				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{
 						Name: "structured-log",
-						Type: telekomv1alpha1.AuditSinkTypeLog,
+						Type: breakglassv1alpha1.AuditSinkTypeLog,
 					},
 				},
 			},
@@ -755,11 +755,11 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 		err := cli.Create(ctx, auditConfig)
 		require.NoError(t, err, "Failed to create AuditConfig with Log sink")
 
-		var fetched telekomv1alpha1.AuditConfig
+		var fetched breakglassv1alpha1.AuditConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.Sinks, 1)
-		assert.Equal(t, telekomv1alpha1.AuditSinkTypeLog, fetched.Spec.Sinks[0].Type)
+		assert.Equal(t, breakglassv1alpha1.AuditSinkTypeLog, fetched.Spec.Sinks[0].Type)
 		t.Logf("Verified: AuditConfig with Log sink works")
 	})
 }
@@ -782,16 +782,16 @@ func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
 	t.Run("PolicyWithCompleteSecurityRules", func(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder("e2e-complete-security-rules", namespace).
 			WithLabels(helpers.E2ELabelsWithFeature("security-rules")).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
 				// Risk Factors with custom scores
-				RiskFactors: telekomv1alpha1.RiskFactors{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 					HostNetwork:         80,
 					HostPID:             70,
 					HostIPC:             60,
 				},
 				// Thresholds for different privilege levels
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow", Reason: "low-risk"},
 					{MaxScore: 150, Action: "warn", Reason: "medium-risk"},
 					{MaxScore: 300, Action: "deny", Reason: "high-risk"},
@@ -799,8 +799,8 @@ func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
 				// Block factors that always deny
 				BlockFactors: []string{"privilegedContainer", "hostNetwork"},
 				// Exemptions for specific namespaces
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}},
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}},
 				},
 			}).
 			Build()
@@ -808,7 +808,7 @@ func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create policy with complete security rules")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)

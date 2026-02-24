@@ -30,7 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -45,20 +45,20 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("CreateEscalationWithEmptyGroup", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-error-empty-group",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:  "",
 				MaxValidFor:     "4h",
 				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"test-cluster"},
 				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},
@@ -72,20 +72,20 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 	})
 
 	t.Run("CreateEscalationWithInvalidDuration", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-error-invalid-duration",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:  "test-group",
 				MaxValidFor:     "invalid-duration",
 				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"test-cluster"},
 				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},
@@ -142,7 +142,7 @@ func TestErrorHandlingResourceNotFound(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("GetNonExistentEscalation", func(t *testing.T) {
-		var escalation telekomv1alpha1.BreakglassEscalation
+		var escalation breakglassv1alpha1.BreakglassEscalation
 		err := cli.Get(ctx, types.NamespacedName{
 			Name:      "non-existent-escalation-12345",
 			Namespace: namespace,
@@ -152,7 +152,7 @@ func TestErrorHandlingResourceNotFound(t *testing.T) {
 	})
 
 	t.Run("GetNonExistentSession", func(t *testing.T) {
-		var session telekomv1alpha1.BreakglassSession
+		var session breakglassv1alpha1.BreakglassSession
 		err := cli.Get(ctx, types.NamespacedName{
 			Name:      "non-existent-session-12345",
 			Namespace: namespace,
@@ -162,7 +162,7 @@ func TestErrorHandlingResourceNotFound(t *testing.T) {
 	})
 
 	t.Run("DeleteNonExistentResource", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "non-existent-to-delete-12345",
 				Namespace: namespace,
@@ -267,24 +267,24 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 			Reason:  "Testing approve expired",
 		})
 		require.NoError(t, err, "Failed to create session via API")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Set to expired state (simulating expiration)
-		var toExpire telekomv1alpha1.BreakglassSession
+		var toExpire breakglassv1alpha1.BreakglassSession
 		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toExpire))
-		toExpire.Status.State = telekomv1alpha1.SessionStateExpired
+		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Hour))
 		require.NoError(t, cli.Status().Update(ctx, &toExpire))
 
 		// Try to approve an expired session (invalid transition)
-		var toApprove telekomv1alpha1.BreakglassSession
+		var toApprove breakglassv1alpha1.BreakglassSession
 		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toApprove))
-		toApprove.Status.State = telekomv1alpha1.SessionStateApproved
+		toApprove.Status.State = breakglassv1alpha1.SessionStateApproved
 		toApprove.Status.Approver = helpers.GetTestApproverEmail()
 		err = cli.Status().Update(ctx, &toApprove)
 
@@ -311,21 +311,21 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 			Reason:  "Testing reject approved",
 		})
 		require.NoError(t, err, "Failed to create session via API")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state and then approve via API
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 		approverClient := tc.ApproverClient()
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err, "Failed to approve session via API")
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Try to reject an already approved session (invalid transition)
-		var toReject telekomv1alpha1.BreakglassSession
+		var toReject breakglassv1alpha1.BreakglassSession
 		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toReject))
-		toReject.Status.State = telekomv1alpha1.SessionStateRejected
+		toReject.Status.State = breakglassv1alpha1.SessionStateRejected
 		err = cli.Status().Update(ctx, &toReject)
 
 		if err != nil {
@@ -368,26 +368,26 @@ func TestErrorHandlingConcurrentModification(t *testing.T) {
 			Reason:  "Testing concurrent modification",
 		})
 		require.NoError(t, err, "Failed to create session via API")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Get two copies of the session
-		var session1, session2 telekomv1alpha1.BreakglassSession
+		var session1, session2 breakglassv1alpha1.BreakglassSession
 		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &session1))
 		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &session2))
 
 		// First update should succeed
-		session1.Status.State = telekomv1alpha1.SessionStateApproved
+		session1.Status.State = breakglassv1alpha1.SessionStateApproved
 		session1.Status.Approver = helpers.TestUsers.Approver.Email
 		err1 := cli.Status().Update(ctx, &session1)
 		require.NoError(t, err1)
 
 		// Second update with stale resource version should fail
-		session2.Status.State = telekomv1alpha1.SessionStateRejected
+		session2.Status.State = breakglassv1alpha1.SessionStateRejected
 		session2.Status.Approver = helpers.TestUsers.SeniorApprover.Email
 		err2 := cli.Status().Update(ctx, &session2)
 

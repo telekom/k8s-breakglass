@@ -33,7 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -287,13 +287,13 @@ func TestSecurityApprovalRequired(t *testing.T) {
 			Reason:  "Testing pending session not authorized",
 		})
 		require.NoError(t, err, "SEC-009: Session creation should succeed in E2E environment")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Verify session is in Pending state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Now verify that SAR denies the user while session is pending
 		apiURL := helpers.GetAPIBaseURL()
@@ -401,7 +401,7 @@ func TestSecurityUnreachableClusterDenied(t *testing.T) {
 			t.Logf("SEC-005: Session creation for unreachable cluster correctly denied: %v", err)
 		} else {
 			// If session was created, verify cluster status shows issues
-			var fetchedCluster telekomv1alpha1.ClusterConfig
+			var fetchedCluster breakglassv1alpha1.ClusterConfig
 			err = cli.Get(ctx, types.NamespacedName{Name: unreachableCluster.Name, Namespace: namespace}, &fetchedCluster)
 			require.NoError(t, err)
 
@@ -476,25 +476,25 @@ func TestSecurityGroupSyncSecretRequired(t *testing.T) {
 
 	t.Run("IDPWithMissingSecretShowsError", func(t *testing.T) {
 		// Create an IDP that references a non-existent secret
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-missing-secret-idp",
 				Labels: helpers.E2ELabelsWithFeature("security"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName:       "Missing Secret IDP",
 				Issuer:            "https://auth.example.com/realms/test",
-				GroupSyncProvider: telekomv1alpha1.GroupSyncProviderKeycloak,
-				OIDC: telekomv1alpha1.OIDCConfig{
+				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority:          "https://auth.example.com",
 					ClientID:           "test-client",
 					InsecureSkipVerify: true,
 				},
-				Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 					BaseURL:  "https://auth.example.com",
 					Realm:    "test",
 					ClientID: "group-sync-client",
-					ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      "secret-that-does-not-exist",
 						Namespace: "default",
 						Key:       "client-secret",
@@ -510,7 +510,7 @@ func TestSecurityGroupSyncSecretRequired(t *testing.T) {
 		// Wait for reconciliation and check status
 		time.Sleep(5 * time.Second)
 
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 
@@ -518,8 +518,8 @@ func TestSecurityGroupSyncSecretRequired(t *testing.T) {
 		hasSecretError := false
 		for _, cond := range fetched.Status.Conditions {
 			if cond.Status == metav1.ConditionFalse &&
-				(cond.Type == string(telekomv1alpha1.IdentityProviderConditionReady) ||
-					cond.Type == string(telekomv1alpha1.IdentityProviderConditionGroupSyncHealthy)) {
+				(cond.Type == string(breakglassv1alpha1.IdentityProviderConditionReady) ||
+					cond.Type == string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)) {
 				hasSecretError = true
 				t.Logf("SEC-010: IDP correctly shows error condition: %s - %s", cond.Type, cond.Message)
 			}
@@ -653,13 +653,13 @@ func TestSecuritySessionCannotSelfApprove(t *testing.T) {
 			Reason:  "Testing self-approval prevention",
 		})
 		require.NoError(t, err, "SEC-012: Session creation should succeed in E2E environment")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Try to approve as the same requester - should be denied
 		err = requesterClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
@@ -730,7 +730,7 @@ func TestSecurityMultipleDenyPoliciesEnforced(t *testing.T) {
 		time.Sleep(3 * time.Second)
 
 		// Verify all policies are created
-		var fetchedPolicies telekomv1alpha1.DenyPolicyList
+		var fetchedPolicies breakglassv1alpha1.DenyPolicyList
 		err = cli.List(ctx, &fetchedPolicies)
 		require.NoError(t, err)
 
@@ -789,8 +789,8 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder("e2e-sec-risk-thresholds", "").
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			AppliesToClusters(clusterName).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         40,
 					HostPID:             50,
 					HostIPC:             30,
@@ -804,7 +804,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 						"SYS_PTRACE": 60,
 					},
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{
 						MaxScore: 30,
 						Action:   "allow",
@@ -832,7 +832,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		require.NoError(t, err, "Failed to create risk threshold policy")
 
 		// Verify policy was created with all thresholds
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
@@ -846,19 +846,19 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder("e2e-sec-block-factors", "").
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			AppliesToClusters(clusterName).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
 				// BlockFactors cause immediate denial regardless of score
 				BlockFactors: []string{
 					"hostNetwork",
 					"hostPID",
 					"privilegedContainer",
 				},
-				RiskFactors: telekomv1alpha1.RiskFactors{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         40,
 					HostPID:             50,
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 100, Action: "allow"},
 					{MaxScore: 999, Action: "deny", Reason: "Exceeded risk threshold"},
 				},
@@ -869,7 +869,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create block factors policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
@@ -883,8 +883,8 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder("e2e-sec-capability-scoring", "").
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			AppliesToClusters(clusterName).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					Capabilities: map[string]int{
 						"NET_ADMIN":          50,
 						"SYS_ADMIN":          100, // Most dangerous
@@ -921,7 +921,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 						"CHECKPOINT_RESTORE": 60,
 					},
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 100, Action: "warn"},
 					{MaxScore: 200, Action: "deny", Reason: "Too many dangerous capabilities: score={{.Score}}"},
@@ -934,7 +934,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create capability scoring policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
@@ -949,17 +949,17 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder("e2e-sec-exemptions", "").
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			AppliesToClusters(clusterName).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 					HostNetwork:         80,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 999, Action: "deny", Reason: "Pod security violation"},
 				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{
 						"kube-system",
 						"monitoring",
 						"logging",
@@ -977,7 +977,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create exemptions policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
@@ -991,11 +991,11 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		policyClosedMode := helpers.NewDenyPolicyBuilder("e2e-sec-fail-closed", "").
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			AppliesToClusters(clusterName).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 999, Action: "deny"},
 				},
@@ -1006,7 +1006,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		err := cli.Create(ctx, policyClosedMode)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policyClosedMode.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Equal(t, "closed", fetched.Spec.PodSecurityRules.FailMode)
@@ -1036,7 +1036,7 @@ func TestSecurityTenantIsolation(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -1056,7 +1056,7 @@ func TestSecurityTenantIsolation(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -1100,7 +1100,7 @@ func TestSecurityAllowedApproverDomains(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify escalation was created with domain restriction
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.AllowedApproverDomains, 1)
@@ -1116,7 +1116,7 @@ func TestSecurityAllowedApproverDomains(t *testing.T) {
 			Reason:  "Testing domain restriction",
 		})
 		require.NoError(t, err, "SEC-022: Session creation should succeed in E2E environment")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
@@ -1162,13 +1162,13 @@ func TestSecuritySessionRejectionWorkflow(t *testing.T) {
 			Reason:  "Testing rejection workflow",
 		})
 		require.NoError(t, err, "SEC-023: Session creation should succeed in E2E environment")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Reject the session
 		err = approverClient.RejectSessionViaAPI(ctx, t, session.Name, session.Namespace, "Testing rejection workflow")
@@ -1176,13 +1176,13 @@ func TestSecuritySessionRejectionWorkflow(t *testing.T) {
 
 		// Wait for rejected state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
 
 		// Verify rejection is recorded
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateRejected, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateRejected, fetchedSession.Status.State)
 		t.Logf("SEC-023: Session correctly rejected, state=%s", fetchedSession.Status.State)
 	})
 
@@ -1229,13 +1229,13 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 			Reason:  "Testing withdrawal workflow",
 		})
 		require.NoError(t, err, "SEC-025: Session creation should succeed in E2E environment")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Withdraw the session
 		err = requesterClient.WithdrawSessionViaAPI(ctx, t, session.Name, session.Namespace)
@@ -1243,7 +1243,7 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 
 		// Wait for withdrawn state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateWithdrawn, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateWithdrawn, helpers.WaitForStateTimeout)
 
 		t.Logf("SEC-025: Session correctly withdrawn by requester")
 	})
@@ -1272,12 +1272,12 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 			Reason:  "Testing withdrawal denial",
 		})
 		require.NoError(t, err, "SEC-026: Session creation should succeed in E2E environment")
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Try to withdraw as a different user - should fail
 		err = approverClient.WithdrawSessionViaAPI(ctx, t, session.Name, session.Namespace)
@@ -1312,7 +1312,7 @@ func TestSecurityBlockSelfApprovalAtClusterLevel(t *testing.T) {
 		err := cli.Create(ctx, clusterConfig)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.ClusterConfig
+		var fetched breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.True(t, fetched.Spec.BlockSelfApproval)
@@ -1334,7 +1334,7 @@ func TestSecurityBlockSelfApprovalAtClusterLevel(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.BlockSelfApproval)
@@ -1370,7 +1370,7 @@ func TestSecurityMandatoryReasonConfigured(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.RequestReason)
@@ -1407,7 +1407,7 @@ func TestSecurityHiddenApproversConfig(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.Approvers.Groups, 1)
@@ -1430,26 +1430,26 @@ func TestSecurityDebugSessionOwnerOnlyTerminate(t *testing.T) {
 
 	t.Run("DebugSessionTerminationRestriction", func(t *testing.T) {
 		// Create a DebugSessionTemplate with termination restrictions
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-sec-owner-only-terminate",
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("security"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Owner-Only Terminate Template",
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Groups: []string{"dev"},
 				},
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration: "2h",
 					MaxRenewals: ptrInt32(2),
 				},
-				TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+				TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 					Enabled:         true,
 					MaxParticipants: 3,
 				},
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: "default-pod-template",
 				},
 			},
@@ -1458,7 +1458,7 @@ func TestSecurityDebugSessionOwnerOnlyTerminate(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 
@@ -1479,26 +1479,26 @@ func TestSecurityDebugSessionMaxParticipantsEnforced(t *testing.T) {
 
 	t.Run("MaxParticipantsConstraint", func(t *testing.T) {
 		// Create template with strict participant limit in terminal sharing
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-sec-max-participants",
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("security"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Limited Participants Template",
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Groups: []string{"dev", "ops"},
 				},
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration: "4h",
 					MaxRenewals: ptrInt32(1),
 				},
-				TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+				TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 					Enabled:         true,
 					MaxParticipants: 2, // Only 2 participants allowed in shared sessions
 				},
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: "default-pod-template",
 				},
 			},
@@ -1507,7 +1507,7 @@ func TestSecurityDebugSessionMaxParticipantsEnforced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.TerminalSharing)
@@ -1531,22 +1531,22 @@ func TestSecurityDebugSessionMaxRenewalsEnforced(t *testing.T) {
 	t.Run("MaxRenewalsConstraint", func(t *testing.T) {
 		// Create template with renewal limits
 		maxRenewals := int32(0)
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-sec-max-renewals",
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("security"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Limited Renewals Template",
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Groups: []string{"dev"},
 				},
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration: "1h",
 					MaxRenewals: &maxRenewals, // No renewals allowed
 				},
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: "default-pod-template",
 				},
 			},
@@ -1555,7 +1555,7 @@ func TestSecurityDebugSessionMaxRenewalsEnforced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Constraints)
@@ -1568,22 +1568,22 @@ func TestSecurityDebugSessionMaxRenewalsEnforced(t *testing.T) {
 	t.Run("RenewalsDisabledCompletely", func(t *testing.T) {
 		// Create template that completely disables renewals via AllowRenewal=false
 		allowRenewal := false
-		template := &telekomv1alpha1.DebugSessionTemplate{
+		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-sec-no-renewals",
 				Namespace: namespace,
 				Labels:    helpers.E2ELabelsWithFeature("security"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "No Renewals Template",
-				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Groups: []string{"ops"},
 				},
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					MaxDuration:  "30m",
 					AllowRenewal: &allowRenewal, // Explicitly disable renewals
 				},
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: "default-pod-template",
 				},
 			},
@@ -1592,7 +1592,7 @@ func TestSecurityDebugSessionMaxRenewalsEnforced(t *testing.T) {
 		err := cli.Create(ctx, template)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DebugSessionTemplate
+		var fetched breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: template.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Constraints)
@@ -1630,7 +1630,7 @@ func TestSecurityIDPRestrictionOnEscalations(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.AllowedIdentityProvidersForApprovers, 2)

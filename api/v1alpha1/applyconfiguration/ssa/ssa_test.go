@@ -24,7 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,7 +35,7 @@ import (
 func newTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 	return scheme
 }
 
@@ -44,12 +44,12 @@ func TestApplyBreakglassSessionStatus(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("successfully updates status on existing session", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
+		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster: "test-cluster",
 				User:    "test@example.com",
 			},
@@ -58,37 +58,37 @@ func TestApplyBreakglassSessionStatus(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 			Build()
 
 		// Update status
-		session.Status.State = telekomv1alpha1.SessionStatePending
+		session.Status.State = breakglassv1alpha1.SessionStatePending
 		session.Status.Approver = "admin@example.com"
 
 		err := ApplyBreakglassSessionStatus(context.Background(), c, session)
 		require.NoError(t, err)
 
 		// Verify the status was updated
-		var updated telekomv1alpha1.BreakglassSession
+		var updated breakglassv1alpha1.BreakglassSession
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStatePending, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStatePending, updated.Status.State)
 		assert.Equal(t, "admin@example.com", updated.Status.Approver)
 	})
 
 	t.Run("returns error when session does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 			Build()
 
-		session := &telekomv1alpha1.BreakglassSession{
+		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "nonexistent-session",
 				Namespace: "default",
 			},
-			Status: telekomv1alpha1.BreakglassSessionStatus{
-				State: telekomv1alpha1.SessionStatePending,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStatePending,
 			},
 		}
 
@@ -98,12 +98,12 @@ func TestApplyBreakglassSessionStatus(t *testing.T) {
 	})
 
 	t.Run("updates conditions correctly", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
+		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster: "test-cluster",
 				User:    "test@example.com",
 			},
@@ -112,7 +112,7 @@ func TestApplyBreakglassSessionStatus(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 			Build()
 
 		// Update with conditions
@@ -130,7 +130,7 @@ func TestApplyBreakglassSessionStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify conditions
-		var updated telekomv1alpha1.BreakglassSession
+		var updated breakglassv1alpha1.BreakglassSession
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated)
 		require.NoError(t, err)
 		require.Len(t, updated.Status.Conditions, 1)
@@ -144,12 +144,12 @@ func TestApplyBreakglassEscalationStatus(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("successfully updates status on existing escalation", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "admin-access",
 			},
 		}
@@ -157,7 +157,7 @@ func TestApplyBreakglassEscalationStatus(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(escalation).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassEscalation{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
 			Build()
 
 		// Update status
@@ -167,7 +167,7 @@ func TestApplyBreakglassEscalationStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the status was updated
-		var updated telekomv1alpha1.BreakglassEscalation
+		var updated breakglassv1alpha1.BreakglassEscalation
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(escalation), &updated)
 		require.NoError(t, err)
 		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
@@ -176,15 +176,15 @@ func TestApplyBreakglassEscalationStatus(t *testing.T) {
 	t.Run("returns error when escalation does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassEscalation{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
 			Build()
 
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "nonexistent",
 				Namespace: "default",
 			},
-			Status: telekomv1alpha1.BreakglassEscalationStatus{
+			Status: breakglassv1alpha1.BreakglassEscalationStatus{
 				ObservedGeneration: 1,
 			},
 		}
@@ -195,12 +195,12 @@ func TestApplyBreakglassEscalationStatus(t *testing.T) {
 	})
 
 	t.Run("updates conditions correctly", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-escalation",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup: "admin-access",
 			},
 		}
@@ -208,7 +208,7 @@ func TestApplyBreakglassEscalationStatus(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(escalation).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassEscalation{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
 			Build()
 
 		// Update with conditions
@@ -226,7 +226,7 @@ func TestApplyBreakglassEscalationStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify conditions
-		var updated telekomv1alpha1.BreakglassEscalation
+		var updated breakglassv1alpha1.BreakglassEscalation
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(escalation), &updated)
 		require.NoError(t, err)
 		require.Len(t, updated.Status.Conditions, 1)
@@ -239,18 +239,18 @@ func TestApplyClusterConfigStatus(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("successfully updates status on existing cluster config", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-cluster",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{},
 		}
 
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(cc).
-			WithStatusSubresource(&telekomv1alpha1.ClusterConfig{}).
+			WithStatusSubresource(&breakglassv1alpha1.ClusterConfig{}).
 			Build()
 
 		// Update status
@@ -269,7 +269,7 @@ func TestApplyClusterConfigStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the status was updated
-		var updated telekomv1alpha1.ClusterConfig
+		var updated breakglassv1alpha1.ClusterConfig
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(cc), &updated)
 		require.NoError(t, err)
 		assert.Equal(t, int64(3), updated.Status.ObservedGeneration)
@@ -280,10 +280,10 @@ func TestApplyClusterConfigStatus(t *testing.T) {
 	t.Run("returns error when cluster config does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.ClusterConfig{}).
+			WithStatusSubresource(&breakglassv1alpha1.ClusterConfig{}).
 			Build()
 
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "nonexistent",
 				Namespace: "default",
@@ -301,12 +301,12 @@ func TestApplyMailProviderStatus(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("successfully updates status on existing mail provider", func(t *testing.T) {
-		mp := &telekomv1alpha1.MailProvider{
+		mp := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-provider",
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.example.com",
 					Port: 587,
 				},
@@ -316,7 +316,7 @@ func TestApplyMailProviderStatus(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(mp).
-			WithStatusSubresource(&telekomv1alpha1.MailProvider{}).
+			WithStatusSubresource(&breakglassv1alpha1.MailProvider{}).
 			Build()
 
 		// Update status
@@ -334,7 +334,7 @@ func TestApplyMailProviderStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the status was updated
-		var updated telekomv1alpha1.MailProvider
+		var updated breakglassv1alpha1.MailProvider
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(mp), &updated)
 		require.NoError(t, err)
 		require.Len(t, updated.Status.Conditions, 1)
@@ -344,10 +344,10 @@ func TestApplyMailProviderStatus(t *testing.T) {
 	t.Run("returns error when mail provider does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.MailProvider{}).
+			WithStatusSubresource(&breakglassv1alpha1.MailProvider{}).
 			Build()
 
-		mp := &telekomv1alpha1.MailProvider{
+		mp := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "nonexistent",
 			},
@@ -364,11 +364,11 @@ func TestApplyIdentityProviderStatus(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("successfully updates status on existing identity provider", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-idp",
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				Issuer: "https://idp.example.com",
 			},
 		}
@@ -376,7 +376,7 @@ func TestApplyIdentityProviderStatus(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(idp).
-			WithStatusSubresource(&telekomv1alpha1.IdentityProvider{}).
+			WithStatusSubresource(&breakglassv1alpha1.IdentityProvider{}).
 			Build()
 
 		// Update status
@@ -395,7 +395,7 @@ func TestApplyIdentityProviderStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the status was updated
-		var updated telekomv1alpha1.IdentityProvider
+		var updated breakglassv1alpha1.IdentityProvider
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(idp), &updated)
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), updated.Status.ObservedGeneration)
@@ -405,10 +405,10 @@ func TestApplyIdentityProviderStatus(t *testing.T) {
 	t.Run("returns error when identity provider does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.IdentityProvider{}).
+			WithStatusSubresource(&breakglassv1alpha1.IdentityProvider{}).
 			Build()
 
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "nonexistent",
 			},
@@ -425,12 +425,12 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("successfully updates status on existing debug session", func(t *testing.T) {
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-debug",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "test-cluster",
 				TemplateRef: "test-template",
 				RequestedBy: "test@example.com",
@@ -440,31 +440,31 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ds).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		// Update status
-		ds.Status.State = telekomv1alpha1.DebugSessionStateActive
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
 		ds.Status.Message = "Session is running"
 
 		err := ApplyDebugSessionStatus(context.Background(), c, ds)
 		require.NoError(t, err)
 
 		// Verify the status was updated
-		var updated telekomv1alpha1.DebugSession
+		var updated breakglassv1alpha1.DebugSession
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(ds), &updated)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateActive, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
 		assert.Equal(t, "Session is running", updated.Status.Message)
 	})
 
 	t.Run("returns error when debug session does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "nonexistent",
 				Namespace: "default",
@@ -482,17 +482,17 @@ func TestApplyAuditConfigStatus(t *testing.T) {
 	scheme := newTestScheme()
 
 	t.Run("successfully updates status on existing audit config", func(t *testing.T) {
-		ac := &telekomv1alpha1.AuditConfig{
+		ac := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-audit",
 			},
-			Spec: telekomv1alpha1.AuditConfigSpec{},
+			Spec: breakglassv1alpha1.AuditConfigSpec{},
 		}
 
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ac).
-			WithStatusSubresource(&telekomv1alpha1.AuditConfig{}).
+			WithStatusSubresource(&breakglassv1alpha1.AuditConfig{}).
 			Build()
 
 		// Update status
@@ -512,7 +512,7 @@ func TestApplyAuditConfigStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the status was updated
-		var updated telekomv1alpha1.AuditConfig
+		var updated breakglassv1alpha1.AuditConfig
 		err = c.Get(context.Background(), client.ObjectKeyFromObject(ac), &updated)
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), updated.Status.EventsProcessed)
@@ -523,10 +523,10 @@ func TestApplyAuditConfigStatus(t *testing.T) {
 	t.Run("returns error when audit config does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.AuditConfig{}).
+			WithStatusSubresource(&breakglassv1alpha1.AuditConfig{}).
 			Build()
 
-		ac := &telekomv1alpha1.AuditConfig{
+		ac := &breakglassv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "nonexistent",
 			},
@@ -575,7 +575,7 @@ func TestDebugSessionApprovalFrom(t *testing.T) {
 
 	t.Run("converts full approval", func(t *testing.T) {
 		now := metav1.Now()
-		approval := &telekomv1alpha1.DebugSessionApproval{
+		approval := &breakglassv1alpha1.DebugSessionApproval{
 			Required:   true,
 			ApprovedBy: "admin@example.com",
 			ApprovedAt: &now,
@@ -593,7 +593,7 @@ func TestDebugSessionApprovalFrom(t *testing.T) {
 
 	t.Run("converts rejection", func(t *testing.T) {
 		now := metav1.Now()
-		approval := &telekomv1alpha1.DebugSessionApproval{
+		approval := &breakglassv1alpha1.DebugSessionApproval{
 			Required:   true,
 			RejectedBy: "rejector@example.com",
 			RejectedAt: &now,
@@ -619,9 +619,9 @@ func TestDebugSessionParticipantFrom(t *testing.T) {
 	t.Run("converts full participant", func(t *testing.T) {
 		now := metav1.Now()
 		left := metav1.Now()
-		participant := &telekomv1alpha1.DebugSessionParticipant{
+		participant := &breakglassv1alpha1.DebugSessionParticipant{
 			User:        "user@example.com",
-			Role:        telekomv1alpha1.ParticipantRoleOwner,
+			Role:        breakglassv1alpha1.ParticipantRoleOwner,
 			JoinedAt:    now,
 			Email:       "user@example.com",
 			DisplayName: "Test User",
@@ -632,7 +632,7 @@ func TestDebugSessionParticipantFrom(t *testing.T) {
 
 		require.NotNil(t, result)
 		assert.Equal(t, "user@example.com", *result.User)
-		assert.Equal(t, telekomv1alpha1.ParticipantRoleOwner, *result.Role)
+		assert.Equal(t, breakglassv1alpha1.ParticipantRoleOwner, *result.Role)
 		assert.Equal(t, "user@example.com", *result.Email)
 		assert.Equal(t, "Test User", *result.DisplayName)
 		assert.NotNil(t, result.LeftAt)
@@ -647,7 +647,7 @@ func TestTerminalSharingStatusFrom(t *testing.T) {
 	})
 
 	t.Run("converts full status", func(t *testing.T) {
-		status := &telekomv1alpha1.TerminalSharingStatus{
+		status := &breakglassv1alpha1.TerminalSharingStatus{
 			Enabled:       true,
 			SessionName:   "test-session",
 			AttachCommand: "tmux attach -t test-session",
@@ -670,7 +670,7 @@ func TestDeployedResourceRefFrom(t *testing.T) {
 	})
 
 	t.Run("converts full resource ref", func(t *testing.T) {
-		ref := &telekomv1alpha1.DeployedResourceRef{
+		ref := &breakglassv1alpha1.DeployedResourceRef{
 			APIVersion: "apps/v1",
 			Kind:       "Deployment",
 			Name:       "debug-pod",
@@ -695,13 +695,13 @@ func TestAllowedPodRefFrom(t *testing.T) {
 	})
 
 	t.Run("converts full pod ref", func(t *testing.T) {
-		ref := &telekomv1alpha1.AllowedPodRef{
+		ref := &breakglassv1alpha1.AllowedPodRef{
 			Namespace: "debug-ns",
 			Name:      "debug-pod",
 			Ready:     true,
 			NodeName:  "node-1",
 			Phase:     "Running",
-			ContainerStatus: &telekomv1alpha1.PodContainerStatus{
+			ContainerStatus: &breakglassv1alpha1.PodContainerStatus{
 				WaitingReason: "ContainerCreating",
 			},
 		}
@@ -726,7 +726,7 @@ func TestPodContainerStatusFrom(t *testing.T) {
 	})
 
 	t.Run("converts full status", func(t *testing.T) {
-		status := &telekomv1alpha1.PodContainerStatus{
+		status := &breakglassv1alpha1.PodContainerStatus{
 			WaitingReason:         "ContainerCreating",
 			WaitingMessage:        "Pulling image",
 			RestartCount:          3,
@@ -752,8 +752,8 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 
 	t.Run("converts full status", func(t *testing.T) {
 		now := metav1.Now()
-		status := &telekomv1alpha1.KubectlDebugStatus{
-			EphemeralContainersInjected: []telekomv1alpha1.EphemeralContainerRef{
+		status := &breakglassv1alpha1.KubectlDebugStatus{
+			EphemeralContainersInjected: []breakglassv1alpha1.EphemeralContainerRef{
 				{
 					PodName:       "target-pod",
 					Namespace:     "app-ns",
@@ -763,7 +763,7 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 					InjectedBy:    "admin@example.com",
 				},
 			},
-			CopiedPods: []telekomv1alpha1.CopiedPodRef{
+			CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 				{
 					OriginalPod:       "original-pod",
 					OriginalNamespace: "app-ns",
@@ -791,7 +791,7 @@ func TestEphemeralContainerRefFrom(t *testing.T) {
 
 	t.Run("converts full ref", func(t *testing.T) {
 		now := metav1.Now()
-		ref := &telekomv1alpha1.EphemeralContainerRef{
+		ref := &breakglassv1alpha1.EphemeralContainerRef{
 			PodName:       "target-pod",
 			Namespace:     "app-ns",
 			ContainerName: "debugger",
@@ -821,7 +821,7 @@ func TestCopiedPodRefFrom(t *testing.T) {
 	t.Run("converts full ref", func(t *testing.T) {
 		now := metav1.Now()
 		expires := metav1.Now()
-		ref := &telekomv1alpha1.CopiedPodRef{
+		ref := &breakglassv1alpha1.CopiedPodRef{
 			OriginalPod:       "original-pod",
 			OriginalNamespace: "app-ns",
 			CopyName:          "debug-copy",
@@ -850,11 +850,11 @@ func TestDebugSessionTemplateSpecFrom(t *testing.T) {
 
 	t.Run("converts basic template spec", func(t *testing.T) {
 		replicas := int32(3)
-		spec := &telekomv1alpha1.DebugSessionTemplateSpec{
+		spec := &breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Test Template",
 			Description:     "A test debug session template",
-			Mode:            telekomv1alpha1.DebugSessionModeWorkload,
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Mode:            breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:        &replicas,
 			TargetNamespace: "debug-ns",
 			FailMode:        "closed",
@@ -865,16 +865,16 @@ func TestDebugSessionTemplateSpecFrom(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, "Test Template", *result.DisplayName)
 		assert.Equal(t, "A test debug session template", *result.Description)
-		assert.Equal(t, telekomv1alpha1.DebugSessionModeWorkload, *result.Mode)
-		assert.Equal(t, telekomv1alpha1.DebugWorkloadDeployment, *result.WorkloadType)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionModeWorkload, *result.Mode)
+		assert.Equal(t, breakglassv1alpha1.DebugWorkloadDeployment, *result.WorkloadType)
 		assert.Equal(t, int32(3), *result.Replicas)
 		assert.Equal(t, "debug-ns", *result.TargetNamespace)
 		assert.Equal(t, "closed", *result.FailMode)
 	})
 
 	t.Run("converts template with pod template ref", func(t *testing.T) {
-		spec := &telekomv1alpha1.DebugSessionTemplateSpec{
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+		spec := &breakglassv1alpha1.DebugSessionTemplateSpec{
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "debug-pod-template",
 			},
 		}
@@ -887,8 +887,8 @@ func TestDebugSessionTemplateSpecFrom(t *testing.T) {
 	})
 
 	t.Run("converts template with allowed config", func(t *testing.T) {
-		spec := &telekomv1alpha1.DebugSessionTemplateSpec{
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+		spec := &breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups:   []string{"sre-team", "admins"},
 				Users:    []string{"user@example.com"},
 				Clusters: []string{"prod-*", "staging"},
@@ -907,8 +907,8 @@ func TestDebugSessionTemplateSpecFrom(t *testing.T) {
 	t.Run("converts template with constraints", func(t *testing.T) {
 		allowRenewal := true
 		maxRenewals := int32(5)
-		spec := &telekomv1alpha1.DebugSessionTemplateSpec{
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+		spec := &breakglassv1alpha1.DebugSessionTemplateSpec{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:           "4h",
 				DefaultDuration:       "1h",
 				AllowRenewal:          &allowRenewal,
@@ -929,8 +929,8 @@ func TestDebugSessionTemplateSpecFrom(t *testing.T) {
 	})
 
 	t.Run("converts template with terminal sharing", func(t *testing.T) {
-		spec := &telekomv1alpha1.DebugSessionTemplateSpec{
-			TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+		spec := &breakglassv1alpha1.DebugSessionTemplateSpec{
+			TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 				Enabled:         true,
 				Provider:        "tmux",
 				MaxParticipants: 5,
@@ -955,7 +955,7 @@ func TestDebugPodTemplateReferenceFrom(t *testing.T) {
 	})
 
 	t.Run("converts reference", func(t *testing.T) {
-		ref := &telekomv1alpha1.DebugPodTemplateReference{
+		ref := &breakglassv1alpha1.DebugPodTemplateReference{
 			Name: "template-name",
 		}
 
@@ -974,7 +974,7 @@ func TestDebugSessionAllowedFrom(t *testing.T) {
 	})
 
 	t.Run("converts full allowed config", func(t *testing.T) {
-		allowed := &telekomv1alpha1.DebugSessionAllowed{
+		allowed := &breakglassv1alpha1.DebugSessionAllowed{
 			Groups:   []string{"group1", "group2"},
 			Users:    []string{"user1@example.com"},
 			Clusters: []string{"cluster-*"},
@@ -997,10 +997,10 @@ func TestDebugSessionApproversFrom(t *testing.T) {
 	})
 
 	t.Run("converts full approvers config", func(t *testing.T) {
-		approvers := &telekomv1alpha1.DebugSessionApprovers{
+		approvers := &breakglassv1alpha1.DebugSessionApprovers{
 			Groups: []string{"approvers-group"},
 			Users:  []string{"approver@example.com"},
-			AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 				Groups:   []string{"auto-approve-group"},
 				Clusters: []string{"dev-*"},
 			},
@@ -1024,7 +1024,7 @@ func TestAutoApproveConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.AutoApproveConfig{
+		config := &breakglassv1alpha1.AutoApproveConfig{
 			Groups:   []string{"trusted-group"},
 			Clusters: []string{"dev-*", "test-*"},
 		}
@@ -1047,7 +1047,7 @@ func TestDebugSessionConstraintsFrom(t *testing.T) {
 	t.Run("converts full constraints", func(t *testing.T) {
 		allowRenewal := true
 		maxRenewals := int32(3)
-		constraints := &telekomv1alpha1.DebugSessionConstraints{
+		constraints := &breakglassv1alpha1.DebugSessionConstraints{
 			MaxDuration:           "8h",
 			DefaultDuration:       "2h",
 			AllowRenewal:          &allowRenewal,
@@ -1074,7 +1074,7 @@ func TestTerminalSharingConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.TerminalSharingConfig{
+		config := &breakglassv1alpha1.TerminalSharingConfig{
 			Enabled:         true,
 			Provider:        "screen",
 			MaxParticipants: 10,
@@ -1097,12 +1097,12 @@ func TestDebugSessionAuditConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.DebugSessionAuditConfig{
+		config := &breakglassv1alpha1.DebugSessionAuditConfig{
 			Enabled:                 true,
 			EnableTerminalRecording: true,
 			EnableShellHistory:      true,
 			RecordingRetention:      "30d",
-			Destinations: []telekomv1alpha1.AuditDestination{
+			Destinations: []breakglassv1alpha1.AuditDestination{
 				{
 					Type: "webhook",
 					URL:  "https://audit.example.com/events",
@@ -1132,7 +1132,7 @@ func TestAuditDestinationFrom(t *testing.T) {
 	})
 
 	t.Run("converts full destination", func(t *testing.T) {
-		dest := &telekomv1alpha1.AuditDestination{
+		dest := &breakglassv1alpha1.AuditDestination{
 			Type: "webhook",
 			URL:  "https://audit.example.com",
 			Headers: map[string]string{
@@ -1157,7 +1157,7 @@ func TestNamespaceFilterFrom(t *testing.T) {
 	})
 
 	t.Run("converts patterns", func(t *testing.T) {
-		filter := &telekomv1alpha1.NamespaceFilter{
+		filter := &breakglassv1alpha1.NamespaceFilter{
 			Patterns: []string{"app-*", "kube-*"},
 		}
 
@@ -1168,8 +1168,8 @@ func TestNamespaceFilterFrom(t *testing.T) {
 	})
 
 	t.Run("converts selector terms", func(t *testing.T) {
-		filter := &telekomv1alpha1.NamespaceFilter{
-			SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{
+		filter := &breakglassv1alpha1.NamespaceFilter{
+			SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 				{
 					MatchLabels: map[string]string{"env": "production"},
 				},
@@ -1192,7 +1192,7 @@ func TestNamespaceSelectorTermFrom(t *testing.T) {
 	})
 
 	t.Run("converts match labels", func(t *testing.T) {
-		term := &telekomv1alpha1.NamespaceSelectorTerm{
+		term := &breakglassv1alpha1.NamespaceSelectorTerm{
 			MatchLabels: map[string]string{"key": "value"},
 		}
 
@@ -1203,11 +1203,11 @@ func TestNamespaceSelectorTermFrom(t *testing.T) {
 	})
 
 	t.Run("converts match expressions", func(t *testing.T) {
-		term := &telekomv1alpha1.NamespaceSelectorTerm{
-			MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+		term := &breakglassv1alpha1.NamespaceSelectorTerm{
+			MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
 				{
 					Key:      "team",
-					Operator: telekomv1alpha1.NamespaceSelectorOpIn,
+					Operator: breakglassv1alpha1.NamespaceSelectorOpIn,
 					Values:   []string{"sre", "platform"},
 				},
 			},
@@ -1229,9 +1229,9 @@ func TestNamespaceSelectorRequirementFrom(t *testing.T) {
 	})
 
 	t.Run("converts full requirement", func(t *testing.T) {
-		req := &telekomv1alpha1.NamespaceSelectorRequirement{
+		req := &breakglassv1alpha1.NamespaceSelectorRequirement{
 			Key:      "environment",
-			Operator: telekomv1alpha1.NamespaceSelectorOpIn,
+			Operator: breakglassv1alpha1.NamespaceSelectorOpIn,
 			Values:   []string{"prod", "staging"},
 		}
 
@@ -1239,7 +1239,7 @@ func TestNamespaceSelectorRequirementFrom(t *testing.T) {
 
 		require.NotNil(t, result)
 		assert.Equal(t, "environment", *result.Key)
-		assert.Equal(t, telekomv1alpha1.NamespaceSelectorOpIn, *result.Operator)
+		assert.Equal(t, breakglassv1alpha1.NamespaceSelectorOpIn, *result.Operator)
 		assert.Equal(t, []string{"prod", "staging"}, result.Values)
 	})
 }
@@ -1252,14 +1252,14 @@ func TestKubectlDebugConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.KubectlDebugConfig{
-			EphemeralContainers: &telekomv1alpha1.EphemeralContainersConfig{
+		config := &breakglassv1alpha1.KubectlDebugConfig{
+			EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 				Enabled: true,
 			},
-			NodeDebug: &telekomv1alpha1.NodeDebugConfig{
+			NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
 				Enabled: true,
 			},
-			PodCopy: &telekomv1alpha1.PodCopyConfig{
+			PodCopy: &breakglassv1alpha1.PodCopyConfig{
 				Enabled: true,
 			},
 		}
@@ -1281,14 +1281,14 @@ func TestEphemeralContainersConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.EphemeralContainersConfig{
+		config := &breakglassv1alpha1.EphemeralContainersConfig{
 			Enabled:            true,
 			RequireImageDigest: true,
 			AllowPrivileged:    false,
 			RequireNonRoot:     true,
 			AllowedImages:      []string{"busybox:*", "alpine:*"},
 			MaxCapabilities:    []string{"NET_ADMIN"},
-			AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+			AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"app-*"},
 			},
 		}
@@ -1314,10 +1314,10 @@ func TestNodeDebugConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.NodeDebugConfig{
+		config := &breakglassv1alpha1.NodeDebugConfig{
 			Enabled:       true,
 			AllowedImages: []string{"debug-image:latest"},
-			HostNamespaces: &telekomv1alpha1.HostNamespacesConfig{
+			HostNamespaces: &breakglassv1alpha1.HostNamespacesConfig{
 				HostNetwork: true,
 				HostPID:     true,
 				HostIPC:     false,
@@ -1342,7 +1342,7 @@ func TestHostNamespacesConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.HostNamespacesConfig{
+		config := &breakglassv1alpha1.HostNamespacesConfig{
 			HostNetwork: true,
 			HostPID:     true,
 			HostIPC:     false,
@@ -1365,7 +1365,7 @@ func TestPodCopyConfigFrom(t *testing.T) {
 	})
 
 	t.Run("converts full config", func(t *testing.T) {
-		config := &telekomv1alpha1.PodCopyConfig{
+		config := &breakglassv1alpha1.PodCopyConfig{
 			Enabled:         true,
 			TargetNamespace: "debug-copies",
 			Labels:          map[string]string{"debug": "true"},
@@ -1390,7 +1390,7 @@ func TestAuditSinkStatusFrom(t *testing.T) {
 
 	t.Run("converts full status", func(t *testing.T) {
 		now := metav1.Now()
-		status := &telekomv1alpha1.AuditSinkStatus{
+		status := &breakglassv1alpha1.AuditSinkStatus{
 			Name:            "webhook-sink",
 			Ready:           true,
 			LastError:       "connection timeout",
@@ -1418,8 +1418,8 @@ func TestDebugPodOverridesFrom(t *testing.T) {
 
 	t.Run("converts full overrides", func(t *testing.T) {
 		hostNetwork := true
-		overrides := &telekomv1alpha1.DebugPodOverrides{
-			Spec: &telekomv1alpha1.DebugPodSpecOverrides{
+		overrides := &breakglassv1alpha1.DebugPodOverrides{
+			Spec: &breakglassv1alpha1.DebugPodSpecOverrides{
 				HostNetwork: &hostNetwork,
 			},
 		}
@@ -1443,11 +1443,11 @@ func TestDebugPodSpecOverridesFrom(t *testing.T) {
 		hostNetwork := true
 		hostPID := false
 		hostIPC := true
-		overrides := &telekomv1alpha1.DebugPodSpecOverrides{
+		overrides := &breakglassv1alpha1.DebugPodSpecOverrides{
 			HostNetwork: &hostNetwork,
 			HostPID:     &hostPID,
 			HostIPC:     &hostIPC,
-			Containers: []telekomv1alpha1.DebugContainerOverride{
+			Containers: []breakglassv1alpha1.DebugContainerOverride{
 				{Name: "debug-container"},
 			},
 		}
@@ -1470,7 +1470,7 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 	})
 
 	t.Run("converts full override", func(t *testing.T) {
-		override := &telekomv1alpha1.DebugContainerOverride{
+		override := &breakglassv1alpha1.DebugContainerOverride{
 			Name: "debug-container",
 			SecurityContext: &corev1.SecurityContext{
 				Privileged: func() *bool { b := true; return &b }(),

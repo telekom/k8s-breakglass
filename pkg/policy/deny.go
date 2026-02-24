@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
@@ -35,7 +35,7 @@ type Action struct {
 	Pod *corev1.Pod
 	// PodSecurityOverrides contains escalation-level overrides for pod security evaluation.
 	// If non-nil, these override the default pod security thresholds/factors.
-	PodSecurityOverrides *telekomv1alpha1.PodSecurityOverrides
+	PodSecurityOverrides *breakglassv1alpha1.PodSecurityOverrides
 }
 
 // PodSecurityResult contains the outcome of pod security evaluation.
@@ -69,8 +69,8 @@ func NewEvaluator(c ctrlclient.Client, log *zap.SugaredLogger) *Evaluator {
 // - Event-driven updates (no polling delay)
 // - Reduced API server load
 // - Consistent reads within a reconciliation cycle
-func (e *Evaluator) listPolicies(ctx context.Context) ([]telekomv1alpha1.DenyPolicy, error) {
-	list := telekomv1alpha1.DenyPolicyList{}
+func (e *Evaluator) listPolicies(ctx context.Context) ([]breakglassv1alpha1.DenyPolicy, error) {
+	list := breakglassv1alpha1.DenyPolicyList{}
 	if err := e.c.List(ctx, &list); err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bo
 }
 
 // evaluatePodSecurity checks if the action should be denied based on pod security rules.
-func (e *Evaluator) evaluatePodSecurity(act Action, rules *telekomv1alpha1.PodSecurityRules) PodSecurityResult {
+func (e *Evaluator) evaluatePodSecurity(act Action, rules *breakglassv1alpha1.PodSecurityRules) PodSecurityResult {
 	// Check if this subresource should be evaluated
 	if !e.shouldEvaluateSubresource(act.Subresource, rules.AppliesTo) {
 		return PodSecurityResult{Denied: false, Action: "allow"}
@@ -325,7 +325,7 @@ func (e *Evaluator) evaluatePodSecurity(act Action, rules *telekomv1alpha1.PodSe
 }
 
 // shouldEvaluateSubresource checks if the given subresource should trigger pod security evaluation.
-func (e *Evaluator) shouldEvaluateSubresource(subresource string, scope *telekomv1alpha1.PodSecurityScope) bool {
+func (e *Evaluator) shouldEvaluateSubresource(subresource string, scope *breakglassv1alpha1.PodSecurityScope) bool {
 	defaultSubresources := []string{"exec", "attach", "portforward"}
 	subresources := defaultSubresources
 	if scope != nil && len(scope.Subresources) > 0 {
@@ -340,7 +340,7 @@ func (e *Evaluator) shouldEvaluateSubresource(subresource string, scope *telekom
 }
 
 // isPodExempt checks if a pod is exempt from security evaluation.
-func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *telekomv1alpha1.PodSecurityExemptions) bool {
+func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *breakglassv1alpha1.PodSecurityExemptions) bool {
 	if exemptions == nil {
 		return false
 	}
@@ -366,7 +366,7 @@ func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *telekomv1alpha1.Pod
 }
 
 // detectRiskFactors returns a list of detected risk factor names.
-func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf telekomv1alpha1.RiskFactors) []string {
+func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf breakglassv1alpha1.RiskFactors) []string {
 	factors := []string{}
 
 	if pod.Spec.HostNetwork {
@@ -417,7 +417,7 @@ func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf telekomv1alpha1.RiskFa
 }
 
 // calculateRiskScore computes the total risk score based on detected factors.
-func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf telekomv1alpha1.RiskFactors) int {
+func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.RiskFactors) int {
 	score := 0
 
 	if pod.Spec.HostNetwork && rf.HostNetwork > 0 {
@@ -523,7 +523,7 @@ func (e *Evaluator) renderReason(reasonTmpl string, score int, factors []string,
 	return buf.String()
 }
 
-func scopeMatches(s *telekomv1alpha1.DenyPolicyScope, act Action) bool {
+func scopeMatches(s *breakglassv1alpha1.DenyPolicyScope, act Action) bool {
 	if s == nil {
 		return true
 	}
@@ -539,7 +539,7 @@ func scopeMatches(s *telekomv1alpha1.DenyPolicyScope, act Action) bool {
 	return true
 }
 
-func ruleMatches(r telekomv1alpha1.DenyRule, act Action) bool {
+func ruleMatches(r breakglassv1alpha1.DenyRule, act Action) bool {
 	if !contains(r.Verbs, act.Verb) {
 		return false
 	}

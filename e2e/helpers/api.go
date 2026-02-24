@@ -35,7 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // CorrelationIDHeader is the HTTP header used to pass correlation IDs
@@ -146,7 +146,7 @@ const sessionsBasePath = "/api/breakglassSessions"
 // the real session controller which sets proper status, sends notifications, etc.
 // If CleanupClient is set and a 409 conflict occurs, it will automatically expire
 // the conflicting session and retry up to 3 times.
-func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req SessionRequest) (*telekomv1alpha1.BreakglassSession, error) {
+func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req SessionRequest) (*breakglassv1alpha1.BreakglassSession, error) {
 	const maxRetries = 3
 	var lastErr error
 
@@ -191,7 +191,7 @@ func is409Conflict(err error) bool {
 }
 
 // doCreateSession performs the actual session creation request
-func (c *APIClient) doCreateSession(ctx context.Context, t *testing.T, req SessionRequest) (*telekomv1alpha1.BreakglassSession, error) {
+func (c *APIClient) doCreateSession(ctx context.Context, t *testing.T, req SessionRequest) (*breakglassv1alpha1.BreakglassSession, error) {
 	// Generate a correlation ID for this request to help with debugging
 	cid := uuid.New().String()
 
@@ -211,7 +211,7 @@ func (c *APIClient) doCreateSession(ctx context.Context, t *testing.T, req Sessi
 		return nil, fmt.Errorf("failed to create session (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
 	}
 
-	var session telekomv1alpha1.BreakglassSession
+	var session breakglassv1alpha1.BreakglassSession
 	if err := json.Unmarshal(body, &session); err != nil {
 		// Try parsing as a simpler response
 		var simpleResp SessionResponse
@@ -383,7 +383,7 @@ func (c *APIClient) CancelSessionViaAPI(ctx context.Context, t *testing.T, sessi
 }
 
 // ListSessions lists all sessions via the REST API
-func (c *APIClient) ListSessions(ctx context.Context) ([]telekomv1alpha1.BreakglassSession, error) {
+func (c *APIClient) ListSessions(ctx context.Context) ([]breakglassv1alpha1.BreakglassSession, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, sessionsBasePath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
@@ -395,7 +395,7 @@ func (c *APIClient) ListSessions(ctx context.Context) ([]telekomv1alpha1.Breakgl
 		return nil, fmt.Errorf("failed to list sessions: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	var sessions []telekomv1alpha1.BreakglassSession
+	var sessions []breakglassv1alpha1.BreakglassSession
 	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
 		return nil, fmt.Errorf("failed to decode sessions: %w", err)
 	}
@@ -404,7 +404,7 @@ func (c *APIClient) ListSessions(ctx context.Context) ([]telekomv1alpha1.Breakgl
 }
 
 // GetSession gets a specific session via the REST API
-func (c *APIClient) GetSession(ctx context.Context, name, namespace string) (*telekomv1alpha1.BreakglassSession, error) {
+func (c *APIClient) GetSession(ctx context.Context, name, namespace string) (*breakglassv1alpha1.BreakglassSession, error) {
 	path := fmt.Sprintf("%s/%s", sessionsBasePath, name)
 	if namespace != "" {
 		path += "?namespace=" + namespace
@@ -424,7 +424,7 @@ func (c *APIClient) GetSession(ctx context.Context, name, namespace string) (*te
 	// The API returns {"session": {...}, "approvalMeta": {...}}
 	// We need to extract the session from the response wrapper
 	var response struct {
-		Session telekomv1alpha1.BreakglassSession `json:"session"`
+		Session breakglassv1alpha1.BreakglassSession `json:"session"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to decode session response: %w", err)
@@ -459,9 +459,9 @@ func (c *APIClient) SendSAR(ctx context.Context, t *testing.T, clusterName strin
 }
 
 // WaitForSessionViaAPI waits for a session to reach a specific state using the API
-func (c *APIClient) WaitForSessionViaAPI(ctx context.Context, t *testing.T, name, namespace string, expectedState telekomv1alpha1.BreakglassSessionState, timeout time.Duration) (*telekomv1alpha1.BreakglassSession, error) {
+func (c *APIClient) WaitForSessionViaAPI(ctx context.Context, t *testing.T, name, namespace string, expectedState breakglassv1alpha1.BreakglassSessionState, timeout time.Duration) (*breakglassv1alpha1.BreakglassSession, error) {
 	deadline := time.Now().Add(timeout)
-	var lastSession *telekomv1alpha1.BreakglassSession
+	var lastSession *breakglassv1alpha1.BreakglassSession
 	var lastErr error
 	attempts := 0
 
@@ -511,7 +511,7 @@ func (c *APIClient) WaitForSessionViaAPI(ctx context.Context, t *testing.T, name
 }
 
 // CreateSessionAndWaitForPending creates a session and waits for it to reach Pending state
-func (c *APIClient) CreateSessionAndWaitForPending(ctx context.Context, t *testing.T, req SessionRequest, timeout time.Duration) (*telekomv1alpha1.BreakglassSession, error) {
+func (c *APIClient) CreateSessionAndWaitForPending(ctx context.Context, t *testing.T, req SessionRequest, timeout time.Duration) (*breakglassv1alpha1.BreakglassSession, error) {
 	session, err := c.CreateSession(ctx, t, req)
 	if err != nil {
 		return nil, err
@@ -519,7 +519,7 @@ func (c *APIClient) CreateSessionAndWaitForPending(ctx context.Context, t *testi
 
 	// Check if the returned session already has the expected state
 	// This avoids waiting for cache propagation if the server already returned the final state
-	if session.Status.State == telekomv1alpha1.SessionStatePending {
+	if session.Status.State == breakglassv1alpha1.SessionStatePending {
 		if t != nil {
 			t.Logf("CreateSessionAndWaitForPending: session %s already in Pending state from create response", session.Name)
 		}
@@ -530,11 +530,11 @@ func (c *APIClient) CreateSessionAndWaitForPending(ctx context.Context, t *testi
 	if t != nil {
 		t.Logf("CreateSessionAndWaitForPending: session %s has state %q, waiting for Pending", session.Name, session.Status.State)
 	}
-	return c.WaitForSessionViaAPI(ctx, t, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, timeout)
+	return c.WaitForSessionViaAPI(ctx, t, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, timeout)
 }
 
 // MustCreateSession creates a session and fails the test if it fails
-func (c *APIClient) MustCreateSession(t *testing.T, ctx context.Context, req SessionRequest) *telekomv1alpha1.BreakglassSession {
+func (c *APIClient) MustCreateSession(t *testing.T, ctx context.Context, req SessionRequest) *breakglassv1alpha1.BreakglassSession {
 	session, err := c.CreateSession(ctx, t, req)
 	require.NoError(t, err, "Failed to create session via API")
 	return session
@@ -597,7 +597,7 @@ type DebugSessionRequest struct {
 // the real session controller which sets proper status, sends notifications, etc.
 // If CleanupClient is set and a 409 conflict occurs, it will automatically delete
 // the conflicting session and retry.
-func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req DebugSessionRequest) (*telekomv1alpha1.DebugSession, error) {
+func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req DebugSessionRequest) (*breakglassv1alpha1.DebugSession, error) {
 	const maxRetries = 3
 	var lastErr error
 
@@ -639,7 +639,7 @@ func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req De
 }
 
 // doCreateDebugSession performs the actual debug session creation request
-func (c *APIClient) doCreateDebugSession(ctx context.Context, t *testing.T, req DebugSessionRequest) (*telekomv1alpha1.DebugSession, error) {
+func (c *APIClient) doCreateDebugSession(ctx context.Context, t *testing.T, req DebugSessionRequest) (*breakglassv1alpha1.DebugSession, error) {
 	cid := uuid.New().String()
 
 	if t != nil {
@@ -658,7 +658,7 @@ func (c *APIClient) doCreateDebugSession(ctx context.Context, t *testing.T, req 
 		return nil, fmt.Errorf("failed to create debug session (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
 	}
 
-	var session telekomv1alpha1.DebugSession
+	var session breakglassv1alpha1.DebugSession
 	if err := json.Unmarshal(body, &session); err != nil {
 		return nil, fmt.Errorf("failed to parse debug session response (cid=%s): %w (body: %s)", cid, err, string(body))
 	}
@@ -796,7 +796,7 @@ func (c *APIClient) TerminateDebugSession(ctx context.Context, t *testing.T, ses
 }
 
 // GetDebugSession retrieves a debug session via the REST API
-func (c *APIClient) GetDebugSession(ctx context.Context, name string) (*telekomv1alpha1.DebugSession, error) {
+func (c *APIClient) GetDebugSession(ctx context.Context, name string) (*breakglassv1alpha1.DebugSession, error) {
 	path := fmt.Sprintf("%s/%s", debugSessionsBasePath, name)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
@@ -811,7 +811,7 @@ func (c *APIClient) GetDebugSession(ctx context.Context, name string) (*telekomv
 		return nil, fmt.Errorf("failed to get debug session: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	var session telekomv1alpha1.DebugSession
+	var session breakglassv1alpha1.DebugSession
 	if err := json.Unmarshal(body, &session); err != nil {
 		return nil, fmt.Errorf("failed to parse debug session response: %w (body: %s)", err, string(body))
 	}
@@ -820,7 +820,7 @@ func (c *APIClient) GetDebugSession(ctx context.Context, name string) (*telekomv
 }
 
 // MustCreateDebugSession creates a debug session and fails the test if it fails
-func (c *APIClient) MustCreateDebugSession(t *testing.T, ctx context.Context, req DebugSessionRequest) *telekomv1alpha1.DebugSession {
+func (c *APIClient) MustCreateDebugSession(t *testing.T, ctx context.Context, req DebugSessionRequest) *breakglassv1alpha1.DebugSession {
 	session, err := c.CreateDebugSession(ctx, t, req)
 	require.NoError(t, err, "Failed to create debug session via API")
 	return session

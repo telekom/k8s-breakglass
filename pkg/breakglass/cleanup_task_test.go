@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,32 +37,32 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 	//     matches expectations (labels set or sessions remain present).
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
 
 	tests := []struct {
 		name              string
-		sessions          []telekomv1alpha1.BreakglassSession
+		sessions          []breakglassv1alpha1.BreakglassSession
 		expectedDeletions int
 		expectedLabels    int
 	}{
 		{
 			name:              "No sessions",
-			sessions:          []telekomv1alpha1.BreakglassSession{},
+			sessions:          []breakglassv1alpha1.BreakglassSession{},
 			expectedDeletions: 0,
 			expectedLabels:    0,
 		},
 		{
 			name: "One expired session",
-			sessions: []telekomv1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "expired-session",
 						Namespace: "default",
 					},
-					Status: telekomv1alpha1.BreakglassSessionStatus{
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 					},
 				},
@@ -72,13 +72,13 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 		},
 		{
 			name: "One valid session",
-			sessions: []telekomv1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "valid-session",
 						Namespace: "default",
 					},
-					Status: telekomv1alpha1.BreakglassSessionStatus{
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 					},
 				},
@@ -88,13 +88,13 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 		},
 		{
 			name: "Mixed sessions",
-			sessions: []telekomv1alpha1.BreakglassSession{
+			sessions: []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "expired-session-1",
 						Namespace: "default",
 					},
-					Status: telekomv1alpha1.BreakglassSessionStatus{
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						RetainedUntil: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
 					},
 				},
@@ -103,7 +103,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 						Name:      "valid-session",
 						Namespace: "default",
 					},
-					Status: telekomv1alpha1.BreakglassSessionStatus{
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 					},
 				},
@@ -112,7 +112,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 						Name:      "expired-session-2",
 						Namespace: "default",
 					},
-					Status: telekomv1alpha1.BreakglassSessionStatus{
+					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 					},
 				},
@@ -149,7 +149,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 
 			// Check that the correct number of sessions have the deletion label
 			// Note: We need to check before the DeleteAllOf operation removes them
-			sessionList := &telekomv1alpha1.BreakglassSessionList{}
+			sessionList := &breakglassv1alpha1.BreakglassSessionList{}
 			err := fakeClient.List(context.Background(), sessionList)
 			assert.NoError(t, err)
 
@@ -187,18 +187,18 @@ func TestCleanupRoutine_markCleanupExpiredSession_ErrorHandling(t *testing.T) {
 	//   the function completes.
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
 
 	// Test with an expired session
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "expired-session",
 			Namespace: "default",
 		},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 		},
 	}
@@ -221,7 +221,7 @@ func TestCleanupRoutine_markCleanupExpiredSession_ErrorHandling(t *testing.T) {
 	routine.markCleanupExpiredSession(context.Background())
 
 	// Verify the session was processed
-	sessionList := &telekomv1alpha1.BreakglassSessionList{}
+	sessionList := &breakglassv1alpha1.BreakglassSessionList{}
 	err = fakeClient.List(context.Background(), sessionList)
 	assert.NoError(t, err)
 	// Sessions might be deleted by the cleanup process, so we just verify it doesn't crash
@@ -273,18 +273,18 @@ func TestCleanupRoutine_WithNilRetainedUntil(t *testing.T) {
 	//     operation succeeds.
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
 
 	// Test with session that has nil RetainedUntil (should not crash)
-	session := telekomv1alpha1.BreakglassSession{
+	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "session-no-retained-until",
 			Namespace: "default",
 		},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			// RetainedUntil is not set (zero value)
 		},
 	}
@@ -307,7 +307,7 @@ func TestCleanupRoutine_WithNilRetainedUntil(t *testing.T) {
 	routine.markCleanupExpiredSession(context.Background())
 
 	// Verify the session was not marked for deletion (zero time should be before current time)
-	sessionList := &telekomv1alpha1.BreakglassSessionList{}
+	sessionList := &breakglassv1alpha1.BreakglassSessionList{}
 	err = fakeClient.List(context.Background(), sessionList)
 	assert.NoError(t, err)
 
@@ -337,19 +337,19 @@ func TestExpireApprovedSessions(t *testing.T) {
 	manager := &SessionManager{}
 	// create fake approved session with ExpiresAt in the past
 	past := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	ses := telekomv1alpha1.BreakglassSession{
+	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "approved-old"},
-		Status: telekomv1alpha1.BreakglassSessionStatus{
-			State:     telekomv1alpha1.SessionStateApproved,
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
 			ExpiresAt: past,
 		},
 	}
 	// initialize scheme and fake client storing the session
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).
-		WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 		Build()
 	manager.Client = fakeClient
 
@@ -363,7 +363,7 @@ func TestExpireApprovedSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error fetching session: %v", err)
 	}
-	if got.Status.State != telekomv1alpha1.SessionStateExpired {
+	if got.Status.State != breakglassv1alpha1.SessionStateExpired {
 		t.Fatalf("expected session to be expired, got state %v", got.Status.State)
 	}
 }
@@ -376,27 +376,27 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 	//   is sent to the session owner.
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	t.Run("sends email on expiration", func(t *testing.T) {
 		past := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 		startTime := metav1.NewTime(time.Now().Add(-3 * time.Hour))
-		ses := telekomv1alpha1.BreakglassSession{
+		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-with-email"},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:         "user@example.com",
 				GrantedGroup: "cluster-admin",
 				Cluster:      "production",
 			},
-			Status: telekomv1alpha1.BreakglassSessionStatus{
-				State:           telekomv1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:           breakglassv1alpha1.SessionStateApproved,
 				ExpiresAt:       past,
 				ActualStartTime: startTime,
 			},
 		}
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 			Build()
 
 		manager := &SessionManager{Client: fakeClient}
@@ -417,7 +417,7 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 		// Verify session expired
 		got, err := manager.GetBreakglassSessionByName(context.Background(), "session-with-email")
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateExpired, got.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, got.Status.State)
 
 		// Verify email was sent
 		messages := mockMail.GetMessages()
@@ -431,18 +431,18 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 
 	t.Run("does not send email when disabled", func(t *testing.T) {
 		past := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		ses := telekomv1alpha1.BreakglassSession{
+		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-no-email"},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User: "user@example.com",
 			},
-			Status: telekomv1alpha1.BreakglassSessionStatus{
-				State:     telekomv1alpha1.SessionStateApproved,
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
 				ExpiresAt: past,
 			},
 		}
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).
-			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 			Build()
 
 		manager := &SessionManager{Client: fakeClient}
@@ -464,7 +464,7 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 		// Verify session expired
 		got, err := manager.GetBreakglassSessionByName(context.Background(), "session-no-email")
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateExpired, got.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, got.Status.State)
 
 		// Verify no email was sent
 		messages := mockMail.GetMessages()
@@ -570,7 +570,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 	//   terminated sessions past their retention period.
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
@@ -578,7 +578,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 	t.Run("no debug sessions", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		manager := &SessionManager{Client: fakeClient}
@@ -590,16 +590,16 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 
 	t.Run("active session not expired", func(t *testing.T) {
 		futureTime := metav1.NewTime(time.Now().Add(1 * time.Hour))
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-not-expired",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "test-cluster",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				ExpiresAt: &futureTime,
 			},
 		}
@@ -607,7 +607,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ds).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		manager := &SessionManager{Client: fakeClient}
@@ -616,24 +616,24 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		routine.cleanupExpiredDebugSessions(context.Background())
 
 		// Session should still be active
-		var updated telekomv1alpha1.DebugSession
+		var updated breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "active-not-expired", Namespace: "default"}, &updated)
 		assert.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateActive, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
 	})
 
 	t.Run("active session expired", func(t *testing.T) {
 		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-expired",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "test-cluster",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				ExpiresAt: &pastTime,
 			},
 		}
@@ -641,7 +641,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ds).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		manager := &SessionManager{Client: fakeClient}
@@ -650,25 +650,25 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		routine.cleanupExpiredDebugSessions(context.Background())
 
 		// Session should be marked as expired
-		var updated telekomv1alpha1.DebugSession
+		var updated breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "active-expired", Namespace: "default"}, &updated)
 		assert.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateExpired, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, updated.Status.State)
 		assert.Contains(t, updated.Status.Message, "expired")
 	})
 
 	t.Run("terminated session within retention period", func(t *testing.T) {
 		recentTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "terminated-recent",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "test-cluster",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateTerminated,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateTerminated,
 				ExpiresAt: &recentTime,
 			},
 		}
@@ -676,7 +676,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ds).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		manager := &SessionManager{Client: fakeClient}
@@ -685,27 +685,27 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		routine.cleanupExpiredDebugSessions(context.Background())
 
 		// Session should still exist (within retention period)
-		var updated telekomv1alpha1.DebugSession
+		var updated breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "terminated-recent", Namespace: "default"}, &updated)
 		assert.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updated.Status.State)
 	})
 
 	t.Run("pending approval session times out", func(t *testing.T) {
 		// Create a session created more than 24 hours ago
 		oldCreationTime := time.Now().Add(-25 * time.Hour)
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "pending-approval-old",
 				Namespace:         "default",
 				CreationTimestamp: metav1.NewTime(oldCreationTime),
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "test-cluster",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State: telekomv1alpha1.DebugSessionStatePendingApproval,
-				Approval: &telekomv1alpha1.DebugSessionApproval{
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+				Approval: &breakglassv1alpha1.DebugSessionApproval{
 					Required: true,
 				},
 			},
@@ -714,7 +714,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ds).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		manager := &SessionManager{Client: fakeClient}
@@ -723,10 +723,10 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		routine.cleanupExpiredDebugSessions(context.Background())
 
 		// Session should be marked as failed due to timeout
-		var updated telekomv1alpha1.DebugSession
+		var updated breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "pending-approval-old", Namespace: "default"}, &updated)
 		assert.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
 		assert.Contains(t, updated.Status.Message, "timed out")
 	})
 
@@ -735,18 +735,18 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		// to the session owner
 		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 		startTime := metav1.NewTime(time.Now().Add(-2 * time.Hour))
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-expired-email",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:           "test-cluster",
 				RequestedBy:       "developer@example.com",
 				RequestedDuration: "1h",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				ExpiresAt: &pastTime,
 				StartsAt:  &startTime,
 			},
@@ -755,7 +755,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ds).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		mockMail := NewMockMailEnqueuer(true)
@@ -770,10 +770,10 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		routine.cleanupExpiredDebugSessions(context.Background())
 
 		// Session should be marked as expired
-		var updated telekomv1alpha1.DebugSession
+		var updated breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "active-expired-email", Namespace: "default"}, &updated)
 		assert.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateExpired, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, updated.Status.State)
 
 		// Verify email was sent
 		messages := mockMail.GetMessages()
@@ -789,17 +789,17 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 	t.Run("active session expired with email disabled does not send email", func(t *testing.T) {
 		// Verify no email is sent when DisableEmail is true
 		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-expired-no-email",
 				Namespace: "default",
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster:     "test-cluster",
 				RequestedBy: "developer@example.com",
 			},
-			Status: telekomv1alpha1.DebugSessionStatus{
-				State:     telekomv1alpha1.DebugSessionStateActive,
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
 				ExpiresAt: &pastTime,
 			},
 		}
@@ -807,7 +807,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ds).
-			WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		mockMail := NewMockMailEnqueuer(true)
@@ -823,10 +823,10 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		routine.cleanupExpiredDebugSessions(context.Background())
 
 		// Session should be marked as expired
-		var updated telekomv1alpha1.DebugSession
+		var updated breakglassv1alpha1.DebugSession
 		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "active-expired-no-email", Namespace: "default"}, &updated)
 		assert.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.DebugSessionStateExpired, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, updated.Status.State)
 
 		// Verify no email was sent
 		messages := mockMail.GetMessages()
@@ -842,7 +842,7 @@ func TestCleanupRoutine_clean(t *testing.T) {
 	//   without panicking when manager is properly configured.
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
@@ -850,8 +850,8 @@ func TestCleanupRoutine_clean(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(
-			&telekomv1alpha1.BreakglassSession{},
-			&telekomv1alpha1.DebugSession{},
+			&breakglassv1alpha1.BreakglassSession{},
+			&breakglassv1alpha1.DebugSession{},
 		).
 		Build()
 
@@ -875,7 +875,7 @@ func TestCleanupInterval(t *testing.T) {
 // TestCleanupRoutine_CleanupRoutine tests the main CleanupRoutine method
 func TestCleanupRoutine_CleanupRoutine(t *testing.T) {
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
@@ -884,8 +884,8 @@ func TestCleanupRoutine_CleanupRoutine(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithStatusSubresource(
-				&telekomv1alpha1.BreakglassSession{},
-				&telekomv1alpha1.DebugSession{},
+				&breakglassv1alpha1.BreakglassSession{},
+				&breakglassv1alpha1.DebugSession{},
 			).
 			Build()
 
@@ -920,8 +920,8 @@ func TestCleanupRoutine_CleanupRoutine(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithStatusSubresource(
-				&telekomv1alpha1.BreakglassSession{},
-				&telekomv1alpha1.DebugSession{},
+				&breakglassv1alpha1.BreakglassSession{},
+				&breakglassv1alpha1.DebugSession{},
 			).
 			Build()
 
@@ -964,8 +964,8 @@ func TestCleanupRoutine_CleanupRoutine(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithStatusSubresource(
-				&telekomv1alpha1.BreakglassSession{},
-				&telekomv1alpha1.DebugSession{},
+				&breakglassv1alpha1.BreakglassSession{},
+				&breakglassv1alpha1.DebugSession{},
 			).
 			Build()
 
@@ -1003,13 +1003,13 @@ func TestCleanupRoutine_CleanupRoutine(t *testing.T) {
 func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 	tests := []struct {
 		name     string
-		session  telekomv1alpha1.DebugSession
+		session  breakglassv1alpha1.DebugSession
 		expected []string
 	}{
 		{
 			name: "only RequestedBy",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "user@example.com",
 				},
 			},
@@ -1017,8 +1017,8 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 		},
 		{
 			name: "RequestedByEmail overrides RequestedBy",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy:      "user@example.com",
 					RequestedByEmail: "email@example.com",
 				},
@@ -1027,11 +1027,11 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 		},
 		{
 			name: "no notification config returns base",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "user@example.com",
 				},
-				Status: telekomv1alpha1.DebugSessionStatus{
+				Status: breakglassv1alpha1.DebugSessionStatus{
 					ResolvedTemplate: nil,
 				},
 			},
@@ -1039,13 +1039,13 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 		},
 		{
 			name: "additional recipients are added",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "user@example.com",
 				},
-				Status: telekomv1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
 							AdditionalRecipients: []string{"admin@example.com", "ops@example.com"},
 						},
 					},
@@ -1055,13 +1055,13 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 		},
 		{
 			name: "deduplicates additional recipients",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "user@example.com",
 				},
-				Status: telekomv1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
 							AdditionalRecipients: []string{"user@example.com", "admin@example.com"},
 						},
 					},
@@ -1071,15 +1071,15 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 		},
 		{
 			name: "excludes recipients in exclusion list",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "user@example.com",
 				},
-				Status: telekomv1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
 							AdditionalRecipients: []string{"admin@example.com", "ops@example.com"},
-							ExcludedRecipients: &telekomv1alpha1.NotificationExclusions{
+							ExcludedRecipients: &breakglassv1alpha1.NotificationExclusions{
 								Users: []string{"ops@example.com"},
 							},
 						},
@@ -1090,15 +1090,15 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 		},
 		{
 			name: "excludes base requester if in exclusion list",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "user@example.com",
 				},
-				Status: telekomv1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
 							AdditionalRecipients: []string{"admin@example.com"},
-							ExcludedRecipients: &telekomv1alpha1.NotificationExclusions{
+							ExcludedRecipients: &breakglassv1alpha1.NotificationExclusions{
 								Users: []string{"user@example.com"},
 							},
 						},
@@ -1109,15 +1109,15 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 		},
 		{
 			name: "empty exclusion list does nothing",
-			session: telekomv1alpha1.DebugSession{
-				Spec: telekomv1alpha1.DebugSessionSpec{
+			session: breakglassv1alpha1.DebugSession{
+				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "user@example.com",
 				},
-				Status: telekomv1alpha1.DebugSessionStatus{
-					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
-						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
 							AdditionalRecipients: []string{"admin@example.com"},
-							ExcludedRecipients: &telekomv1alpha1.NotificationExclusions{
+							ExcludedRecipients: &breakglassv1alpha1.NotificationExclusions{
 								Users: []string{},
 							},
 						},

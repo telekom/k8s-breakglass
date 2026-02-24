@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -47,27 +47,27 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 	t.Run("CreatePolicyWithNamespaceExemption", func(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-exempt-ns"), "").
 			WithLabels(helpers.E2ELabelsWithFeature("exemptions")).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 					HostNetwork:         80,
 					HostPID:             70,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 100, Action: "deny", Reason: "Pod risk score {{.Score}} exceeds threshold"},
 				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
 					// Exempt kube-system and monitoring namespaces from security evaluation
-					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring", "logging"}},
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring", "logging"}},
 				},
 			}).
-			WithRule(telekomv1alpha1.DenyRule{
+			WithRule(breakglassv1alpha1.DenyRule{
 				APIGroups:    []string{""},
 				Resources:    []string{"pods"},
 				Subresources: []string{"exec"},
 				Verbs:        []string{"create"},
-				Namespaces:   &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+				Namespaces:   &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 			}).
 			Build()
 		cleanup.Add(policy)
@@ -75,7 +75,7 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 		require.NoError(t, err, "Failed to create DenyPolicy with namespace exemptions")
 
 		// Verify policy was created with exemptions
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
@@ -101,28 +101,28 @@ func TestDenyPolicyExemptionByPodLabels(t *testing.T) {
 	t.Run("CreatePolicyWithPodLabelExemption", func(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-exempt-labels"), "").
 			WithLabels(helpers.E2ELabelsWithFeature("exemptions")).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 					HostNetwork:         80,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 100, Action: "deny", Reason: "Pod risk score {{.Score}} exceeds threshold"},
 				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+				Exemptions: &breakglassv1alpha1.PodSecurityExemptions{
 					// Exempt pods with specific security exemption label
 					PodLabels: map[string]string{
 						"breakglass.t-caas.telekom.com/security-exempt": "true",
 					},
 				},
 			}).
-			WithRule(telekomv1alpha1.DenyRule{
+			WithRule(breakglassv1alpha1.DenyRule{
 				APIGroups:    []string{""},
 				Resources:    []string{"pods"},
 				Subresources: []string{"exec"},
 				Verbs:        []string{"create"},
-				Namespaces:   &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+				Namespaces:   &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 			}).
 			Build()
 		cleanup.Add(policy)
@@ -130,7 +130,7 @@ func TestDenyPolicyExemptionByPodLabels(t *testing.T) {
 		require.NoError(t, err, "Failed to create DenyPolicy with pod label exemptions")
 
 		// Verify policy was created with label exemptions
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
@@ -161,7 +161,7 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create cluster-scoped policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -174,7 +174,7 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 		// No AppliesTo = global policy
 		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-global"), "").
 			WithLabels(helpers.E2ELabelsWithFeature("scoping")).
-			WithRule(telekomv1alpha1.DenyRule{
+			WithRule(breakglassv1alpha1.DenyRule{
 				APIGroups:     []string{""},
 				Resources:     []string{"nodes"},
 				Verbs:         []string{"delete"},
@@ -186,7 +186,7 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create global policy")
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		assert.Nil(t, fetched.Spec.AppliesTo, "Global policy should have no AppliesTo scope")
@@ -215,7 +215,7 @@ func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.Precedence)
@@ -233,7 +233,7 @@ func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		// Precedence might be nil or default to 100
@@ -254,7 +254,7 @@ func TestDenyPolicyBlockFactors(t *testing.T) {
 	t.Run("PolicyWithBlockFactors", func(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-block-factors"), "").
 			WithLabels(helpers.E2ELabelsWithFeature("block-factors")).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
 				// Block factors cause immediate denial regardless of risk score
 				BlockFactors: []string{
 					"hostNetwork",
@@ -262,11 +262,11 @@ func TestDenyPolicyBlockFactors(t *testing.T) {
 					"hostIPC",
 					"privilegedContainer",
 				},
-				RiskFactors: telekomv1alpha1.RiskFactors{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostPathWritable: 50,
 					RunAsRoot:        30,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "allow"},
 					{MaxScore: 100, Action: "deny"},
 				},
@@ -276,7 +276,7 @@ func TestDenyPolicyBlockFactors(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
@@ -301,8 +301,8 @@ func TestDenyPolicyCapabilityRiskFactors(t *testing.T) {
 	t.Run("PolicyWithCapabilityRiskFactors", func(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-capability-risk"), "").
 			WithLabels(helpers.E2ELabelsWithFeature("capabilities")).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					PrivilegedContainer: 100,
 					// Map specific Linux capabilities to risk scores
 					Capabilities: map[string]int{
@@ -313,7 +313,7 @@ func TestDenyPolicyCapabilityRiskFactors(t *testing.T) {
 						"DAC_OVERRIDE": 30, // Bypass file permissions
 					},
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 30, Action: "allow"},
 					{MaxScore: 60, Action: "warn", Reason: "Elevated capabilities detected: {{.Score}}"},
 					{MaxScore: 100, Action: "deny", Reason: "Dangerous capabilities: {{.Score}}"},
@@ -324,7 +324,7 @@ func TestDenyPolicyCapabilityRiskFactors(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.RiskFactors.Capabilities)
@@ -355,7 +355,7 @@ func TestDenyPolicyScopeBySession(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -373,7 +373,7 @@ func TestDenyPolicyScopeBySession(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)
@@ -433,12 +433,12 @@ func TestDenyPolicyCombinedScoping(t *testing.T) {
 			WithLabels(helpers.E2ELabelsWithFeature("combined-scoping")).
 			AppliesToClusters("production", "staging").
 			AppliesToTenants("critical-apps").
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
 				BlockFactors: []string{"privilegedContainer", "hostNetwork"},
-				RiskFactors: telekomv1alpha1.RiskFactors{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostPathWritable: 100,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{MaxScore: 50, Action: "warn"},
 					{MaxScore: 100, Action: "deny", Reason: "High-risk pod access in critical environment"},
 				},
@@ -448,7 +448,7 @@ func TestDenyPolicyCombinedScoping(t *testing.T) {
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.AppliesTo)

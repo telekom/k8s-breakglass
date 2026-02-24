@@ -21,7 +21,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 // EscalationBuilder provides a fluent API for building BreakglassEscalation resources.
@@ -53,10 +53,10 @@ type EscalationBuilder struct {
 	blockSelfApproval           *bool
 	retainFor                   string
 	clusterConfigRefs           []string
-	requestReason               *telekomv1alpha1.ReasonConfig
-	approvalReason              *telekomv1alpha1.ReasonConfig
+	requestReason               *breakglassv1alpha1.ReasonConfig
+	approvalReason              *breakglassv1alpha1.ReasonConfig
 	disableNotifications        *bool
-	podSecurityOverrides        *telekomv1alpha1.PodSecurityOverrides
+	podSecurityOverrides        *breakglassv1alpha1.PodSecurityOverrides
 	allowedIDPsForRequests      []string
 	allowedIDPsForApprovers     []string
 	notificationExclusionUsers  []string
@@ -202,7 +202,7 @@ func (b *EscalationBuilder) WithApproverDomains(domains ...string) *EscalationBu
 
 // WithRequestReason sets the request reason configuration
 func (b *EscalationBuilder) WithRequestReason(mandatory bool, description string) *EscalationBuilder {
-	b.requestReason = &telekomv1alpha1.ReasonConfig{
+	b.requestReason = &breakglassv1alpha1.ReasonConfig{
 		Mandatory:   mandatory,
 		Description: description,
 	}
@@ -211,7 +211,7 @@ func (b *EscalationBuilder) WithRequestReason(mandatory bool, description string
 
 // WithApprovalReason sets the approval reason configuration
 func (b *EscalationBuilder) WithApprovalReason(mandatory bool, description string) *EscalationBuilder {
-	b.approvalReason = &telekomv1alpha1.ReasonConfig{
+	b.approvalReason = &breakglassv1alpha1.ReasonConfig{
 		Mandatory:   mandatory,
 		Description: description,
 	}
@@ -237,7 +237,7 @@ func (b *EscalationBuilder) WithNotificationExclusionGroups(groups ...string) *E
 }
 
 // WithPodSecurityOverrides sets pod security overrides for the escalation
-func (b *EscalationBuilder) WithPodSecurityOverrides(overrides *telekomv1alpha1.PodSecurityOverrides) *EscalationBuilder {
+func (b *EscalationBuilder) WithPodSecurityOverrides(overrides *breakglassv1alpha1.PodSecurityOverrides) *EscalationBuilder {
 	b.podSecurityOverrides = overrides
 	return b
 }
@@ -252,7 +252,7 @@ func (b *EscalationBuilder) WithShortDurations() *EscalationBuilder {
 // Build constructs the BreakglassEscalation resource.
 // If allowedGroups is not set, it defaults to TestUsers.Requester.Groups.
 // If approverUsers is not set, it defaults to TestUsers.Approver.Email.
-func (b *EscalationBuilder) Build() *telekomv1alpha1.BreakglassEscalation {
+func (b *EscalationBuilder) Build() *breakglassv1alpha1.BreakglassEscalation {
 	// Apply defaults
 	allowedGroups := b.allowedGroups
 	if len(allowedGroups) == 0 {
@@ -269,21 +269,21 @@ func (b *EscalationBuilder) Build() *telekomv1alpha1.BreakglassEscalation {
 	hiddenFromUI = append(hiddenFromUI, b.hiddenApproverUsers...)
 	hiddenFromUI = append(hiddenFromUI, b.hiddenApproverGroups...)
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
 			Namespace: b.namespace,
 			Labels:    b.labels,
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup:  b.escalatedGroup,
 			MaxValidFor:     b.maxValidFor,
 			ApprovalTimeout: b.approvalTimeout,
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: b.allowedClusters,
 				Groups:   allowedGroups,
 			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				Users:        approverUsers,
 				Groups:       b.approverGroups,
 				HiddenFromUI: hiddenFromUI,
@@ -329,7 +329,7 @@ func (b *EscalationBuilder) Build() *telekomv1alpha1.BreakglassEscalation {
 		escalation.Spec.AllowedIdentityProvidersForApprovers = b.allowedIDPsForApprovers
 	}
 	if len(b.notificationExclusionUsers) > 0 || len(b.notificationExclusionGroups) > 0 {
-		escalation.Spec.NotificationExclusions = &telekomv1alpha1.NotificationExclusions{
+		escalation.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{
 			Users:  b.notificationExclusionUsers,
 			Groups: b.notificationExclusionGroups,
 		}
@@ -343,10 +343,10 @@ type DenyPolicyBuilder struct {
 	name             string
 	namespace        string
 	labels           map[string]string
-	rules            []telekomv1alpha1.DenyRule
+	rules            []breakglassv1alpha1.DenyRule
 	precedence       *int32
-	appliesTo        *telekomv1alpha1.DenyPolicyScope
-	podSecurityRules *telekomv1alpha1.PodSecurityRules
+	appliesTo        *breakglassv1alpha1.DenyPolicyScope
+	podSecurityRules *breakglassv1alpha1.PodSecurityRules
 }
 
 // NewDenyPolicyBuilder creates a new DenyPolicyBuilder with E2E test labels
@@ -355,7 +355,7 @@ func NewDenyPolicyBuilder(name, namespace string) *DenyPolicyBuilder {
 		name:      name,
 		namespace: namespace,
 		labels:    E2ETestLabels(),
-		rules:     []telekomv1alpha1.DenyRule{},
+		rules:     []breakglassv1alpha1.DenyRule{},
 	}
 }
 
@@ -374,7 +374,7 @@ func (b *DenyPolicyBuilder) WithPrecedence(precedence int32) *DenyPolicyBuilder 
 // AppliesToClusters sets the clusters this policy applies to.
 func (b *DenyPolicyBuilder) AppliesToClusters(clusters ...string) *DenyPolicyBuilder {
 	if b.appliesTo == nil {
-		b.appliesTo = &telekomv1alpha1.DenyPolicyScope{}
+		b.appliesTo = &breakglassv1alpha1.DenyPolicyScope{}
 	}
 	b.appliesTo.Clusters = clusters
 	return b
@@ -383,7 +383,7 @@ func (b *DenyPolicyBuilder) AppliesToClusters(clusters ...string) *DenyPolicyBui
 // AppliesToTenants sets the tenants this policy applies to.
 func (b *DenyPolicyBuilder) AppliesToTenants(tenants ...string) *DenyPolicyBuilder {
 	if b.appliesTo == nil {
-		b.appliesTo = &telekomv1alpha1.DenyPolicyScope{}
+		b.appliesTo = &breakglassv1alpha1.DenyPolicyScope{}
 	}
 	b.appliesTo.Tenants = tenants
 	return b
@@ -392,27 +392,27 @@ func (b *DenyPolicyBuilder) AppliesToTenants(tenants ...string) *DenyPolicyBuild
 // AppliesToSessions sets the sessions this policy applies to.
 func (b *DenyPolicyBuilder) AppliesToSessions(sessions ...string) *DenyPolicyBuilder {
 	if b.appliesTo == nil {
-		b.appliesTo = &telekomv1alpha1.DenyPolicyScope{}
+		b.appliesTo = &breakglassv1alpha1.DenyPolicyScope{}
 	}
 	b.appliesTo.Sessions = sessions
 	return b
 }
 
 // WithRule adds a deny rule
-func (b *DenyPolicyBuilder) WithRule(rule telekomv1alpha1.DenyRule) *DenyPolicyBuilder {
+func (b *DenyPolicyBuilder) WithRule(rule breakglassv1alpha1.DenyRule) *DenyPolicyBuilder {
 	b.rules = append(b.rules, rule)
 	return b
 }
 
 // DenySecrets adds a rule to deny access to secrets in specified namespaces
 func (b *DenyPolicyBuilder) DenySecrets(namespaces ...string) *DenyPolicyBuilder {
-	rule := telekomv1alpha1.DenyRule{
+	rule := breakglassv1alpha1.DenyRule{
 		Verbs:     []string{"get", "list", "watch", "create", "update", "delete"},
 		APIGroups: []string{""},
 		Resources: []string{"secrets"},
 	}
 	if len(namespaces) > 0 {
-		rule.Namespaces = &telekomv1alpha1.NamespaceFilter{
+		rule.Namespaces = &breakglassv1alpha1.NamespaceFilter{
 			Patterns: namespaces,
 		}
 	}
@@ -421,13 +421,13 @@ func (b *DenyPolicyBuilder) DenySecrets(namespaces ...string) *DenyPolicyBuilder
 
 // DenyPodsExec adds a rule to deny exec on pods
 func (b *DenyPolicyBuilder) DenyPodsExec(namespaces ...string) *DenyPolicyBuilder {
-	rule := telekomv1alpha1.DenyRule{
+	rule := breakglassv1alpha1.DenyRule{
 		Verbs:     []string{"create"},
 		APIGroups: []string{""},
 		Resources: []string{"pods/exec"},
 	}
 	if len(namespaces) > 0 {
-		rule.Namespaces = &telekomv1alpha1.NamespaceFilter{
+		rule.Namespaces = &breakglassv1alpha1.NamespaceFilter{
 			Patterns: namespaces,
 		}
 	}
@@ -436,13 +436,13 @@ func (b *DenyPolicyBuilder) DenyPodsExec(namespaces ...string) *DenyPolicyBuilde
 
 // DenyAll adds a rule to deny all operations on specified resources
 func (b *DenyPolicyBuilder) DenyAll(apiGroups, resources []string, namespaces ...string) *DenyPolicyBuilder {
-	rule := telekomv1alpha1.DenyRule{
+	rule := breakglassv1alpha1.DenyRule{
 		Verbs:     []string{"*"},
 		APIGroups: apiGroups,
 		Resources: resources,
 	}
 	if len(namespaces) > 0 {
-		rule.Namespaces = &telekomv1alpha1.NamespaceFilter{
+		rule.Namespaces = &breakglassv1alpha1.NamespaceFilter{
 			Patterns: namespaces,
 		}
 	}
@@ -451,13 +451,13 @@ func (b *DenyPolicyBuilder) DenyAll(apiGroups, resources []string, namespaces ..
 
 // DenyPods adds a rule to deny specified verbs on pods
 func (b *DenyPolicyBuilder) DenyPods(verbs []string, namespaces ...string) *DenyPolicyBuilder {
-	rule := telekomv1alpha1.DenyRule{
+	rule := breakglassv1alpha1.DenyRule{
 		Verbs:     verbs,
 		APIGroups: []string{""},
 		Resources: []string{"pods"},
 	}
 	if len(namespaces) > 0 {
-		rule.Namespaces = &telekomv1alpha1.NamespaceFilter{
+		rule.Namespaces = &breakglassv1alpha1.NamespaceFilter{
 			Patterns: namespaces,
 		}
 	}
@@ -466,13 +466,13 @@ func (b *DenyPolicyBuilder) DenyPods(verbs []string, namespaces ...string) *Deny
 
 // DenyResource adds a rule to deny specified verbs on a resource
 func (b *DenyPolicyBuilder) DenyResource(apiGroup, resource string, verbs []string, namespaces ...string) *DenyPolicyBuilder {
-	rule := telekomv1alpha1.DenyRule{
+	rule := breakglassv1alpha1.DenyRule{
 		Verbs:     verbs,
 		APIGroups: []string{apiGroup},
 		Resources: []string{resource},
 	}
 	if len(namespaces) > 0 {
-		rule.Namespaces = &telekomv1alpha1.NamespaceFilter{
+		rule.Namespaces = &breakglassv1alpha1.NamespaceFilter{
 			Patterns: namespaces,
 		}
 	}
@@ -480,20 +480,20 @@ func (b *DenyPolicyBuilder) DenyResource(apiGroup, resource string, verbs []stri
 }
 
 // WithPodSecurityRules sets pod security rules for the policy
-func (b *DenyPolicyBuilder) WithPodSecurityRules(rules *telekomv1alpha1.PodSecurityRules) *DenyPolicyBuilder {
+func (b *DenyPolicyBuilder) WithPodSecurityRules(rules *breakglassv1alpha1.PodSecurityRules) *DenyPolicyBuilder {
 	b.podSecurityRules = rules
 	return b
 }
 
 // Build constructs the DenyPolicy resource
-func (b *DenyPolicyBuilder) Build() *telekomv1alpha1.DenyPolicy {
-	policy := &telekomv1alpha1.DenyPolicy{
+func (b *DenyPolicyBuilder) Build() *breakglassv1alpha1.DenyPolicy {
+	policy := &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
 			Namespace: b.namespace,
 			Labels:    b.labels,
 		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
+		Spec: breakglassv1alpha1.DenyPolicySpec{
 			Rules: b.rules,
 		},
 	}
@@ -597,14 +597,14 @@ func (b *SessionBuilder) WithLabels(labels map[string]string) *SessionBuilder {
 }
 
 // Build constructs the BreakglassSession resource.
-func (b *SessionBuilder) Build() *telekomv1alpha1.BreakglassSession {
-	session := &telekomv1alpha1.BreakglassSession{
+func (b *SessionBuilder) Build() *breakglassv1alpha1.BreakglassSession {
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
 			Namespace: b.namespace,
 			Labels:    b.labels,
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      b.cluster,
 			User:         b.user,
 			GrantedGroup: b.grantedGroup,
@@ -643,13 +643,13 @@ type ClusterConfigBuilder struct {
 	location                 string
 	qps                      *int32
 	burst                    *int32
-	kubeconfigSecretRef      *telekomv1alpha1.SecretKeyReference
+	kubeconfigSecretRef      *breakglassv1alpha1.SecretKeyReference
 	blockSelfApproval        bool
 	identityProviderRefs     []string
 	labels                   map[string]string
-	authType                 telekomv1alpha1.ClusterAuthType
-	oidcAuth                 *telekomv1alpha1.OIDCAuthConfig
-	oidcFromIdentityProvider *telekomv1alpha1.OIDCFromIdentityProviderConfig
+	authType                 breakglassv1alpha1.ClusterAuthType
+	oidcAuth                 *breakglassv1alpha1.OIDCAuthConfig
+	oidcFromIdentityProvider *breakglassv1alpha1.OIDCFromIdentityProviderConfig
 }
 
 // NewClusterConfigBuilder creates a new ClusterConfigBuilder with sensible defaults.
@@ -707,7 +707,7 @@ func (b *ClusterConfigBuilder) WithBurst(burst int32) *ClusterConfigBuilder {
 // The namespace defaults to the ClusterConfig's namespace if not provided.
 // If secretKey is empty, the default key ("value") will be used by the controller.
 func (b *ClusterConfigBuilder) WithKubeconfigSecret(secretName, secretKey string) *ClusterConfigBuilder {
-	b.kubeconfigSecretRef = &telekomv1alpha1.SecretKeyReference{
+	b.kubeconfigSecretRef = &breakglassv1alpha1.SecretKeyReference{
 		Name:      secretName,
 		Namespace: b.namespace,
 	}
@@ -720,7 +720,7 @@ func (b *ClusterConfigBuilder) WithKubeconfigSecret(secretName, secretKey string
 // WithKubeconfigSecretInNamespace sets the kubeconfig secret reference with an explicit namespace.
 // If secretKey is empty, the default key ("value") will be used by the controller.
 func (b *ClusterConfigBuilder) WithKubeconfigSecretInNamespace(secretName, secretNamespace, secretKey string) *ClusterConfigBuilder {
-	b.kubeconfigSecretRef = &telekomv1alpha1.SecretKeyReference{
+	b.kubeconfigSecretRef = &breakglassv1alpha1.SecretKeyReference{
 		Name:      secretName,
 		Namespace: secretNamespace,
 	}
@@ -749,7 +749,7 @@ func (b *ClusterConfigBuilder) WithLabels(labels map[string]string) *ClusterConf
 }
 
 // WithAuthType sets the authentication type (Kubeconfig or OIDC).
-func (b *ClusterConfigBuilder) WithAuthType(authType telekomv1alpha1.ClusterAuthType) *ClusterConfigBuilder {
+func (b *ClusterConfigBuilder) WithAuthType(authType breakglassv1alpha1.ClusterAuthType) *ClusterConfigBuilder {
 	b.authType = authType
 	return b
 }
@@ -757,8 +757,8 @@ func (b *ClusterConfigBuilder) WithAuthType(authType telekomv1alpha1.ClusterAuth
 // WithOIDCAuth sets OIDC authentication configuration.
 // This also sets AuthType to OIDC automatically.
 func (b *ClusterConfigBuilder) WithOIDCAuth(issuerURL, clientID, server string) *ClusterConfigBuilder {
-	b.authType = telekomv1alpha1.ClusterAuthTypeOIDC
-	b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{
+	b.authType = breakglassv1alpha1.ClusterAuthTypeOIDC
+	b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: issuerURL,
 		ClientID:  clientID,
 		Server:    server,
@@ -770,9 +770,9 @@ func (b *ClusterConfigBuilder) WithOIDCAuth(issuerURL, clientID, server string) 
 // Must be called after WithOIDCAuth.
 func (b *ClusterConfigBuilder) WithOIDCClientSecret(secretName, secretNamespace, secretKey string) *ClusterConfigBuilder {
 	if b.oidcAuth == nil {
-		b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{}
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
 	}
-	b.oidcAuth.ClientSecretRef = &telekomv1alpha1.SecretKeyReference{
+	b.oidcAuth.ClientSecretRef = &breakglassv1alpha1.SecretKeyReference{
 		Name:      secretName,
 		Namespace: secretNamespace,
 		Key:       secretKey,
@@ -784,7 +784,7 @@ func (b *ClusterConfigBuilder) WithOIDCClientSecret(secretName, secretNamespace,
 // The certificate should be PEM encoded.
 func (b *ClusterConfigBuilder) WithOIDCCertificateAuthority(caPEM string) *ClusterConfigBuilder {
 	if b.oidcAuth == nil {
-		b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{}
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
 	}
 	b.oidcAuth.CertificateAuthority = caPEM
 	return b
@@ -794,7 +794,7 @@ func (b *ClusterConfigBuilder) WithOIDCCertificateAuthority(caPEM string) *Clust
 // Use this when the cluster has a self-signed certificate and no CA is provided.
 func (b *ClusterConfigBuilder) WithOIDCAllowTOFU(allow bool) *ClusterConfigBuilder {
 	if b.oidcAuth == nil {
-		b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{}
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
 	}
 	b.oidcAuth.AllowTOFU = allow
 	return b
@@ -803,7 +803,7 @@ func (b *ClusterConfigBuilder) WithOIDCAllowTOFU(allow bool) *ClusterConfigBuild
 // WithOIDCInsecureSkipTLSVerify sets insecure TLS verification for OIDC (for testing only).
 func (b *ClusterConfigBuilder) WithOIDCInsecureSkipTLSVerify(skip bool) *ClusterConfigBuilder {
 	if b.oidcAuth == nil {
-		b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{}
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
 	}
 	b.oidcAuth.InsecureSkipTLSVerify = skip
 	return b
@@ -812,7 +812,7 @@ func (b *ClusterConfigBuilder) WithOIDCInsecureSkipTLSVerify(skip bool) *Cluster
 // WithOIDCScopes sets additional OIDC scopes to request.
 func (b *ClusterConfigBuilder) WithOIDCScopes(scopes ...string) *ClusterConfigBuilder {
 	if b.oidcAuth == nil {
-		b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{}
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
 	}
 	b.oidcAuth.Scopes = scopes
 	return b
@@ -821,7 +821,7 @@ func (b *ClusterConfigBuilder) WithOIDCScopes(scopes ...string) *ClusterConfigBu
 // WithOIDCAudience sets the OIDC audience for token requests.
 func (b *ClusterConfigBuilder) WithOIDCAudience(audience string) *ClusterConfigBuilder {
 	if b.oidcAuth == nil {
-		b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{}
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
 	}
 	b.oidcAuth.Audience = audience
 	return b
@@ -830,8 +830,8 @@ func (b *ClusterConfigBuilder) WithOIDCAudience(audience string) *ClusterConfigB
 // WithOIDCFromIdentityProvider configures OIDC settings inherited from an IdentityProvider.
 // This also sets AuthType to OIDC automatically.
 func (b *ClusterConfigBuilder) WithOIDCFromIdentityProvider(idpName, server string) *ClusterConfigBuilder {
-	b.authType = telekomv1alpha1.ClusterAuthTypeOIDC
-	b.oidcFromIdentityProvider = &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+	b.authType = breakglassv1alpha1.ClusterAuthTypeOIDC
+	b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 		Name:   idpName,
 		Server: server,
 	}
@@ -839,14 +839,14 @@ func (b *ClusterConfigBuilder) WithOIDCFromIdentityProvider(idpName, server stri
 }
 
 // Build constructs the ClusterConfig resource.
-func (b *ClusterConfigBuilder) Build() *telekomv1alpha1.ClusterConfig {
-	config := &telekomv1alpha1.ClusterConfig{
+func (b *ClusterConfigBuilder) Build() *breakglassv1alpha1.ClusterConfig {
+	config := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
 			Namespace: b.namespace,
 			Labels:    b.labels,
 		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			BlockSelfApproval: b.blockSelfApproval,
 		},
 	}

@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -55,7 +55,7 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 		t.Logf("Step 1: Created escalation %s", escalation.Name)
 
 		// Verify escalation was created and has proper status
-		var createdEsc telekomv1alpha1.BreakglassEscalation
+		var createdEsc breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &createdEsc)
 		require.NoError(t, err)
 		assert.Equal(t, escalation.Spec.EscalatedGroup, createdEsc.Spec.EscalatedGroup)
@@ -81,13 +81,13 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for session to be approved
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify session is now approved
-		var approvedSession telekomv1alpha1.BreakglassSession
+		var approvedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &approvedSession)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateApproved, approvedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, approvedSession.Status.State)
 		assert.NotEmpty(t, approvedSession.Status.Approver)
 		t.Logf("Step 3 verified: Session state is %s, approved by %s",
 			approvedSession.Status.State, approvedSession.Status.Approver)
@@ -105,20 +105,20 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 		// Step 5: Expire the session (simulate time passage by updating status directly)
 		// Note: This is testing the controller's ability to handle expired sessions,
 		// not a user-facing operation
-		var sessionToExpire telekomv1alpha1.BreakglassSession
+		var sessionToExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &sessionToExpire)
 		require.NoError(t, err)
-		sessionToExpire.Status.State = telekomv1alpha1.SessionStateExpired
+		sessionToExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 		sessionToExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
 		err = helpers.ApplySessionStatus(ctx, cli, &sessionToExpire)
 		require.NoError(t, err)
 		t.Logf("Step 5: Session expired")
 
 		// Verify session is now expired
-		var expiredSession telekomv1alpha1.BreakglassSession
+		var expiredSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &expiredSession)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateExpired, expiredSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, expiredSession.Status.State)
 		t.Logf("Step 5 verified: Session state is %s", expiredSession.Status.State)
 	})
 }
@@ -166,7 +166,7 @@ func TestHappyPathMultipleEscalationsForSameCluster(t *testing.T) {
 	}
 
 	// Verify all sessions were created
-	var sessions telekomv1alpha1.BreakglassSessionList
+	var sessions breakglassv1alpha1.BreakglassSessionList
 	err := cli.List(ctx, &sessions)
 	require.NoError(t, err)
 
@@ -221,10 +221,10 @@ func TestHappyPathSessionRejection(t *testing.T) {
 	t.Logf("Session rejected via API")
 
 	// Verify rejection
-	var rejectedSession telekomv1alpha1.BreakglassSession
+	var rejectedSession breakglassv1alpha1.BreakglassSession
 	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &rejectedSession)
 	require.NoError(t, err)
-	assert.Equal(t, telekomv1alpha1.SessionStateRejected, rejectedSession.Status.State)
+	assert.Equal(t, breakglassv1alpha1.SessionStateRejected, rejectedSession.Status.State)
 	assert.Equal(t, "E2E test rejection", rejectedSession.Status.ApprovalReason)
 	t.Logf("Verified: Session state is %s, reason: %s",
 		rejectedSession.Status.State, rejectedSession.Status.ApprovalReason)
@@ -253,7 +253,7 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 		t.Logf("Created global deny policy: %s", policy.Name)
 
 		// Verify policy exists
-		var created telekomv1alpha1.DenyPolicy
+		var created breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &created)
 		require.NoError(t, err)
 		assert.Len(t, created.Spec.Rules, 1)
@@ -271,7 +271,7 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 		t.Logf("Created cluster-scoped deny policy: %s", policy.Name)
 
 		// Verify policy
-		var created telekomv1alpha1.DenyPolicy
+		var created breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &created)
 		require.NoError(t, err)
 		assert.NotNil(t, created.Spec.AppliesTo)
@@ -281,8 +281,8 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 
 	t.Run("CreatePodSecurityDenyPolicy", func(t *testing.T) {
 		policy := helpers.NewDenyPolicyBuilder("e2e-pod-security-deny-policy", namespace).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork:         30,
 					HostPID:             40,
 					HostIPC:             40,
@@ -290,7 +290,7 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 					HostPathWritable:    25,
 					RunAsRoot:           15,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{
 						MaxScore: 50,
 						Action:   "deny",
@@ -309,7 +309,7 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 		t.Logf("Created pod security deny policy: %s", policy.Name)
 
 		// Verify policy
-		var created telekomv1alpha1.DenyPolicy
+		var created breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &created)
 		require.NoError(t, err)
 		assert.NotNil(t, created.Spec.PodSecurityRules)
@@ -329,7 +329,7 @@ func TestHappyPathListResources(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("ListBreakglassSessions", func(t *testing.T) {
-		var sessions telekomv1alpha1.BreakglassSessionList
+		var sessions breakglassv1alpha1.BreakglassSessionList
 		err := cli.List(ctx, &sessions)
 		require.NoError(t, err)
 		t.Logf("Total BreakglassSessions: %d", len(sessions.Items))
@@ -341,7 +341,7 @@ func TestHappyPathListResources(t *testing.T) {
 	})
 
 	t.Run("ListBreakglassEscalations", func(t *testing.T) {
-		var escalations telekomv1alpha1.BreakglassEscalationList
+		var escalations breakglassv1alpha1.BreakglassEscalationList
 		err := cli.List(ctx, &escalations)
 		require.NoError(t, err)
 		t.Logf("Total BreakglassEscalations: %d", len(escalations.Items))
@@ -353,7 +353,7 @@ func TestHappyPathListResources(t *testing.T) {
 	})
 
 	t.Run("ListDenyPolicies", func(t *testing.T) {
-		var policies telekomv1alpha1.DenyPolicyList
+		var policies breakglassv1alpha1.DenyPolicyList
 		err := cli.List(ctx, &policies)
 		require.NoError(t, err)
 		t.Logf("Total DenyPolicies: %d", len(policies.Items))
@@ -365,7 +365,7 @@ func TestHappyPathListResources(t *testing.T) {
 	})
 
 	t.Run("ListClusterConfigs", func(t *testing.T) {
-		var configs telekomv1alpha1.ClusterConfigList
+		var configs breakglassv1alpha1.ClusterConfigList
 		err := cli.List(ctx, &configs)
 		require.NoError(t, err)
 		t.Logf("Total ClusterConfigs: %d", len(configs.Items))
@@ -377,7 +377,7 @@ func TestHappyPathListResources(t *testing.T) {
 	})
 
 	t.Run("ListIdentityProviders", func(t *testing.T) {
-		var idps telekomv1alpha1.IdentityProviderList
+		var idps breakglassv1alpha1.IdentityProviderList
 		err := cli.List(ctx, &idps)
 		require.NoError(t, err)
 		t.Logf("Total IdentityProviders: %d", len(idps.Items))
@@ -389,7 +389,7 @@ func TestHappyPathListResources(t *testing.T) {
 	})
 
 	t.Run("ListMailProviders", func(t *testing.T) {
-		var mps telekomv1alpha1.MailProviderList
+		var mps breakglassv1alpha1.MailProviderList
 		err := cli.List(ctx, &mps)
 		require.NoError(t, err)
 		t.Logf("Total MailProviders: %d", len(mps.Items))
@@ -401,7 +401,7 @@ func TestHappyPathListResources(t *testing.T) {
 	})
 
 	t.Run("ListResourcesInSpecificNamespace", func(t *testing.T) {
-		var sessions telekomv1alpha1.BreakglassSessionList
+		var sessions breakglassv1alpha1.BreakglassSessionList
 		err := cli.List(ctx, &sessions)
 		require.NoError(t, err)
 
@@ -441,7 +441,7 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 		t.Logf("Created escalation with maxValidFor: %s", escalation.Spec.MaxValidFor)
 
 		// Update maxValidFor with retry for conflict handling
-		err = helpers.UpdateWithRetry(ctx, cli, escalation, func(esc *telekomv1alpha1.BreakglassEscalation) error {
+		err = helpers.UpdateWithRetry(ctx, cli, escalation, func(esc *breakglassv1alpha1.BreakglassEscalation) error {
 			esc.Spec.MaxValidFor = "8h"
 			return nil
 		})
@@ -449,7 +449,7 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 		t.Logf("Updated escalation maxValidFor to: 8h")
 
 		// Verify update
-		var updated telekomv1alpha1.BreakglassEscalation
+		var updated breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, "8h", updated.Spec.MaxValidFor)
@@ -468,8 +468,8 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 
 		// Add another rule using retry to handle conflicts with the reconciler
 		// The DenyPolicyReconciler may update status after creation, causing conflicts
-		err = helpers.UpdateWithRetry(ctx, cli, policy, func(p *telekomv1alpha1.DenyPolicy) error {
-			p.Spec.Rules = append(p.Spec.Rules, telekomv1alpha1.DenyRule{
+		err = helpers.UpdateWithRetry(ctx, cli, policy, func(p *breakglassv1alpha1.DenyPolicy) error {
+			p.Spec.Rules = append(p.Spec.Rules, breakglassv1alpha1.DenyRule{
 				Verbs:     []string{"delete"},
 				Resources: []string{"secrets"},
 				APIGroups: []string{""},
@@ -480,7 +480,7 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 		t.Logf("Updated policy to have %d rules", len(policy.Spec.Rules))
 
 		// Verify update
-		var updated telekomv1alpha1.DenyPolicy
+		var updated breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		assert.Len(t, updated.Spec.Rules, 2)

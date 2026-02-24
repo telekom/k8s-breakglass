@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestFixturesDir(t *testing.T) {
@@ -75,7 +75,7 @@ spec:
 	obj, _, err := fixtureDecoder.Decode(data, nil, nil)
 	require.NoError(t, err)
 
-	escalation, ok := obj.(*telekomv1alpha1.BreakglassEscalation)
+	escalation, ok := obj.(*breakglassv1alpha1.BreakglassEscalation)
 	require.True(t, ok, "Expected BreakglassEscalation, got %T", obj)
 
 	assert.Equal(t, "test-fixture", escalation.Name)
@@ -111,7 +111,7 @@ spec:
 	obj, _, err := fixtureDecoder.Decode(data, nil, nil)
 	require.NoError(t, err)
 
-	escalation := obj.(*telekomv1alpha1.BreakglassEscalation)
+	escalation := obj.(*breakglassv1alpha1.BreakglassEscalation)
 
 	// Simulate customization
 	escalation.SetName("customized-name")

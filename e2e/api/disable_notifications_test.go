@@ -21,7 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -99,7 +99,7 @@ func TestEscalationNotificationConfig(t *testing.T) {
 	_ = helpers.SetupTest(t)
 
 	t.Run("EscalationMailProviderField", func(t *testing.T) {
-		spec := telekomv1alpha1.BreakglassEscalationSpec{
+		spec := breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup:       "test-group",
 			MaxValidFor:          "1h",
 			ApprovalTimeout:      "30m",
@@ -112,7 +112,7 @@ func TestEscalationNotificationConfig(t *testing.T) {
 	})
 
 	t.Run("EscalationWithoutMailProvider", func(t *testing.T) {
-		spec := telekomv1alpha1.BreakglassEscalationSpec{
+		spec := breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup:       "test-group",
 			MaxValidFor:          "1h",
 			ApprovalTimeout:      "30m",

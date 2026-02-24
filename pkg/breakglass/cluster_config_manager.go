@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -51,12 +51,12 @@ func NewClusterConfigManager(c client.Client, opts ...ClusterConfigManagerOption
 }
 
 // GetClusterConfigByName fetches the ClusterConfig CR by metadata.name (which is usually the cluster name/ID)
-func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
+func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
 	// Try to use a field index (metadata.name) if available via the client's cache.
-	list := telekomv1alpha1.ClusterConfigList{}
+	list := breakglassv1alpha1.ClusterConfigList{}
 	// Try to use a field index (metadata.name) via MatchingFields if available.
 	if err := ccm.client.List(ctx, &list, client.MatchingFields{"metadata.name": name}); err == nil {
-		matching := make([]*telekomv1alpha1.ClusterConfig, 0, len(list.Items))
+		matching := make([]*breakglassv1alpha1.ClusterConfig, 0, len(list.Items))
 		for i := range list.Items {
 			if list.Items[i].Name == name {
 				matching = append(matching, &list.Items[i])
@@ -77,12 +77,12 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 	}
 
 	// Fallback: do a full list scan (should be rare) - maintain original behavior for safety.
-	list2 := telekomv1alpha1.ClusterConfigList{}
+	list2 := breakglassv1alpha1.ClusterConfigList{}
 	if err := ccm.client.List(ctx, &list2); err != nil {
 		ccm.getLogger().Errorw("Failed to list ClusterConfig resources", "error", err)
 		return nil, fmt.Errorf("failed to list ClusterConfig resources: %w", err)
 	}
-	matching := make([]*telekomv1alpha1.ClusterConfig, 0, len(list2.Items))
+	matching := make([]*breakglassv1alpha1.ClusterConfig, 0, len(list2.Items))
 	for i := range list2.Items {
 		if list2.Items[i].Name == name {
 			matching = append(matching, &list2.Items[i])
@@ -104,8 +104,8 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 
 // GetClusterConfigInNamespace fetches the ClusterConfig resource by name within the provided namespace.
 // This avoids cross-namespace listing when the caller knows the escalation or resource namespace.
-func (ccm *ClusterConfigManager) GetClusterConfigInNamespace(ctx context.Context, namespace, name string) (*telekomv1alpha1.ClusterConfig, error) {
-	got := &telekomv1alpha1.ClusterConfig{}
+func (ccm *ClusterConfigManager) GetClusterConfigInNamespace(ctx context.Context, namespace, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	got := &breakglassv1alpha1.ClusterConfig{}
 	if err := ccm.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, got); err != nil {
 		return nil, err
 	}

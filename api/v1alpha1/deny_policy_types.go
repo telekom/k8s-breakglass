@@ -200,6 +200,8 @@ type DenyPolicyStatus struct {
 // +kubebuilder:resource:scope=Cluster,shortName=dpolicy
 // +kubebuilder:printcolumn:name="Precedence",type=integer,JSONPath=`.spec.precedence`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+
+// DenyPolicy is the Schema for the denypolicies API.
 type DenyPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -293,6 +295,8 @@ func validateDenyPolicySpec(policy *DenyPolicy) field.ErrorList {
 }
 
 // +kubebuilder:object:root=true
+
+// DenyPolicyList contains a list of DenyPolicy resources.
 type DenyPolicyList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

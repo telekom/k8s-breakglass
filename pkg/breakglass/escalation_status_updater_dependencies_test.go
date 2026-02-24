@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -32,7 +32,7 @@ func TestEscalationStatusUpdaterWithEventRecorder(t *testing.T) {
 		EventRecorder: fakeRecorder,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
@@ -68,7 +68,7 @@ func TestEscalationStatusUpdaterWithIDPLoader(t *testing.T) {
 		EventRecorder: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
@@ -111,7 +111,7 @@ func TestEventEmissionWithEventRecorder(t *testing.T) {
 	fakeRecorder := fakeEventRecorder{Events: make(chan string, 1)}
 
 	// Create an escalation resource
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-esc",
 			Namespace: "default",

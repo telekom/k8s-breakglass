@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -305,7 +305,7 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	t.Run("RuleWithEmptyVerbs", func(t *testing.T) {
 		// Testing validation of empty verbs - need to use WithRule for invalid rule
 		policy := helpers.NewDenyPolicyBuilder("e2e-empty-verbs-policy", namespace).
-			WithRule(telekomv1alpha1.DenyRule{
+			WithRule(breakglassv1alpha1.DenyRule{
 				Verbs:     []string{}, // Empty verbs
 				Resources: []string{"pods"},
 				APIGroups: []string{""},
@@ -324,7 +324,7 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	t.Run("RuleWithEmptyResources", func(t *testing.T) {
 		// Testing validation of empty resources - need to use WithRule for invalid rule
 		policy := helpers.NewDenyPolicyBuilder("e2e-empty-resources-policy", namespace).
-			WithRule(telekomv1alpha1.DenyRule{
+			WithRule(breakglassv1alpha1.DenyRule{
 				Verbs:     []string{"get"},
 				Resources: []string{}, // Empty resources
 				APIGroups: []string{""},
@@ -343,7 +343,7 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	t.Run("RuleWithInvalidVerb", func(t *testing.T) {
 		// Testing validation of invalid verb - need to use WithRule for invalid rule
 		policy := helpers.NewDenyPolicyBuilder("e2e-invalid-verb-policy", namespace).
-			WithRule(telekomv1alpha1.DenyRule{
+			WithRule(breakglassv1alpha1.DenyRule{
 				Verbs:     []string{"invalid-verb-xyz"},
 				Resources: []string{"pods"},
 				APIGroups: []string{""},
@@ -362,11 +362,11 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	t.Run("PodSecurityRulesWithInvalidBlockFactor", func(t *testing.T) {
 		// Testing validation of invalid block factor
 		policy := helpers.NewDenyPolicyBuilder("e2e-invalid-block-factor", namespace).
-			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
+			WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+				RiskFactors: breakglassv1alpha1.RiskFactors{
 					HostNetwork: 50,
 				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
+				Thresholds: []breakglassv1alpha1.RiskThreshold{
 					{
 						MaxScore: 50,
 						Action:   "deny",
@@ -398,14 +398,14 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("MissingAuthority", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-authority",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					// Authority intentionally missing
 					ClientID: "some-client",
 				},
@@ -422,14 +422,14 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 	})
 
 	t.Run("MissingClientID", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-client-id",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://example.com",
 					// ClientID intentionally missing
 				},
@@ -446,14 +446,14 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 	})
 
 	t.Run("InvalidAuthority", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-authority",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "not-a-valid-url",
 					ClientID:  "some-client",
 				},
@@ -470,23 +470,23 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 	})
 
 	t.Run("KeycloakSecretRefToNonExistentSecret", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-nonexistent-secret-ref",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
-				OIDC: telekomv1alpha1.OIDCConfig{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://example.com",
 					ClientID:  "some-client",
 				},
-				GroupSyncProvider: telekomv1alpha1.GroupSyncProviderKeycloak,
-				Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 					BaseURL:  "https://keycloak.example.com",
 					Realm:    "test-realm",
 					ClientID: "test-client",
-					ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      "secret-that-does-not-exist",
 						Namespace: namespace,
 						Key:       "client-secret",
@@ -517,18 +517,18 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("MissingSMTPHost", func(t *testing.T) {
-		mp := &telekomv1alpha1.MailProvider{
+		mp := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-smtp-host",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					// Host intentionally missing
 					Port: 587,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "test@example.com",
 				},
 			},
@@ -544,18 +544,18 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 	})
 
 	t.Run("InvalidSMTPPort", func(t *testing.T) {
-		mp := &telekomv1alpha1.MailProvider{
+		mp := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-smtp-port",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.example.com",
 					Port: 99999, // Invalid port
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "test@example.com",
 				},
 			},
@@ -571,18 +571,18 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 	})
 
 	t.Run("InvalidSenderEmail", func(t *testing.T) {
-		mp := &telekomv1alpha1.MailProvider{
+		mp := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-sender-email",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.example.com",
 					Port: 587,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					Address: "not-an-email",
 				},
 			},
@@ -598,18 +598,18 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 	})
 
 	t.Run("MissingSenderAddress", func(t *testing.T) {
-		mp := &telekomv1alpha1.MailProvider{
+		mp := &breakglassv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-sender-address",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.MailProviderSpec{
-				SMTP: telekomv1alpha1.SMTPConfig{
+			Spec: breakglassv1alpha1.MailProviderSpec{
+				SMTP: breakglassv1alpha1.SMTPConfig{
 					Host: "smtp.example.com",
 					Port: 587,
 				},
-				Sender: telekomv1alpha1.SenderConfig{
+				Sender: breakglassv1alpha1.SenderConfig{
 					// Address intentionally missing
 				},
 			},
@@ -637,13 +637,13 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("MissingKubeconfigSecretRef", func(t *testing.T) {
-		cfg := &telekomv1alpha1.ClusterConfig{
+		cfg := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-kubeconfig-ref",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
 				// KubeconfigSecretRef intentionally missing
 			},
@@ -659,15 +659,15 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 	})
 
 	t.Run("KubeconfigSecretRefToNonExistentSecret", func(t *testing.T) {
-		cfg := &telekomv1alpha1.ClusterConfig{
+		cfg := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-nonexistent-kubeconfig-secret",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "kubeconfig-secret-that-does-not-exist",
 					Namespace: namespace,
 					Key:       "kubeconfig",
@@ -700,15 +700,15 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 		err := cli.Create(ctx, secret)
 		require.NoError(t, err)
 
-		cfg := &telekomv1alpha1.ClusterConfig{
+		cfg := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-wrong-key-cluster",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig", // Key that doesn't exist
@@ -742,15 +742,15 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 		require.NoError(t, err)
 
 		zeroQPS := int32(0)
-		cfg := &telekomv1alpha1.ClusterConfig{
+		cfg := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-qps",
 				Namespace: namespace,
 				Labels:    helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig",

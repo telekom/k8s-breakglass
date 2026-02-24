@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -78,7 +78,7 @@ func TestSessionApprovalWorkflow(t *testing.T) {
 		cleanup.Add(session)
 
 		// Verify the session is created with correct values
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err, "Failed to fetch session")
 
@@ -114,12 +114,12 @@ func TestSessionApprovalWorkflow(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session")
 
 		// Wait for and verify the session is now approved
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
-		require.Equal(t, telekomv1alpha1.SessionStateApproved, fetched.Status.State)
+		require.Equal(t, breakglassv1alpha1.SessionStateApproved, fetched.Status.State)
 	})
 
 	t.Run("RejectSession", func(t *testing.T) {
@@ -149,12 +149,12 @@ func TestSessionApprovalWorkflow(t *testing.T) {
 		require.NoError(t, err, "Failed to reject session")
 
 		// Wait for and verify the session is rejected
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
 
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
-		require.Equal(t, telekomv1alpha1.SessionStateRejected, fetched.Status.State)
+		require.Equal(t, breakglassv1alpha1.SessionStateRejected, fetched.Status.State)
 	})
 
 	t.Run("SessionWithDisabledNotifications", func(t *testing.T) {
@@ -183,7 +183,7 @@ func TestSessionApprovalWorkflow(t *testing.T) {
 		cleanup.Add(session)
 
 		// The session should exist with correct values
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err, "Failed to fetch quiet session")
 		require.Equal(t, quietEscalation.Spec.EscalatedGroup, fetched.Spec.GrantedGroup)
@@ -232,23 +232,23 @@ func TestSessionStateTransitions(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Failed to approve session via API")
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Now expire it (this is testing controller behavior, done via status update)
-		var toExpire telekomv1alpha1.BreakglassSession
+		var toExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 		require.NoError(t, err)
 
-		toExpire.Status.State = telekomv1alpha1.SessionStateExpired
+		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 		toExpire.Status.ReasonEnded = "timeExpired"
 		err = cli.Status().Update(ctx, &toExpire)
 		require.NoError(t, err)
 
 		// Verify
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
-		require.Equal(t, telekomv1alpha1.SessionStateExpired, fetched.Status.State)
+		require.Equal(t, breakglassv1alpha1.SessionStateExpired, fetched.Status.State)
 	})
 
 	t.Run("TransitionPendingToWithdrawn", func(t *testing.T) {
@@ -270,10 +270,10 @@ func TestSessionStateTransitions(t *testing.T) {
 		require.NoError(t, err, "Failed to withdraw session via API")
 
 		// Verify
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
-		require.Equal(t, telekomv1alpha1.SessionStateWithdrawn, fetched.Status.State)
+		require.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, fetched.Status.State)
 	})
 }
 
@@ -303,7 +303,7 @@ func TestMultipleApproversScenario(t *testing.T) {
 		require.NoError(t, err, "Failed to create multi-approver escalation")
 
 		// Verify the escalation was created with all approvers
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		require.Len(t, fetched.Spec.Approvers.Users, 3)

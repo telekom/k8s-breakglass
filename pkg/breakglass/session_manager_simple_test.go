@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 type stubReader struct {
@@ -49,26 +49,26 @@ func TestSessionManager_Simple(t *testing.T) {
 	//     behave or return expected errors for non-existent resources.
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	// Create test sessions
-	session1 := &telekomv1alpha1.BreakglassSession{
+	session1 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "session-1",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user1@example.com",
 			Cluster:      "cluster1",
 			GrantedGroup: "admin",
 		},
 	}
 
-	session2 := &telekomv1alpha1.BreakglassSession{
+	session2 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "session-2",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "user2@example.com",
 			Cluster:      "cluster2",
 			GrantedGroup: "viewer",
@@ -97,11 +97,11 @@ func TestSessionManager_Simple(t *testing.T) {
 	})
 
 	t.Run("AddBreakglassSession", func(t *testing.T) {
-		newSession := telekomv1alpha1.BreakglassSession{
+		newSession := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "new-session",
 			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:         "newuser@example.com",
 				Cluster:      "newcluster",
 				GrantedGroup: "editor",
@@ -131,11 +131,11 @@ func TestSessionManager_Simple(t *testing.T) {
 		// Test the method exists and handles errors properly
 		// Since fake client doesn't support status updates properly,
 		// we just test that the method exists and error handling
-		session := telekomv1alpha1.BreakglassSession{
+		session := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "nonexistent-session",
 			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:         "testuser@example.com",
 				Cluster:      "testcluster",
 				GrantedGroup: "admin",
@@ -150,11 +150,11 @@ func TestSessionManager_Simple(t *testing.T) {
 	t.Run("UpdateBreakglassSession", func(t *testing.T) {
 		// Test that UpdateBreakglassSession uses SSA (Server-Side Apply) semantics.
 		// SSA creates objects if they don't exist (upsert behavior).
-		session := telekomv1alpha1.BreakglassSession{
+		session := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "ssa-create-session",
 			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:         "testuser@example.com",
 				Cluster:      "testcluster",
 				GrantedGroup: "admin",
@@ -172,9 +172,9 @@ func TestSessionManager_Simple(t *testing.T) {
 	})
 
 	t.Run("GetAllBreakglassSessions uses reader", func(t *testing.T) {
-		readerSession := telekomv1alpha1.BreakglassSession{
+		readerSession := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "reader-session"},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:         "reader@example.com",
 				Cluster:      "reader-cluster",
 				GrantedGroup: "reader-group",
@@ -183,11 +183,11 @@ func TestSessionManager_Simple(t *testing.T) {
 
 		reader := stubReader{
 			listFn: func(list client.ObjectList) error {
-				bsl, ok := list.(*telekomv1alpha1.BreakglassSessionList)
+				bsl, ok := list.(*breakglassv1alpha1.BreakglassSessionList)
 				if !ok {
 					return fmt.Errorf("unexpected list type %T", list)
 				}
-				bsl.Items = []telekomv1alpha1.BreakglassSession{readerSession}
+				bsl.Items = []breakglassv1alpha1.BreakglassSession{readerSession}
 				return nil
 			},
 		}
@@ -242,15 +242,15 @@ func TestSessionManager_FieldSelectorMethods(t *testing.T) {
 	//   method presence and basic behavior across selector types.
 	//
 	scheme := runtime.NewScheme()
-	err := telekomv1alpha1.AddToScheme(scheme)
+	err := breakglassv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
 
 	// Create test session
-	session := &telekomv1alpha1.BreakglassSession{
+	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "field-test-session",
 		},
-		Spec: telekomv1alpha1.BreakglassSessionSpec{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:         "fieldtestuser@example.com",
 			Cluster:      "fieldtestcluster",
 			GrantedGroup: "admin",
@@ -260,20 +260,20 @@ func TestSessionManager_FieldSelectorMethods(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session).
-		WithIndex(&telekomv1alpha1.BreakglassSession{}, "metadata.name", func(obj client.Object) []string {
-			if s, ok := obj.(*telekomv1alpha1.BreakglassSession); ok && s.Name != "" {
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Name != "" {
 				return []string{s.Name}
 			}
 			return nil
 		}).
-		WithIndex(&telekomv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
-			if s, ok := obj.(*telekomv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
 				return []string{s.Spec.Cluster}
 			}
 			return nil
 		}).
-		WithIndex(&telekomv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
-			if s, ok := obj.(*telekomv1alpha1.BreakglassSession); ok && s.Spec.User != "" {
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.User != "" {
 				return []string{s.Spec.User}
 			}
 			return nil

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
@@ -49,13 +49,13 @@ func TestEscalationManager_GetAllBreakglassEscalations(t *testing.T) {
 		{
 			name: "single escalation",
 			existingObjects: []client.Object{
-				&telekomv1alpha1.BreakglassEscalation{
+				&breakglassv1alpha1.BreakglassEscalation{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-escalation",
 						Namespace: "default",
 					},
-					Spec: telekomv1alpha1.BreakglassEscalationSpec{
-						Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{"test-cluster"},
 							Groups:   []string{"admin"},
 						},
@@ -68,25 +68,25 @@ func TestEscalationManager_GetAllBreakglassEscalations(t *testing.T) {
 		{
 			name: "multiple escalations",
 			existingObjects: []client.Object{
-				&telekomv1alpha1.BreakglassEscalation{
+				&breakglassv1alpha1.BreakglassEscalation{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-escalation-1",
 						Namespace: "default",
 					},
-					Spec: telekomv1alpha1.BreakglassEscalationSpec{
-						Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{"test-cluster"},
 							Groups:   []string{"admin"},
 						},
 					},
 				},
-				&telekomv1alpha1.BreakglassEscalation{
+				&breakglassv1alpha1.BreakglassEscalation{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-escalation-2",
 						Namespace: "default",
 					},
-					Spec: telekomv1alpha1.BreakglassEscalationSpec{
-						Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{"test-cluster-2"},
 							Groups:   []string{"user"},
 						},
@@ -141,26 +141,26 @@ func TestEscalationManager_GetBreakglassEscalationsWithFilter(t *testing.T) {
 	//
 	scheme := breakglass.Scheme
 
-	escalation1 := &telekomv1alpha1.BreakglassEscalation{
+	escalation1 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "admin-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test-cluster"},
 				Groups:   []string{"admin"},
 			},
 		},
 	}
 
-	escalation2 := &telekomv1alpha1.BreakglassEscalation{
+	escalation2 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "user-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test-cluster"},
 				Groups:   []string{"user"},
 			},
@@ -170,14 +170,14 @@ func TestEscalationManager_GetBreakglassEscalationsWithFilter(t *testing.T) {
 	tests := []struct {
 		name            string
 		existingObjects []client.Object
-		filter          func(telekomv1alpha1.BreakglassEscalation) bool
+		filter          func(breakglassv1alpha1.BreakglassEscalation) bool
 		expectedCount   int
 		expectError     bool
 	}{
 		{
 			name:            "filter for admin groups",
 			existingObjects: []client.Object{escalation1, escalation2},
-			filter: func(e telekomv1alpha1.BreakglassEscalation) bool {
+			filter: func(e breakglassv1alpha1.BreakglassEscalation) bool {
 				for _, group := range e.Spec.Allowed.Groups {
 					if group == "admin" {
 						return true
@@ -191,7 +191,7 @@ func TestEscalationManager_GetBreakglassEscalationsWithFilter(t *testing.T) {
 		{
 			name:            "filter for non-existing groups",
 			existingObjects: []client.Object{escalation1, escalation2},
-			filter: func(e telekomv1alpha1.BreakglassEscalation) bool {
+			filter: func(e breakglassv1alpha1.BreakglassEscalation) bool {
 				for _, group := range e.Spec.Allowed.Groups {
 					if group == "nonexistent" {
 						return true
@@ -205,7 +205,7 @@ func TestEscalationManager_GetBreakglassEscalationsWithFilter(t *testing.T) {
 		{
 			name:            "filter all",
 			existingObjects: []client.Object{escalation1, escalation2},
-			filter: func(e telekomv1alpha1.BreakglassEscalation) bool {
+			filter: func(e breakglassv1alpha1.BreakglassEscalation) bool {
 				return true
 			},
 			expectedCount: 2,
@@ -257,26 +257,26 @@ func TestEscalationManager_GetGroupBreakglassEscalations(t *testing.T) {
 	//
 	scheme := breakglass.Scheme
 
-	escalation1 := &telekomv1alpha1.BreakglassEscalation{
+	escalation1 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "admin-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test-cluster"},
 				Groups:   []string{"admin", "system:authenticated"},
 			},
 		},
 	}
 
-	escalation2 := &telekomv1alpha1.BreakglassEscalation{
+	escalation2 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "user-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"test-cluster"},
 				Groups:   []string{"user"},
 			},
@@ -353,39 +353,39 @@ func TestEscalationManager_GetGroupBreakglassEscalations(t *testing.T) {
 func TestEscalationManager_GetClusterGroupBreakglassEscalations(t *testing.T) {
 	scheme := breakglass.Scheme
 
-	escalation1 := &telekomv1alpha1.BreakglassEscalation{
+	escalation1 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cluster1-admin-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster1"},
 				Groups:   []string{"admin"},
 			},
 		},
 	}
 
-	escalation2 := &telekomv1alpha1.BreakglassEscalation{
+	escalation2 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cluster2-admin-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster2"},
 				Groups:   []string{"admin"},
 			},
 		},
 	}
 
-	escalation3 := &telekomv1alpha1.BreakglassEscalation{
+	escalation3 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cluster1-user-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster1"},
 				Groups:   []string{"user"},
 			},
@@ -393,14 +393,14 @@ func TestEscalationManager_GetClusterGroupBreakglassEscalations(t *testing.T) {
 	}
 
 	// Global escalation - applies to all clusters (uses "*" wildcard for ClusterConfigRefs and Allowed.Clusters)
-	globalEscalation := &telekomv1alpha1.BreakglassEscalation{
+	globalEscalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "global-readonly-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			ClusterConfigRefs: []string{"*"}, // "*" = global (matches any cluster)
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"*"}, // "*" = global (matches any cluster)
 				Groups:   []string{"readonly-users"},
 			},
@@ -518,14 +518,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	scheme := breakglass.Scheme
 
 	// Escalation with prefix pattern (prod-*)
-	prefixEscalation := &telekomv1alpha1.BreakglassEscalation{
+	prefixEscalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "prod-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			ClusterConfigRefs: []string{"prod-*"},
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"prod-*"},
 				Groups:   []string{"prod-team"},
 			},
@@ -534,14 +534,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	}
 
 	// Escalation with suffix pattern (*-staging)
-	suffixEscalation := &telekomv1alpha1.BreakglassEscalation{
+	suffixEscalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "staging-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			ClusterConfigRefs: []string{"*-staging"},
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"*-staging"},
 				Groups:   []string{"dev-team"},
 			},
@@ -550,14 +550,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	}
 
 	// Escalation with single char pattern (cluster-?)
-	singleCharEscalation := &telekomv1alpha1.BreakglassEscalation{
+	singleCharEscalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "numbered-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			ClusterConfigRefs: []string{"cluster-?"},
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster-?"},
 				Groups:   []string{"ops-team"},
 			},
@@ -566,14 +566,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	}
 
 	// Global escalation with "*"
-	globalEscalation := &telekomv1alpha1.BreakglassEscalation{
+	globalEscalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "global-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			ClusterConfigRefs: []string{"*"},
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"emergency-team"},
 			},
@@ -582,14 +582,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	}
 
 	// Escalation with empty arrays (should NOT match anything)
-	emptyEscalation := &telekomv1alpha1.BreakglassEscalation{
+	emptyEscalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "empty-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			ClusterConfigRefs: []string{}, // Empty = matches NOTHING
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{}, // Empty = matches NOTHING
 				Groups:   []string{"any-team"},
 			},
@@ -598,14 +598,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	}
 
 	// Exact match escalation
-	exactEscalation := &telekomv1alpha1.BreakglassEscalation{
+	exactEscalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "exact-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			ClusterConfigRefs: []string{"prod-eu-west"},
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"prod-eu-west"},
 				Groups:   []string{"eu-team"},
 			},
@@ -747,14 +747,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	// This tests that allowed.clusters alone supports glob patterns
 
 	// Escalation using only allowed.clusters with glob (no clusterConfigRefs)
-	allowedClustersOnlyGlob := &telekomv1alpha1.BreakglassEscalation{
+	allowedClustersOnlyGlob := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allowed-clusters-only-glob",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			// No clusterConfigRefs - only using allowed.clusters
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"dev-*"}, // Glob pattern in allowed.clusters only
 				Groups:   []string{"dev-team"},
 			},
@@ -763,14 +763,14 @@ func TestEscalationManager_GlobPatternMatching(t *testing.T) {
 	}
 
 	// Escalation using only allowed.clusters with global wildcard (no clusterConfigRefs)
-	allowedClustersOnlyGlobal := &telekomv1alpha1.BreakglassEscalation{
+	allowedClustersOnlyGlobal := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allowed-clusters-only-global",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			// No clusterConfigRefs - only using allowed.clusters
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"*"}, // Global wildcard in allowed.clusters only
 				Groups:   []string{"global-team"},
 			},
@@ -877,13 +877,13 @@ func TestEscalationManager_GetBreakglassEscalation(t *testing.T) {
 	//
 	scheme := breakglass.Scheme
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster1"},
 				Groups:   []string{"admin"},
 			},
@@ -1081,15 +1081,15 @@ func TestEscalationManager_UpdateBreakglassEscalationStatus(t *testing.T) {
 	//
 	scheme := breakglass.Scheme
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "admin-access",
 		},
-		Status: telekomv1alpha1.BreakglassEscalationStatus{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			ObservedGeneration: 0,
 		},
 	}
@@ -1113,7 +1113,7 @@ func TestEscalationManager_UpdateBreakglassEscalationStatus(t *testing.T) {
 		}
 
 		// Verify the status was updated
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-escalation", Namespace: "default"}, &fetched); err != nil {
 			t.Fatalf("Failed to fetch escalation: %v", err)
 		}
@@ -1146,13 +1146,13 @@ func TestEscalationManager_GetClusterGroupTargetBreakglassEscalation(t *testing.
 	//
 	scheme := breakglass.Scheme
 
-	escalation1 := &telekomv1alpha1.BreakglassEscalation{
+	escalation1 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "escalation-1",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster1"},
 				Groups:   []string{"admin"},
 			},
@@ -1160,13 +1160,13 @@ func TestEscalationManager_GetClusterGroupTargetBreakglassEscalation(t *testing.
 		},
 	}
 
-	escalation2 := &telekomv1alpha1.BreakglassEscalation{
+	escalation2 := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "escalation-2",
 			Namespace: "default",
 		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"cluster1"},
 				Groups:   []string{"user"},
 			},

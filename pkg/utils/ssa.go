@@ -17,7 +17,7 @@ import (
 	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"go.uber.org/zap"
 )
@@ -158,25 +158,25 @@ func ApplyStatus(ctx context.Context, c client.Client, obj client.Object) error 
 // This supports all known CRD types and core types like Secrets.
 func ToApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, error) {
 	switch o := obj.(type) {
-	case *telekomv1alpha1.BreakglassSession:
+	case *breakglassv1alpha1.BreakglassSession:
 		return breakglassSessionToApplyConfig(o)
-	case *telekomv1alpha1.ClusterConfig:
+	case *breakglassv1alpha1.ClusterConfig:
 		return clusterConfigToApplyConfig(o)
-	case *telekomv1alpha1.DebugSession:
+	case *breakglassv1alpha1.DebugSession:
 		return debugSessionToApplyConfig(o)
-	case *telekomv1alpha1.BreakglassEscalation:
+	case *breakglassv1alpha1.BreakglassEscalation:
 		return breakglassEscalationToApplyConfig(o)
-	case *telekomv1alpha1.IdentityProvider:
+	case *breakglassv1alpha1.IdentityProvider:
 		return identityProviderToApplyConfig(o)
-	case *telekomv1alpha1.MailProvider:
+	case *breakglassv1alpha1.MailProvider:
 		return mailProviderToApplyConfig(o)
-	case *telekomv1alpha1.DenyPolicy:
+	case *breakglassv1alpha1.DenyPolicy:
 		return denyPolicyToApplyConfig(o)
-	case *telekomv1alpha1.DebugSessionTemplate:
+	case *breakglassv1alpha1.DebugSessionTemplate:
 		return debugSessionTemplateToApplyConfig(o)
-	case *telekomv1alpha1.DebugPodTemplate:
+	case *breakglassv1alpha1.DebugPodTemplate:
 		return debugPodTemplateToApplyConfig(o)
-	case *telekomv1alpha1.DebugSessionClusterBinding:
+	case *breakglassv1alpha1.DebugSessionClusterBinding:
 		return debugSessionClusterBindingToApplyConfig(o)
 	case *corev1.Secret:
 		return secretToApplyConfig(o), nil
@@ -199,17 +199,17 @@ func ToApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, error)
 // containing only the metadata and status fields (for status subresource updates).
 func ToStatusApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, error) {
 	switch o := obj.(type) {
-	case *telekomv1alpha1.BreakglassSession:
+	case *breakglassv1alpha1.BreakglassSession:
 		return breakglassSessionStatusApplyConfig(o)
-	case *telekomv1alpha1.ClusterConfig:
+	case *breakglassv1alpha1.ClusterConfig:
 		return clusterConfigStatusApplyConfig(o)
-	case *telekomv1alpha1.DebugSession:
+	case *breakglassv1alpha1.DebugSession:
 		return debugSessionStatusApplyConfig(o)
-	case *telekomv1alpha1.BreakglassEscalation:
+	case *breakglassv1alpha1.BreakglassEscalation:
 		return breakglassEscalationStatusApplyConfig(o)
-	case *telekomv1alpha1.IdentityProvider:
+	case *breakglassv1alpha1.IdentityProvider:
 		return identityProviderStatusApplyConfig(o)
-	case *telekomv1alpha1.MailProvider:
+	case *breakglassv1alpha1.MailProvider:
 		return mailProviderStatusApplyConfig(o)
 	default:
 		return nil, fmt.Errorf("unsupported type for status ApplyConfiguration: %T", obj)
@@ -218,7 +218,7 @@ func ToStatusApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, 
 
 // Helper functions for each type
 
-func breakglassSessionToApplyConfig(o *telekomv1alpha1.BreakglassSession) (*ac.BreakglassSessionApplyConfiguration, error) {
+func breakglassSessionToApplyConfig(o *breakglassv1alpha1.BreakglassSession) (*ac.BreakglassSessionApplyConfiguration, error) {
 	cfg := ac.BreakglassSession(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -227,7 +227,7 @@ func breakglassSessionToApplyConfig(o *telekomv1alpha1.BreakglassSession) (*ac.B
 	return cfg, nil
 }
 
-func breakglassSessionStatusApplyConfig(o *telekomv1alpha1.BreakglassSession) (*ac.BreakglassSessionApplyConfiguration, error) {
+func breakglassSessionStatusApplyConfig(o *breakglassv1alpha1.BreakglassSession) (*ac.BreakglassSessionApplyConfiguration, error) {
 	cfg := ac.BreakglassSession(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -236,7 +236,7 @@ func breakglassSessionStatusApplyConfig(o *telekomv1alpha1.BreakglassSession) (*
 	return cfg, nil
 }
 
-func clusterConfigToApplyConfig(o *telekomv1alpha1.ClusterConfig) (*ac.ClusterConfigApplyConfiguration, error) {
+func clusterConfigToApplyConfig(o *breakglassv1alpha1.ClusterConfig) (*ac.ClusterConfigApplyConfiguration, error) {
 	cfg := ac.ClusterConfig(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -245,7 +245,7 @@ func clusterConfigToApplyConfig(o *telekomv1alpha1.ClusterConfig) (*ac.ClusterCo
 	return cfg, nil
 }
 
-func clusterConfigStatusApplyConfig(o *telekomv1alpha1.ClusterConfig) (*ac.ClusterConfigApplyConfiguration, error) {
+func clusterConfigStatusApplyConfig(o *breakglassv1alpha1.ClusterConfig) (*ac.ClusterConfigApplyConfiguration, error) {
 	cfg := ac.ClusterConfig(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -254,7 +254,7 @@ func clusterConfigStatusApplyConfig(o *telekomv1alpha1.ClusterConfig) (*ac.Clust
 	return cfg, nil
 }
 
-func debugSessionToApplyConfig(o *telekomv1alpha1.DebugSession) (*ac.DebugSessionApplyConfiguration, error) {
+func debugSessionToApplyConfig(o *breakglassv1alpha1.DebugSession) (*ac.DebugSessionApplyConfiguration, error) {
 	cfg := ac.DebugSession(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -263,7 +263,7 @@ func debugSessionToApplyConfig(o *telekomv1alpha1.DebugSession) (*ac.DebugSessio
 	return cfg, nil
 }
 
-func debugSessionStatusApplyConfig(o *telekomv1alpha1.DebugSession) (*ac.DebugSessionApplyConfiguration, error) {
+func debugSessionStatusApplyConfig(o *breakglassv1alpha1.DebugSession) (*ac.DebugSessionApplyConfiguration, error) {
 	cfg := ac.DebugSession(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func debugSessionStatusApplyConfig(o *telekomv1alpha1.DebugSession) (*ac.DebugSe
 	return cfg, nil
 }
 
-func breakglassEscalationToApplyConfig(o *telekomv1alpha1.BreakglassEscalation) (*ac.BreakglassEscalationApplyConfiguration, error) {
+func breakglassEscalationToApplyConfig(o *breakglassv1alpha1.BreakglassEscalation) (*ac.BreakglassEscalationApplyConfiguration, error) {
 	cfg := ac.BreakglassEscalation(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -281,7 +281,7 @@ func breakglassEscalationToApplyConfig(o *telekomv1alpha1.BreakglassEscalation) 
 	return cfg, nil
 }
 
-func breakglassEscalationStatusApplyConfig(o *telekomv1alpha1.BreakglassEscalation) (*ac.BreakglassEscalationApplyConfiguration, error) {
+func breakglassEscalationStatusApplyConfig(o *breakglassv1alpha1.BreakglassEscalation) (*ac.BreakglassEscalationApplyConfiguration, error) {
 	cfg := ac.BreakglassEscalation(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -290,7 +290,7 @@ func breakglassEscalationStatusApplyConfig(o *telekomv1alpha1.BreakglassEscalati
 	return cfg, nil
 }
 
-func identityProviderToApplyConfig(o *telekomv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
+func identityProviderToApplyConfig(o *breakglassv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
 	cfg := ac.IdentityProvider(o.Name, "")
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -299,7 +299,7 @@ func identityProviderToApplyConfig(o *telekomv1alpha1.IdentityProvider) (*ac.Ide
 	return cfg, nil
 }
 
-func identityProviderStatusApplyConfig(o *telekomv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
+func identityProviderStatusApplyConfig(o *breakglassv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
 	cfg := ac.IdentityProvider(o.Name, "")
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -308,7 +308,7 @@ func identityProviderStatusApplyConfig(o *telekomv1alpha1.IdentityProvider) (*ac
 	return cfg, nil
 }
 
-func mailProviderToApplyConfig(o *telekomv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
+func mailProviderToApplyConfig(o *breakglassv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
 	cfg := ac.MailProvider(o.Name, "")
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -317,7 +317,7 @@ func mailProviderToApplyConfig(o *telekomv1alpha1.MailProvider) (*ac.MailProvide
 	return cfg, nil
 }
 
-func mailProviderStatusApplyConfig(o *telekomv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
+func mailProviderStatusApplyConfig(o *breakglassv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
 	cfg := ac.MailProvider(o.Name, "")
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -326,7 +326,7 @@ func mailProviderStatusApplyConfig(o *telekomv1alpha1.MailProvider) (*ac.MailPro
 	return cfg, nil
 }
 
-func denyPolicyToApplyConfig(o *telekomv1alpha1.DenyPolicy) (*ac.DenyPolicyApplyConfiguration, error) {
+func denyPolicyToApplyConfig(o *breakglassv1alpha1.DenyPolicy) (*ac.DenyPolicyApplyConfiguration, error) {
 	cfg := ac.DenyPolicy(o.Name, "")
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -335,7 +335,7 @@ func denyPolicyToApplyConfig(o *telekomv1alpha1.DenyPolicy) (*ac.DenyPolicyApply
 	return cfg, nil
 }
 
-func debugSessionTemplateToApplyConfig(o *telekomv1alpha1.DebugSessionTemplate) (*ac.DebugSessionTemplateApplyConfiguration, error) {
+func debugSessionTemplateToApplyConfig(o *breakglassv1alpha1.DebugSessionTemplate) (*ac.DebugSessionTemplateApplyConfiguration, error) {
 	cfg := ac.DebugSessionTemplate(o.Name, "")
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -344,7 +344,7 @@ func debugSessionTemplateToApplyConfig(o *telekomv1alpha1.DebugSessionTemplate) 
 	return cfg, nil
 }
 
-func debugPodTemplateToApplyConfig(o *telekomv1alpha1.DebugPodTemplate) (*ac.DebugPodTemplateApplyConfiguration, error) {
+func debugPodTemplateToApplyConfig(o *breakglassv1alpha1.DebugPodTemplate) (*ac.DebugPodTemplateApplyConfiguration, error) {
 	cfg := ac.DebugPodTemplate(o.Name, "")
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
@@ -353,7 +353,7 @@ func debugPodTemplateToApplyConfig(o *telekomv1alpha1.DebugPodTemplate) (*ac.Deb
 	return cfg, nil
 }
 
-func debugSessionClusterBindingToApplyConfig(o *telekomv1alpha1.DebugSessionClusterBinding) (*ac.DebugSessionClusterBindingApplyConfiguration, error) {
+func debugSessionClusterBindingToApplyConfig(o *breakglassv1alpha1.DebugSessionClusterBinding) (*ac.DebugSessionClusterBindingApplyConfiguration, error) {
 	cfg := ac.DebugSessionClusterBinding(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err

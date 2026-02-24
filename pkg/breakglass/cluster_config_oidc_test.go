@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,10 +34,10 @@ import (
 
 func TestValidateOIDCAuth_NeitherOIDCConfigured(t *testing.T) {
 	// Test when authType is OIDC but neither oidcAuth nor oidcFromIdentityProvider is configured
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-missing-config", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType:                 telekomv1alpha1.ClusterAuthTypeOIDC,
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType:                 breakglassv1alpha1.ClusterAuthTypeOIDC,
 			OIDCAuth:                 nil,
 			OIDCFromIdentityProvider: nil,
 		},
@@ -86,11 +86,11 @@ func TestValidateOIDCAuth_DirectOIDCMissingFields(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cc := &telekomv1alpha1.ClusterConfig{
+			cc := &breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "oidc-" + tc.name, Namespace: "default"},
-				Spec: telekomv1alpha1.ClusterConfigSpec{
-					AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-					OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
+					AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+					OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 						IssuerURL: tc.issuerURL,
 						ClientID:  tc.clientID,
 						Server:    tc.server,
@@ -111,11 +111,11 @@ func TestValidateOIDCAuth_DirectOIDCMissingFields(t *testing.T) {
 }
 
 func TestValidateOIDCAuth_DirectOIDCMissingClientSecretRef(t *testing.T) {
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-no-secret-ref", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL:       "https://idp.example.com",
 				ClientID:        "client-id",
 				Server:          "https://api.example.com:6443",
@@ -136,15 +136,15 @@ func TestValidateOIDCAuth_DirectOIDCMissingClientSecretRef(t *testing.T) {
 
 func TestValidateOIDCAuth_DirectOIDCClientSecretMissing(t *testing.T) {
 	// Secret referenced doesn't exist
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-secret-missing", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://idp.example.com",
 				ClientID:  "client-id",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "non-existent-secret",
 					Namespace: "default",
 				},
@@ -167,15 +167,15 @@ func TestValidateOIDCAuth_DirectOIDCClientSecretMissingKey(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-secret", Namespace: "default"},
 		Data:       map[string][]byte{"wrong-key": []byte("secret-value")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-secret-no-key", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://idp.example.com",
 				ClientID:  "client-id",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-secret",
 					Namespace: "default",
 					Key:       "client-secret", // This key doesn't exist
@@ -200,20 +200,20 @@ func TestValidateOIDCAuth_DirectOIDCCASecretMissing(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-client-secret", Namespace: "default"},
 		Data:       map[string][]byte{"client-secret": []byte("secret-value")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-ca-missing", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://idp.example.com",
 				ClientID:  "client-id",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-client-secret",
 					Namespace: "default",
 					Key:       "client-secret",
 				},
-				CASecretRef: &telekomv1alpha1.SecretKeyReference{
+				CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "non-existent-ca-secret",
 					Namespace: "default",
 				},
@@ -236,11 +236,11 @@ func TestValidateOIDCAuth_DirectOIDCCASecretMissing(t *testing.T) {
 // ============================================================================
 
 func TestValidateOIDCFromIdentityProvider_MissingName(t *testing.T) {
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-idp-no-name", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "", // Missing
 				Server: "https://api.example.com:6443",
 			},
@@ -258,11 +258,11 @@ func TestValidateOIDCFromIdentityProvider_MissingName(t *testing.T) {
 }
 
 func TestValidateOIDCFromIdentityProvider_MissingServer(t *testing.T) {
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-idp-no-server", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "my-idp",
 				Server: "", // Missing
 			},
@@ -280,11 +280,11 @@ func TestValidateOIDCFromIdentityProvider_MissingServer(t *testing.T) {
 }
 
 func TestValidateOIDCFromIdentityProvider_IDPNotFound(t *testing.T) {
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-idp-not-found", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "non-existent-idp",
 				Server: "https://api.example.com:6443",
 			},
@@ -301,17 +301,17 @@ func TestValidateOIDCFromIdentityProvider_IDPNotFound(t *testing.T) {
 }
 
 func TestValidateOIDCFromIdentityProvider_IDPDisabled(t *testing.T) {
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: true, // IDP is disabled
 		},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-idp-disabled", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "disabled-idp",
 				Server: "https://api.example.com:6443",
 			},
@@ -330,18 +330,18 @@ func TestValidateOIDCFromIdentityProvider_IDPDisabled(t *testing.T) {
 
 func TestValidateOIDCFromIDP_NoClientSecretRef_PlainProvider(t *testing.T) {
 	// IDP without Keycloak config and no explicit clientSecretRef
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "plain-idp"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
 			Keycloak: nil, // No Keycloak config
 		},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-idp-no-secret", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:            "plain-idp",
 				Server:          "https://api.example.com:6443",
 				ClientSecretRef: nil, // No explicit secret ref
@@ -367,7 +367,7 @@ func TestGetClusterConfigInNamespace(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("found in specific namespace", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "prod"},
 		}
 		cli := newTestFakeClient(cc)
@@ -381,7 +381,7 @@ func TestGetClusterConfigInNamespace(t *testing.T) {
 	})
 
 	t.Run("not found in wrong namespace", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "prod"},
 		}
 		cli := newTestFakeClient(cc)
@@ -406,7 +406,7 @@ func TestGetClusterConfigByName_EdgeCases(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("special characters in name", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster-with-dash", Namespace: "default"},
 		}
 		cli := newTestFakeClient(cc)
@@ -418,7 +418,7 @@ func TestGetClusterConfigByName_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("empty name returns error", func(t *testing.T) {
-		cc := &telekomv1alpha1.ClusterConfig{
+		cc := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "some-cluster", Namespace: "default"},
 		}
 		cli := newTestFakeClient(cc)
@@ -430,10 +430,10 @@ func TestGetClusterConfigByName_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("multiple namespaces same name returns error", func(t *testing.T) {
-		cc1 := &telekomv1alpha1.ClusterConfig{
+		cc1 := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "shared-name", Namespace: "ns1"},
 		}
-		cc2 := &telekomv1alpha1.ClusterConfig{
+		cc2 := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "shared-name", Namespace: "ns2"},
 		}
 		cli := newTestFakeClient(cc1, cc2)

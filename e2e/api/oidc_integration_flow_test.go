@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -123,7 +123,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 	// Step 3: Wait for ClusterConfig to become Ready
 	err = waitForClusterConfigConditionReady(t, ctx, cli, clusterConfig.Name, namespace, 2*time.Minute)
 	if err != nil {
-		var cc telekomv1alpha1.ClusterConfig
+		var cc breakglassv1alpha1.ClusterConfig
 		if getErr := cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &cc); getErr == nil {
 			logClusterConfigConditions(t, &cc)
 		}
@@ -161,7 +161,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 	require.NoError(t, err, "Failed to approve session via API")
 
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Step 6: Verify webhook authorization works for the OIDC cluster
 	t.Run("VerifyWebhookAuthorizationWithOIDC", func(t *testing.T) {
@@ -189,7 +189,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 
 	// Step 7: Verify ClusterConfig status reflects healthy state
 	t.Run("VerifyClusterConfigHealthy", func(t *testing.T) {
-		var cc telekomv1alpha1.ClusterConfig
+		var cc breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &cc)
 		require.NoError(t, err)
 		assertClusterConfigReady(t, &cc)
@@ -261,7 +261,7 @@ func TestOIDCClusterConfigTokenExchange(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 
-	var cc telekomv1alpha1.ClusterConfig
+	var cc breakglassv1alpha1.ClusterConfig
 	err = cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &cc)
 	require.NoError(t, err)
 
@@ -279,7 +279,7 @@ func TestOIDCClusterConfigTokenExchange(t *testing.T) {
 func waitForClusterConfigConditionReady(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		var cc telekomv1alpha1.ClusterConfig
+		var cc breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cc)
 		if err != nil {
 			return err
@@ -295,26 +295,26 @@ func waitForClusterConfigConditionReady(t *testing.T, ctx context.Context, cli c
 	return fmt.Errorf("timed out waiting for ClusterConfig %s/%s to become Ready", namespace, name)
 }
 
-func isClusterConfigReady(cc *telekomv1alpha1.ClusterConfig) bool {
+func isClusterConfigReady(cc *breakglassv1alpha1.ClusterConfig) bool {
 	for _, cond := range cc.Status.Conditions {
-		if cond.Type == string(telekomv1alpha1.ClusterConfigConditionReady) && cond.Status == metav1.ConditionTrue {
+		if cond.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) && cond.Status == metav1.ConditionTrue {
 			return true
 		}
 	}
 	return false
 }
 
-func logClusterConfigConditions(t *testing.T, cc *telekomv1alpha1.ClusterConfig) {
+func logClusterConfigConditions(t *testing.T, cc *breakglassv1alpha1.ClusterConfig) {
 	for _, cond := range cc.Status.Conditions {
 		t.Logf("ClusterConfig condition: Type=%s, Status=%s, Reason=%s, Message=%s",
 			cond.Type, cond.Status, cond.Reason, cond.Message)
 	}
 }
 
-func assertClusterConfigReady(t *testing.T, cc *telekomv1alpha1.ClusterConfig) {
+func assertClusterConfigReady(t *testing.T, cc *breakglassv1alpha1.ClusterConfig) {
 	found := false
 	for _, cond := range cc.Status.Conditions {
-		if cond.Type == string(telekomv1alpha1.ClusterConfigConditionReady) {
+		if cond.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) {
 			found = true
 			assert.Equal(t, metav1.ConditionTrue, cond.Status, "Expected ClusterConfig Ready condition to be True")
 			break

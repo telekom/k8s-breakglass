@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -61,7 +61,7 @@ func TestFetchGroupMembersFromMultipleIDPs_SingleIDPFallback_HappyPath(t *testin
 		EventRecorder: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
@@ -102,7 +102,7 @@ func TestFetchGroupMembersFromMultipleIDPs_MultipleGroups_HappyPath(t *testing.T
 		EventRecorder: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
@@ -139,7 +139,7 @@ func TestFetchGroupMembersFromMultipleIDPs_EmptyGroups(t *testing.T) {
 		EventRecorder: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",
@@ -168,7 +168,7 @@ func TestFetchGroupMembersFromMultipleIDPs_NilResolver(t *testing.T) {
 		EventRecorder: nil,
 	}
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-escalation",
 			Namespace: "default",

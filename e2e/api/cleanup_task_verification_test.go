@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -122,21 +122,21 @@ func TestCleanupTaskSessionExpiration(t *testing.T) {
 			Reason:  "Expiration test",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err)
 
 		session = helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify ExpiresAt is set
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
 		require.False(t, fetchedSession.Status.ExpiresAt.IsZero(), "ExpiresAt should be set after approval")
@@ -168,16 +168,16 @@ func TestCleanupDebugSessionResources(t *testing.T) {
 	t.Run("DebugSessionCleanupOnTermination", func(t *testing.T) {
 		// Create a debug pod template with correct structure
 		podTemplateName := helpers.GenerateUniqueName("e2e-cleanup-pod-tpl")
-		podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   podTemplateName,
 				Labels: helpers.E2ELabelsWithFeature("cleanup"),
 			},
-			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Cleanup Test Pod Template",
 				Description: "Pod template for testing cleanup",
-				Template: &telekomv1alpha1.DebugPodSpec{
-					Spec: telekomv1alpha1.DebugPodSpecInner{
+				Template: &breakglassv1alpha1.DebugPodSpec{
+					Spec: breakglassv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{
 								Name:    "debug",
@@ -193,20 +193,20 @@ func TestCleanupDebugSessionResources(t *testing.T) {
 		err := cli.Create(ctx, podTemplate)
 		require.NoError(t, err)
 
-		sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+		sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-cleanup-sess-tpl"),
 				Labels: helpers.E2ELabelsWithFeature("cleanup"),
 			},
-			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Cleanup Test Session Template",
-				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+				PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 					Name: podTemplateName,
 				},
-				WorkloadType:    telekomv1alpha1.DebugWorkloadDaemonSet,
+				WorkloadType:    breakglassv1alpha1.DebugWorkloadDaemonSet,
 				TargetNamespace: namespace,
-				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 					AllowRenewal: cleanupPtrBool(false),
 					MaxRenewals:  cleanupPtrInt32(0),
 				},
@@ -217,11 +217,11 @@ func TestCleanupDebugSessionResources(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify templates exist
-		var fetchedPodTpl telekomv1alpha1.DebugPodTemplate
+		var fetchedPodTpl breakglassv1alpha1.DebugPodTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: podTemplate.Name}, &fetchedPodTpl)
 		require.NoError(t, err)
 
-		var fetchedSessTpl telekomv1alpha1.DebugSessionTemplate
+		var fetchedSessTpl breakglassv1alpha1.DebugSessionTemplate
 		err = cli.Get(ctx, types.NamespacedName{Name: sessionTemplate.Name}, &fetchedSessTpl)
 		require.NoError(t, err)
 
@@ -245,7 +245,7 @@ func TestCleanupOrphanedResources(t *testing.T) {
 		// Create a DebugSession that will be used to test orphan detection
 		// In a real scenario, orphaned pods would be those whose parent session
 		// no longer exists
-		ds := &telekomv1alpha1.DebugSession{
+		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-orphan-test"),
 				Namespace: namespace,
@@ -255,7 +255,7 @@ func TestCleanupOrphanedResources(t *testing.T) {
 					"breakglass.t-caas.telekom.com/managed-by": "breakglass-controller",
 				},
 			},
-			Spec: telekomv1alpha1.DebugSessionSpec{
+			Spec: breakglassv1alpha1.DebugSessionSpec{
 				RequestedBy: helpers.TestUsers.SchedulingTestRequester.Email,
 				Cluster:     helpers.GetTestClusterName(),
 				TemplateRef: "nonexistent-template", // Will fail but that's OK for this test
@@ -267,7 +267,7 @@ func TestCleanupOrphanedResources(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the session has proper labels for cleanup tracking
-		var fetched telekomv1alpha1.DebugSession
+		var fetched breakglassv1alpha1.DebugSession
 		err = cli.Get(ctx, types.NamespacedName{Name: ds.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 
@@ -318,16 +318,16 @@ func TestCleanupApprovalTimeout(t *testing.T) {
 			Reason:  "Approval timeout test",
 		})
 		require.NoError(t, err)
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Check that ApprovalTimeout is reflected in the session
 		// with approval timeout to determine expiration
-		var fetchedSession telekomv1alpha1.BreakglassSession
+		var fetchedSession breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
 		require.NoError(t, err)
 

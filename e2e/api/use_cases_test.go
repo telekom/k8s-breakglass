@@ -42,7 +42,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -98,14 +98,14 @@ func TestUseCasePodShellAccess(t *testing.T) {
 		require.NotEmpty(t, session.Name, "Session name should be returned")
 
 		// Session should already be in Pending state (set by session controller)
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Approve the session via API
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Session approval should succeed")
 
 		// Verify session transitions to Approved
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("ErrorPath_SessionWithoutReason", func(t *testing.T) {
@@ -186,7 +186,7 @@ func TestUseCasePodRestart(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("ErrorPath_SessionRejected", func(t *testing.T) {
@@ -213,7 +213,7 @@ func TestUseCasePodRestart(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify rejected state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
 	})
 }
 
@@ -267,7 +267,7 @@ func TestUseCaseWorkloadScaling(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("ErrorPath_ApprovalTimeout", func(t *testing.T) {
@@ -293,13 +293,13 @@ func TestUseCaseWorkloadScaling(t *testing.T) {
 
 		// Wait for session to timeout (don't approve)
 		// Controller should mark it as ApprovalTimeout after 5s + reconciliation interval
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = helpers.WaitForCondition(ctx, func() (bool, error) {
 			if err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched); err != nil {
 				return false, nil
 			}
 			// Wait for session to leave Pending state (timed out or other terminal state)
-			return fetched.Status.State != telekomv1alpha1.SessionStatePending, nil
+			return fetched.Status.State != breakglassv1alpha1.SessionStatePending, nil
 		}, helpers.WaitForStateTimeout, 1*time.Second)
 		if err == nil {
 			t.Logf("Session state after timeout period: %s", fetched.Status.State)
@@ -360,7 +360,7 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("ErrorPath_DenyPolicyBlocks", func(t *testing.T) {
@@ -374,7 +374,7 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 
 		// The deny policy would prevent deletion when evaluated by the webhook
 		// This test validates DenyPolicy creation succeeds
-		var fetched telekomv1alpha1.DenyPolicy
+		var fetched breakglassv1alpha1.DenyPolicy
 		err = cli.Get(ctx, types.NamespacedName{Name: denyPolicy.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.Rules, 1)
@@ -430,7 +430,7 @@ func TestUseCaseM2MAutomatedAccess(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("ErrorPath_LongDurationRejected", func(t *testing.T) {
@@ -500,7 +500,7 @@ func TestUseCaseBISDebugging(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("ErrorPath_BlockSelfApproval", func(t *testing.T) {
@@ -577,7 +577,7 @@ func TestUseCaseIngressRestart(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 }
 
@@ -604,19 +604,19 @@ func TestUseCasePodSecurityRules(t *testing.T) {
 	// Create deny policy with pod security rules
 	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-pod-security", namespace).
 		WithLabels(helpers.E2ELabelsWithExtra(map[string]string{"use-case": "pod-security"})).
-		WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
-			RiskFactors: telekomv1alpha1.RiskFactors{
+		WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{
 				HostNetwork:         30,
 				HostPID:             40,
 				PrivilegedContainer: 50,
 			},
-			Thresholds: []telekomv1alpha1.RiskThreshold{
+			Thresholds: []breakglassv1alpha1.RiskThreshold{
 				{MaxScore: 50, Action: "allow"},
 				{MaxScore: 100, Action: "warn"},
 				{MaxScore: 1000, Action: "deny", Reason: "Pod security score too high: {{.Score}}"},
 			},
 		}).
-		WithRule(telekomv1alpha1.DenyRule{
+		WithRule(breakglassv1alpha1.DenyRule{
 			Verbs:        []string{"create"},
 			APIGroups:    []string{""},
 			Resources:    []string{"pods"},
@@ -637,7 +637,7 @@ func TestUseCasePodSecurityRules(t *testing.T) {
 		WithApproverGroups(helpers.TestUsers.Approver.Groups[0]).
 		WithApproverUsers(helpers.TestUsers.Approver.Email).
 		WithDenyPolicyRefs(denyPolicy.Name).
-		WithPodSecurityOverrides(&telekomv1alpha1.PodSecurityOverrides{
+		WithPodSecurityOverrides(&breakglassv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: intPtr(150), // Higher threshold for SREs
 			ExemptFactors:   []string{"privilegedContainer", "hostNetwork"},
@@ -661,7 +661,7 @@ func TestUseCasePodSecurityRules(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("ErrorPath_RegularUserBlockedFromPrivileged", func(t *testing.T) {
@@ -738,7 +738,7 @@ func TestUseCaseSessionLifecycle(t *testing.T) {
 		err = helpers.WithdrawSession(ctx, cli, session.Name, namespace)
 		require.NoError(t, err, "Session withdrawal should succeed")
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateWithdrawn, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateWithdrawn, helpers.WaitForStateTimeout)
 	})
 
 	t.Run("SessionExpiration", func(t *testing.T) {
@@ -768,15 +768,15 @@ func TestUseCaseSessionLifecycle(t *testing.T) {
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify session stays approved (not expired yet since MaxValidFor is 1h)
 		// Just fetch current state to confirm it's still approved
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		t.Logf("Session state after approval: %s, ExpiresAt: %v", fetched.Status.State, fetched.Status.ExpiresAt)
-		assert.Equal(t, telekomv1alpha1.SessionStateApproved, fetched.Status.State, "Session should remain approved")
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, fetched.Status.State, "Session should remain approved")
 	})
 
 	t.Run("MultipleSessionsPerUser", func(t *testing.T) {
@@ -842,16 +842,16 @@ func TestUseCaseSessionLifecycle(t *testing.T) {
 		cleanup.Add(session)
 
 		// Session should go to pending
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// After approval, should go to WaitingForScheduledTime or Approved
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
 		// Wait for session to reach expected state after approval
-		fetched := helpers.WaitForSessionStateAny(t, ctx, cli, session.Name, namespace, []telekomv1alpha1.BreakglassSessionState{
-			telekomv1alpha1.SessionStateApproved,
-			telekomv1alpha1.SessionStateWaitingForScheduledTime,
+		fetched := helpers.WaitForSessionStateAny(t, ctx, cli, session.Name, namespace, []breakglassv1alpha1.BreakglassSessionState{
+			breakglassv1alpha1.SessionStateApproved,
+			breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 		}, 15*time.Second)
 		t.Logf("Scheduled session state: %s", fetched.Status.State)
 	})

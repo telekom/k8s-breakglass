@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -80,16 +80,16 @@ func TestIdentityProviderMultipleSelection(t *testing.T) {
 
 	t.Run("CreateMultipleIDPs", func(t *testing.T) {
 		// Create primary IDP (simulating corporate OIDC)
-		idp1 := &telekomv1alpha1.IdentityProvider{
+		idp1 := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-corp-idp",
 				Labels: helpers.E2ELabelsWithFeature("multi-idp"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				Primary:     true,
 				DisplayName: "Corporate OIDC",
 				Issuer:      "https://corp-auth.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://corp-auth.example.com",
 					ClientID:  "breakglass-ui",
 				},
@@ -100,16 +100,16 @@ func TestIdentityProviderMultipleSelection(t *testing.T) {
 		require.NoError(t, err, "Failed to create corp IDP")
 
 		// Create secondary IDP (simulating external partner OIDC)
-		idp2 := &telekomv1alpha1.IdentityProvider{
+		idp2 := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-partner-idp",
 				Labels: helpers.E2ELabelsWithFeature("multi-idp"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				Primary:     false,
 				DisplayName: "Partner SSO",
 				Issuer:      "https://partner-sso.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://partner-sso.example.com",
 					ClientID:  "breakglass-partner",
 				},
@@ -120,12 +120,12 @@ func TestIdentityProviderMultipleSelection(t *testing.T) {
 		require.NoError(t, err, "Failed to create partner IDP")
 
 		// Verify both IDPs were created by checking for the specific IDPs we created
-		var fetchedIDP1 telekomv1alpha1.IdentityProvider
+		var fetchedIDP1 breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp1.Name}, &fetchedIDP1)
 		require.NoError(t, err, "Failed to fetch corp IDP")
 		t.Logf("IDP-002: Created IDP %s with Issuer=%s", fetchedIDP1.Name, fetchedIDP1.Spec.Issuer)
 
-		var fetchedIDP2 telekomv1alpha1.IdentityProvider
+		var fetchedIDP2 breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp2.Name}, &fetchedIDP2)
 		require.NoError(t, err, "Failed to fetch partner IDP")
 		t.Logf("IDP-002: Created IDP %s with Issuer=%s", fetchedIDP2.Name, fetchedIDP2.Spec.Issuer)
@@ -137,15 +137,15 @@ func TestIdentityProviderMultipleSelection(t *testing.T) {
 
 	t.Run("IssuerUniquenessEnforced", func(t *testing.T) {
 		// Try to create IDP with duplicate issuer (should fail)
-		duplicateIDP := &telekomv1alpha1.IdentityProvider{
+		duplicateIDP := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-duplicate-issuer",
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Duplicate",
 				Issuer:      "https://corp-auth.example.com", // Same as idp1
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://corp-auth.example.com",
 					ClientID:  "duplicate-client",
 				},
@@ -181,15 +181,15 @@ func TestIdentityProviderStatusHealth(t *testing.T) {
 		require.True(t, strings.HasPrefix(keycloakURL, "https://"),
 			"Keycloak URL must use HTTPS for CRD validation (spec.oidc.authority requires ^https://), got: %s", keycloakURL)
 
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-health-check-idp",
 				Labels: helpers.E2ELabelsWithFeature("idp-health"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Health Check IDP",
 				Issuer:      keycloakURL + "/realms/master",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority:          keycloakURL,
 					ClientID:           "breakglass-ui",
 					InsecureSkipVerify: true, // For e2e with self-signed certs
@@ -202,12 +202,12 @@ func TestIdentityProviderStatusHealth(t *testing.T) {
 
 		// Wait for IDP to have a Ready condition
 		err = helpers.WaitForCondition(ctx, func() (bool, error) {
-			var fetched telekomv1alpha1.IdentityProvider
+			var fetched breakglassv1alpha1.IdentityProvider
 			if err := cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched); err != nil {
 				return false, nil
 			}
 			for _, c := range fetched.Status.Conditions {
-				if telekomv1alpha1.IdentityProviderConditionType(c.Type) == telekomv1alpha1.IdentityProviderConditionReady {
+				if breakglassv1alpha1.IdentityProviderConditionType(c.Type) == breakglassv1alpha1.IdentityProviderConditionReady {
 					t.Logf("IDP-009: Ready condition - Status=%s, Reason=%s", c.Status, c.Reason)
 					return true, nil
 				}
@@ -236,15 +236,15 @@ func TestIdentityProviderInvalidIssuer(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("IDPWithInvalidIssuerShowsError", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-invalid-issuer-idp",
 				Labels: helpers.E2ELabelsWithFeature("idp-error"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Invalid Issuer IDP",
 				Issuer:      "https://nonexistent.invalid.local",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://nonexistent.invalid.local",
 					ClientID:  "test-client",
 				},
@@ -257,7 +257,7 @@ func TestIdentityProviderInvalidIssuer(t *testing.T) {
 		// Wait and check for error condition in status
 		time.Sleep(5 * time.Second) // Give controller time to reconcile
 
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 
@@ -280,16 +280,16 @@ func TestIdentityProviderDisabled(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("CreateDisabledIDP", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-disabled-idp",
 				Labels: helpers.E2ELabelsWithFeature("disabled-idp"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Disabled IDP",
 				Issuer:      "https://disabled-idp.example.com",
 				Disabled:    true,
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://disabled-idp.example.com",
 					ClientID:  "disabled-client",
 				},
@@ -299,7 +299,7 @@ func TestIdentityProviderDisabled(t *testing.T) {
 		err := cli.Create(ctx, idp)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 		assert.True(t, fetched.Spec.Disabled, "IDP should be marked as disabled")
@@ -338,25 +338,25 @@ func TestIdentityProviderKeycloakGroupSync(t *testing.T) {
 		// Use a unique realm name to avoid issuer conflicts when cleanup is skipped
 		uniqueRealm := helpers.GenerateUniqueName("keycloak-sync")
 
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-keycloak-sync-idp"),
 				Labels: helpers.E2ELabelsWithFeature("keycloak-sync"),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName:       "Keycloak Group Sync IDP",
 				Issuer:            keycloakURL + "/realms/" + uniqueRealm,
-				GroupSyncProvider: telekomv1alpha1.GroupSyncProviderKeycloak,
-				OIDC: telekomv1alpha1.OIDCConfig{
+				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority:          keycloakURL,
 					ClientID:           "breakglass-ui",
 					InsecureSkipVerify: true,
 				},
-				Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 					BaseURL:  keycloakURL,
 					Realm:    uniqueRealm,
 					ClientID: "breakglass-backend",
-					ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      secret.Name,
 						Namespace: namespace,
 						Key:       "client-secret",
@@ -372,12 +372,12 @@ func TestIdentityProviderKeycloakGroupSync(t *testing.T) {
 
 		// Wait for GroupSyncHealthy condition
 		err = helpers.WaitForCondition(ctx, func() (bool, error) {
-			var fetched telekomv1alpha1.IdentityProvider
+			var fetched breakglassv1alpha1.IdentityProvider
 			if err := cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched); err != nil {
 				return false, nil
 			}
 			for _, c := range fetched.Status.Conditions {
-				if telekomv1alpha1.IdentityProviderConditionType(c.Type) == telekomv1alpha1.IdentityProviderConditionGroupSyncHealthy {
+				if breakglassv1alpha1.IdentityProviderConditionType(c.Type) == breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy {
 					t.Logf("IDP-005: GroupSyncHealthy - Status=%s, Reason=%s", c.Status, c.Reason)
 					return true, nil
 				}

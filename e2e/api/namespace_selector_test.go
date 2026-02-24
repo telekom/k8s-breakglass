@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -93,12 +93,12 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 	// policy which blocks all configmap operations with higher precedence
 	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-ns-selector-policy", "").
 		AppliesToClusters(clusterName).
-		WithRule(telekomv1alpha1.DenyRule{
+		WithRule(breakglassv1alpha1.DenyRule{
 			APIGroups: []string{""},
 			Resources: []string{"services"},
 			Verbs:     []string{"delete"},
-			Namespaces: &telekomv1alpha1.NamespaceFilter{
-				SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{
+			Namespaces: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
 						MatchLabels: map[string]string{
 							"env": "production",
@@ -136,7 +136,7 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 	cleanup.Add(session)
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err, "Failed to approve session")
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("PolicyBlocksMatchingNamespace", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -250,13 +250,13 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 	// Use a unique pattern (e2e-mixed-ns-blocked) that won't match pre-deployed policies
 	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-mixed-ns-filter-policy", "").
 		AppliesToClusters(clusterName).
-		WithRule(telekomv1alpha1.DenyRule{
+		WithRule(breakglassv1alpha1.DenyRule{
 			APIGroups: []string{""},
 			Resources: []string{"endpoints"},
 			Verbs:     []string{"delete"},
-			Namespaces: &telekomv1alpha1.NamespaceFilter{
+			Namespaces: &breakglassv1alpha1.NamespaceFilter{
 				Patterns: []string{"e2e-mixed-ns-blocked-*"},
-				SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
 						MatchLabels: map[string]string{
 							"restricted": "true",
@@ -294,7 +294,7 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 	cleanup.Add(session)
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Create a namespace that matches the pattern for testing on the SPOKE cluster
 	blockedPatternNS := &corev1.Namespace{
@@ -391,22 +391,22 @@ func TestDenyPolicyMatchExpressions(t *testing.T) {
 
 	// Create DenyPolicy with matchExpressions
 	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-match-expressions-policy", "").
-		WithRule(telekomv1alpha1.DenyRule{
+		WithRule(breakglassv1alpha1.DenyRule{
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 			Verbs:     []string{"delete"},
-			Namespaces: &telekomv1alpha1.NamespaceFilter{
-				SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{
+			Namespaces: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{
-						MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+						MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{
 							{
 								Key:      "env",
-								Operator: telekomv1alpha1.NamespaceSelectorOpIn,
+								Operator: breakglassv1alpha1.NamespaceSelectorOpIn,
 								Values:   []string{"production", "staging"},
 							},
 							{
 								Key:      "tier",
-								Operator: telekomv1alpha1.NamespaceSelectorOpNotIn,
+								Operator: breakglassv1alpha1.NamespaceSelectorOpNotIn,
 								Values:   []string{"dev"},
 							},
 						},
@@ -421,7 +421,7 @@ func TestDenyPolicyMatchExpressions(t *testing.T) {
 	t.Log("DenyPolicy with matchExpressions created successfully")
 
 	// Verify the policy was created correctly
-	var fetched telekomv1alpha1.DenyPolicy
+	var fetched breakglassv1alpha1.DenyPolicy
 	err = cli.Get(ctx, types.NamespacedName{Name: denyPolicy.Name}, &fetched)
 	require.NoError(t, err)
 	require.Len(t, fetched.Spec.Rules, 1)
@@ -441,24 +441,24 @@ func TestAuditConfigNamespaceSelectors(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	// Create AuditConfig with namespace selectors
-	auditConfig := &telekomv1alpha1.AuditConfig{
+	auditConfig := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-ns-selector-audit",
 			Labels: map[string]string{
 				"e2e-test": "true",
 			},
 		},
-		Spec: telekomv1alpha1.AuditConfigSpec{
+		Spec: breakglassv1alpha1.AuditConfigSpec{
 			Enabled: true,
-			Sinks: []telekomv1alpha1.AuditSinkConfig{
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
 				{
 					Name: "test-log",
-					Type: telekomv1alpha1.AuditSinkTypeLog,
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
 				},
 			},
-			Filtering: &telekomv1alpha1.AuditFilterConfig{
-				IncludeNamespaces: &telekomv1alpha1.NamespaceFilter{
-					SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{
+			Filtering: &breakglassv1alpha1.AuditFilterConfig{
+				IncludeNamespaces: &breakglassv1alpha1.NamespaceFilter{
+					SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 						{
 							MatchLabels: map[string]string{
 								"audit": "enabled",
@@ -475,7 +475,7 @@ func TestAuditConfigNamespaceSelectors(t *testing.T) {
 	t.Log("AuditConfig with namespace selector created successfully")
 
 	// Verify the config was created correctly
-	var fetched telekomv1alpha1.AuditConfig
+	var fetched breakglassv1alpha1.AuditConfig
 	err = cli.Get(ctx, types.NamespacedName{Name: auditConfig.Name}, &fetched)
 	require.NoError(t, err)
 	require.NotNil(t, fetched.Spec.Filtering)

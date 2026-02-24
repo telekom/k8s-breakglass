@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -116,13 +116,13 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session")
 
 		// Wait for session to be approved
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify session is approved
-		var approved telekomv1alpha1.BreakglassSession
+		var approved breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &approved)
 		require.NoError(t, err)
-		assert.Equal(t, telekomv1alpha1.SessionStateApproved, approved.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, approved.Status.State)
 		t.Logf("Step 2b: Approved session by %s, expires at %s", approved.Status.Approver, approved.Status.ExpiresAt)
 	})
 
@@ -140,18 +140,18 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 	t.Run("Step4_ExpireSession", func(t *testing.T) {
 		// Expire the session
 		require.NotEmpty(t, sessionName, "Session name should be set from Step2")
-		var toExpire telekomv1alpha1.BreakglassSession
+		var toExpire breakglassv1alpha1.BreakglassSession
 		err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &toExpire)
 		require.NoError(t, err)
 
-		toExpire.Status.State = telekomv1alpha1.SessionStateExpired
+		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
 		err = cli.Status().Update(ctx, &toExpire)
 		require.NoError(t, err, "Failed to expire session")
 
 		// Wait for informer cache to sync with the expired state
 		helpers.WaitForSessionState(t, ctx, cli, sessionName, namespace,
-			telekomv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
 		t.Logf("Step 4: Expired session")
 	})
 
@@ -215,7 +215,7 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err, "Failed to approve session")
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	t.Logf("Created and approved session for user %s", testUser)
 
 	t.Run("Step1_RequestAllowedWithoutPolicy", func(t *testing.T) {
@@ -257,7 +257,7 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 
 	t.Run("Step4_DeletePolicyAndRequestAllowed", func(t *testing.T) {
 		// Delete the policy
-		policy := &telekomv1alpha1.DenyPolicy{
+		policy := &breakglassv1alpha1.DenyPolicy{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-block-configmap-deletion",
 				Namespace: namespace,
@@ -356,7 +356,7 @@ func TestCompleteFlowMultipleUsers(t *testing.T) {
 			err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 			require.NoError(t, err, "Failed to approve session")
 
-			helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 			t.Logf("Created and approved session for %s", u.email)
 		}
 	}

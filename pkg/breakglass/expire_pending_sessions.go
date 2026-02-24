@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 
 	// ExpirePendingSessions sets state to Timeout for pending sessions that have expired (approval timeout)
@@ -14,7 +14,7 @@ import (
 
 func (wc *BreakglassSessionController) ExpirePendingSessions() {
 	// Use indexed query to fetch only pending sessions (matching ExpireApprovedSessions pattern)
-	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), telekomv1alpha1.SessionStatePending)
+	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStatePending)
 	if err != nil {
 		wc.log.Error("error listing breakglass sessions for pending expiry", err)
 		return
@@ -22,14 +22,14 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 	for _, ses := range sessions {
 		if IsSessionApprovalTimedOut(ses) {
 			wc.log.Infow("Expiring pending session due to approval timeout", "session", ses.Name)
-			ses.Status.State = telekomv1alpha1.SessionStateTimeout
+			ses.Status.State = breakglassv1alpha1.SessionStateTimeout
 
 			// Set RetainedUntil for timeout sessions
 			retainFor := ParseRetainFor(ses.Spec, wc.log)
 			ses.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 			ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
-				Type:               string(telekomv1alpha1.SessionConditionTypeExpired),
+				Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 				Status:             metav1.ConditionTrue,
 				LastTransitionTime: metav1.Now(),
 				Reason:             "ApprovalTimeout",

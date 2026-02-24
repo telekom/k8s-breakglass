@@ -87,6 +87,11 @@ linters:
   #   - nolintlint       ~15 issues (would require adding explanations to all nolint directives)
 
   settings:
+    importas:
+      no-unaliased: true
+      alias:
+        - pkg: "github.com/telekom/k8s-breakglass/api/v1alpha1"
+          alias: breakglassv1alpha1
     gocritic:
       enabled-checks:
         - boolExprSimplify

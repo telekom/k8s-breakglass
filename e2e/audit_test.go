@@ -34,7 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 )
@@ -188,7 +188,7 @@ func TestAuditLogging(t *testing.T) {
 
 	// Pre-cleanup: Delete any existing sessions for the audit-test-group to avoid 409 "already approved" errors.
 	// This handles stale sessions from previous test runs that haven't expired yet.
-	existingSessions := &telekomv1alpha1.BreakglassSessionList{}
+	existingSessions := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := cli.List(ctx, existingSessions, client.InNamespace("breakglass-system"),
 		client.MatchingLabels{"breakglass.t-caas.telekom.com/group": "audit-test-group"}); err == nil {
 		for i := range existingSessions.Items {
@@ -214,7 +214,7 @@ func TestAuditLogging(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add to cleanup
-	cleanup.Add(&telekomv1alpha1.BreakglassSession{
+	cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 	})
 
@@ -225,7 +225,7 @@ func TestAuditLogging(t *testing.T) {
 
 	// 3. Wait for session to be Ready/Active
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// 4. Verify Audit Events
 	// We expect:

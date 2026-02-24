@@ -30,7 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -104,13 +104,13 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 		} else {
 			t.Log("ClusterConfig created - kubeconfig validation at reconcile")
 			// Use condition helper to wait for ClusterConfig to have Ready condition set (True or False)
-			var updated telekomv1alpha1.ClusterConfig
+			var updated breakglassv1alpha1.ClusterConfig
 			helpers.WaitForCondition(ctx, func() (bool, error) {
 				if err := cli.Get(ctx, types.NamespacedName{Name: clusterCfg.Name, Namespace: namespace}, &updated); err != nil {
 					return false, nil
 				}
 				for _, c := range updated.Status.Conditions {
-					if telekomv1alpha1.ClusterConfigConditionType(c.Type) == telekomv1alpha1.ClusterConfigConditionReady {
+					if breakglassv1alpha1.ClusterConfigConditionType(c.Type) == breakglassv1alpha1.ClusterConfigConditionReady {
 						return true, nil // Condition exists, regardless of status
 					}
 				}
@@ -118,7 +118,7 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 			}, 10*time.Second, 500*time.Millisecond)
 			readyCond := "unknown"
 			for _, c := range updated.Status.Conditions {
-				if telekomv1alpha1.ClusterConfigConditionType(c.Type) == telekomv1alpha1.ClusterConfigConditionReady {
+				if breakglassv1alpha1.ClusterConfigConditionType(c.Type) == breakglassv1alpha1.ClusterConfigConditionReady {
 					readyCond = string(c.Status)
 					break
 				}
@@ -179,7 +179,7 @@ func TestConcurrentSessionCreation(t *testing.T) {
 				})
 				if apiErr == nil {
 					// Add to cleanup
-					cleanup.Add(&telekomv1alpha1.BreakglassSession{
+					cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 						ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 					})
 				}
@@ -257,25 +257,25 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		require.NoError(t, err, "Failed to create session via API")
 
 		// Add to cleanup
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Approve via API
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for approved state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Try to move back to pending (invalid) - this tests webhook validation
-		var toRevert telekomv1alpha1.BreakglassSession
+		var toRevert breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toRevert)
 		require.NoError(t, err)
-		toRevert.Status.State = telekomv1alpha1.SessionStatePending
+		toRevert.Status.State = breakglassv1alpha1.SessionStatePending
 
 		err = helpers.ApplySessionStatus(ctx, cli, &toRevert)
 		if err != nil {
@@ -296,27 +296,27 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		require.NoError(t, err, "Failed to create session via API")
 
 		// Add to cleanup
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Move to expired state (simulating expiration) - need to set status directly for this edge case test
-		var toExpire telekomv1alpha1.BreakglassSession
+		var toExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toExpire)
 		require.NoError(t, err)
-		toExpire.Status.State = telekomv1alpha1.SessionStateExpired
+		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
 		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Hour))
 		err = helpers.ApplySessionStatus(ctx, cli, &toExpire)
 		require.NoError(t, err)
 
 		// Try to move back to approved (invalid - resurrection) - this tests webhook validation
-		var toRevive telekomv1alpha1.BreakglassSession
+		var toRevive breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toRevive)
 		require.NoError(t, err)
-		toRevive.Status.State = telekomv1alpha1.SessionStateApproved
+		toRevive.Status.State = breakglassv1alpha1.SessionStateApproved
 		toRevive.Status.ExpiresAt = metav1.NewTime(time.Now().Add(1 * time.Hour))
 
 		err = helpers.ApplySessionStatus(ctx, cli, &toRevive)
@@ -397,7 +397,7 @@ func TestErrorRecovery(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for escalation to be fully deleted before recreating
-		helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &telekomv1alpha1.BreakglassEscalation{}, 10*time.Second)
+		helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &breakglassv1alpha1.BreakglassEscalation{}, 10*time.Second)
 
 		escalation2 := helpers.NewEscalationBuilder("e2e-recreate-esc", namespace).
 			WithEscalatedGroup("recreate-admins-v2").
@@ -411,7 +411,7 @@ func TestErrorRecovery(t *testing.T) {
 			t.Logf("Recreate failed: %v", err)
 		} else {
 			t.Log("Recreate succeeded")
-			var fetched telekomv1alpha1.BreakglassEscalation
+			var fetched breakglassv1alpha1.BreakglassEscalation
 			err = cli.Get(ctx, types.NamespacedName{Name: escalation2.Name, Namespace: namespace}, &fetched)
 			require.NoError(t, err)
 			assert.Equal(t, "recreate-admins-v2", fetched.Spec.EscalatedGroup)
@@ -423,7 +423,7 @@ func TestErrorRecovery(t *testing.T) {
 			WithCluster(helpers.GetTestClusterName()).
 			Build()
 
-		session.Status.State = telekomv1alpha1.SessionStateApproved
+		session.Status.State = breakglassv1alpha1.SessionStateApproved
 		err := cli.Status().Update(ctx, session)
 
 		assert.True(t, errors.IsNotFound(err), "Should get NotFound error")

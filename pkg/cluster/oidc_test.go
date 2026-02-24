@@ -28,7 +28,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,16 +54,16 @@ func TestOIDCTokenProvider_NewProvider(t *testing.T) {
 func TestOIDCTokenProvider_GetRESTConfig_MissingOIDCAuth(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	log := zap.NewNop().Sugar()
 
 	provider := NewOIDCTokenProvider(client, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{
 			// OIDCAuth not set
 		},
 	}
@@ -104,7 +104,7 @@ func TestOIDCTokenProvider_GetRESTConfig_WithMockedOIDCServer(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create client secret
 	secret := &corev1.Secret{
@@ -125,15 +125,15 @@ func TestOIDCTokenProvider_GetRESTConfig_WithMockedOIDCServer(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(client, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: server.URL,
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-secret",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -176,7 +176,7 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func TestOIDCTokenProvider_GetRESTConfig_MissingClientSecret(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create mock OIDC server for discovery
 	discoveryResponse := oidcDiscovery{
@@ -205,15 +205,15 @@ func TestOIDCTokenProvider_GetRESTConfig_MissingClientSecret(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(client, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: server.URL,
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "missing-secret",
 					Namespace: "default",
 				},
@@ -244,7 +244,7 @@ func TestOIDCTokenProvider_GetRESTConfig_MissingClientSecret(t *testing.T) {
 func TestOIDCTokenProvider_ConfiguresTLS(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create CA secret
 	caSecret := &corev1.Secret{
@@ -275,20 +275,20 @@ func TestOIDCTokenProvider_ConfiguresTLS(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(client, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://idp.example.com",
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-secret",
 					Namespace: "default",
 					Key:       "client-secret",
 				},
-				CASecretRef: &telekomv1alpha1.SecretKeyReference{
+				CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "cluster-ca",
 					Namespace: "default",
 					Key:       "ca.crt",
@@ -310,7 +310,7 @@ func TestOIDCTokenProvider_ConfiguresTLS_InsecureSkipVerify(t *testing.T) {
 	// Test that insecureSkipTLSVerify on OIDCAuthConfig sets Insecure on rest.Config
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create only client secret (no CA secret - we're using insecure)
 	clientSecret := &corev1.Secret{
@@ -356,15 +356,15 @@ func TestOIDCTokenProvider_ConfiguresTLS_InsecureSkipVerify(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(client, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: server.URL,
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-secret",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -448,7 +448,7 @@ func TestOIDCTokenProvider_RefreshToken(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create client secret
 	secret := &corev1.Secret{
@@ -469,11 +469,11 @@ func TestOIDCTokenProvider_RefreshToken(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: server.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name:      "oidc-secret",
 			Namespace: "default",
 			Key:       "client-secret",
@@ -675,17 +675,17 @@ func TestOIDCTokenProvider_InvalidateWithNamespace(t *testing.T) {
 func TestOIDCTokenProvider_OIDCFromIdentityProvider_NotFound(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	log := zap.NewNop().Sugar()
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "non-existent-idp",
 				Server: "https://api.cluster.example.com:6443",
 			},
@@ -700,12 +700,12 @@ func TestOIDCTokenProvider_OIDCFromIdentityProvider_NotFound(t *testing.T) {
 func TestOIDCTokenProvider_OIDCFromIdentityProvider_Disabled(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
-			OIDC: telekomv1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -721,10 +721,10 @@ func TestOIDCTokenProvider_OIDCFromIdentityProvider_Disabled(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "disabled-idp",
 				Server: "https://api.cluster.example.com:6443",
 			},
@@ -739,12 +739,12 @@ func TestOIDCTokenProvider_OIDCFromIdentityProvider_Disabled(t *testing.T) {
 func TestOIDCTokenProvider_OIDCFromIdentityProvider_MissingClientSecret(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-idp"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
-			OIDC: telekomv1alpha1.OIDCConfig{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com",
 				ClientID:  "test-client",
 			},
@@ -760,10 +760,10 @@ func TestOIDCTokenProvider_OIDCFromIdentityProvider_MissingClientSecret(t *testi
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "test-idp",
 				Server: "https://api.cluster.example.com:6443",
 				// No clientSecretRef provided either
@@ -779,7 +779,7 @@ func TestOIDCTokenProvider_OIDCFromIdentityProvider_MissingClientSecret(t *testi
 func TestOIDCTokenProvider_TokenExchange(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Token exchange call counter
 	exchangeCallCount := 0
@@ -864,18 +864,18 @@ func TestOIDCTokenProvider_TokenExchange(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: oidcServer.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name:      "oidc-client-secret",
 			Namespace: "default",
 			Key:       "client-secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled: true,
-			SubjectTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "subject-token-secret",
 				Namespace: "default",
 				Key:       "token",
@@ -903,7 +903,7 @@ func TestOIDCTokenProvider_TokenExchange(t *testing.T) {
 func TestOIDCTokenProvider_TokenExchange_MissingSubjectTokenSecret(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = telekomv1alpha1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
 
 	// Create mock OIDC server for discovery
 	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -939,18 +939,18 @@ func TestOIDCTokenProvider_TokenExchange_MissingSubjectTokenSecret(t *testing.T)
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: oidcServer.URL,
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name:      "oidc-client-secret",
 			Namespace: "default",
 			Key:       "client-secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled: true,
-			SubjectTokenSecretRef: &telekomv1alpha1.SecretKeyReference{
+			SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 				Name:      "missing-subject-token",
 				Namespace: "default",
 				Key:       "token",
@@ -973,16 +973,16 @@ func TestOIDCTokenProvider_TokenExchange_MissingSubjectTokenSecretRef(t *testing
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	oidcConfig := &telekomv1alpha1.OIDCAuthConfig{
+	oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL: "https://auth.example.com",
 		ClientID:  "test-client",
 		Server:    "https://api.example.com:6443",
-		ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name:      "oidc-client-secret",
 			Namespace: "default",
 			Key:       "client-secret",
 		},
-		TokenExchange: &telekomv1alpha1.TokenExchangeConfig{
+		TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
 			Enabled: true,
 			// Missing SubjectTokenSecretRef
 		},

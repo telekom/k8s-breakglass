@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -46,20 +46,20 @@ func TestClusterBindingReconcilerStatus(t *testing.T) {
 	cli := setupClient(t)
 
 	// Create a test template for the binding
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-binding-test-template",
 			Labels: map[string]string{
 				"e2e-test": "cluster-binding",
 			},
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Binding Test Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"platform-sre"},
 			},
@@ -84,17 +84,17 @@ func TestClusterBindingReconcilerStatus(t *testing.T) {
 	_ = cli.Create(ctx, ns)
 
 	// Create a ClusterBinding
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-test-binding",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "e2e-binding-test-template",
 			},
 			Clusters: []string{"local-cluster"},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups: []string{"team-alpha"},
 			},
 		},
@@ -109,7 +109,7 @@ func TestClusterBindingReconcilerStatus(t *testing.T) {
 	}()
 
 	// Wait for the binding status to be updated
-	var updatedBinding telekomv1alpha1.DebugSessionClusterBinding
+	var updatedBinding breakglassv1alpha1.DebugSessionClusterBinding
 	require.Eventually(t, func() bool {
 		err := cli.Get(ctx, types.NamespacedName{
 			Name:      binding.Name,
@@ -149,17 +149,17 @@ func TestClusterBindingNameCollision(t *testing.T) {
 
 	cli := setupClient(t)
 
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-collision-test-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Collision Test Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
@@ -183,13 +183,13 @@ func TestClusterBindingNameCollision(t *testing.T) {
 	}
 	_ = cli.Create(ctx, ns)
 
-	binding1 := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding1 := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-collision-binding-1",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "e2e-collision-test-template",
 			},
 			Clusters:    []string{"local-cluster"},
@@ -203,13 +203,13 @@ func TestClusterBindingNameCollision(t *testing.T) {
 		_ = cli.Delete(ctx, binding1)
 	}()
 
-	binding2 := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding2 := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-collision-binding-2",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "e2e-collision-test-template",
 			},
 			Clusters:    []string{"local-cluster"},
@@ -239,17 +239,17 @@ func TestClusterBindingWithSchedulingConstraints(t *testing.T) {
 
 	cli := setupClient(t)
 
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-scheduling-test-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Scheduling Test Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
@@ -273,17 +273,17 @@ func TestClusterBindingWithSchedulingConstraints(t *testing.T) {
 	}
 	_ = cli.Create(ctx, ns)
 
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-scheduling-binding",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "e2e-scheduling-test-template",
 			},
 			Clusters: []string{"local-cluster"},
-			SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+			SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
 				DeniedNodeLabels: map[string]string{
 					"node-role.kubernetes.io/control-plane": "",
 				},
@@ -299,7 +299,7 @@ func TestClusterBindingWithSchedulingConstraints(t *testing.T) {
 		_ = cli.Delete(ctx, binding)
 	}()
 
-	var createdBinding telekomv1alpha1.DebugSessionClusterBinding
+	var createdBinding breakglassv1alpha1.DebugSessionClusterBinding
 	err = cli.Get(ctx, types.NamespacedName{
 		Name:      binding.Name,
 		Namespace: binding.Namespace,
@@ -323,17 +323,17 @@ func TestClusterBindingWithNamespaceConstraints(t *testing.T) {
 
 	cli := setupClient(t)
 
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-namespace-test-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Namespace Test Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
@@ -357,21 +357,21 @@ func TestClusterBindingWithNamespaceConstraints(t *testing.T) {
 	}
 	_ = cli.Create(ctx, ns)
 
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-namespace-binding",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "e2e-namespace-test-template",
 			},
 			Clusters: []string{"local-cluster"},
-			NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
-				AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+			NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+				AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 					Patterns: []string{"debug-*", "team-*"},
 				},
-				DeniedNamespaces: &telekomv1alpha1.NamespaceFilter{
+				DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 					Patterns: []string{"kube-system", "kube-public"},
 				},
 				DefaultNamespace:   "debug-sessions",
@@ -388,7 +388,7 @@ func TestClusterBindingWithNamespaceConstraints(t *testing.T) {
 		_ = cli.Delete(ctx, binding)
 	}()
 
-	var createdBinding telekomv1alpha1.DebugSessionClusterBinding
+	var createdBinding breakglassv1alpha1.DebugSessionClusterBinding
 	err = cli.Get(ctx, types.NamespacedName{
 		Name:      binding.Name,
 		Namespace: binding.Namespace,
@@ -415,17 +415,17 @@ func TestClusterBindingWithImpersonation(t *testing.T) {
 
 	cli := setupClient(t)
 
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-impersonation-test-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Impersonation Test Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
@@ -449,18 +449,18 @@ func TestClusterBindingWithImpersonation(t *testing.T) {
 	}
 	_ = cli.Create(ctx, ns)
 
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-impersonation-binding",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "e2e-impersonation-test-template",
 			},
 			Clusters: []string{"local-cluster"},
-			Impersonation: &telekomv1alpha1.ImpersonationConfig{
-				ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+			Impersonation: &breakglassv1alpha1.ImpersonationConfig{
+				ServiceAccountRef: &breakglassv1alpha1.ServiceAccountReference{
 					Name:      "debug-deployer",
 					Namespace: "breakglass",
 				},
@@ -476,7 +476,7 @@ func TestClusterBindingWithImpersonation(t *testing.T) {
 		_ = cli.Delete(ctx, binding)
 	}()
 
-	var createdBinding telekomv1alpha1.DebugSessionClusterBinding
+	var createdBinding breakglassv1alpha1.DebugSessionClusterBinding
 	err = cli.Get(ctx, types.NamespacedName{
 		Name:      binding.Name,
 		Namespace: binding.Namespace,
@@ -504,21 +504,21 @@ func TestClusterBindingWithAuxiliaryResources(t *testing.T) {
 	cli := setupClient(t)
 
 	// Create a test template with auxiliary resources
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-auxiliary-test-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Auxiliary Resources Test Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{"*"},
 				Groups:   []string{"*"},
 			},
-			AuxiliaryResources: []telekomv1alpha1.AuxiliaryResource{
+			AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
 				{
 					Name:        "test-network-policy",
 					Category:    "network-policy",
@@ -558,17 +558,17 @@ func TestClusterBindingWithAuxiliaryResources(t *testing.T) {
 	_ = cli.Create(ctx, ns)
 
 	// Create a binding that references the template with auxiliary resources
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-auxiliary-binding",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: "e2e-auxiliary-test-template",
 			},
 			Clusters: []string{"local-cluster"},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups: []string{"*"},
 			},
 			// Override auxiliary resources - require network-policy category
@@ -585,7 +585,7 @@ func TestClusterBindingWithAuxiliaryResources(t *testing.T) {
 	}()
 
 	// Wait for the binding status to be updated
-	var updatedBinding telekomv1alpha1.DebugSessionClusterBinding
+	var updatedBinding breakglassv1alpha1.DebugSessionClusterBinding
 	require.Eventually(t, func() bool {
 		err := cli.Get(ctx, types.NamespacedName{
 			Name:      binding.Name,
@@ -611,7 +611,7 @@ func TestClusterBindingWithAuxiliaryResources(t *testing.T) {
 	assert.Contains(t, updatedBinding.Spec.RequiredAuxiliaryResourceCategories, "network-policy")
 
 	// Verify the template has the auxiliary resources we configured
-	var createdTemplate telekomv1alpha1.DebugSessionTemplate
+	var createdTemplate breakglassv1alpha1.DebugSessionTemplate
 	err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &createdTemplate)
 	require.NoError(t, err)
 
@@ -659,14 +659,14 @@ func TestClusterBindingFullChain(t *testing.T) {
 	_ = cli.Create(ctx, ns)
 
 	// Create a pod template for the session template
-	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-binding-chain-pod-template",
 		},
-		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Binding Chain Pod Template",
-			Template: &telekomv1alpha1.DebugPodSpec{
-				Spec: telekomv1alpha1.DebugPodSpecInner{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
@@ -689,33 +689,33 @@ func TestClusterBindingFullChain(t *testing.T) {
 
 	// Create session template with auto-approval
 	replicas := int32(1)
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-binding-chain-template",
 			Labels: map[string]string{
 				"e2e-test": "binding-chain",
 			},
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Binding Chain Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: podTemplate.Name,
 			},
-			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName},
 				Groups:   []string{"*"},
 			},
-			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
 					Clusters: []string{"*"},
 				},
 			},
 			// Template defaults - binding will override these
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
 				AllowRenewal:    ptrBool(true),
@@ -733,24 +733,24 @@ func TestClusterBindingFullChain(t *testing.T) {
 	}()
 
 	// Create a binding with stricter constraints
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-binding-chain-binding",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: template.Name,
 			},
 			Clusters: []string{clusterName},
 			// Binding overrides: stricter constraints
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "2h",
 				DefaultDuration: "30m",
 				AllowRenewal:    ptrBool(true),
 				MaxRenewals:     ptrInt32(1), // Stricter than template
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Groups: []string{"*"},
 			},
 		},
@@ -766,7 +766,7 @@ func TestClusterBindingFullChain(t *testing.T) {
 
 	// Wait for binding to be reconciled
 	require.Eventually(t, func() bool {
-		var updatedBinding telekomv1alpha1.DebugSessionClusterBinding
+		var updatedBinding breakglassv1alpha1.DebugSessionClusterBinding
 		if err := cli.Get(ctx, types.NamespacedName{
 			Name:      binding.Name,
 			Namespace: binding.Namespace,
@@ -802,7 +802,7 @@ func TestClusterBindingFullChain(t *testing.T) {
 	t.Logf("Created session: %s in namespace %s", session.Name, session.Namespace)
 
 	// Wait for session to reach a state (pending or active)
-	var fetchedSession telekomv1alpha1.DebugSession
+	var fetchedSession breakglassv1alpha1.DebugSession
 	require.Eventually(t, func() bool {
 		if err := cli.Get(ctx, types.NamespacedName{
 			Name:      session.Name,
@@ -822,7 +822,7 @@ func TestClusterBindingFullChain(t *testing.T) {
 
 	// Verify ResolvedBinding is populated when session is active
 	// The reconciler should auto-discover the binding and cache it in status
-	if fetchedSession.Status.State == telekomv1alpha1.DebugSessionStateActive {
+	if fetchedSession.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 		require.NotNil(t, fetchedSession.Status.ResolvedBinding,
 			"ResolvedBinding should be populated for active session created via binding")
 		assert.Equal(t, binding.Name, fetchedSession.Status.ResolvedBinding.Name,
@@ -860,21 +860,21 @@ func TestClusterBindingConstraintsApplied(t *testing.T) {
 	_ = cli.Create(ctx, ns)
 
 	// Create a simple template
-	template := &telekomv1alpha1.DebugSessionTemplate{
+	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "e2e-constraints-applied-template",
 		},
-		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "Constraints Applied Template",
-			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "basic-debug",
 			},
-			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName},
 				Groups:   []string{"*"},
 			},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "8h",
 				DefaultDuration: "2h",
 			},
@@ -890,17 +890,17 @@ func TestClusterBindingConstraintsApplied(t *testing.T) {
 	}()
 
 	// Create binding with stricter constraints
-	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-constraints-applied-binding",
 			Namespace: testNS,
 		},
-		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
-			TemplateRef: &telekomv1alpha1.TemplateReference{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{
 				Name: template.Name,
 			},
 			Clusters: []string{clusterName},
-			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "1h",  // Much stricter
 				DefaultDuration: "15m", // Much stricter
 			},
@@ -917,7 +917,7 @@ func TestClusterBindingConstraintsApplied(t *testing.T) {
 
 	// Wait for binding status
 	require.Eventually(t, func() bool {
-		var updatedBinding telekomv1alpha1.DebugSessionClusterBinding
+		var updatedBinding breakglassv1alpha1.DebugSessionClusterBinding
 		if err := cli.Get(ctx, types.NamespacedName{
 			Name:      binding.Name,
 			Namespace: binding.Namespace,
@@ -928,7 +928,7 @@ func TestClusterBindingConstraintsApplied(t *testing.T) {
 	}, 30*time.Second, 2*time.Second, "Binding should resolve templates")
 
 	// Verify binding was created with correct constraints
-	var createdBinding telekomv1alpha1.DebugSessionClusterBinding
+	var createdBinding breakglassv1alpha1.DebugSessionClusterBinding
 	err = cli.Get(ctx, types.NamespacedName{
 		Name:      binding.Name,
 		Namespace: binding.Namespace,

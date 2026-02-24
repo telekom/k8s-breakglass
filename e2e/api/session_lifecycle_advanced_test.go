@@ -24,7 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -55,7 +55,7 @@ func TestSessionActualStartTimeTracking(t *testing.T) {
 			Reason:  "Test actual start time tracking",
 		})
 		require.NoError(t, err, "Session creation should succeed in E2E environment")
-		s.Cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		s.Cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
@@ -63,9 +63,9 @@ func TestSessionActualStartTimeTracking(t *testing.T) {
 		require.NoError(t, err, "Session approval should succeed in E2E environment")
 
 		helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-		var fetched telekomv1alpha1.BreakglassSession
+		var fetched breakglassv1alpha1.BreakglassSession
 		err = s.Client.Get(s.Ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
 		require.NoError(t, err)
 
@@ -87,7 +87,7 @@ func TestSessionIDPMismatchHandling(t *testing.T) {
 	})
 
 	t.Run("SessionSpecContainsIDPFields", func(t *testing.T) {
-		spec := telekomv1alpha1.BreakglassSessionSpec{
+		spec := breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "test-cluster",
 			User:                   helpers.TestUsers.Requester.Email,
 			GrantedGroup:           "test-group",
@@ -107,14 +107,14 @@ func TestSessionConditionTypes(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AllConditionTypesDocumented", func(t *testing.T) {
-		conditionTypes := []telekomv1alpha1.BreakglassSessionConditionType{
-			telekomv1alpha1.SessionConditionTypeIdle,
-			telekomv1alpha1.SessionConditionTypeApproved,
-			telekomv1alpha1.SessionConditionTypeRejected,
-			telekomv1alpha1.SessionConditionTypeExpired,
-			telekomv1alpha1.SessionConditionTypeCanceled,
-			telekomv1alpha1.SessionConditionTypeActive,
-			telekomv1alpha1.SessionConditionTypeSessionExpired,
+		conditionTypes := []breakglassv1alpha1.BreakglassSessionConditionType{
+			breakglassv1alpha1.SessionConditionTypeIdle,
+			breakglassv1alpha1.SessionConditionTypeApproved,
+			breakglassv1alpha1.SessionConditionTypeRejected,
+			breakglassv1alpha1.SessionConditionTypeExpired,
+			breakglassv1alpha1.SessionConditionTypeCanceled,
+			breakglassv1alpha1.SessionConditionTypeActive,
+			breakglassv1alpha1.SessionConditionTypeSessionExpired,
 		}
 
 		for _, ct := range conditionTypes {
@@ -124,14 +124,14 @@ func TestSessionConditionTypes(t *testing.T) {
 	})
 
 	t.Run("AllSessionStatesDocumented", func(t *testing.T) {
-		sessionStates := []telekomv1alpha1.BreakglassSessionState{
-			telekomv1alpha1.SessionStatePending,
-			telekomv1alpha1.SessionStateApproved,
-			telekomv1alpha1.SessionStateRejected,
-			telekomv1alpha1.SessionStateExpired,
-			telekomv1alpha1.SessionStateWithdrawn,
-			telekomv1alpha1.SessionStateTimeout,
-			telekomv1alpha1.SessionStateWaitingForScheduledTime,
+		sessionStates := []breakglassv1alpha1.BreakglassSessionState{
+			breakglassv1alpha1.SessionStatePending,
+			breakglassv1alpha1.SessionStateApproved,
+			breakglassv1alpha1.SessionStateRejected,
+			breakglassv1alpha1.SessionStateExpired,
+			breakglassv1alpha1.SessionStateWithdrawn,
+			breakglassv1alpha1.SessionStateTimeout,
+			breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 		}
 
 		for _, state := range sessionStates {
@@ -146,14 +146,14 @@ func TestEscalationConditionTypes(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AllEscalationConditionTypesDocumented", func(t *testing.T) {
-		conditionTypes := []telekomv1alpha1.BreakglassEscalationConditionType{
-			telekomv1alpha1.BreakglassEscalationConditionReady,
-			telekomv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved,
-			telekomv1alpha1.BreakglassEscalationConditionConfigValidated,
-			telekomv1alpha1.BreakglassEscalationConditionClusterRefsValid,
-			telekomv1alpha1.BreakglassEscalationConditionIDPRefsValid,
-			telekomv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid,
-			telekomv1alpha1.BreakglassEscalationConditionMailProviderValid,
+		conditionTypes := []breakglassv1alpha1.BreakglassEscalationConditionType{
+			breakglassv1alpha1.BreakglassEscalationConditionReady,
+			breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved,
+			breakglassv1alpha1.BreakglassEscalationConditionConfigValidated,
+			breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid,
+			breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid,
+			breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid,
+			breakglassv1alpha1.BreakglassEscalationConditionMailProviderValid,
 		}
 
 		for _, ct := range conditionTypes {
@@ -168,7 +168,7 @@ func TestSessionClusterConfigRefTracking(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("ClusterConfigRefFieldExists", func(t *testing.T) {
-		spec := telekomv1alpha1.BreakglassSessionSpec{
+		spec := breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:          "my-cluster",
 			User:             helpers.TestUsers.Requester.Email,
 			GrantedGroup:     "test-group",

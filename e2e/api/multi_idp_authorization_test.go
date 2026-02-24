@@ -31,12 +31,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
 func init() {
-	_ = telekomv1alpha1.AddToScheme(scheme.Scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme.Scheme)
 }
 
 // MultiIDPAuthorizationSuite tests authorization flows with multiple identity providers.
@@ -158,11 +158,11 @@ func (s *MultiIDPAuthorizationSuite) TestEmployeeAccessEmployeeOnlyCluster() {
 	// Step 2: Approver approves via API
 	t.Log("Step 2: Approver approves session via API")
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStatePending, 30*time.Second)
+		breakglassv1alpha1.SessionStatePending, 30*time.Second)
 	err = s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace)
 	s.Require().NoError(err)
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Log("✓ Session approved")
 
 	// Step 3: Employee accesses cluster
@@ -220,7 +220,7 @@ func (s *MultiIDPAuthorizationSuite) TestContractorDeniedOnEmployeeOnlyCluster()
 	// Wait for processing
 	time.Sleep(5 * time.Second)
 
-	var fetched telekomv1alpha1.BreakglassSession
+	var fetched breakglassv1alpha1.BreakglassSession
 	fetchErr := s.hubClient.Get(s.ctx, client.ObjectKey{
 		Namespace: session.Namespace,
 		Name:      session.Name,
@@ -228,8 +228,8 @@ func (s *MultiIDPAuthorizationSuite) TestContractorDeniedOnEmployeeOnlyCluster()
 
 	if fetchErr == nil {
 		// Session exists - verify it's in a rejected state or verify kubectl fails
-		if fetched.Status.State == telekomv1alpha1.SessionStateRejected ||
-			fetched.Status.State == telekomv1alpha1.SessionStateTimeout {
+		if fetched.Status.State == breakglassv1alpha1.SessionStateRejected ||
+			fetched.Status.State == breakglassv1alpha1.SessionStateTimeout {
 			t.Logf("✓ Contractor session correctly rejected with state: %s", fetched.Status.State)
 			return
 		}
@@ -279,11 +279,11 @@ func (s *MultiIDPAuthorizationSuite) TestContractorAccessContractorCluster() {
 	// Step 2: Approver approves via API
 	t.Log("Step 2: Approver approves session via API")
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStatePending, 30*time.Second)
+		breakglassv1alpha1.SessionStatePending, 30*time.Second)
 	err = s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace)
 	s.Require().NoError(err)
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Log("✓ Session approved")
 
 	// Step 3: Contractor accesses cluster
@@ -326,11 +326,11 @@ func (s *MultiIDPAuthorizationSuite) TestIDPMismatchDenied() {
 
 	// Step 2: Approve via API
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStatePending, 30*time.Second)
+		breakglassv1alpha1.SessionStatePending, 30*time.Second)
 	err = s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace)
 	s.Require().NoError(err)
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Log("✓ Employee session approved")
 
 	// Step 3: Contractor tries to use employee's session with their own token
@@ -359,7 +359,7 @@ func (s *MultiIDPAuthorizationSuite) TestMultipleIDPsConfigured() {
 	t := s.T()
 
 	// List all IdentityProviders (cluster-scoped)
-	var idpList telekomv1alpha1.IdentityProviderList
+	var idpList breakglassv1alpha1.IdentityProviderList
 	err := s.hubClient.List(s.ctx, &idpList)
 	s.Require().NoError(err, "Should be able to list IdentityProviders")
 

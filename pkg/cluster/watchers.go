@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	clientcache "k8s.io/client-go/tools/cache"
@@ -26,7 +26,7 @@ func RegisterInvalidationHandlers(ctx context.Context, mgr ctrl.Manager, provide
 		return fmt.Errorf("manager cache is nil")
 	}
 
-	ccInformer, err := cache.GetInformer(ctx, &telekomv1alpha1.ClusterConfig{})
+	ccInformer, err := cache.GetInformer(ctx, &breakglassv1alpha1.ClusterConfig{})
 	if err != nil {
 		return fmt.Errorf("get ClusterConfig informer: %w", err)
 	}
@@ -100,12 +100,12 @@ func RegisterInvalidationHandlers(ctx context.Context, mgr ctrl.Manager, provide
 	return nil
 }
 
-func extractClusterConfig(obj interface{}) *telekomv1alpha1.ClusterConfig {
+func extractClusterConfig(obj interface{}) *breakglassv1alpha1.ClusterConfig {
 	switch t := obj.(type) {
-	case *telekomv1alpha1.ClusterConfig:
+	case *breakglassv1alpha1.ClusterConfig:
 		return t
 	case clientcache.DeletedFinalStateUnknown:
-		if cfg, ok := t.Obj.(*telekomv1alpha1.ClusterConfig); ok {
+		if cfg, ok := t.Obj.(*breakglassv1alpha1.ClusterConfig); ok {
 			return cfg
 		}
 	}

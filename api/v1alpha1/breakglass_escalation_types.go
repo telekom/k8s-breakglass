@@ -250,6 +250,7 @@ type SessionLimitsOverride struct {
 	MaxActiveSessionsTotal *int32 `json:"maxActiveSessionsTotal,omitempty"`
 }
 
+// ReasonConfig defines the configuration for the reason field on escalation requests.
 type ReasonConfig struct {
 	// mandatory indicates whether the field is required (true) or optional (false).
 	// +optional
@@ -323,6 +324,8 @@ type BreakglassEscalationStatus struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the escalation"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+
+// BreakglassEscalation is the Schema for the breakglassescalations API.
 type BreakglassEscalation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -428,6 +431,8 @@ func (be *BreakglassEscalation) SetupWebhookWithManager(mgr ctrl.Manager) error 
 }
 
 // +kubebuilder:object:root=true
+
+// BreakglassEscalationList contains a list of BreakglassEscalation resources.
 type BreakglassEscalationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

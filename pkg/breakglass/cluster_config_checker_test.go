@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,15 +25,15 @@ func newTestFakeClient(objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().
 		WithScheme(Scheme).
 		WithObjects(objs...).
-		WithStatusSubresource(&telekomv1alpha1.ClusterConfig{}).
+		WithStatusSubresource(&breakglassv1alpha1.ClusterConfig{}).
 		Build()
 }
 
 func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 	// Setup: ClusterConfig referencing a secret that doesn't exist
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "default"},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "missing", Namespace: "default"}},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "missing", Namespace: "default"}},
 	}
 	cl := newTestFakeClient(cc)
 	fakeRecorder := fakeEventRecorder{}
@@ -41,7 +41,7 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 	// run once
 	checker.runOnce(context.Background(), checker.Log)
 	// read updated CC from client
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	// Check Ready condition is False
 	readyCondition := getCondition(got, "Ready")
@@ -53,12 +53,12 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 func TestClusterConfigChecker_MissingKey(t *testing.T) {
 	// secret exists but missing key 'value'
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"}, Data: map[string][]byte{"other": []byte("x")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
+	cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "default"}, Spec: breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background(), checker.Log)
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	// Check Ready condition is False
 	readyCondition := getCondition(got, "Ready")
@@ -70,7 +70,7 @@ func TestClusterConfigChecker_MissingKey(t *testing.T) {
 func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	// secret contains key but invalid kubeconfig
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s2", Namespace: "default"}, Data: map[string][]byte{"value": []byte("not-a-kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-c", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s2", Namespace: "default"}}}
+	cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-c", Namespace: "default"}, Spec: breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s2", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := fakeEventRecorder{}
 	// stub RestConfigFromKubeConfig to return error
@@ -79,7 +79,7 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	defer func() { RestConfigFromKubeConfig = old }()
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background(), checker.Log)
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	// Check Ready condition is False
 	readyCondition := getCondition(got, "Ready")
@@ -91,7 +91,7 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	// secret contains key and parse OK, but cluster unreachable
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s3", Namespace: "default"}, Data: map[string][]byte{"value": []byte("fake-kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-d", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s3", Namespace: "default"}}}
+	cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-d", Namespace: "default"}, Spec: breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "s3", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := fakeEventRecorder{}
 	// stub RestConfigFromKubeConfig to return non-nil config
@@ -104,7 +104,7 @@ func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	defer func() { CheckClusterReachable = oldCheck }()
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background(), checker.Log)
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	// Check Ready condition is False
 	readyCondition := getCondition(got, "Ready")
@@ -117,9 +117,9 @@ func TestClusterConfigChecker_Unreachable(t *testing.T) {
 // the Ready condition is set to True with proper reason.
 func TestClusterConfigChecker_SuccessfulValidation(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "valid-secret", Namespace: "default"}, Data: map[string][]byte{"value": []byte("valid-kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-success", Namespace: "default", Generation: 1},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "valid-secret", Namespace: "default"}},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "valid-secret", Namespace: "default"}},
 	}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := fakeEventRecorder{}
@@ -135,7 +135,7 @@ func TestClusterConfigChecker_SuccessfulValidation(t *testing.T) {
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	// Check Ready condition is True
 	readyCondition := getCondition(got, "Ready")
@@ -149,11 +149,11 @@ func TestClusterConfigChecker_SuccessfulValidation(t *testing.T) {
 // persisted to the API server. This test would fail if status updates weren't persisted correctly.
 func TestClusterConfigChecker_StatusUpdatePersisted(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "test-secret", Namespace: "default"}, Data: map[string][]byte{"value": []byte("kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-persist-test", Namespace: "default", Generation: 5},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "test-secret", Namespace: "default"}},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "test-secret", Namespace: "default"}},
 		// Start with an old condition
-		Status: telekomv1alpha1.ClusterConfigStatus{
+		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
 				{
 					Type:               "Ready",
@@ -181,7 +181,7 @@ func TestClusterConfigChecker_StatusUpdatePersisted(t *testing.T) {
 	checker.runOnce(context.Background(), checker.Log)
 
 	// Read back from client - this simulates reading from the API server
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 
 	// Verify the status was actually updated (not just modified in memory)
@@ -197,10 +197,10 @@ func TestClusterConfigChecker_StatusUpdatePersisted(t *testing.T) {
 // transitions from a failure state to success when the problem is fixed.
 func TestClusterConfigChecker_TransitionFromFailToSuccess(t *testing.T) {
 	// Start with a ClusterConfig in a failed state (missing secret)
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-transition", Namespace: "default", Generation: 2},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "transition-secret", Namespace: "default"}},
-		Status: telekomv1alpha1.ClusterConfigStatus{
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "transition-secret", Namespace: "default"}},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
 				{
 					Type:               "Ready",
@@ -219,7 +219,7 @@ func TestClusterConfigChecker_TransitionFromFailToSuccess(t *testing.T) {
 
 	// First check - secret still missing
 	checker.runOnce(context.Background(), checker.Log)
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	require.Equal(t, metav1.ConditionFalse, getCondition(got, "Ready").Status)
 
@@ -245,12 +245,12 @@ func TestClusterConfigChecker_TransitionFromFailToSuccess(t *testing.T) {
 }
 
 // helper: construct a client.ObjectKey for a ClusterConfig stored in the fake client
-func clientKey(cc *telekomv1alpha1.ClusterConfig) client.ObjectKey {
+func clientKey(cc *breakglassv1alpha1.ClusterConfig) client.ObjectKey {
 	return client.ObjectKey{Namespace: cc.Namespace, Name: cc.Name}
 }
 
 // helper: get condition by type from a ClusterConfig
-func getCondition(cc *telekomv1alpha1.ClusterConfig, condType string) *metav1.Condition {
+func getCondition(cc *breakglassv1alpha1.ClusterConfig, condType string) *metav1.Condition {
 	for i := range cc.Status.Conditions {
 		if cc.Status.Conditions[i].Type == condType {
 			return &cc.Status.Conditions[i]
@@ -261,9 +261,9 @@ func getCondition(cc *telekomv1alpha1.ClusterConfig, condType string) *metav1.Co
 
 // TestClusterConfigChecker_NoKubeconfigSecretRef tests handling of ClusterConfig with no ref
 func TestClusterConfigChecker_NoKubeconfigSecretRef(t *testing.T) {
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-no-ref", Namespace: "default"},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{
 			// Empty kubeconfigSecretRef
 		},
 	}
@@ -276,9 +276,9 @@ func TestClusterConfigChecker_NoKubeconfigSecretRef(t *testing.T) {
 
 // TestClusterConfigChecker_LeaderElectionWait tests that checker waits for leadership signal
 func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-leader", Namespace: "default"},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "sec", Namespace: "default"}},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "sec", Namespace: "default"}},
 	}
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "sec", Namespace: "default"}, Data: map[string][]byte{"value": []byte("kubeconfig")}}
 	cl := newTestFakeClient(cc, sec)
@@ -334,10 +334,10 @@ func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 
 func TestClusterConfigChecker_OIDCAuthType_MissingOIDCConfig(t *testing.T) {
 	// ClusterConfig with authType=OIDC but no oidcAuth configuration
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
 			// OIDCAuth not set
 		},
 	}
@@ -347,7 +347,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingOIDCConfig(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 
 	readyCondition := getCondition(got, "Ready")
@@ -358,15 +358,15 @@ func TestClusterConfigChecker_OIDCAuthType_MissingOIDCConfig(t *testing.T) {
 
 func TestClusterConfigChecker_OIDCAuthType_MissingClientSecret(t *testing.T) {
 	// ClusterConfig with OIDC auth but missing client secret
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster-2", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://idp.example.com",
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "missing-secret",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -380,7 +380,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingClientSecret(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 
 	readyCondition := getCondition(got, "Ready")
@@ -395,20 +395,20 @@ func TestClusterConfigChecker_OIDCAuthType_MissingCASecret(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-client-secret", Namespace: "default"},
 		Data:       map[string][]byte{"client-secret": []byte("test-secret")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster-3", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://idp.example.com",
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-client-secret",
 					Namespace: "default",
 					Key:       "client-secret",
 				},
-				CASecretRef: &telekomv1alpha1.SecretKeyReference{
+				CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "missing-ca-secret",
 					Namespace: "default",
 					Key:       "ca.crt",
@@ -422,7 +422,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingCASecret(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 
 	readyCondition := getCondition(got, "Ready")
@@ -444,20 +444,20 @@ func TestClusterConfigChecker_OIDCAuthType_TOFUAllowsEmptyCAKey(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "ca-secret-for-tofu", Namespace: "default"},
 		Data:       map[string][]byte{}, // Empty - TOFU will populate this
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster-tofu", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				IssuerURL: "https://idp.example.com",
 				ClientID:  "test-client",
 				Server:    "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-client-secret",
 					Namespace: "default",
 					Key:       "client-secret",
 				},
-				CASecretRef: &telekomv1alpha1.SecretKeyReference{
+				CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "ca-secret-for-tofu",
 					Namespace: "default",
 					Key:       "ca.crt",
@@ -471,7 +471,7 @@ func TestClusterConfigChecker_OIDCAuthType_TOFUAllowsEmptyCAKey(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 
 	readyCondition := getCondition(got, "Ready")
@@ -490,15 +490,15 @@ func TestClusterConfigChecker_OIDCAuthType_MissingRequiredFields(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-client-secret", Namespace: "default"},
 		Data:       map[string][]byte{"client-secret": []byte("test-secret")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster-4", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
 				// Missing IssuerURL
 				ClientID: "test-client",
 				Server:   "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "oidc-client-secret",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -512,7 +512,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingRequiredFields(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 
 	readyCondition := getCondition(got, "Ready")
@@ -645,12 +645,12 @@ func TestNewStatusUpdateHelper(t *testing.T) {
 func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
 	tests := []struct {
 		name    string
-		ref     *telekomv1alpha1.OIDCFromIdentityProviderConfig
+		ref     *breakglassv1alpha1.OIDCFromIdentityProviderConfig
 		wantMsg string
 	}{
 		{
 			name: "missing name",
-			ref: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+			ref: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "",
 				Server: "https://api.example.com:6443",
 			},
@@ -658,7 +658,7 @@ func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
 		},
 		{
 			name: "missing server",
-			ref: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+			ref: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "my-idp",
 				Server: "",
 			},
@@ -666,7 +666,7 @@ func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
 		},
 		{
 			name: "both missing",
-			ref: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+			ref: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "",
 				Server: "",
 			},
@@ -676,10 +676,10 @@ func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cc := &telekomv1alpha1.ClusterConfig{
+			cc := &breakglassv1alpha1.ClusterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "oidc-from-idp-cluster", Namespace: "default"},
-				Spec: telekomv1alpha1.ClusterConfigSpec{
-					AuthType:                 telekomv1alpha1.ClusterAuthTypeOIDC,
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
+					AuthType:                 breakglassv1alpha1.ClusterAuthTypeOIDC,
 					OIDCFromIdentityProvider: tt.ref,
 				},
 			}
@@ -689,7 +689,7 @@ func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
 
 			checker.runOnce(context.Background(), checker.Log)
 
-			got := &telekomv1alpha1.ClusterConfig{}
+			got := &breakglassv1alpha1.ClusterConfig{}
 			require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 			readyCondition := getCondition(got, "Ready")
 			require.NotNil(t, readyCondition)
@@ -702,11 +702,11 @@ func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
 // TestValidateOIDCFromIdentityProvider_IdentityProviderNotFound tests that
 // validateOIDCFromIdentityProvider fails when the referenced IdentityProvider doesn't exist
 func TestValidateOIDCFromIdentityProvider_IdentityProviderNotFound(t *testing.T) {
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-from-idp-notfound", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "nonexistent-idp",
 				Server: "https://api.example.com:6443",
 			},
@@ -718,7 +718,7 @@ func TestValidateOIDCFromIdentityProvider_IdentityProviderNotFound(t *testing.T)
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)
@@ -729,14 +729,14 @@ func TestValidateOIDCFromIdentityProvider_IdentityProviderNotFound(t *testing.T)
 // TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled tests that
 // validateOIDCFromIdentityProvider fails when the referenced IdentityProvider is disabled
 func TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled(t *testing.T) {
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: true, // IDP is disabled
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL: "https://keycloak.example.com", ClientID: "client",
 				Realm: "test-realm",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "keycloak-secret",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -744,11 +744,11 @@ func TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled(t *testing.T)
 			},
 		},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-from-disabled-idp", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "disabled-idp",
 				Server: "https://api.example.com:6443",
 			},
@@ -760,7 +760,7 @@ func TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled(t *testing.T)
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)
@@ -773,18 +773,18 @@ func TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled(t *testing.T)
 // nor the IdentityProvider has a client secret configured
 func TestValidateOIDCFromIdentityProvider_NoClientSecretRef(t *testing.T) {
 	// IDP without Keycloak config (so no implicit client secret)
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-no-keycloak"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
 			// No Keycloak config
 		},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-no-secret", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "idp-no-keycloak",
 				Server: "https://api.example.com:6443",
 				// No ClientSecretRef
@@ -797,7 +797,7 @@ func TestValidateOIDCFromIdentityProvider_NoClientSecretRef(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)
@@ -808,14 +808,14 @@ func TestValidateOIDCFromIdentityProvider_NoClientSecretRef(t *testing.T) {
 // TestValidateOIDCFromIdentityProvider_ClientSecretMissing tests that
 // validateOIDCFromIdentityProvider fails when the client secret reference exists but secret is missing
 func TestValidateOIDCFromIdentityProvider_ClientSecretMissing(t *testing.T) {
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-with-keycloak"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL: "https://keycloak.example.com", ClientID: "client",
 				Realm: "test-realm",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "missing-keycloak-secret",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -823,11 +823,11 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretMissing(t *testing.T) {
 			},
 		},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-secret-missing", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "idp-with-keycloak",
 				Server: "https://api.example.com:6443",
 			},
@@ -839,7 +839,7 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretMissing(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)
@@ -850,14 +850,14 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretMissing(t *testing.T) {
 // TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing tests that
 // validateOIDCFromIdentityProvider fails when the secret exists but doesn't have the required key
 func TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing(t *testing.T) {
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-key-missing"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL: "https://keycloak.example.com", ClientID: "client",
 				Realm: "test-realm",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "keycloak-secret-wrong-key",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -870,11 +870,11 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret-wrong-key", Namespace: "default"},
 		Data:       map[string][]byte{"wrong-key": []byte("secret-value")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-key-missing", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "idp-key-missing",
 				Server: "https://api.example.com:6443",
 			},
@@ -886,7 +886,7 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)
@@ -897,14 +897,14 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing(t *testing.T) {
 // TestValidateOIDCFromIdentityProvider_CASecretMissing tests that
 // validateOIDCFromIdentityProvider fails when caSecretRef points to a missing secret
 func TestValidateOIDCFromIdentityProvider_CASecretMissing(t *testing.T) {
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-ca-test"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL: "https://keycloak.example.com", ClientID: "client",
 				Realm: "test-realm",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "keycloak-client-secret",
 					Namespace: "default",
 					Key:       "client-secret",
@@ -916,14 +916,14 @@ func TestValidateOIDCFromIdentityProvider_CASecretMissing(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-client-secret", Namespace: "default"},
 		Data:       map[string][]byte{"client-secret": []byte("secret-value")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-ca-missing", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "idp-ca-test",
 				Server: "https://api.example.com:6443",
-				CASecretRef: &telekomv1alpha1.SecretKeyReference{
+				CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "missing-ca-secret",
 					Namespace: "default",
 					Key:       "ca.crt",
@@ -937,7 +937,7 @@ func TestValidateOIDCFromIdentityProvider_CASecretMissing(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)
@@ -948,14 +948,14 @@ func TestValidateOIDCFromIdentityProvider_CASecretMissing(t *testing.T) {
 // TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret tests that
 // when OIDCFromIdentityProvider has its own ClientSecretRef, it uses that instead of IDP's
 func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T) {
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-explicit-secret"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL: "https://keycloak.example.com", ClientID: "client",
 				Realm: "test-realm",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "idp-keycloak-secret", // This should NOT be used
 					Namespace: "default",
 					Key:       "client-secret",
@@ -968,14 +968,14 @@ func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T)
 		ObjectMeta: metav1.ObjectMeta{Name: "explicit-client-secret", Namespace: "default"},
 		Data:       map[string][]byte{"my-key": []byte("explicit-secret-value")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-explicit-secret", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "idp-explicit-secret",
 				Server: "https://api.example.com:6443",
-				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 					Name:      "explicit-client-secret",
 					Namespace: "default",
 					Key:       "my-key",
@@ -989,7 +989,7 @@ func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T)
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)
@@ -1002,14 +1002,14 @@ func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T)
 // TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey tests that
 // when no key is specified, "client-secret" is used as the default
 func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
-	idp := &telekomv1alpha1.IdentityProvider{
+	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-default-key"},
-		Spec: telekomv1alpha1.IdentityProviderSpec{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
-			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 				BaseURL: "https://keycloak.example.com", ClientID: "client",
 				Realm: "test-realm",
-				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "keycloak-secret-default",
 					Namespace: "default",
 					// Key is empty - should default to "client-secret"
@@ -1022,11 +1022,11 @@ func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret-default", Namespace: "default"},
 		Data:       map[string][]byte{"client-secret": []byte("secret-value")},
 	}
-	cc := &telekomv1alpha1.ClusterConfig{
+	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-default-key", Namespace: "default"},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
-			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
 				Name:   "idp-default-key",
 				Server: "https://api.example.com:6443",
 			},
@@ -1038,7 +1038,7 @@ func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 
 	checker.runOnce(context.Background(), checker.Log)
 
-	got := &telekomv1alpha1.ClusterConfig{}
+	got := &breakglassv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	readyCondition := getCondition(got, "Ready")
 	require.NotNil(t, readyCondition)

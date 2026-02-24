@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -43,15 +43,15 @@ func TestIdentityProviderCRUD(t *testing.T) {
 	t.Run("CreateAndReadIdentityProvider", func(t *testing.T) {
 		uniqueName := helpers.GenerateUniqueName("e2e-idp")
 		issuer := "https://" + uniqueName + ".example.com"
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   uniqueName,
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "E2E Test IDP",
 				Issuer:      issuer,
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: issuer,
 					ClientID:  "test-client-id",
 				},
@@ -61,7 +61,7 @@ func TestIdentityProviderCRUD(t *testing.T) {
 		err := cli.Create(ctx, idp)
 		require.NoError(t, err, "Failed to create IdentityProvider")
 
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err, "Failed to get IdentityProvider")
 		assert.Equal(t, "test-client-id", fetched.Spec.OIDC.ClientID)
@@ -73,15 +73,15 @@ func TestIdentityProviderCRUD(t *testing.T) {
 	t.Run("UpdateIdentityProvider", func(t *testing.T) {
 		uniqueName := helpers.GenerateUniqueName("e2e-idp-update")
 		issuer := "https://" + uniqueName + ".example.com"
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   uniqueName,
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Original Name",
 				Issuer:      issuer,
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: issuer,
 					ClientID:  "original-client-id",
 				},
@@ -92,18 +92,18 @@ func TestIdentityProviderCRUD(t *testing.T) {
 		require.NoError(t, err)
 
 		// Update the IDP using retry to handle conflicts with the IdentityProviderReconciler
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 
-		err = helpers.UpdateWithRetry(ctx, cli, &fetched, func(idp *telekomv1alpha1.IdentityProvider) error {
+		err = helpers.UpdateWithRetry(ctx, cli, &fetched, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.DisplayName = "Updated Name"
 			return nil
 		})
 		require.NoError(t, err)
 
 		// Verify update
-		var updated telekomv1alpha1.IdentityProvider
+		var updated breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, "Updated Name", updated.Spec.DisplayName)
@@ -114,15 +114,15 @@ func TestIdentityProviderCRUD(t *testing.T) {
 	t.Run("DeleteIdentityProvider", func(t *testing.T) {
 		uniqueName := helpers.GenerateUniqueName("e2e-idp-delete")
 		issuer := "https://" + uniqueName + ".example.com"
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   uniqueName,
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "To Be Deleted",
 				Issuer:      issuer,
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: issuer,
 					ClientID:  "delete-client",
 				},
@@ -153,15 +153,15 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 
 	t.Run("EscalationWithAllowedIDP", func(t *testing.T) {
 		// Create an IdentityProvider
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-allowed"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Allowed IDP",
 				Issuer:      "https://allowed.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://allowed.example.com",
 					ClientID:  "allowed-client",
 				},
@@ -182,7 +182,7 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Contains(t, fetched.Spec.AllowedIdentityProvidersForRequests, idp.Name)
@@ -191,15 +191,15 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 	})
 
 	t.Run("EscalationWithApproverIDPRestriction", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-approver"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Approver IDP",
 				Issuer:      "https://approver.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://approver.example.com",
 					ClientID:  "approver-client",
 				},
@@ -219,7 +219,7 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Contains(t, fetched.Spec.AllowedIdentityProvidersForApprovers, idp.Name)
@@ -239,15 +239,15 @@ func TestIdentityProviderStatus(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("IdentityProviderStatusTransition", func(t *testing.T) {
-		idp := &telekomv1alpha1.IdentityProvider{
+		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-status"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Status Test IDP",
 				Issuer:      "https://status.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://status.example.com",
 					ClientID:  "status-client",
 				},
@@ -260,7 +260,7 @@ func TestIdentityProviderStatus(t *testing.T) {
 		// Wait briefly for controller to process
 		time.Sleep(2 * time.Second)
 
-		var fetched telekomv1alpha1.IdentityProvider
+		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 
@@ -282,15 +282,15 @@ func TestMultipleIDPSelection(t *testing.T) {
 
 	t.Run("EscalationWithMultipleAllowedIDPs", func(t *testing.T) {
 		// Create multiple IDPs
-		idp1 := &telekomv1alpha1.IdentityProvider{
+		idp1 := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-multi1"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Corporate SSO",
 				Issuer:      "https://corp.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://corp.example.com",
 					ClientID:  "corp-sso",
 				},
@@ -300,15 +300,15 @@ func TestMultipleIDPSelection(t *testing.T) {
 		err := cli.Create(ctx, idp1)
 		require.NoError(t, err)
 
-		idp2 := &telekomv1alpha1.IdentityProvider{
+		idp2 := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-multi2"),
 				Labels: helpers.E2ETestLabels(),
 			},
-			Spec: telekomv1alpha1.IdentityProviderSpec{
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				DisplayName: "Partner SSO",
 				Issuer:      "https://partner.example.com",
-				OIDC: telekomv1alpha1.OIDCConfig{
+				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority: "https://partner.example.com",
 					ClientID:  "partner-sso",
 				},
@@ -329,7 +329,7 @@ func TestMultipleIDPSelection(t *testing.T) {
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		var fetched telekomv1alpha1.BreakglassEscalation
+		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Spec.AllowedIdentityProvidersForRequests, 2)
