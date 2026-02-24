@@ -70,7 +70,35 @@ sum(rate(breakglass_webhook_sar_decisions_by_action_total{decision="denied"}[5m]
 | `breakglass_webhook_session_sar_errors_total` | Counter | `cluster`, `session`, `group` | Errors checking session grants |
 | `breakglass_webhook_session_sars_skipped_total` | Counter | `cluster` | Session checks skipped (e.g., due to config errors) |
 
+### Session Activity Tracking
+
+Activity tracking records when sessions are actively used by the authorization webhook. Activity data is buffered and flushed periodically (default 30s) to reduce API server load. The `lastActivity` and `activityCount` fields on `BreakglassSessionStatus` are updated on each flush cycle via an optimistic-concurrency status merge-patch (retry-on-conflict). Failed flushes are re-queued with merge logic (up to 5 retries).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-----------|
+| `breakglass_session_activity_requests_total` | Counter | `cluster`, `granted_group` | Authorization requests that matched a breakglass session (bounded by granted group, not session name) |
+| `breakglass_session_activity_flushes_total` | Counter | — | Activity tracker flush cycles completed |
+| `breakglass_session_activity_flush_errors_total` | Counter | — | Failed activity status updates during flush |
+| `breakglass_session_activity_dropped_total` | Counter | — | Activity entries dropped due to tracker capacity limit |
+| `breakglass_session_idle_expired_total` | Counter | `cluster` | Sessions automatically expired due to idle timeout |
+
 **Example Queries:**
+
+```promql
+# Activity rate by granted group
+sum by (granted_group) (rate(breakglass_session_activity_requests_total[5m]))
+
+# Activity rate per cluster
+sum by (cluster) (rate(breakglass_session_activity_requests_total[5m]))
+
+# Flush error rate
+rate(breakglass_session_activity_flush_errors_total[5m])
+
+# Idle expiration rate per cluster
+sum by (cluster) (rate(breakglass_session_idle_expired_total[5m]))
+```
+
+### Session-Based Authorization (Example Queries)
 
 ```promql
 # Success rate of session grant checks
@@ -141,7 +169,8 @@ Track breakglass session creation, state changes, and expiration.
 | `breakglass_session_created_total` | Counter | `cluster` | Sessions created |
 | `breakglass_session_updated_total` | Counter | `cluster` | Session status updates (approve/reject/etc) |
 | `breakglass_session_deleted_total` | Counter | `cluster` | Sessions deleted |
-| `breakglass_session_expired_total` | Counter | `cluster` | Sessions expired automatically |
+| `breakglass_session_expired_total` | Counter | `cluster` | Sessions expired automatically (time-based) |
+| `breakglass_session_idle_expired_total` | Counter | `cluster` | Sessions expired due to idle timeout |
 
 **Example Queries:**
 

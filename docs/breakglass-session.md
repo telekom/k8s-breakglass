@@ -34,11 +34,12 @@ Admission webhooks enforce valid state transitions and reject invalid updates (f
 | `Rejected` | Approver denied the request | ❌ No | Approver rejected request | `rejectedAt` (Terminal) |
 | `Withdrawn` | User canceled their own request | ❌ No | User withdrew before approval | `withdrawnAt` (Terminal) |
 | `Expired` | Session reached max duration OR approver dropped it | ❌ No | Session time exceeded OR explicitly expired | `expiresAt` (Terminal) |
+| `IdleExpired` | Session idle timeout exceeded | ❌ No | No activity within configured `idleTimeout` | `lastActivity` (Terminal) |
 | `ApprovalTimeout` | Pending session timed out awaiting approval | ❌ No | Pending session exceeded timeout threshold | `timeoutAt` (Terminal) |
 
 ### Terminal States
 
-Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**, **ApprovalTimeout**), it can NEVER return to an active state:
+Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**, **IdleExpired**, **ApprovalTimeout**), it can NEVER return to an active state:
 
 - These states take absolute precedence over any timestamps
 - Even if timestamps appear valid, the session is not valid
@@ -57,6 +58,7 @@ Timestamps are preserved across state transitions to maintain audit history:
 | `expiresAt` | When session expires or expired | Approval and after each drop | Never |
 | `timeoutAt` | When pending session timed out | After timeout threshold | Never |
 | `retainedUntil` | When session object will be deleted | Terminal state entry | Never |
+| `lastActivity` | Most recent authorized webhook request | Each activity flush cycle via status merge patch | Never |
 
 **Example timestamp preservation:**
 ```
@@ -86,7 +88,7 @@ spec:
   # Optional: Session duration settings
   maxValidFor: "1h"           # Max time active after approval (default: 1h)
   retainFor: "720h"           # Time to retain expired sessions (default: 720h)
-  # Note: idleTimeout is NOT YET IMPLEMENTED
+  idleTimeout: "30m"          # Auto-expire if no activity within this duration (optional)
   
   # Optional: ClusterConfig reference (if different from cluster name parsing)
   clusterConfigRef: "my-cluster-config"
@@ -108,6 +110,10 @@ status:
   rejectedAt: null                       # When rejected (if applicable)
   expiresAt: "2024-01-15T11:30:00Z"     # When session expires
   retainedUntil: "2024-02-14T10:30:00Z" # When session object is deleted
+  
+  # Activity tracking (updated by webhook)
+  lastActivity: "2024-01-15T10:45:00Z"  # Most recent authorized request
+  activityCount: 42                      # Total authorized requests
 ```
 
 ## Spec Fields
@@ -156,17 +162,14 @@ maxValidFor: "30m"  # 30 minutes
 
 #### idleTimeout
 
-> **⚠️ NOT YET IMPLEMENTED**: This field is reserved for future use. The idle timeout detection feature is not currently functional.
+Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day units like `"1d12h"`). Must not exceed `maxValidFor`.
 
-Maximum time a session can sit idle without being used (planned):
+Copied automatically from the matched `BreakglassEscalation` at approval time.
 
 ```yaml
-# NOT YET IMPLEMENTED - these settings are ignored
-idleTimeout: "1h"   # 1 hour (planned default)
-idleTimeout: "30m"  # 30 minutes (planned)
+idleTimeout: "30m"  # Expire after 30 minutes of inactivity
+idleTimeout: "1h"   # Expire after 1 hour of inactivity
 ```
-
-See [issue #8](https://github.com/telekom/k8s-breakglass/issues/8) for implementation status.
 
 #### retainFor
 
@@ -205,7 +208,7 @@ Array of current session conditions. Available condition types:
 
 - `Approved` - Session has been approved and is active
 - `Rejected` - Session has been rejected
-- `Idle` - Session is idle (not yet implemented)
+- `Idle` - Session idle timeout exceeded (reason: `IdleTimeout`)
 
 ```yaml
 status:
@@ -255,6 +258,32 @@ status:
   retainedUntil: "2024-02-14T10:30:00Z"
 ```
 
+### Activity Tracking Fields
+
+These fields are updated by the authorization webhook's `ActivityTracker` via optimistic-concurrency status merge-patches with retry-on-conflict. They record when and how often a session is exercised.
+
+#### lastActivity
+
+Timestamp of the most recent authorized webhook request for this session:
+
+```yaml
+status:
+  lastActivity: "2024-01-15T10:45:00Z"
+```
+
+Used as the primary baseline for idle timeout calculation. Sessions without `lastActivity` are skipped by the idle-timeout controller to avoid false positives.
+
+#### activityCount
+
+Total number of authorized webhook requests that matched this session:
+
+```yaml
+status:
+  activityCount: 42
+```
+
+Incremented on each flush cycle (default 30s) by the sum of requests buffered since the last flush.
+
 ## Session Lifecycle
 
 Sessions are created via REST API and progress through states:
@@ -263,8 +292,9 @@ Sessions are created via REST API and progress through states:
 2. **Pending** → Awaiting approval
 3. **Approved** → Session active and granting privileges
 4. **Expired** → Session timed out or session reached its maximum duration
-5. **Rejected** → Request denied by approver
-6. **Retained** → Expired session retained for audit purposes before deletion
+5. **IdleExpired** → Session had no activity within its configured idle timeout
+6. **Rejected** → Request denied by approver
+7. **Retained** → Expired session retained for audit purposes before deletion
 
 ## Complete Examples
 

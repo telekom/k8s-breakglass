@@ -290,14 +290,14 @@ Configured per-escalation:
 ```yaml
 spec:
   maxValidFor: "2h"    # Total active time after approval
-  # idleTimeout: "1h"  # NOT YET IMPLEMENTED - reserved for future use
+  idleTimeout: "1h"    # Auto-expire after 1h of inactivity
   retainFor: "720h"    # Retention after expiry (30 days)
 ```
 
 Timeout behavior:
 
 - `maxValidFor`: Total duration session is active regardless of usage
-- `idleTimeout`: **NOT YET IMPLEMENTED** - Session auto-revoked if not used for this duration (planned feature)
+- `idleTimeout`: Session auto-expired if no authorization requests for this duration
 - `retainFor`: How long to keep expired sessions in system (for audit)
 
 ## API Response Format

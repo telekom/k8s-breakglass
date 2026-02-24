@@ -29,6 +29,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
+        description: ClusterConfig is the Schema for the clusterconfigs API.
         properties:
           apiVersion:
             description: |-

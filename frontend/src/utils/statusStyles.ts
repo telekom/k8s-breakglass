@@ -19,6 +19,7 @@ const STATE_TONE_MAP: Record<string, StatusTone> = {
   timeout: "danger",
   approvaltimeout: "danger",
   expired: "muted",
+  idleexpired: "danger",
   completed: "muted",
   ended: "muted",
   unknown: "neutral",

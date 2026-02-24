@@ -9,6 +9,7 @@ import { describeApprover, wasApprovedBy } from "@/utils/sessionFilters";
 import { pushError, pushSuccess } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
+import { formatRelativeTime } from "@/composables/useDateFormatting";
 import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
@@ -58,6 +59,7 @@ const stateOptions = [
   { value: "timeout", label: "Approval Timeout" },
   { value: "active", label: "Active" },
   { value: "expired", label: "Expired" },
+  { value: "idleexpired", label: "Idle Expired" },
 ];
 
 function startedFor(session: SessionCR): string | null {
@@ -81,7 +83,20 @@ function endedFor(session: SessionCR): string | null {
 
 function reasonEndedLabel(session: SessionCR): string {
   const status = session.status || {};
-  if ((status as any).reasonEnded) return (status as any).reasonEnded as string;
+  const rawReason = (status as any).reasonEnded as string | undefined;
+  if (rawReason) {
+    // Map known backend values to human-readable labels
+    const reasonLabels: Record<string, string> = {
+      withdrawn: "Withdrawn by user",
+      rejected: "Rejected",
+      canceled: "Canceled by approver",
+      timeExpired: "Session expired",
+      idleTimeout: "Idle timeout exceeded",
+      duplicateCleanup: "Duplicate session cleaned up",
+      dropped: "Dropped",
+    };
+    return reasonLabels[rawReason] ?? rawReason;
+  }
   if ((status as any).reason) return (status as any).reason as string;
   if ((session as any).terminationReason) return (session as any).terminationReason as string;
   if ((session as any).state) {
@@ -96,6 +111,8 @@ function reasonEndedLabel(session: SessionCR): string {
         return "Rejected";
       case "expired":
         return "Session expired";
+      case "idleexpired":
+        return "Session idle expired";
       case "approved":
         return "Active";
       case "pending":
@@ -541,6 +558,16 @@ onMounted(() => {
             :ended="endedFor(session)"
           />
 
+          <div v-if="session.status?.lastActivity || session.spec?.idleTimeout" class="activity-info">
+            <span v-if="session.status?.lastActivity">
+              <strong>Last Activity:</strong> {{ formatRelativeTime(session.status.lastActivity) }}
+              <span v-if="session.status?.activityCount != null"> ({{ session.status.activityCount }} requests)</span>
+            </span>
+            <span v-if="session.spec?.idleTimeout">
+              <strong>Idle Timeout:</strong> {{ session.spec.idleTimeout }}
+            </span>
+          </div>
+
           <div v-if="session.spec?.requestReason || session.status?.approvalReason" class="reasons">
             <ReasonPanel
               v-if="session.spec?.requestReason"
@@ -802,6 +829,15 @@ header p {
 .reasons {
   display: grid;
   gap: var(--space-sm);
+}
+
+.activity-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  font-size: 0.85rem;
+  color: var(--session-muted);
+  margin-bottom: var(--space-sm);
 }
 
 .end-reason {

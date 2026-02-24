@@ -13,7 +13,14 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/types"
 )
+
+// ActivityCleaner is the interface for pruning orphaned activity tracker entries.
+// Implemented by webhook.ActivityTracker.
+type ActivityCleaner interface {
+	Cleanup(activeSessionIDs map[types.NamespacedName]bool) int
+}
 
 const (
 	// DefaultCleanupOperationTimeout is the timeout for cleanup operations to ensure
@@ -22,13 +29,14 @@ const (
 )
 
 type CleanupRoutine struct {
-	Log           *zap.SugaredLogger
-	Manager       *SessionManager
-	AuditManager  *audit.Manager
-	MailService   MailEnqueuer    // Mail service for sending expiration notifications
-	BrandingName  string          // Branding name for email templates
-	DisableEmail  bool            // Whether to disable email notifications
-	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
+	Log             *zap.SugaredLogger
+	Manager         *SessionManager
+	AuditManager    *audit.Manager
+	MailService     MailEnqueuer    // Mail service for sending expiration notifications
+	BrandingName    string          // Branding name for email templates
+	DisableEmail    bool            // Whether to disable email notifications
+	LeaderElected   <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
+	ActivityTracker ActivityCleaner // Optional: prune orphaned entries during cleanup
 }
 
 // CleanupInterval is the interval between cleanup routine runs.
@@ -114,17 +122,21 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		activator := NewScheduledSessionActivator(cr.Log, cr.Manager).
 			WithMailService(cr.MailService, cr.BrandingName, cr.DisableEmail)
 		activator.ActivateScheduledSessions()
+	}
 
-		ctrl := &BreakglassSessionController{
+	// Build session controller once for the expiry operations below.
+	var sessionCtrl *BreakglassSessionController
+	if cr.Manager != nil {
+		sessionCtrl = &BreakglassSessionController{
 			log:            cr.Log,
 			sessionManager: cr.Manager,
 			mailService:    cr.MailService,
 			disableEmail:   cr.DisableEmail,
 			config:         config.Config{Frontend: config.Frontend{BrandingName: cr.BrandingName}},
 		}
-		ctrl.ExpirePendingSessions()
+		sessionCtrl.ExpirePendingSessions()
 		// Expire approved sessions whose ExpiresAt has passed
-		ctrl.ExpireApprovedSessions()
+		sessionCtrl.ExpireApprovedSessions()
 	}
 
 	cleanupCtx := ctx
@@ -142,6 +154,13 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager)
 	}
 
+	// Expire approved sessions that have been idle longer than their idleTimeout.
+	// Uses the bounded opCtx to ensure idle-expiry checks are included in the
+	// cleanup operation timeout and don't block shutdown.
+	if sessionCtrl != nil {
+		sessionCtrl.ExpireIdleSessions(opCtx)
+	}
+
 	// markCleanupExpiredSession and cleanupExpiredDebugSessions dereference
 	// cr.Manager without a nil check; guard them to avoid a panic when the
 	// session manager has not been initialised (e.g. breakglass disabled).
@@ -149,12 +168,43 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		cr.markCleanupExpiredSession(opCtx)
 		// Cleanup expired debug sessions
 		cr.cleanupExpiredDebugSessions(opCtx)
+
+		// Prune orphaned activity tracker entries.
+		// Build a set of active (approved) sessions and let the tracker discard the rest.
+		if cr.ActivityTracker != nil {
+			cr.pruneActivityTracker(opCtx)
+		}
 	}
 	cr.Log.Info("Finished breakglass session cleanup task")
 }
 
+// pruneActivityTracker builds a set of active (approved) session NamespacedNames
+// and calls ActivityTracker.Cleanup() to remove entries for sessions that no longer exist.
+func (cr CleanupRoutine) pruneActivityTracker(ctx context.Context) {
+	var bsl breakglassv1alpha1.BreakglassSessionList
+	if err := cr.Manager.List(ctx, &bsl); err != nil {
+		cr.Log.Warnw("Failed to list sessions for activity tracker pruning", "error", err)
+		return
+	}
+
+	activeIDs := make(map[types.NamespacedName]bool, len(bsl.Items))
+	for i := range bsl.Items {
+		if bsl.Items[i].Status.State == breakglassv1alpha1.SessionStateApproved {
+			activeIDs[types.NamespacedName{
+				Namespace: bsl.Items[i].Namespace,
+				Name:      bsl.Items[i].Name,
+			}] = true
+		}
+	}
+
+	cr.ActivityTracker.Cleanup(activeIDs)
+}
+
 // Marks sessions that are expired and removes those that should no longer be stored.
 func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
+	if routine.Manager == nil {
+		return
+	}
 	routine.Log.Debug("Starting expired session cleanup")
 	var deletedCount int
 
@@ -217,6 +267,9 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 // cleanupExpiredDebugSessions marks debug sessions as expired when their ExpiresAt timestamp has passed.
 // It also deletes terminated/expired debug sessions that are past their retention period.
 func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
+	if routine.Manager == nil {
+		return
+	}
 	routine.Log.Debug("Starting expired debug session cleanup")
 	var expiredCount, deletedCount int
 

@@ -260,7 +260,7 @@ func main() {
 	// (GET /api/debugSessions/templates/:name/clusters) for a unified user experience.
 
 	// Register API controllers based on component flags
-	apiControllers := api.Setup(sessionController, escalationManager, &sessionManager, cliConfig.EnableFrontend,
+	apiControllers, webhookCtrl := api.Setup(sessionController, escalationManager, &sessionManager, cliConfig.EnableFrontend,
 		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService)
 
 	// Make IdentityProvider available to API server for frontend configuration
@@ -297,14 +297,20 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			breakglass.CleanupRoutine{
+			cr := breakglass.CleanupRoutine{
 				Log:           log,
 				Manager:       &sessionManager,
 				LeaderElected: leaderElectedCh,
 				MailService:   mailService,
 				BrandingName:  cfg.Frontend.BrandingName,
 				DisableEmail:  cliConfig.DisableEmail,
-			}.CleanupRoutine(managerCtx)
+			}
+			// Plumb the activity tracker from the webhook controller so the
+			// cleanup routine can prune orphaned entries.
+			if at := webhookCtrl.ActivityTrackerCleaner(); at != nil {
+				cr.ActivityTracker = at
+			}
+			cr.CleanupRoutine(managerCtx)
 		}()
 		log.Infow("Cleanup routine enabled")
 	} else {
@@ -533,6 +539,9 @@ func main() {
 			log.Info("Audit service shut down successfully")
 		}
 	}
+
+	// Stop activity tracker (flushes remaining session activity entries)
+	webhookCtrl.StopActivityTracker(shutdownCtx)
 
 	cancel()
 	log.Info("Waiting for all goroutines to finish")

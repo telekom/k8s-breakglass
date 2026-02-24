@@ -466,6 +466,40 @@ func TestValidateTimeoutRelationships_ApprovalTimeoutEqualMaxValidFor(t *testing
 	assert.Nil(t, errs, "approvalTimeout == maxValidFor should pass")
 }
 
+func TestValidateTimeoutRelationships_IdleTimeoutValid(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		MaxValidFor: "2h",
+		IdleTimeout: "30m",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.Nil(t, errs, "valid idleTimeout should pass")
+}
+
+func TestValidateTimeoutRelationships_IdleTimeoutBelowMinimum(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		IdleTimeout: "30s",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.NotNil(t, errs, "sub-minute idleTimeout should fail")
+}
+
+func TestValidateTimeoutRelationships_IdleTimeoutExceedsMaxValidFor(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		MaxValidFor: "1h",
+		IdleTimeout: "2h",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.NotNil(t, errs, "idleTimeout > maxValidFor should fail")
+}
+
+func TestValidateTimeoutRelationships_IdleTimeoutInvalidFormat(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		IdleTimeout: "garbage",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.NotNil(t, errs, "invalid idleTimeout format should fail")
+}
+
 // TestEnsureClusterWideUniqueName tests cluster-wide name uniqueness validation
 func TestEnsureClusterWideUniqueName_NilInputs(t *testing.T) {
 	// Nil reader (no webhookClient/Cache)
