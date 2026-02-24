@@ -173,6 +173,35 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 	result.Errors = append(result.Errors, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProvidersForRequests, specPath.Child("allowedIdentityProvidersForRequests"))...)
 	result.Errors = append(result.Errors, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProvidersForApprovers, specPath.Child("allowedIdentityProvidersForApprovers"))...)
 
+	// Defense-in-depth: validate podSecurityOverrides.requireApproval requires approvers (mirrors CEL rule)
+	if pso := escalation.Spec.PodSecurityOverrides; pso != nil && pso.RequireApproval {
+		hasApprovers := pso.Approvers != nil && (len(pso.Approvers.Groups) > 0 || len(pso.Approvers.Users) > 0)
+		if !hasApprovers {
+			result.Errors = append(result.Errors, field.Required(
+				specPath.Child("podSecurityOverrides").Child("approvers"),
+				"approvers must be specified when requireApproval is true",
+			))
+		}
+	}
+
+	// Defense-in-depth: validate sessionLimitsOverride.unlimited conflicts (mirrors CEL rule)
+	if slo := escalation.Spec.SessionLimitsOverride; slo != nil && slo.Unlimited {
+		if slo.MaxActiveSessionsPerUser != nil {
+			result.Errors = append(result.Errors, field.Invalid(
+				specPath.Child("sessionLimitsOverride").Child("maxActiveSessionsPerUser"),
+				*slo.MaxActiveSessionsPerUser,
+				"maxActiveSessionsPerUser must not be set when unlimited is true",
+			))
+		}
+		if slo.MaxActiveSessionsTotal != nil {
+			result.Errors = append(result.Errors, field.Invalid(
+				specPath.Child("sessionLimitsOverride").Child("maxActiveSessionsTotal"),
+				*slo.MaxActiveSessionsTotal,
+				"maxActiveSessionsTotal must not be set when unlimited is true",
+			))
+		}
+	}
+
 	return result
 }
 

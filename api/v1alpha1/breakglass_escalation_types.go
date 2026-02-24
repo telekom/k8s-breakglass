@@ -236,7 +236,7 @@ type NotificationExclusions struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.unlimited) || self.unlimited == false || (!has(self.maxActiveSessionsPerUser) && !has(self.maxActiveSessionsTotal))",message="maxActiveSessionsPerUser and maxActiveSessionsTotal must not be set when unlimited is true"
 type SessionLimitsOverride struct {
 	// unlimited disables session limits entirely for this escalation.
-	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
+	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal must not be set.
 	// Use with caution - this should only be granted to trusted platform teams.
 	// +optional
 	Unlimited bool `json:"unlimited,omitempty"`

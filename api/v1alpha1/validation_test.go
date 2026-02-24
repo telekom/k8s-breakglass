@@ -1120,6 +1120,147 @@ func TestValidateAuditConfig_LogSink(t *testing.T) {
 	})
 }
 
+// ==================== Defense-in-Depth Validation Tests ====================
+
+// These tests verify Go webhook validation mirrors CEL rules for
+// PodSecurityOverrides.requireApproval and SessionLimitsOverride.unlimited.
+
+func TestValidateBreakglassEscalation_PodSecurityRequireApproval(t *testing.T) {
+	validBase := func() *BreakglassEscalation {
+		return &BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test"},
+			Spec: BreakglassEscalationSpec{
+				EscalatedGroup: "admin-group",
+				Allowed:        BreakglassEscalationAllowed{Groups: []string{"dev"}, Clusters: []string{"c1"}},
+				Approvers:      BreakglassEscalationApprovers{Groups: []string{"approvers"}},
+			},
+		}
+	}
+
+	t.Run("requireApproval false without approvers is valid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.PodSecurityOverrides = &PodSecurityOverrides{
+			Enabled:         true,
+			RequireApproval: false,
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.True(t, result.IsValid(), "expected valid, got: %s", result.ErrorMessage())
+	})
+
+	t.Run("requireApproval true with approver groups is valid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.PodSecurityOverrides = &PodSecurityOverrides{
+			Enabled:         true,
+			RequireApproval: true,
+			Approvers:       &PodSecurityApprovers{Groups: []string{"sec-team"}},
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.True(t, result.IsValid(), "expected valid, got: %s", result.ErrorMessage())
+	})
+
+	t.Run("requireApproval true with approver users is valid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.PodSecurityOverrides = &PodSecurityOverrides{
+			Enabled:         true,
+			RequireApproval: true,
+			Approvers:       &PodSecurityApprovers{Users: []string{"admin@example.com"}},
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.True(t, result.IsValid(), "expected valid, got: %s", result.ErrorMessage())
+	})
+
+	t.Run("requireApproval true without approvers is invalid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.PodSecurityOverrides = &PodSecurityOverrides{
+			Enabled:         true,
+			RequireApproval: true,
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "approvers")
+	})
+
+	t.Run("requireApproval true with empty approvers is invalid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.PodSecurityOverrides = &PodSecurityOverrides{
+			Enabled:         true,
+			RequireApproval: true,
+			Approvers:       &PodSecurityApprovers{},
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "approvers")
+	})
+}
+
+func TestValidateBreakglassEscalation_SessionLimitsUnlimited(t *testing.T) {
+	validBase := func() *BreakglassEscalation {
+		return &BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test"},
+			Spec: BreakglassEscalationSpec{
+				EscalatedGroup: "admin-group",
+				Allowed:        BreakglassEscalationAllowed{Groups: []string{"dev"}, Clusters: []string{"c1"}},
+				Approvers:      BreakglassEscalationApprovers{Groups: []string{"approvers"}},
+			},
+		}
+	}
+
+	int32Ptr := func(v int32) *int32 { return &v }
+
+	t.Run("unlimited true without limits is valid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.SessionLimitsOverride = &SessionLimitsOverride{Unlimited: true}
+		result := ValidateBreakglassEscalation(e)
+		assert.True(t, result.IsValid(), "expected valid, got: %s", result.ErrorMessage())
+	})
+
+	t.Run("unlimited false with limits is valid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.SessionLimitsOverride = &SessionLimitsOverride{
+			Unlimited:                false,
+			MaxActiveSessionsPerUser: int32Ptr(5),
+			MaxActiveSessionsTotal:   int32Ptr(10),
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.True(t, result.IsValid(), "expected valid, got: %s", result.ErrorMessage())
+	})
+
+	t.Run("unlimited true with maxActiveSessionsPerUser is invalid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.SessionLimitsOverride = &SessionLimitsOverride{
+			Unlimited:                true,
+			MaxActiveSessionsPerUser: int32Ptr(5),
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxActiveSessionsPerUser")
+	})
+
+	t.Run("unlimited true with maxActiveSessionsTotal is invalid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.SessionLimitsOverride = &SessionLimitsOverride{
+			Unlimited:              true,
+			MaxActiveSessionsTotal: int32Ptr(10),
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxActiveSessionsTotal")
+	})
+
+	t.Run("unlimited true with both limits is invalid", func(t *testing.T) {
+		e := validBase()
+		e.Spec.SessionLimitsOverride = &SessionLimitsOverride{
+			Unlimited:                true,
+			MaxActiveSessionsPerUser: int32Ptr(5),
+			MaxActiveSessionsTotal:   int32Ptr(10),
+		}
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxActiveSessionsPerUser")
+		assert.Contains(t, result.ErrorMessage(), "maxActiveSessionsTotal")
+	})
+}
+
 // ==================== Malformed Resource Tests ====================
 
 // These tests verify that validation handles malformed resources gracefully

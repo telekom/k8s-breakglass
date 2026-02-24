@@ -14,11 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auth-operator integration documentation**: Added `docs/auth-operator-integration.md` covering the authorization chain, role generation flow, shared group naming, deployment considerations, combined monitoring, and troubleshooting when using auth-operator alongside k8s-breakglass (resolves #311)
 - **Confirmation dialog for withdraw action** ([#397](https://github.com/telekom/k8s-breakglass/issues/397)): Replaced the browser-native `window.confirm` with a polished `scale-modal` confirmation dialog when withdrawing requests. Applied to both My Pending Requests and Session Browser views. Shows the request name and a clear warning that the action cannot be undone.
 - **CEL validation expressions on CRDs**: Added 6 `x-kubernetes-validations` (CEL) rules to `BreakglassEscalation`, `DenyPolicy`, and `IdentityProvider` CRDs for admission-time cross-field validation enforced by the API server. Rules cover: blockSelfApproval requires approver groups or users, allowedIdentityProviders mutual exclusivity, SessionLimitsOverride unlimited conflicts, PodSecurityOverrides requireApproval requires approvers, DenyPolicy requires at least one rule, and IdentityProvider keycloak config required when groupSyncProvider is Keycloak (resolves #313)
+- **Defense-in-depth Go webhook validation**: Added Go webhook checks mirroring the CEL rules for `PodSecurityOverrides.requireApproval` and `SessionLimitsOverride.unlimited` conflicts, ensuring enforcement even when CEL is unavailable
 - **Cosign keyless signing for release images**: Release workflow now signs container images and mirrors cosign signature/attestation OCI artifacts to the Artifactory registry using `cosign copy` on a best-effort basis, enabling supply-chain verification on both GHCR and Artifactory
 - **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release
 - **SLSA provenance attestation re-enabled**: Assemble job now generates and pushes SLSA Build L1 provenance via actions/attest-build-provenance
 
 ### Changed
+
+- **DenyPolicy now requires at least one rule** (**breaking**): Empty `DenyPolicySpec` (no `rules` and no `podSecurityRules`) is now rejected at both CEL admission and webhook validation. Previously-valid empty DenyPolicy resources will fail on update.
 
 - **Migrated `fake.NewSimpleClientset` to `fake.NewClientset`**: Replaced deprecated `fake.NewSimpleClientset()` calls with `fake.NewClientset()` in `pkg/breakglass/event_recorder_test.go` and removed associated `//nolint:staticcheck` suppressions (resolves #381)
 
