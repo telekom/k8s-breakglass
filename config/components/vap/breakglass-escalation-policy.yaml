@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# ValidatingAdmissionPolicy: BreakglassEscalation validations
+#
+# Supplements webhook-based validation with in-process CEL checks.
+# Phase 1 — deployed in Warn mode alongside existing webhooks.
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-escalation-validation
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["breakglass.t-caas.telekom.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["breakglassescalations"]
+
+  validations:
+    # At least one approver group or user must be specified
+    - expression: >-
+        !has(object.spec.approvers) ||
+        (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
+        (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+      message: "at least one approver group or user must be specified"
+      reason: Invalid
+
+    # escalatedGroup must use identifier format
+    - expression: >-
+        object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')
+      message: "spec.escalatedGroup must match identifier format [a-zA-Z0-9._:-]+"
+      reason: Invalid
+
+    # allowed.groups entries must be non-empty
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.groups) ||
+        object.spec.allowed.groups.all(g, g.size() > 0)
+      message: "spec.allowed.groups must not contain empty entries"
+      reason: Invalid
+
+    # allowed.clusters entries must be non-empty
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.clusters) ||
+        object.spec.allowed.clusters.all(c, c.size() > 0)
+      message: "spec.allowed.clusters must not contain empty entries"
+      reason: Invalid
+
+    # No duplicate allowed groups
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.groups) ||
+        object.spec.allowed.groups.size() == object.spec.allowed.groups.toSet().size()
+      message: "spec.allowed.groups must not contain duplicates"
+      reason: Invalid
+
+    # No duplicate allowed clusters
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.clusters) ||
+        object.spec.allowed.clusters.size() == object.spec.allowed.clusters.toSet().size()
+      message: "spec.allowed.clusters must not contain duplicates"
+      reason: Invalid
+
+    # IDP mutual exclusivity: allowedIdentityProviders cannot be set together
+    # with forRequests or forApprovers
+    - expression: >-
+        !has(object.spec.allowedIdentityProviders) ||
+        object.spec.allowedIdentityProviders.size() == 0 ||
+        (!has(object.spec.forRequests) || !has(object.spec.forRequests.identityProviders) || object.spec.forRequests.identityProviders.size() == 0) &&
+        (!has(object.spec.forApprovers) || !has(object.spec.forApprovers.identityProviders) || object.spec.forApprovers.identityProviders.size() == 0)
+      message: "allowedIdentityProviders cannot be used together with forRequests.identityProviders or forApprovers.identityProviders"
+      reason: Invalid

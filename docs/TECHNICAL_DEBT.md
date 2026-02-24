@@ -55,6 +55,17 @@ None - test code usage is acceptable. Production code usage has been fixed.
 
 ## Recently Fixed
 
+### ✅ SSA vs Create() for Debug Session Creation (Design Decision)
+
+**Status:** ✅ Resolved — keep `Create()` (issue #382)  
+**Impact:** Low — Design clarification, no code behavior change  
+**Files:**
+- `pkg/breakglass/debug_session_api.go` (~line 740)
+- `pkg/breakglass/debug_session_api_test.go`
+
+**Decision:**
+Evaluated replacing `Create()` with a pre-check `Get()` + SSA `Apply()` pattern for debug session creation. Decided to keep `Create()` because: (1) native `AlreadyExists` conflict detection without extra round-trips, (2) `Create()` semantics match the one-shot API operation (SSA's idempotent create-or-update would silently overwrite), (3) no multi-owner benefit since sessions are created by the API and managed by the reconciler, (4) simpler code. The reconciler continues to use SSA for lifecycle management.
+
 ### ✅ Field Selector Performance for Debug Sessions
 
 **Status:** ✅ Fixed (indexed lookups)  

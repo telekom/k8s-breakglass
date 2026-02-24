@@ -12,6 +12,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
 - [ ] TLS certificates for external access (production CA, not self-signed)
 - [ ] DNS configured for breakglass service endpoint
 - [ ] Storage for audit logs (optional, if using persistent audit)
+- [ ] ValidatingAdmissionPolicy component enabled (K8s 1.30+, optional — see [VAP Migration](validating-admission-policy.md))
 
 ### Authentication & Identity
 

@@ -737,14 +737,30 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// NOTE: Using Create() instead of SSA for DebugSession creation.
-	// Reason: We need AlreadyExists detection to return HTTP 409 Conflict to the user.
-	// SSA would silently update an existing session, which is not the desired UX.
-	// The session name is deterministic (debug-{user}-{cluster}-{timestamp}), so SSA
-	// would technically work, but we want explicit conflict detection for the API.
+	// Design Decision (#382): Using Create() instead of SSA for DebugSession creation.
 	//
-	// TODO(https://github.com/telekom/k8s-breakglass/issues/382): Consider using SSA with a pre-check Get() if we want SSA semantics
-	// while preserving conflict detection for duplicate session names.
+	// We evaluated replacing Create() with a pre-check Get() + SSA Apply pattern for
+	// consistency with the reconciler's SSA approach. The decision is to keep Create()
+	// because:
+	//
+	// 1. Native conflict detection — Create() returns AlreadyExists natively, giving us
+	//    HTTP 409 Conflict without an extra round-trip. A pre-check Get() would add
+	//    latency and introduce a small race window between Get and Apply.
+	//
+	// 2. Semantic correctness — SSA Apply is designed for idempotent reconciliation
+	//    (create-or-update). Debug session creation is intentionally a one-shot operation;
+	//    silently updating an existing session would violate the expected API contract.
+	//
+	// 3. No multi-owner benefit — SSA's field ownership tracking adds value when multiple
+	//    controllers manage the same object. Debug sessions are created by the API server
+	//    and then managed exclusively by the reconciler. There is no ownership conflict.
+	//
+	// 4. Simplicity — The current code is straightforward and well-tested. Adding a
+	//    pre-check Get() increases complexity without a concrete benefit.
+	//
+	// The reconciler continues to use SSA for status updates and lifecycle management,
+	// which is the correct boundary: Create() for API-driven creation, SSA for
+	// controller-driven reconciliation.
 	if err := c.client.Create(apiCtx, session); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			apiresponses.RespondConflict(ctx, "session already exists")

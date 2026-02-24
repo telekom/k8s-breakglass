@@ -67,7 +67,7 @@ jobs:
         run: gosec -fmt sarif -out gosec-results.sarif ./...
 
       - name: Upload gosec results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
+        uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4.32.4
         if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         with:
@@ -80,7 +80,7 @@ jobs:
       - name: Build image (local)
         run: docker build -t breakglass:scan .
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
+        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # v0.34.1
         with:
           image-ref: breakglass:scan
           format: 'table'
@@ -119,7 +119,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
+        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # v0.34.1
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -127,7 +127,7 @@ jobs:
           output: 'trivy-fs-results.sarif'
 
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
+        uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4.32.4
         if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         with:
           sarif_file: 'trivy-fs-results.sarif'
