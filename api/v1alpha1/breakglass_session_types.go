@@ -343,15 +343,21 @@ func validateMonotonicStatusFields(oldObj, newObj *BreakglassSession) field.Erro
 		))
 	}
 
-	// LastActivity must not move backwards
-	if oldObj.Status.LastActivity != nil && !oldObj.Status.LastActivity.IsZero() &&
-		newObj.Status.LastActivity != nil && !newObj.Status.LastActivity.IsZero() &&
-		newObj.Status.LastActivity.Time.Before(oldObj.Status.LastActivity.Time) {
-		errs = append(errs, field.Invalid(
-			statusPath.Child("lastActivity"),
-			newObj.Status.LastActivity.Time,
-			fmt.Sprintf("lastActivity must not move backwards (was %s)", oldObj.Status.LastActivity.Time.Format("2006-01-02T15:04:05Z")),
-		))
+	// LastActivity must not move backwards or be cleared once set
+	if oldObj.Status.LastActivity != nil && !oldObj.Status.LastActivity.IsZero() {
+		if newObj.Status.LastActivity == nil || newObj.Status.LastActivity.IsZero() {
+			errs = append(errs, field.Invalid(
+				statusPath.Child("lastActivity"),
+				nil,
+				"lastActivity must not be cleared once set (prevents discarding activity history)",
+			))
+		} else if newObj.Status.LastActivity.Time.Before(oldObj.Status.LastActivity.Time) {
+			errs = append(errs, field.Invalid(
+				statusPath.Child("lastActivity"),
+				newObj.Status.LastActivity.Time,
+				fmt.Sprintf("lastActivity must not move backwards (was %s)", oldObj.Status.LastActivity.Time.Format("2006-01-02T15:04:05Z")),
+			))
+		}
 	}
 
 	return errs

@@ -32,6 +32,11 @@ server:
   # Graceful shutdown timeout (optional). Go duration string.
   # Controls how long the server waits for in-flight requests during shutdown.
   # shutdownTimeout: "30s"
+  #
+  # enableActivityTracking enables recording session activity from the authorization webhook.
+  # When enabled, the ActivityTracker buffers webhook hits and flushes lastActivity/activityCount
+  # to BreakglassSession status every 30 seconds. Required for idle timeout (spec.idleTimeout) to work.
+  # enableActivityTracking: false
 frontend:
   baseURL: http://localhost:5173
   # Optional: brandingName controls the product name shown in the UI header and
@@ -55,7 +60,3 @@ kubernetes:
   # Valid values: "email" (default), "preferred_username", "sub"
   # This must match the OIDC claimMappings.username.claim on spoke clusters.
   # userIdentifierClaim: "email"
-  # enableActivityTracking enables recording session activity from the authorization webhook.
-  # When enabled, the ActivityTracker buffers webhook hits and flushes lastActivity/activityCount
-  # to BreakglassSession status every 30 seconds. Required for idle timeout (spec.idleTimeout) to work.
-  # enableActivityTracking: false

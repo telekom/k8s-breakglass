@@ -76,11 +76,11 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 		// no requests have been recorded yet), we cannot reliably determine
 		// idleness, so skip this session.
 		if ses.Status.LastActivity == nil || ses.Status.LastActivity.IsZero() {
-			// Warn if idleTimeout is configured but no activity was ever recorded.
-			// This typically means enableActivityTracking is disabled in the server config,
-			// making idleTimeout silently ineffective.
+			// Session has idleTimeout but no activity recorded yet. This is normal for
+			// newly-approved sessions that haven't been used, or when enableActivityTracking
+			// is disabled. Log at debug to avoid noisy logs on every cleanup cycle.
 			if ses.Status.ActivityCount == 0 {
-				wc.log.Warnw("Session has idleTimeout configured but no activity recorded; is enableActivityTracking enabled?",
+				wc.log.Debugw("Skipping idle check: no activity recorded yet",
 					"session", ses.Name,
 					"idleTimeout", ses.Spec.IdleTimeout)
 			}

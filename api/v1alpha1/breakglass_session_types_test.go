@@ -461,15 +461,15 @@ func TestValidateUpdate_MonotonicLastActivity(t *testing.T) {
 		}
 	})
 
-	t.Run("set to nil lastActivity is allowed", func(t *testing.T) {
+	t.Run("clearing lastActivity is rejected", func(t *testing.T) {
 		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
 			State: SessionStateApproved, LastActivity: &now,
 		}}
 		updated := old.DeepCopy()
 		updated.Status.LastActivity = nil
 		_, err := updated.ValidateUpdate(context.Background(), old, updated)
-		if err != nil {
-			t.Fatalf("expected no error for clearing lastActivity, got: %v", err)
+		if err == nil {
+			t.Fatal("expected error for clearing lastActivity")
 		}
 	})
 }

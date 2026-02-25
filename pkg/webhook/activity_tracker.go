@@ -194,6 +194,7 @@ func (at *ActivityTracker) Cleanup(activeSessionIDs map[types.NamespacedName]boo
 	}
 	if pruned > 0 {
 		at.log.Infow("Pruned orphaned activity tracker entries", "pruned", pruned, "remaining", len(at.entries))
+		metrics.SessionActivityBufferSize.Set(float64(len(at.entries)))
 	}
 	return pruned
 }
