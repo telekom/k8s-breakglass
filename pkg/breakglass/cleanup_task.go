@@ -180,21 +180,21 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 
 // pruneActivityTracker builds a set of active (approved) session NamespacedNames
 // and calls ActivityTracker.Cleanup() to remove entries for sessions that no longer exist.
+// Uses the status.state field index (via GetSessionsByState) to only fetch Approved
+// sessions instead of listing all sessions and filtering in Go.
 func (cr CleanupRoutine) pruneActivityTracker(ctx context.Context) {
-	var bsl breakglassv1alpha1.BreakglassSessionList
-	if err := cr.Manager.List(ctx, &bsl); err != nil {
-		cr.Log.Warnw("Failed to list sessions for activity tracker pruning", "error", err)
+	approved, err := cr.Manager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateApproved)
+	if err != nil {
+		cr.Log.Warnw("Failed to list approved sessions for activity tracker pruning", "error", err)
 		return
 	}
 
-	activeIDs := make(map[types.NamespacedName]bool, len(bsl.Items))
-	for i := range bsl.Items {
-		if bsl.Items[i].Status.State == breakglassv1alpha1.SessionStateApproved {
-			activeIDs[types.NamespacedName{
-				Namespace: bsl.Items[i].Namespace,
-				Name:      bsl.Items[i].Name,
-			}] = true
-		}
+	activeIDs := make(map[types.NamespacedName]bool, len(approved))
+	for i := range approved {
+		activeIDs[types.NamespacedName{
+			Namespace: approved[i].Namespace,
+			Name:      approved[i].Name,
+		}] = true
 	}
 
 	cr.ActivityTracker.Cleanup(activeIDs)

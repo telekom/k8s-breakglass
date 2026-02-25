@@ -10,6 +10,7 @@ import { pushError, pushSuccess } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
 import { formatRelativeTime } from "@/composables/useDateFormatting";
+import { formatDurationRounded } from "@/composables/useDuration";
 import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
@@ -564,7 +565,7 @@ onMounted(() => {
               <span v-if="session.status?.activityCount != null"> ({{ session.status.activityCount }} requests)</span>
             </span>
             <span v-if="session.spec?.idleTimeout">
-              <strong>Idle Timeout:</strong> {{ session.spec.idleTimeout }}
+              <strong>Idle Timeout:</strong> {{ formatDurationRounded(session.spec.idleTimeout) }}
             </span>
           </div>
 

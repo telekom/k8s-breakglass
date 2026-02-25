@@ -308,11 +308,46 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("state"), newObj.Status.State,
 			fmt.Sprintf("invalid state transition from %q to %q", oldObj.Status.State, newObj.Status.State)))
 	}
+
+	// Monotonic enforcement: status counters and timestamps must never go backwards.
+	// This prevents buggy controllers or concurrent writers from corrupting activity data.
+	allErrs = append(allErrs, validateMonotonicStatusFields(oldObj, newObj)...)
+
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, newObj.Namespace, newObj.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, newObj.Name, allErrs)
+}
+
+// validateMonotonicStatusFields ensures activity-tracking status fields never
+// regress. ActivityCount must be non-decreasing, and LastActivity must not
+// move backwards (it may stay the same during idempotent reconciliation).
+func validateMonotonicStatusFields(oldObj, newObj *BreakglassSession) field.ErrorList {
+	var errs field.ErrorList
+	statusPath := field.NewPath("status")
+
+	// ActivityCount must never decrease
+	if newObj.Status.ActivityCount < oldObj.Status.ActivityCount {
+		errs = append(errs, field.Invalid(
+			statusPath.Child("activityCount"),
+			newObj.Status.ActivityCount,
+			fmt.Sprintf("activityCount must be monotonically non-decreasing (was %d)", oldObj.Status.ActivityCount),
+		))
+	}
+
+	// LastActivity must not move backwards
+	if oldObj.Status.LastActivity != nil && !oldObj.Status.LastActivity.IsZero() &&
+		newObj.Status.LastActivity != nil && !newObj.Status.LastActivity.IsZero() &&
+		newObj.Status.LastActivity.Time.Before(oldObj.Status.LastActivity.Time) {
+		errs = append(errs, field.Invalid(
+			statusPath.Child("lastActivity"),
+			newObj.Status.LastActivity.Time,
+			fmt.Sprintf("lastActivity must not move backwards (was %s)", oldObj.Status.LastActivity.Time.Format("2006-01-02T15:04:05Z")),
+		))
+	}
+
+	return errs
 }
 
 // isValidBreakglassSessionStateTransition validates state transitions for BreakglassSession.

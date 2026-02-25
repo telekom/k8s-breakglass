@@ -368,3 +368,108 @@ func TestBreakglassSession_ValidateCreate_ScheduledStartTimeTooSoon(t *testing.T
 		t.Fatal("expected error when scheduledStartTime is less than 5 minutes in the future")
 	}
 }
+
+func TestValidateUpdate_MonotonicActivityCount(t *testing.T) {
+	spec := BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"}
+
+	t.Run("increasing activityCount is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, ActivityCount: 5,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.ActivityCount = 10
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for increasing activityCount, got: %v", err)
+		}
+	})
+
+	t.Run("same activityCount is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, ActivityCount: 5,
+		}}
+		updated := old.DeepCopy()
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for same activityCount, got: %v", err)
+		}
+	})
+
+	t.Run("decreasing activityCount is rejected", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, ActivityCount: 10,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.ActivityCount = 5
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err == nil {
+			t.Fatal("expected error for decreasing activityCount")
+		}
+	})
+}
+
+func TestValidateUpdate_MonotonicLastActivity(t *testing.T) {
+	spec := BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"}
+	now := metav1.Now()
+	earlier := metav1.NewTime(now.Add(-10 * time.Minute))
+	later := metav1.NewTime(now.Add(10 * time.Minute))
+
+	t.Run("advancing lastActivity is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &earlier,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = &later
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for advancing lastActivity, got: %v", err)
+		}
+	})
+
+	t.Run("same lastActivity is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &now,
+		}}
+		updated := old.DeepCopy()
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for same lastActivity, got: %v", err)
+		}
+	})
+
+	t.Run("regressing lastActivity is rejected", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &later,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = &earlier
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err == nil {
+			t.Fatal("expected error for regressing lastActivity")
+		}
+	})
+
+	t.Run("nil to set lastActivity is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = &now
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for nil-to-set lastActivity, got: %v", err)
+		}
+	})
+
+	t.Run("set to nil lastActivity is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &now,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = nil
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for clearing lastActivity, got: %v", err)
+		}
+	})
+}
