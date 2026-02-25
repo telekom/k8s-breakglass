@@ -1669,9 +1669,9 @@ func (wc *WebhookController) recordSessionActivity(sessions []breakglassv1alpha1
 		return
 	}
 
-	// Find the session namespace via map for O(1) lookup instead of O(n) scan.
-	// Sessions slice is per-user-per-cluster so typically small, but this avoids
-	// worst-case linear cost on the hot webhook path.
+	// Find the session namespace. This is a linear O(n) scan, but the sessions
+	// slice is per-user-per-cluster so typically contains 1-3 items, making a
+	// map lookup unnecessary overhead for the common case.
 	for i := range sessions {
 		if sessions[i].Name == sessionName {
 			wc.activityTracker.RecordActivity(sessions[i].Namespace, sessions[i].Name, time.Now())

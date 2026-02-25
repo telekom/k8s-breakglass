@@ -51,10 +51,10 @@ const (
 	SessionConditionTypeSessionExpired     BreakglassSessionConditionType   = "SessionExpired"
 	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
 
-	SessionStatePending                 BreakglassSessionState = "Pending"
-	SessionStateApproved                BreakglassSessionState = "Approved"
-	SessionStateRejected                BreakglassSessionState = "Rejected"
-	SessionStateExpired                 BreakglassSessionState = "Expired"
+	SessionStatePending  BreakglassSessionState = "Pending"
+	SessionStateApproved BreakglassSessionState = "Approved"
+	SessionStateRejected BreakglassSessionState = "Rejected"
+	SessionStateExpired  BreakglassSessionState = "Expired"
 	// SessionStateIdleExpired indicates the session was automatically expired due to
 	// exceeding its configured idle timeout (no webhook activity for the specified duration).
 	// This is a terminal state — the user must create a new request.
@@ -323,6 +323,13 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 // validateMonotonicStatusFields ensures activity-tracking status fields never
 // regress. ActivityCount must be non-decreasing, and LastActivity must not
 // move backwards (it may stay the same during idempotent reconciliation).
+//
+// SCOPE NOTE: This validation fires on full-object updates only. Internal
+// controllers use the status subresource (client.Status().Patch), which
+// bypasses admission webhooks. The primary monotonic guarantee for those
+// writes is the in-code merge logic in ActivityTracker.updateSessionActivity.
+// This webhook validation acts as defense-in-depth for non-standard callers
+// (e.g., kubectl edit, manual API calls).
 func validateMonotonicStatusFields(oldObj, newObj *BreakglassSession) field.ErrorList {
 	var errs field.ErrorList
 	statusPath := field.NewPath("status")

@@ -110,6 +110,13 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 		if stored, gerr := wc.sessionManager.GetBreakglassSessionByName(ctx, ses.Name); gerr == nil {
 			ses.Namespace = stored.Namespace
 			ses.ResourceVersion = stored.ResourceVersion
+			// If the session was already transitioned to a terminal state by another
+			// controller replica, skip idle expiry to avoid overwriting the reason.
+			if stored.Status.State != breakglassv1alpha1.SessionStateApproved {
+				wc.log.Infow("Session already transitioned after refetch; skipping idle expiry",
+					"session", ses.Name, "currentState", stored.Status.State)
+				continue
+			}
 			// Re-validate: if the stored session's lastActivity is more recent, it may no longer be idle
 			if stored.Status.LastActivity != nil && !stored.Status.LastActivity.IsZero() {
 				refreshedIdle := time.Since(stored.Status.LastActivity.Time)

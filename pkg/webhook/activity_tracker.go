@@ -299,6 +299,7 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 				at.entries[key] = entry
 			}
 		}
+		metrics.SessionActivityBufferSize.Set(float64(len(at.entries)))
 		at.mu.Unlock()
 	}
 

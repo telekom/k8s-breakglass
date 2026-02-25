@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **CRD fields**: Added `spec.idleTimeout` to both `BreakglassSession` and `BreakglassEscalation` (with kubebuilder pattern validation). Added `status.lastActivity` and `status.activityCount` to session status. IdleTimeout is automatically copied from the matched escalation to the session.
   - **Metrics**: `breakglass_session_activity_requests_total` (labels: `cluster`, `granted_group`), `breakglass_session_activity_flushes_total`, `breakglass_session_activity_flush_errors_total`, `breakglass_session_activity_dropped_total` (capacity limit), `breakglass_session_activity_buffer_size` (gauge), `breakglass_session_idle_expired_total` (label: `cluster`). Fixed activity request metric cardinality by replacing unbounded `session` label with bounded `granted_group`.
   - **Validation**: `idleTimeout` is validated as a positive, parseable duration that does not exceed `maxValidFor`.
+  - **Monotonic status validation**: `ValidateUpdate` enforces that `status.activityCount` never decreases and `status.lastActivity` never regresses. This is defense-in-depth for full-object updates (e.g., `kubectl edit`); internal controllers use the status subresource, which bypasses the validating webhook.
   - **Frontend**: `IdleExpired` state displayed with danger tone in session browser, last activity and idle timeout shown in session details, idle-expired sessions included in state filter options.
 
 ### Changed
