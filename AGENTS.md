@@ -58,3 +58,64 @@ config/                        Kustomize overlays
 ## CI Checks
 
 All PRs must pass: golangci-lint, unit tests, frontend tests (Vitest), Helm lint, Docker build, manifest validation, REUSE compliance, Trivy scan, OpenSSF Scorecard.
+
+## Reusable Prompts (19 total)
+
+Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name:
+
+| Prompt | Category | Purpose |
+|--------|----------|---------|
+| **Task Prompts** | | |
+| `review-pr` | General | PR checklist (code quality, testing, security, docs) |
+| `add-crd-field` | Task | Step-by-step guide for adding a new CRD field |
+| `github-pr-management` | Workflow | GitHub PR workflows: review threads, rebasing, squashing, CI checks |
+| **Code Quality Reviewers** | | |
+| `review-go-style` | Lint | golangci-lint v2 compliance: `importas`, `errorlint`, `usestdlibvars`, formatting |
+| `review-concurrency` | Safety | Multi-replica races, SSA ownership, monotonic merges, cache staleness, time handling |
+| `review-k8s-patterns` | Ops | Error handling, context propagation, reconciler idempotency, structured logging |
+| `review-performance` | Perf | Webhook latency, API server load, memory allocation, informer indexes, metrics cardinality |
+| `review-integration-wiring` | Wiring | Dead code, unwired fields, unused interfaces, uncalled functions, config propagation |
+| **API & Security Reviewers** | | |
+| `review-api-crd` | API | CRD schema correctness, backwards compatibility, webhook validation |
+| `review-security` | Security | RBAC least privilege, webhook safety, input validation, credential handling |
+| `review-rest-api` | API | Gin HTTP endpoints: validation, response format, auth, pagination, concurrency |
+| **Documentation & Testing Reviewers** | | |
+| `review-docs-consistency` | Docs | Documentation ↔ code alignment: field names, metrics tables, headings, links |
+| `review-ci-testing` | Testing | Test coverage, assertion quality, switch exhaustiveness, CI workflow alignment |
+| `review-edge-cases` | Testing | Zero/nil/empty values, boundary conditions, clock edge cases, fuzz properties |
+| `review-qa-regression` | QA | Regression impact, state machine integrity, backwards compat, rollback safety |
+| **Domain-Specific Reviewers** | | |
+| `review-frontend-ui` | Frontend | Vue 3 accessibility (WCAG 2.1 AA), TypeScript strict, state display, filters |
+| `review-cli-usability` | CLI | `bgctl` command structure, flag naming, output formats, error messages, completion |
+| `review-helm-chart` | Helm | Chart values, template correctness, CRD sync, RBAC alignment, upgrade safety |
+| `review-end-user` | UX | End-user experience: SRE during incidents, platform admin, security auditor |
+
+### Running a Multi-Persona Review
+
+Invoke each review prompt in sequence against a code change and collect findings.
+The 16 reviewer personas cover every issue class found by automated reviewers
+(Copilot, etc.) and more:
+
+**Code quality** (4 personas):
+- **Go style** catches import alias violations, `%v` error wrapping, string literals, lint failures
+- **Concurrency** catches SSA races, lost updates, stale cache reads, `time.Now()` vs `.UTC()`
+- **K8s patterns** catches missing context timeouts, non-idempotent reconcilers, unbounded lists
+- **Performance** catches webhook latency regressions, unbounded memory, high-cardinality metrics
+
+**Correctness** (4 personas):
+- **Integration wiring** catches new code that is defined but never called or connected
+- **API & CRD** catches missing validation markers, backwards-compatibility breaks
+- **Edge cases** catches untested boundary conditions, zero-value bugs, clock skew issues
+- **QA regression** catches state machine violations, data migration gaps, rollback hazards
+
+**Security & documentation** (3 personas):
+- **Security** catches privilege escalation, credential leaks, input injection, CSRF gaps
+- **Docs consistency** catches field name mismatches, missing metrics docs, duplicate headings
+- **CI & testing** catches coverage gaps, wrong test names in docs, missing enum cases
+
+**User-facing** (5 personas):
+- **Frontend UI** catches missing session states in filters, accessibility gaps, XSS risks
+- **CLI usability** catches unclear error messages, missing completions, flag inconsistencies
+- **REST API** catches validation gaps, inconsistent response formats, auth bypasses
+- **Helm chart** catches RBAC drift, stale CRDs, upgrade failures, missing security contexts
+- **End-user** catches UX pain for SREs during incidents, admin config friction, audit gaps
