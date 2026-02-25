@@ -80,6 +80,7 @@ Activity tracking records when sessions are actively used by the authorization w
 | `breakglass_session_activity_flushes_total` | Counter | — | Activity tracker flush cycles completed |
 | `breakglass_session_activity_flush_errors_total` | Counter | — | Failed activity status updates during flush |
 | `breakglass_session_activity_dropped_total` | Counter | — | Activity entries dropped due to tracker capacity limit |
+| `breakglass_session_activity_buffer_size` | Gauge | — | Number of sessions with buffered activity entries awaiting flush |
 | `breakglass_session_idle_expired_total` | Counter | `cluster` | Sessions automatically expired due to idle timeout |
 
 **Example Queries:**
@@ -170,7 +171,6 @@ Track breakglass session creation, state changes, and expiration.
 | `breakglass_session_updated_total` | Counter | `cluster` | Session status updates (approve/reject/etc) |
 | `breakglass_session_deleted_total` | Counter | `cluster` | Sessions deleted |
 | `breakglass_session_expired_total` | Counter | `cluster` | Sessions expired automatically (time-based) |
-| `breakglass_session_idle_expired_total` | Counter | `cluster` | Sessions expired due to idle timeout |
 
 **Example Queries:**
 

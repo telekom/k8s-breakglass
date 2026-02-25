@@ -38,6 +38,8 @@ type (
 )
 
 const (
+	// SessionConditionTypeIdle indicates the session has been idle (no authorization requests)
+	// for longer than the configured idle timeout.
 	SessionConditionTypeIdle     BreakglassSessionConditionType = "Idle"
 	SessionConditionTypeApproved BreakglassSessionConditionType = "Approved"
 	SessionConditionTypeRejected BreakglassSessionConditionType = "Rejected"
@@ -53,6 +55,9 @@ const (
 	SessionStateApproved                BreakglassSessionState = "Approved"
 	SessionStateRejected                BreakglassSessionState = "Rejected"
 	SessionStateExpired                 BreakglassSessionState = "Expired"
+	// SessionStateIdleExpired indicates the session was automatically expired due to
+	// exceeding its configured idle timeout (no webhook activity for the specified duration).
+	// This is a terminal state — the user must create a new request.
 	SessionStateIdleExpired             BreakglassSessionState = "IdleExpired"
 	SessionStateWithdrawn               BreakglassSessionState = "Withdrawn"
 	SessionStateTimeout                 BreakglassSessionState = "ApprovalTimeout"

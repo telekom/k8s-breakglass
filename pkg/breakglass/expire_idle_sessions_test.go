@@ -862,3 +862,111 @@ func TestExpireIdleSessions_ConcurrentTransitionDuringRetry(t *testing.T) {
 	assert.NotEqual(t, breakglassv1alpha1.SessionStateApproved, got.Status.State,
 		"Session should not remain Approved after concurrent transition")
 }
+
+func TestExpireIdleSessions_CancelledContext(t *testing.T) {
+	// Purpose:
+	//   Verifies that ExpireIdleSessions respects context cancellation and
+	//   stops processing remaining sessions when the context is done.
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+
+	past := metav1.NewTime(time.Now().Add(-30 * time.Minute))
+
+	// Create multiple idle sessions
+	sessions := []client.Object{
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "idle-cancel-1", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "prod", User: "user@example.com", GrantedGroup: "admin",
+				IdleTimeout: "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, LastActivity: &past,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "idle-cancel-2", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "prod", User: "user@example.com", GrantedGroup: "admin",
+				IdleTimeout: "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, LastActivity: &past,
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sessions...).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", idleTestMetadataNameIndexer).
+		Build()
+
+	manager := &SessionManager{Client: fakeClient}
+	ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+	// Cancel context before calling ExpireIdleSessions
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ctrl.ExpireIdleSessions(ctx)
+
+	// At least one session should remain Approved because the context was cancelled
+	var remaining int
+	for _, name := range []string{"idle-cancel-1", "idle-cancel-2"} {
+		got, gerr := manager.GetBreakglassSessionByName(context.Background(), name)
+		require.NoError(t, gerr)
+		if got.Status.State == breakglassv1alpha1.SessionStateApproved {
+			remaining++
+		}
+	}
+	// With a pre-cancelled context, the loop should exit early; at least one
+	// session should remain un-expired. (The list call itself may still succeed
+	// because the fake client doesn't check context cancellation.)
+	assert.GreaterOrEqual(t, remaining, 1,
+		"At least one session should remain Approved when context is cancelled")
+}
+
+func TestExpireIdleSessions_BoundaryIdleEqualsTimeout(t *testing.T) {
+	// Purpose:
+	//   Verifies behavior when idle duration exactly equals the timeout.
+	//   Edge case: idleSince == idleTimeout should still expire the session
+	//   because the condition is >= (not >).
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+
+	// Set lastActivity to exactly idleTimeout ago
+	idleTimeout := 10 * time.Minute
+	boundary := metav1.NewTime(time.Now().Add(-idleTimeout))
+
+	ses := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "boundary-session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "prod", User: "user@example.com", GrantedGroup: "admin",
+			IdleTimeout: "10m",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:        breakglassv1alpha1.SessionStateApproved,
+			LastActivity: &boundary,
+		},
+	}
+
+	fakeClient := newIdleTestClient(scheme, ses)
+	manager := &SessionManager{Client: fakeClient}
+	ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+	ctrl.ExpireIdleSessions(context.Background())
+
+	got, gerr := manager.GetBreakglassSessionByName(context.Background(), "boundary-session")
+	require.NoError(t, gerr)
+	assert.Equal(t, breakglassv1alpha1.SessionStateIdleExpired, got.Status.State,
+		"Session at exact timeout boundary should be expired")
+	assert.Equal(t, "idleTimeout", got.Status.ReasonEnded)
+}

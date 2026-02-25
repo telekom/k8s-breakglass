@@ -147,6 +147,11 @@ escalations: []
   #   retainFor: 24h
   #   # Optional: Max time allowed for approval before session expires
   #   # approvalTimeout: 30m
+  #   # Optional: Idle timeout — expire session if no authorization requests for this duration.
+  #   # Requires enableActivityTracking: true in the server config.
+  #   # Format: Go duration string, e.g. "15m", "1h", "1d". Must be ≤ maxValidFor.
+  #   # Effective granularity is ~5 minutes (the cleanup interval).
+  #   # idleTimeout: 30m
   #   
   #   # ==========================================
   #   # Session Limits Override (optional)

@@ -10,6 +10,12 @@ multiple controller instances. For object updates (metadata/spec), controllers u
 apply-configurations where available (CRDs and core types like Secrets) to keep SSA patches
 structured and consistent.
 
+> **Exception:** The `ActivityTracker` uses optimistic-concurrency status merge-patch
+> (`client.MergeFrom` with `retry.RetryOnConflict`) instead of SSA. This avoids dedicated
+> field-manager ownership for the `lastActivity`/`activityCount` fields, allowing multiple
+> replicas to safely merge activity data through monotonic convergence (latest timestamp,
+> additive count).
+
 Additional controller-runtime features in use:
 
 - **Reconciliation timeout**: Default timeout is 5 minutes per reconciliation. Timeouts are surfaced

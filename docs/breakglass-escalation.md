@@ -103,12 +103,20 @@ maxValidFor: "4h"    # 4 hours
 
 Maximum idle time before a session is automatically expired. Sessions are considered "idle" when no authorization requests have been made. Activity is tracked per session and flushed to the status every ~30 seconds.
 
+> **Prerequisite:** `enableActivityTracking: true` must be set in the server config
+> (`config.yaml`). When activity tracking is disabled (the default), sessions will
+> never record `lastActivity` and idle timeout will have no effect — the idle expiry
+> controller skips sessions without activity data. See the
+> [configuration reference](configuration-reference.md) for details.
+
 ```yaml
 idleTimeout: "1h"    # Expire after 1 hour of inactivity
 idleTimeout: "30m"   # Expire after 30 minutes of inactivity
 ```
 
 **Minimum value**: 1 minute (`1m`). Values below this are rejected to avoid premature expiry.
+
+**Effective granularity**: Idle checks run every ~5 minutes (the cleanup interval), so a 1-minute idle timeout may not trigger until up to 5 minutes after the true idle point.
 
 **Relationship to maxValidFor**: `idleTimeout` must not exceed `maxValidFor` (if both are set).
 

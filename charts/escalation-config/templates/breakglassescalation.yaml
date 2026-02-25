@@ -81,6 +81,9 @@ spec:
   {{- if $esc.approvalTimeout }}
   approvalTimeout: {{ $esc.approvalTimeout }}
   {{- end }}
+  {{- if $esc.idleTimeout }}
+  idleTimeout: {{ $esc.idleTimeout }}
+  {{- end }}
   # Optional: override IDP session limits for this escalation
   {{- if $esc.sessionLimitsOverride }}
   sessionLimitsOverride:

@@ -567,6 +567,14 @@ var (
 		Name: "breakglass_session_activity_dropped_total",
 		Help: "Total number of activity entries dropped due to tracker capacity limit",
 	})
+
+	// SessionActivityBufferSize tracks the number of sessions with buffered activity
+	// entries awaiting the next flush cycle. Useful for detecting capacity pressure
+	// before entries start being dropped.
+	SessionActivityBufferSize = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "breakglass_session_activity_buffer_size",
+		Help: "Number of sessions with buffered activity entries awaiting flush",
+	})
 )
 
 func init() {
@@ -725,6 +733,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(SessionActivityFlushes)
 	ctrlmetrics.Registry.MustRegister(SessionActivityFlushErrors)
 	ctrlmetrics.Registry.MustRegister(SessionActivityDropped)
+	ctrlmetrics.Registry.MustRegister(SessionActivityBufferSize)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.

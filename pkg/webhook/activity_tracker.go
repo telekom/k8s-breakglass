@@ -142,7 +142,10 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, ts time.Time) 
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 
 	at.mu.Lock()
-	defer at.mu.Unlock()
+	defer func() {
+		metrics.SessionActivityBufferSize.Set(float64(len(at.entries)))
+		at.mu.Unlock()
+	}()
 
 	entry, exists := at.entries[key]
 	if !exists {
@@ -249,8 +252,13 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 	// Swap out the entries map so we release the lock quickly.
 	entries := at.entries
 	at.entries = make(map[types.NamespacedName]*activityEntry)
+	metrics.SessionActivityBufferSize.Set(0)
 	at.mu.Unlock()
 
+	// Process entries sequentially. While bounded concurrency (e.g., errgroup
+	// with a semaphore) could improve throughput, sequential processing avoids
+	// thundering-herd pressure on the API server. With typical entry counts
+	// (tens, not thousands), the sequential approach is sufficient.
 	var failed []*activityEntry
 	for key, entry := range entries {
 		if err := at.updateSessionActivity(ctx, key, entry); err != nil {

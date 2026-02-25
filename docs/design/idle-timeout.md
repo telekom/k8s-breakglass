@@ -90,14 +90,14 @@ for _, session := range activeSessions {
 | Per-session RBAC re-check (proposed) | High (first match) | O(n) extra SAR checks | O(1) per request (update only the attributed session) |
 | Async batch update | Medium | O(1) combined check only | O(n) per batch, off the webhook critical path |
 
-**Recommendation:** The implementation uses per-session attribution (re-check each session individually) with buffered writes via the `ActivityTracker`. Activity is recorded in-memory and flushed to the API server every 30 seconds using SSA, avoiding hot-path latency while still providing per-session granularity.
+**Recommendation:** The implementation uses per-session attribution (re-check each session individually) with buffered writes via the `ActivityTracker`. Activity is recorded in-memory and flushed to the API server every 30 seconds using optimistic-concurrency status merge-patch (`client.MergeFrom` + `retry.RetryOnConflict`), avoiding hot-path latency while still providing per-session granularity.
 
 ### 4.2 Write Concern
 
 The webhook records activity through the `ActivityTracker` which batches writes. Mitigations:
 
 - **Buffered writes:** The `ActivityTracker` accumulates activity records in-memory and flushes every 30 seconds, collapsing multiple requests into a single status update per session.
-- **Async fire-and-forget:** Flush runs in a background goroutine to avoid adding latency to the webhook response path.
+- **Background flush:** Flush runs in a background goroutine to avoid adding latency to the webhook response path. Failed flushes are re-queued with merge logic (latest timestamp, summed counts) up to 5 retries.
 - **Status merge-patch:** Use optimistic-concurrency status merge-patch (`client.MergeFrom` + `retry.RetryOnConflict`) to avoid lost updates across replicas.
 
 ```go
@@ -139,7 +139,7 @@ if spec.IdleTimeout != "" {
         log.Warnw("Invalid idleTimeout", "session", session.Name, "value", spec.IdleTimeout)
     } else {
         lastUsed := session.Status.LastActivity
-        if lastUsed == nil {
+        if lastUsed == nil || lastUsed.IsZero() {
             continue // no activity recorded yet — skip to avoid false positives
         }
         if time.Since(lastUsed.Time) > idleTimeout {

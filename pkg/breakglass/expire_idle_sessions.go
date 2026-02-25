@@ -27,6 +27,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// maxStatusUpdateRetries is the maximum number of status update attempts
+// before giving up on transitioning a session to IdleExpired.
+const maxStatusUpdateRetries = 3
+
 // ExpireIdleSessions sets state to IdleExpired for approved sessions that have been idle
 // longer than their configured spec.idleTimeout. A session is idle when no authorization
 // request has been recorded since the session was approved (or since the last activity if any).
@@ -46,6 +50,14 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 	}
 
 	for _, ses := range sessions {
+		// Check for context cancellation between sessions to exit promptly during shutdown.
+		select {
+		case <-ctx.Done():
+			wc.log.Infow("Context cancelled during idle session expiry", "error", ctx.Err())
+			return
+		default:
+		}
+
 		if ses.Spec.IdleTimeout == "" {
 			continue
 		}
@@ -64,6 +76,14 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 		// no requests have been recorded yet), we cannot reliably determine
 		// idleness, so skip this session.
 		if ses.Status.LastActivity == nil || ses.Status.LastActivity.IsZero() {
+			// Warn if idleTimeout is configured but no activity was ever recorded.
+			// This typically means enableActivityTracking is disabled in the server config,
+			// making idleTimeout silently ineffective.
+			if ses.Status.ActivityCount == 0 {
+				wc.log.Warnw("Session has idleTimeout configured but no activity recorded; is enableActivityTracking enabled?",
+					"session", ses.Name,
+					"idleTimeout", ses.Spec.IdleTimeout)
+			}
 			continue
 		}
 		baseline := ses.Status.LastActivity.Time
@@ -81,26 +101,31 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 
 		// Prepare status transition
 		ses.Status.State = breakglassv1alpha1.SessionStateIdleExpired
-		ses.SetCondition(metav1.Condition{
-			Type:               string(breakglassv1alpha1.SessionConditionTypeIdle),
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
-			Reason:             "IdleTimeout",
-			Message:            fmt.Sprintf("Session expired after %s of inactivity (idle timeout: %s).", idleSince.Round(time.Second), ses.Spec.IdleTimeout),
-		})
+		ses.SetCondition(newIdleCondition(idleSince, ses.Spec.IdleTimeout))
 		ses.Status.ReasonEnded = "idleTimeout"
 
-		// Ensure we have correct metadata for the API update
+		// Ensure we have correct metadata for the API update.
+		// Re-validate idle condition after refetch to avoid TOCTOU race where
+		// activity was recorded between our initial check and this point.
 		if stored, gerr := wc.sessionManager.GetBreakglassSessionByName(ctx, ses.Name); gerr == nil {
 			ses.Namespace = stored.Namespace
 			ses.ResourceVersion = stored.ResourceVersion
+			// Re-validate: if the stored session's lastActivity is more recent, it may no longer be idle
+			if stored.Status.LastActivity != nil && !stored.Status.LastActivity.IsZero() {
+				refreshedIdle := time.Since(stored.Status.LastActivity.Time)
+				if refreshedIdle < idleTimeout {
+					wc.log.Infow("Session no longer idle after refetch; skipping expiry",
+						"session", ses.Name,
+						"refreshedIdleSince", refreshedIdle.Round(time.Second))
+					continue
+				}
+			}
 		} else {
 			wc.log.Debugw("could not refetch session before idle status update; will attempt update anyway",
 				"session", ses.Name, "error", gerr)
 		}
 
 		// Persist the status change with retry on conflict (following ExpireApprovedSessions pattern)
-		const maxStatusUpdateRetries = 3
 		var lastErr error
 		for attempt := 0; attempt < maxStatusUpdateRetries; attempt++ {
 			if err := wc.sessionManager.UpdateBreakglassSessionStatus(ctx, ses); err == nil {
@@ -195,5 +220,18 @@ func (wc *BreakglassSessionController) sendSessionIdleExpiredEmail(session break
 		wc.log.Errorw("failed to enqueue idle-expired session email",
 			"session", session.Name,
 			"error", err)
+	}
+}
+
+// newIdleCondition builds a standard Idle condition for idle-expired sessions.
+// This helper avoids duplicating the condition construction across the idle expiry
+// code and any future callers.
+func newIdleCondition(idleSince time.Duration, idleTimeout string) metav1.Condition {
+	return metav1.Condition{
+		Type:               string(breakglassv1alpha1.SessionConditionTypeIdle),
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "IdleTimeout",
+		Message:            fmt.Sprintf("Session expired after %s of inactivity (idle timeout: %s).", idleSince.Round(time.Second), idleTimeout),
 	}
 }

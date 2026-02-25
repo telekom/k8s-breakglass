@@ -3342,6 +3342,17 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 		},
 	}
 
+	// Enrich audit event with activity details for idle-timeout expirations
+	if reason == "idleTimeout" {
+		if session.Status.LastActivity != nil {
+			event.Details["lastActivity"] = session.Status.LastActivity.Time.UTC().Format(time.RFC3339)
+		}
+		event.Details["activityCount"] = session.Status.ActivityCount
+		if session.Spec.IdleTimeout != "" {
+			event.Details["idleTimeout"] = session.Spec.IdleTimeout
+		}
+	}
+
 	b.auditService.Emit(ctx, event)
 }
 

@@ -55,3 +55,7 @@ kubernetes:
   # Valid values: "email" (default), "preferred_username", "sub"
   # This must match the OIDC claimMappings.username.claim on spoke clusters.
   # userIdentifierClaim: "email"
+  # enableActivityTracking enables recording session activity from the authorization webhook.
+  # When enabled, the ActivityTracker buffers webhook hits and flushes lastActivity/activityCount
+  # to BreakglassSession status every 30 seconds. Required for idle timeout (spec.idleTimeout) to work.
+  # enableActivityTracking: false

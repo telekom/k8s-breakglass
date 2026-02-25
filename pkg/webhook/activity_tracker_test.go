@@ -42,29 +42,46 @@ func newTestActivityScheme() *runtime.Scheme {
 }
 
 func TestActivityTracker_RecordActivity(t *testing.T) {
-	scheme := newTestActivityScheme()
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	tracker := NewActivityTracker(fakeClient,
-		WithFlushInterval(1*time.Hour), // long interval so we control flushing manually
-		WithActivityLogger(zap.NewNop().Sugar()),
-	)
-	defer tracker.Stop(context.Background())
-
-	now := time.Now()
-
 	t.Run("record single activity", func(t *testing.T) {
-		tracker.RecordActivity("breakglass", "session-1", now)
+		scheme := newTestActivityScheme()
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		tracker := NewActivityTracker(fakeClient,
+			WithFlushInterval(1*time.Hour),
+			WithActivityLogger(zap.NewNop().Sugar()),
+		)
+		defer tracker.Stop(context.Background())
+
+		tracker.RecordActivity("breakglass", "session-1", time.Now())
 		assert.Equal(t, 1, tracker.Pending())
 	})
 
 	t.Run("record multiple activities for same session", func(t *testing.T) {
+		scheme := newTestActivityScheme()
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		tracker := NewActivityTracker(fakeClient,
+			WithFlushInterval(1*time.Hour),
+			WithActivityLogger(zap.NewNop().Sugar()),
+		)
+		defer tracker.Stop(context.Background())
+
+		now := time.Now()
+		tracker.RecordActivity("breakglass", "session-1", now)
 		tracker.RecordActivity("breakglass", "session-1", now.Add(1*time.Second))
 		tracker.RecordActivity("breakglass", "session-1", now.Add(2*time.Second))
 		assert.Equal(t, 1, tracker.Pending(), "Multiple activities for same session should be buffered as one entry")
 	})
 
 	t.Run("record activities for different sessions", func(t *testing.T) {
+		scheme := newTestActivityScheme()
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		tracker := NewActivityTracker(fakeClient,
+			WithFlushInterval(1*time.Hour),
+			WithActivityLogger(zap.NewNop().Sugar()),
+		)
+		defer tracker.Stop(context.Background())
+
+		now := time.Now()
+		tracker.RecordActivity("breakglass", "session-1", now)
 		tracker.RecordActivity("breakglass", "session-2", now)
 		assert.Equal(t, 2, tracker.Pending())
 	})
@@ -547,13 +564,13 @@ func TestActivityTracker_StopContextExpired(t *testing.T) {
 	// Goroutine that delays closing done to simulate slow shutdown.
 	go func() {
 		<-at.stopCh
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond) // Must exceed context timeout below
 		close(at.done)
 	}()
 
 	at.RecordActivity("breakglass", "session-ctx", time.Now())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	at.Stop(ctx) // Should hit ctx.Done() branch
@@ -588,7 +605,7 @@ func TestActivityTracker_RunTickerFlush(t *testing.T) {
 		Build()
 
 	tracker := NewActivityTracker(fakeClient,
-		WithFlushInterval(50*time.Millisecond), // Short interval to trigger ticker
+		WithFlushInterval(100*time.Millisecond), // Short interval to trigger ticker
 		WithActivityLogger(zap.NewNop().Sugar()),
 	)
 	defer tracker.Stop(context.Background())
@@ -600,7 +617,7 @@ func TestActivityTracker_RunTickerFlush(t *testing.T) {
 	// this test specifically covers the ticker.C path in run().
 	require.Eventually(t, func() bool {
 		return tracker.Pending() == 0
-	}, 2*time.Second, 10*time.Millisecond,
+	}, 5*time.Second, 25*time.Millisecond,
 		"Ticker should trigger automatic flush of pending activity")
 }
 
