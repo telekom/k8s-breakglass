@@ -142,10 +142,7 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, ts time.Time) 
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 
 	at.mu.Lock()
-	defer func() {
-		metrics.SessionActivityBufferSize.Set(float64(len(at.entries)))
-		at.mu.Unlock()
-	}()
+	defer at.mu.Unlock()
 
 	entry, exists := at.entries[key]
 	if !exists {
@@ -163,6 +160,7 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, ts time.Time) 
 			lastSeen:  ts,
 			count:     1,
 		}
+		metrics.SessionActivityBufferSize.Set(float64(len(at.entries)))
 		return
 	}
 	if ts.After(entry.lastSeen) {

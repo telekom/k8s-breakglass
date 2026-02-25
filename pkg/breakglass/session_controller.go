@@ -137,6 +137,7 @@ func IsSessionPendingApproval(session breakglassv1alpha1.BreakglassSession) bool
 	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
 		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
 		session.Status.State == breakglassv1alpha1.SessionStateExpired ||
+		session.Status.State == breakglassv1alpha1.SessionStateIdleExpired ||
 		session.Status.State == breakglassv1alpha1.SessionStateTimeout {
 		return false
 	}
@@ -1559,10 +1560,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 		canApprove := wc.isSessionApprover(c, ses)
 		alreadyActive := IsSessionActive(ses)
-		valid := true
-		if IsSessionExpired(ses) || ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn || ses.Status.State == breakglassv1alpha1.SessionStateRejected {
-			valid = false
-		}
+		valid := IsSessionValid(ses)
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
 		return
 	}

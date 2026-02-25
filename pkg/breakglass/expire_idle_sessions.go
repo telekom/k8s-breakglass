@@ -45,7 +45,7 @@ const maxStatusUpdateRetries = 3
 func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 	sessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateApproved)
 	if err != nil {
-		wc.log.Error("error listing breakglass sessions for idle expiry", err)
+		wc.log.Errorw("error listing breakglass sessions for idle expiry", "error", err)
 		return
 	}
 
@@ -134,9 +134,11 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 
 		// Persist the status change with retry on conflict (following ExpireApprovedSessions pattern)
 		var lastErr error
+		idleExpireSucceeded := false
 		for attempt := 0; attempt < maxStatusUpdateRetries; attempt++ {
 			if err := wc.sessionManager.UpdateBreakglassSessionStatus(ctx, ses); err == nil {
 				lastErr = nil
+				idleExpireSucceeded = true
 				metrics.SessionIdleExpired.WithLabelValues(ses.Spec.Cluster).Inc()
 				wc.emitSessionExpiredAuditEvent(ctx, &ses, "idleTimeout")
 				break
@@ -176,7 +178,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 		if lastErr != nil {
 			wc.log.Errorw("failed to update idle-expired session after retries",
 				"session", ses.Name, "error", lastErr)
-		} else {
+		} else if idleExpireSucceeded {
 			wc.sendSessionIdleExpiredEmail(ses)
 		}
 	}
