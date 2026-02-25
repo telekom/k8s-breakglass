@@ -87,13 +87,24 @@ responsiveness.
   - Watch/informer count scales linearly with cluster count, not
     quadratically
 
-### 10. Metrics Cardinality
+### 10. Metrics Cardinality & Gauge Consistency
 
 - High-cardinality label values (session names, user IDs, resource names)
   create unbounded metric series.
 - Flag any metric with a label whose values are unbounded.
 - Verify gauges are cleaned up when sessions expire (otherwise stale
   series accumulate forever).
+- **Gauge consistency across all mutation paths**: For every gauge metric
+  (e.g., buffer sizes, active session counts), verify it is updated in
+  **every** code path that mutates the underlying data. Common misses:
+  - `Add()` updates the gauge but `Cleanup()` / `Prune()` / `Delete()`
+    does not → gauge drifts from reality.
+  - Error paths that bail out early without restoring the gauge.
+  - Periodic maintenance goroutines that remove entries but forget to
+    `Set()` the new size.
+- Audit pattern: for each `.Set()` / `.Inc()` / `.Dec()` call on a gauge,
+  search for all other places where the same underlying collection is
+  modified and verify the gauge is also updated there.
 
 ## Output format
 

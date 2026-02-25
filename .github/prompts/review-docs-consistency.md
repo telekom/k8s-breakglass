@@ -57,6 +57,18 @@ consistent, and synchronized with the actual code.
 - Check that error messages, log messages, and condition reasons in Go
   code use the same terminology as the docs.
 
+### 8. Example Config File ↔ Config Struct Alignment
+
+- Verify that `config.example.yaml` mirrors the Go config struct hierarchy
+  exactly. Each YAML key must appear under the section that matches its
+  parent struct (e.g., `ServerConfig` fields under `server:`,
+  `KubernetesConfig` fields under `kubernetes:`).
+- Cross-reference struct YAML tags (`yaml:"…"`) against the example file.
+  Flag options placed in the wrong YAML section — this misleads operators
+  and causes silent misconfiguration where the value is parsed but ignored.
+- If a new config option is added, verify it also appears in the example
+  file with an accurate comment explaining its effect and default.
+
 ## Output format
 
 For each finding, provide:

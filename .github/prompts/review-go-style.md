@@ -83,6 +83,21 @@ time.Monday, time.January
 - `gocritic` is relaxed in `_test.go` files
 - `tparallel`: Verify correct `t.Parallel()` usage in tests
 
+### 10. Log Level Hygiene
+
+- **Warn/Error in periodic loops**: Flag `Warnw`, `Errorw`, `Warn`, or
+  `Error` log calls inside ticker-driven or cron-style loops (e.g.,
+  cleanup goroutines, expiry checks, flush cycles). These fire every
+  iteration and flood logs. Use `Debugw` or `Infow` for expected
+  conditions; reserve `Warn` for first-occurrence or rate-limited events.
+- **Misleading messages**: Flag log messages that imply a problem when
+  the situation is actually normal. Example: "no activity recorded" for
+  a newly-approved session that simply hasn't been used yet is not a
+  warning — it is expected state.
+- **Structured logging consistency**: Verify all log calls use the
+  structured `w` suffix variants (`Infow`, `Warnw`, `Errorw`) with
+  key-value pairs, not `Info`, `Warn`, `Error` with `fmt.Sprintf`.
+
 ## Output format
 
 For each finding:
