@@ -9,7 +9,8 @@ metadata:
 spec:
   displayName: "Network Debug Session"
   description: "Debug session with network troubleshooting tools"
-  debugPodTemplateRef: test-network-debug-pod
+  podTemplateRef:
+    name: test-network-debug-pod
   allowedNamespaces:
     - default
     - kube-system

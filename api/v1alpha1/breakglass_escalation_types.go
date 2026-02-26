@@ -49,6 +49,13 @@ const (
 )
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.approvers) && ((has(self.approvers.users) && size(self.approvers.users) > 0) || (has(self.approvers.groups) && size(self.approvers.groups) > 0))",message="at least one approver (user or group) must be specified"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || (has(self.approvers) && has(self.approvers.groups) && size(self.approvers.groups) > 0)",message="blockSelfApproval requires at least one approver group"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers) || !has(self.approvers.groups) || !has(self.escalatedGroup) || !self.approvers.groups.exists(g, g == self.escalatedGroup)",message="escalatedGroup cannot be an approver group when blockSelfApproval is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers) || !has(self.approvers.hiddenFromUI) || !has(self.escalatedGroup) || !self.approvers.hiddenFromUI.exists(g, g == self.escalatedGroup)",message="escalatedGroup cannot be a hidden approver group (hiddenFromUI) when blockSelfApproval is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders) == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0))",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers"
+// +kubebuilder:validation:XValidation:rule="(!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) == (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
@@ -86,10 +93,12 @@ type BreakglassEscalationSpec struct {
 
 	// clusterConfigRefs lists ClusterConfig object names this escalation applies to (alternative to allowed.clusters).
 	// +optional
+	// +kubebuilder:validation:MaxItems=50
 	ClusterConfigRefs []string `json:"clusterConfigRefs,omitempty"`
 
 	// denyPolicyRefs (optional) attach default deny policies to any session created via this escalation.
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	DenyPolicyRefs []string `json:"denyPolicyRefs,omitempty"`
 
 	// requestReason configures an optional free-text reason the requester must or may provide
@@ -105,6 +114,7 @@ type BreakglassEscalationSpec struct {
 	// allowedApproverDomains can restrict approvers to specific email domains for this escalation.
 	// If omitted, cluster-level defaults are used.
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	AllowedApproverDomains []string `json:"allowedApproverDomains,omitempty"`
 
 	// allowedIdentityProviders specifies which IdentityProvider CRs can use this escalation.
@@ -115,6 +125,7 @@ type BreakglassEscalationSpec struct {
 	// The intersection of cluster-allowed and escalation-allowed IDPs is used.
 	// NOTE: This field is mutually exclusive with AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers.
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	AllowedIdentityProviders []string `json:"allowedIdentityProviders,omitempty"`
 
 	// allowedIdentityProvidersForRequests specifies which IdentityProvider CRs can REQUEST this escalation.
@@ -123,6 +134,7 @@ type BreakglassEscalationSpec struct {
 	// This field is mutually exclusive with AllowedIdentityProviders.
 	// When set, AllowedIdentityProvidersForApprovers must also be set (or both can be left empty).
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	AllowedIdentityProvidersForRequests []string `json:"allowedIdentityProvidersForRequests,omitempty"`
 
 	// allowedIdentityProvidersForApprovers specifies which IdentityProvider CRs can APPROVE this escalation.
@@ -131,6 +143,7 @@ type BreakglassEscalationSpec struct {
 	// This field is mutually exclusive with AllowedIdentityProviders.
 	// When set, AllowedIdentityProvidersForRequests must also be set (or both can be left empty).
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	AllowedIdentityProvidersForApprovers []string `json:"allowedIdentityProvidersForApprovers,omitempty"`
 
 	// blockSelfApproval, if set to true, will prevent the session requester from approving their own session for this escalation.
@@ -192,6 +205,7 @@ type PodSecurityOverrides struct {
 	// Valid values: hostNetwork, hostPID, hostIPC, privilegedContainer, hostPathWritable, hostPathReadOnly, runAsRoot
 	// Example: ["privilegedContainer", "hostNetwork"] allows exec to privileged/hostNetwork pods.
 	// +optional
+	// +kubebuilder:validation:MaxItems=10
 	ExemptFactors []string `json:"exemptFactors,omitempty"`
 
 	// namespaceScope limits where overrides apply. If set, overrides only work for pods in these namespaces.
@@ -236,10 +250,13 @@ type NotificationExclusions struct {
 
 // SessionLimitsOverride allows an escalation to override the IdentityProvider's session limits.
 // This enables differentiated access for platform teams vs tenants.
+//
+// +kubebuilder:validation:XValidation:rule="!(has(self.unlimited) && self.unlimited) || (!has(self.maxActiveSessionsPerUser) && !has(self.maxActiveSessionsTotal))",message="unlimited=true is mutually exclusive with maxActiveSessionsPerUser and maxActiveSessionsTotal"
 type SessionLimitsOverride struct {
 	// unlimited disables session limits entirely for this escalation.
 	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
 	// Use with caution - this should only be granted to trusted platform teams.
+	// +kubebuilder:default=false
 	// +optional
 	Unlimited bool `json:"unlimited,omitempty"`
 
@@ -279,23 +296,30 @@ type BreakglassEscalationAllowed struct {
 	// Supports exact string matching and glob patterns (e.g., "prod-*", "*-staging", "*").
 	// Use "*" to match all clusters (global escalation).
 	// Glob patterns follow filepath.Match semantics: * matches any sequence of characters, ? matches single character.
+	// +kubebuilder:validation:MaxItems=50
 	Clusters []string `json:"clusters,omitempty"`
 	// groups is a list of groups this escalation can be used by.
 	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
 	// Future enhancement: Consider adding globbing (e.g., "admin-*") or regex support for group name matching.
+	// +kubebuilder:validation:MaxItems=50
 	Groups []string `json:"groups,omitempty"`
 }
 
 // BreakglassEscalationApprovers
 type BreakglassEscalationApprovers struct {
 	// users that are allowed to approve a session for this escalation
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
 	Users []string `json:"users,omitempty"`
 	// groups that are allowed to approve a session for this escalation
+	// +optional
+	// +kubebuilder:validation:MaxItems=30
 	Groups []string `json:"groups,omitempty"`
 	// hiddenFromUI is a list of groups that are used as fallback approvers but are hidden from the UI and notification emails.
 	// This is useful for groups that should not be bothered with notifications (e.g., FLM or duty managers).
 	// These groups will still function as approvers for sessions but won't be displayed in the UI or sent emails.
 	// +optional
+	// +kubebuilder:validation:MaxItems=30
 	HiddenFromUI []string `json:"hiddenFromUI,omitempty"`
 }
 

@@ -9,7 +9,8 @@ metadata:
 spec:
   displayName: "Basic Debug Session"
   description: "A basic debug session with busybox container"
-  debugPodTemplateRef: test-basic-debug-pod
+  podTemplateRef:
+    name: test-basic-debug-pod
   allowedNamespaces:
     - default
     - kube-system

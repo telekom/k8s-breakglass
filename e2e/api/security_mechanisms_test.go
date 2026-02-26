@@ -631,12 +631,14 @@ func TestSecuritySessionCannotSelfApprove(t *testing.T) {
 	t.Run("SelfApprovalDenied", func(t *testing.T) {
 		// Create an escalation where security-requester is in both allowed groups and approvers list
 		// BlockSelfApproval must be explicitly set to true to prevent self-approval
+		// Note: blockSelfApproval requires at least one approver group (CEL rule)
 		escalation := helpers.NewEscalationBuilder("e2e-self-approve-test", namespace).
 			WithEscalatedGroup("self-approve-test-group").
 			WithBlockSelfApproval(true). // Enable blocking self-approval
 			WithAllowedClusters(clusterName).
 			WithAllowedGroups(helpers.TestUsers.SecurityRequester.Groups...).
 			WithApproverUsers(helpers.TestUsers.SecurityRequester.Email, helpers.TestUsers.SecurityApprover.Email). // Include the requester as an approver - should still be blocked from self-approval
+			WithApproverGroups("security-approvers").                                                               // Required: blockSelfApproval needs at least one approver group
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			Build()
 		cleanup.Add(escalation)
@@ -758,11 +760,14 @@ func TestSecurityMultipleDenyPoliciesEnforced(t *testing.T) {
 		err := cli.Create(ctx, policyStrict)
 		require.NoError(t, err)
 
-		// No rules = allow all (this won't override the strict policy due to lower precedence)
+		// Less restrictive policy: denies only pods/get (narrower verb set than the strict
+		// policy which denies "delete") to test precedence ordering.
+		// Every DenyPolicy must have at least one rule or podSecurityRules (CEL rule).
 		policyPermissive := helpers.NewDenyPolicyBuilder("e2e-sec-overlap-permissive", "").
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			WithPrecedence(100). // Lower priority
 			AppliesToClusters(clusterName).
+			DenyPods([]string{"get"}, "*"). // Must have at least one deny rule
 			Build()
 		cleanup.Add(policyPermissive)
 		err = cli.Create(ctx, policyPermissive)
@@ -1322,12 +1327,14 @@ func TestSecurityBlockSelfApprovalAtClusterLevel(t *testing.T) {
 
 	t.Run("EscalationOverridesClusterSelfApproval", func(t *testing.T) {
 		// Create escalation that explicitly sets BlockSelfApproval
+		// Note: blockSelfApproval requires at least one approver group (CEL rule)
 		escalation := helpers.NewEscalationBuilder("e2e-sec-escalation-block-override", namespace).
 			WithEscalatedGroup("block-override-test-group").
 			WithBlockSelfApproval(true).
 			WithAllowedClusters("*").
 			WithAllowedGroups("dev").
 			WithApproverUsers(helpers.TestUsers.Approver.Email).
+			WithApproverGroups("security-approvers"). // Required: blockSelfApproval needs at least one approver group
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			Build()
 		cleanup.Add(escalation)

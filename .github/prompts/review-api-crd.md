@@ -65,6 +65,13 @@ properly validated.
   Webhook validation is defense-in-depth for non-standard callers
   (`kubectl edit`, direct API writes). Document this scope explicitly in
   webhook code comments.
+- **Field path precision in list validation**: When validating elements in
+  a slice/list field (e.g., `spec.approvers.groups`), errors must use
+  `fieldPath.Index(i)` to identify the specific offending element, not just
+  the parent list path. An error on `spec.approvers.groups` without an
+  index tells the user "something in the list is wrong" but not which entry.
+  - **WRONG**: `field.Invalid(groupsPath, group, "msg")` inside a `for _, g` loop.
+  - **RIGHT**: `field.Invalid(groupsPath.Index(i), group, "msg")` inside a `for i, g` loop.
 
 ### 7. CRD Sample Validity
 
@@ -72,6 +79,49 @@ properly validated.
   CRD schema.
 - Verify that sample values exercise validation edge cases (min, max,
   pattern boundaries).
+
+### 8. CEL Validation Expressions (`x-kubernetes-validations`)
+
+- **`has()` guards for optional fields**: Every CEL rule that accesses an
+  optional field (marked `+optional`, `omitempty`, or pointer type) MUST
+  use `has(self.field)` before accessing the field with `size()`,
+  `.exists()`, or any other operator. Without this guard, the CEL rule
+  throws a runtime `"no such key"` error when the field is absent.
+  - **WRONG**: `size(self.optionalList) == 0` — fails when field is absent.
+  - **RIGHT**: `!has(self.optionalList) || size(self.optionalList) == 0`
+  - **WRONG**: `size(self.parent.optionalChild) > 0` — fails when child absent.
+  - **RIGHT**: `has(self.parent.optionalChild) && size(self.parent.optionalChild) > 0`
+  - Also applies to nested optional fields within optional structs — guard
+    each level of the access path that is optional.
+  - **Boolean fields with `+kubebuilder:default`**: Even when a boolean
+    field has a default value (e.g., `+kubebuilder:default=false`), prefer
+    guarding with `has()` for consistency with other CEL rules. While the
+    API server defaults the field before CEL runs, `has()` is defensive
+    against intermediate states and keeps the pattern uniform.
+    - **AVOID**: `!self.boolField || condition` — fragile if defaulting changes.
+    - **PREFER**: `!(has(self.boolField) && self.boolField) || condition`
+- **CEL cost budget**: CEL rules on unbounded lists can exceed the
+  Kubernetes API server's cost budget. Ensure every list field accessed in
+  a CEL rule has a `+kubebuilder:validation:MaxItems` constraint. Check
+  that `make validate-crds` passes (which runs the offline CRD schema
+  validation including CEL cost estimation).
+- **Consistency with Go webhooks**: CEL rules should match the equivalent
+  Go webhook validation logic. If a Go validation uses a different error
+  message or different semantics than the CEL rule, one of them is wrong.
+- **Rule message clarity**: CEL rule messages should clearly explain what
+  is wrong and how to fix it, not just state "invalid value".
+- **Test comment enforcement attribution**: Test comments describing CEL
+  validation behavior must explicitly state that the constraint is
+  enforced by a CEL rule (not just Go validation). Write "rejected by
+  CEL rule at admission time" rather than vague "is now invalid". This
+  avoids confusion about which layer enforces which constraint, especially
+  when both Go webhooks and CEL rules exist for overlapping validations.
+- **Test-object compliance**: When adding or tightening a CEL rule, verify
+  that existing test objects still satisfy it. This includes e2e Go
+  builders (`NewEscalationBuilder`, `NewDenyPolicyBuilder`), YAML fixture
+  files (`e2e/fixtures/`, `config/samples/`), and shell heredocs. Objects
+  that pass Go-level unit tests but fail CEL at admission time indicate
+  a gap between unit-test coverage and runtime behavior.
 
 ## Output format
 

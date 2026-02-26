@@ -138,7 +138,31 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 	approverUsersPath := specPath.Child("approvers").Child("users")
 
 	if len(escalation.Spec.Approvers.Groups) == 0 && len(escalation.Spec.Approvers.Users) == 0 {
-		result.Errors = append(result.Errors, field.Required(specPath.Child("approvers"), "either users or groups must be specified as approvers"))
+		result.Errors = append(result.Errors, field.Required(specPath.Child("approvers"), "at least one approver (user or group) must be specified"))
+	}
+
+	// Validate blockSelfApproval constraints (mirrors CEL rules)
+	if escalation.Spec.BlockSelfApproval != nil && *escalation.Spec.BlockSelfApproval {
+		if len(escalation.Spec.Approvers.Groups) == 0 {
+			result.Errors = append(result.Errors, field.Invalid(
+				specPath.Child("blockSelfApproval"), true,
+				"blockSelfApproval requires at least one approver group"))
+		}
+		for i, g := range escalation.Spec.Approvers.Groups {
+			if g == escalation.Spec.EscalatedGroup {
+				result.Errors = append(result.Errors, field.Invalid(
+					approverGroupsPath.Index(i), g,
+					"escalatedGroup cannot be an approver group when blockSelfApproval is enabled"))
+			}
+		}
+		hiddenFromUIPath := specPath.Child("approvers").Child("hiddenFromUI")
+		for i, g := range escalation.Spec.Approvers.HiddenFromUI {
+			if g == escalation.Spec.EscalatedGroup {
+				result.Errors = append(result.Errors, field.Invalid(
+					hiddenFromUIPath.Index(i), g,
+					"escalatedGroup cannot be a hidden approver group (hiddenFromUI) when blockSelfApproval is enabled"))
+			}
+		}
 	}
 
 	result.Errors = append(result.Errors, validateStringListEntriesNotEmpty(escalation.Spec.Approvers.Groups, approverGroupsPath)...)
@@ -166,6 +190,16 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 
 	// Validate timeout relationships
 	result.Errors = append(result.Errors, validateTimeoutRelationships(&escalation.Spec, specPath)...)
+
+	// Validate sessionLimitsOverride exclusivity (mirrors CEL rule)
+	if escalation.Spec.SessionLimitsOverride != nil && escalation.Spec.SessionLimitsOverride.Unlimited {
+		if escalation.Spec.SessionLimitsOverride.MaxActiveSessionsPerUser != nil ||
+			escalation.Spec.SessionLimitsOverride.MaxActiveSessionsTotal != nil {
+			result.Errors = append(result.Errors, field.Invalid(
+				specPath.Child("sessionLimitsOverride").Child("unlimited"), true,
+				"unlimited=true is mutually exclusive with maxActiveSessionsPerUser and maxActiveSessionsTotal"))
+		}
+	}
 
 	// Multi-IDP validations
 	result.Errors = append(result.Errors, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProviders, specPath.Child("allowedIdentityProviders"))...)
@@ -418,6 +452,11 @@ func ValidateDenyPolicy(dp *DenyPolicy) *ValidationResult {
 	}
 
 	specPath := field.NewPath("spec")
+
+	// Validate at least one rule type is specified (mirrors CEL rule)
+	if len(dp.Spec.Rules) == 0 && dp.Spec.PodSecurityRules == nil {
+		result.Errors = append(result.Errors, field.Required(specPath, "at least one deny rule or podSecurityRules must be specified"))
+	}
 
 	// Validate rules
 	for i, rule := range dp.Spec.Rules {

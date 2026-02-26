@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -821,16 +822,20 @@ func TestDenyPolicy_ValidateCreate_EmptyRules(t *testing.T) {
 			Name: "empty-rules-policy",
 		},
 		Spec: DenyPolicySpec{
-			Rules: []DenyRule{}, // empty rules is valid
+			Rules: []DenyRule{}, // empty rules with no podSecurityRules is now invalid (also rejected by CEL rule at admission time)
 		},
 	}
 
 	warnings, err := policy.ValidateCreate(ctx, policy)
-	if err != nil {
-		t.Errorf("ValidateCreate() unexpected error for empty rules: %v", err)
+	if err == nil {
+		t.Fatal("ValidateCreate() expected error for empty rules with no podSecurityRules")
 	}
 	if len(warnings) > 0 {
 		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "at least one deny rule or podSecurityRules must be specified") {
+		t.Errorf("ValidateCreate() error should mention the deny rule requirement, got: %s", errMsg)
 	}
 }
 

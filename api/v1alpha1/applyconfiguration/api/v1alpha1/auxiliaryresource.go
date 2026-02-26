@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -44,7 +44,7 @@ type AuxiliaryResourceApplyConfiguration struct {
 	// deleteAfter specifies if this resource should be deleted after session ends.
 	DeleteAfter *bool `json:"deleteAfter,omitempty"`
 	// failurePolicy determines behavior if resource creation fails.
-	FailurePolicy *breakglassv1alpha1.AuxiliaryResourceFailurePolicy `json:"failurePolicy,omitempty"`
+	FailurePolicy *apiv1alpha1.AuxiliaryResourceFailurePolicy `json:"failurePolicy,omitempty"`
 	// optional marks this resource as optional (same as failurePolicy=ignore).
 	// Deprecated: Use failurePolicy instead. Removal target: v1beta1.
 	Optional *bool `json:"optional,omitempty"`
@@ -115,7 +115,7 @@ func (b *AuxiliaryResourceApplyConfiguration) WithDeleteAfter(value bool) *Auxil
 // WithFailurePolicy sets the FailurePolicy field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the FailurePolicy field is set to the value of the last call.
-func (b *AuxiliaryResourceApplyConfiguration) WithFailurePolicy(value breakglassv1alpha1.AuxiliaryResourceFailurePolicy) *AuxiliaryResourceApplyConfiguration {
+func (b *AuxiliaryResourceApplyConfiguration) WithFailurePolicy(value apiv1alpha1.AuxiliaryResourceFailurePolicy) *AuxiliaryResourceApplyConfiguration {
 	b.FailurePolicy = &value
 	return b
 }

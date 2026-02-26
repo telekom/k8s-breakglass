@@ -22,6 +22,8 @@ const (
 )
 
 // DenyPolicySpec defines deny rules applicable to sessions / clusters / tenants.
+//
+// +kubebuilder:validation:XValidation:rule="(has(self.rules) && size(self.rules) > 0) || has(self.podSecurityRules)",message="at least one deny rule or podSecurityRules must be specified"
 type DenyPolicySpec struct {
 	// appliesTo scopes the policy. Empty means global.
 	// Any listed selector must match (logical AND within struct, lists are OR).
@@ -30,6 +32,7 @@ type DenyPolicySpec struct {
 
 	// rules are evaluated in order; first matching rule denies.
 	// +optional
+	// +kubebuilder:validation:MaxItems=200
 	Rules []DenyRule `json:"rules,omitempty"`
 
 	// podSecurityRules evaluates pod specifications for exec/attach/portforward requests.
@@ -47,22 +50,28 @@ type DenyPolicySpec struct {
 type DenyPolicyScope struct {
 	// clusters list exact clusterIDs.
 	// +optional
+	// +kubebuilder:validation:MaxItems=50
 	Clusters []string `json:"clusters,omitempty"`
 	// tenants list tenant IDs.
 	// +optional
+	// +kubebuilder:validation:MaxItems=50
 	Tenants []string `json:"tenants,omitempty"`
 	// sessions list specific BreakglassSession names.
 	// +optional
+	// +kubebuilder:validation:MaxItems=50
 	Sessions []string `json:"sessions,omitempty"`
 }
 
 // DenyRule blocks an action matching the attributes.
 type DenyRule struct {
 	// verbs like get, list, watch, create, update, patch, delete, deletecollection
+	// +kubebuilder:validation:MaxItems=20
 	Verbs []string `json:"verbs"`
 	// apiGroups for the resource ("" for core)
+	// +kubebuilder:validation:MaxItems=50
 	APIGroups []string `json:"apiGroups"`
 	// resources names (plural). Use "*" for wildcard. Subresources are matched via subresource field.
+	// +kubebuilder:validation:MaxItems=100
 	Resources []string `json:"resources"`
 	// namespaces supports patterns (glob-style) and label-based namespace selection.
 	// Empty means cluster-scoped only resources.
@@ -70,9 +79,11 @@ type DenyRule struct {
 	Namespaces *NamespaceFilter `json:"namespaces,omitempty"`
 	// resourceNames are specific resource object names (supports wildcards). If empty matches any.
 	// +optional
+	// +kubebuilder:validation:MaxItems=100
 	ResourceNames []string `json:"resourceNames,omitempty"`
 	// subresources (e.g. status). If empty matches none (only main resource). Use "*" for any.
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	Subresources []string `json:"subresources,omitempty"`
 }
 
@@ -91,11 +102,13 @@ type PodSecurityRules struct {
 
 	// thresholds define actions based on cumulative risk score.
 	// Evaluated in order; first matching threshold determines the action.
+	// +kubebuilder:validation:MaxItems=20
 	Thresholds []RiskThreshold `json:"thresholds"`
 
 	// blockFactors immediately deny if ANY listed factor is present, regardless of score.
 	// Valid values: hostNetwork, hostPID, hostIPC, privilegedContainer, hostPathWritable, runAsRoot
 	// +optional
+	// +kubebuilder:validation:MaxItems=10
 	BlockFactors []string `json:"blockFactors,omitempty"`
 
 	// exemptions exclude certain pods from security evaluation.

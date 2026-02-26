@@ -70,6 +70,7 @@ spec:
                       Glob patterns follow filepath.Match semantics: * matches any sequence of characters, ? matches single character.
                     items:
                       type: string
+                    maxItems: 50
                     type: array
                   groups:
                     description: |-
@@ -78,6 +79,7 @@ spec:
                       Future enhancement: Consider adding globbing (e.g., "admin-*") or regex support for group name matching.
                     items:
                       type: string
+                    maxItems: 50
                     type: array
                 type: object
               allowedApproverDomains:
@@ -86,6 +88,7 @@ spec:
                   If omitted, cluster-level defaults are used.
                 items:
                   type: string
+                maxItems: 20
                 type: array
               allowedIdentityProviders:
                 description: |-
@@ -98,6 +101,7 @@ spec:
                   NOTE: This field is mutually exclusive with AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers.
                 items:
                   type: string
+                maxItems: 20
                 type: array
               allowedIdentityProvidersForApprovers:
                 description: |-
@@ -108,6 +112,7 @@ spec:
                   When set, AllowedIdentityProvidersForRequests must also be set (or both can be left empty).
                 items:
                   type: string
+                maxItems: 20
                 type: array
               allowedIdentityProvidersForRequests:
                 description: |-
@@ -118,6 +123,7 @@ spec:
                   When set, AllowedIdentityProvidersForApprovers must also be set (or both can be left empty).
                 items:
                   type: string
+                maxItems: 20
                 type: array
               approvalReason:
                 description: |-
@@ -148,6 +154,7 @@ spec:
                       this escalation
                     items:
                       type: string
+                    maxItems: 30
                     type: array
                   hiddenFromUI:
                     description: |-
@@ -156,12 +163,14 @@ spec:
                       These groups will still function as approvers for sessions but won't be displayed in the UI or sent emails.
                     items:
                       type: string
+                    maxItems: 30
                     type: array
                   users:
                     description: users that are allowed to approve a session for this
                       escalation
                     items:
                       type: string
+                    maxItems: 100
                     type: array
                 type: object
               blockSelfApproval:
@@ -174,12 +183,14 @@ spec:
                   escalation applies to (alternative to allowed.clusters).
                 items:
                   type: string
+                maxItems: 50
                 type: array
               denyPolicyRefs:
                 description: denyPolicyRefs (optional) attach default deny policies
                   to any session created via this escalation.
                 items:
                   type: string
+                maxItems: 20
                 type: array
               disableNotifications:
                 description: |-
@@ -270,6 +281,7 @@ spec:
                       Example: ["privilegedContainer", "hostNetwork"] allows exec to privileged/hostNetwork pods.
                     items:
                       type: string
+                    maxItems: 10
                     type: array
                   maxAllowedScore:
                     description: |-
@@ -408,15 +420,49 @@ spec:
                     minimum: 1
                     type: integer
                   unlimited:
+                    default: false
                     description: |-
                       unlimited disables session limits entirely for this escalation.
                       When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
                       Use with caution - this should only be granted to trusted platform teams.
                     type: boolean
                 type: object
+                x-kubernetes-validations:
+                - message: unlimited=true is mutually exclusive with maxActiveSessionsPerUser
+                    and maxActiveSessionsTotal
+                  rule: '!(has(self.unlimited) && self.unlimited) || (!has(self.maxActiveSessionsPerUser)
+                    && !has(self.maxActiveSessionsTotal))'
             required:
             - allowed
             type: object
+            x-kubernetes-validations:
+            - message: at least one approver (user or group) must be specified
+              rule: has(self.approvers) && ((has(self.approvers.users) && size(self.approvers.users)
+                > 0) || (has(self.approvers.groups) && size(self.approvers.groups)
+                > 0))
+            - message: blockSelfApproval requires at least one approver group
+              rule: '!has(self.blockSelfApproval) || !self.blockSelfApproval || (has(self.approvers)
+                && has(self.approvers.groups) && size(self.approvers.groups) > 0)'
+            - message: escalatedGroup cannot be an approver group when blockSelfApproval
+                is enabled
+              rule: '!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers)
+                || !has(self.approvers.groups) || !has(self.escalatedGroup) || !self.approvers.groups.exists(g,
+                g == self.escalatedGroup)'
+            - message: escalatedGroup cannot be a hidden approver group (hiddenFromUI)
+                when blockSelfApproval is enabled
+              rule: '!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers)
+                || !has(self.approvers.hiddenFromUI) || !has(self.escalatedGroup)
+                || !self.approvers.hiddenFromUI.exists(g, g == self.escalatedGroup)'
+            - message: allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers
+              rule: '!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders)
+                == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests)
+                == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers)
+                == 0))'
+            - message: allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers
+                must both be set or both be empty
+              rule: (!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests)
+                == 0) == (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers)
+                == 0)
           status:
             description: BreakglassEscalationStatus defines the observed state of
               BreakglassEscalation.

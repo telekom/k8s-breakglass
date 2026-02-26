@@ -21,10 +21,6 @@ spec:
       - platform-lead@example.com
     groups:
       - security-team@example.com
-  permissions:
-    - apiGroups: ["*"]
-      resources: ["*"]
-      verbs: ["*"]
   requestReason:
     mandatory: true
     description: "Provide incident ticket number and description"

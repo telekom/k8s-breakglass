@@ -10,6 +10,8 @@ package v1alpha1
 
 // ReasonConfigApplyConfiguration represents a declarative configuration of the ReasonConfig type for use
 // with apply.
+//
+// ReasonConfig defines the configuration for the reason field on escalation requests.
 type ReasonConfigApplyConfiguration struct {
 	// mandatory indicates whether the field is required (true) or optional (false).
 	Mandatory *bool `json:"mandatory,omitempty"`

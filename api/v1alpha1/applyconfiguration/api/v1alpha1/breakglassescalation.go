@@ -16,6 +16,8 @@ import (
 
 // BreakglassEscalationApplyConfiguration represents a declarative configuration of the BreakglassEscalation type for use
 // with apply.
+//
+// BreakglassEscalation is the Schema for the breakglassescalations API.
 type BreakglassEscalationApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`

@@ -22,14 +22,3 @@ spec:
       - approver@example.com
     groups:
       - platform-team@example.com
-  permissions:
-    - apiGroups: [""]
-      resources: ["pods", "pods/log"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: [""]
-      resources: ["pods/exec"]
-      verbs: ["create"]
-      namespaces: ["default", "kube-system"]
-    - apiGroups: ["apps"]
-      resources: ["deployments", "replicasets"]
-      verbs: ["get", "list"]

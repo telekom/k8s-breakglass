@@ -58,16 +58,19 @@ spec:
                     description: clusters list exact clusterIDs.
                     items:
                       type: string
+                    maxItems: 50
                     type: array
                   sessions:
                     description: sessions list specific BreakglassSession names.
                     items:
                       type: string
+                    maxItems: 50
                     type: array
                   tenants:
                     description: tenants list tenant IDs.
                     items:
                       type: string
+                    maxItems: 50
                     type: array
                 type: object
               podSecurityRules:
@@ -94,6 +97,7 @@ spec:
                       Valid values: hostNetwork, hostPID, hostIPC, privilegedContainer, hostPathWritable, runAsRoot
                     items:
                       type: string
+                    maxItems: 10
                     type: array
                   exemptions:
                     description: exemptions exclude certain pods from security evaluation.
@@ -269,6 +273,7 @@ spec:
                       - action
                       - maxScore
                       type: object
+                    maxItems: 20
                     type: array
                 required:
                 - riskFactors
@@ -287,6 +292,7 @@ spec:
                       description: apiGroups for the resource ("" for core)
                       items:
                         type: string
+                      maxItems: 50
                       type: array
                     namespaces:
                       description: |-
@@ -371,32 +377,40 @@ spec:
                         (supports wildcards). If empty matches any.
                       items:
                         type: string
+                      maxItems: 100
                       type: array
                     resources:
                       description: resources names (plural). Use "*" for wildcard.
                         Subresources are matched via subresource field.
                       items:
                         type: string
+                      maxItems: 100
                       type: array
                     subresources:
                       description: subresources (e.g. status). If empty matches none
                         (only main resource). Use "*" for any.
                       items:
                         type: string
+                      maxItems: 20
                       type: array
                     verbs:
                       description: verbs like get, list, watch, create, update, patch,
                         delete, deletecollection
                       items:
                         type: string
+                      maxItems: 20
                       type: array
                   required:
                   - apiGroups
                   - resources
                   - verbs
                   type: object
+                maxItems: 200
                 type: array
             type: object
+            x-kubernetes-validations:
+            - message: at least one deny rule or podSecurityRules must be specified
+              rule: (has(self.rules) && size(self.rules) > 0) || has(self.podSecurityRules)
           status:
             description: DenyPolicyStatus holds policy evaluation state tracked via
               conditions.
