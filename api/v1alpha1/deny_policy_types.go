@@ -32,6 +32,7 @@ type DenyPolicySpec struct {
 
 	// rules are evaluated in order; first matching rule denies.
 	// +optional
+	// +kubebuilder:validation:MaxItems=200
 	Rules []DenyRule `json:"rules,omitempty"`
 
 	// podSecurityRules evaluates pod specifications for exec/attach/portforward requests.

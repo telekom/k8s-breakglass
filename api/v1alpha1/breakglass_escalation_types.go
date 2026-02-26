@@ -52,7 +52,7 @@ const (
 //
 // +kubebuilder:validation:XValidation:rule="has(self.approvers) && ((has(self.approvers.users) && size(self.approvers.users) > 0) || (has(self.approvers.groups) && size(self.approvers.groups) > 0))",message="at least one approver (user or group) must be specified"
 // +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || (has(self.approvers) && has(self.approvers.groups) && size(self.approvers.groups) > 0)",message="blockSelfApproval requires at least one approver group"
-// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers) || !has(self.approvers.groups) || !self.approvers.groups.exists(g, g == self.escalatedGroup)",message="escalatedGroup cannot be an approver group when blockSelfApproval is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers) || !has(self.approvers.groups) || !has(self.escalatedGroup) || !self.approvers.groups.exists(g, g == self.escalatedGroup)",message="escalatedGroup cannot be an approver group when blockSelfApproval is enabled"
 // +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders) == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0))",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers"
 // +kubebuilder:validation:XValidation:rule="(!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) == (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
 type BreakglassEscalationSpec struct {
@@ -251,6 +251,7 @@ type SessionLimitsOverride struct {
 	// unlimited disables session limits entirely for this escalation.
 	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
 	// Use with caution - this should only be granted to trusted platform teams.
+	// +kubebuilder:default=false
 	// +optional
 	Unlimited bool `json:"unlimited,omitempty"`
 

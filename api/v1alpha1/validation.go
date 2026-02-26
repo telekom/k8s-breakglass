@@ -138,7 +138,7 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 	approverUsersPath := specPath.Child("approvers").Child("users")
 
 	if len(escalation.Spec.Approvers.Groups) == 0 && len(escalation.Spec.Approvers.Users) == 0 {
-		result.Errors = append(result.Errors, field.Required(specPath.Child("approvers"), "either users or groups must be specified as approvers"))
+		result.Errors = append(result.Errors, field.Required(specPath.Child("approvers"), "at least one approver (user or group) must be specified"))
 	}
 
 	// Validate blockSelfApproval constraints (mirrors CEL rules)

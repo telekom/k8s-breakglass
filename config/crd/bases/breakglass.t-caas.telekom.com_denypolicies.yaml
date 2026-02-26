@@ -395,6 +395,7 @@ spec:
                   - resources
                   - verbs
                   type: object
+                maxItems: 200
                 type: array
             type: object
             x-kubernetes-validations:

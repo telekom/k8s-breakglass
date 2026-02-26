@@ -414,6 +414,7 @@ spec:
                     minimum: 1
                     type: integer
                   unlimited:
+                    default: false
                     description: |-
                       unlimited disables session limits entirely for this escalation.
                       When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
@@ -439,7 +440,7 @@ spec:
             - message: escalatedGroup cannot be an approver group when blockSelfApproval
                 is enabled
               rule: '!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers)
-                || !has(self.approvers.groups) || !self.approvers.groups.exists(g,
+                || !has(self.approvers.groups) || !has(self.escalatedGroup) || !self.approvers.groups.exists(g,
                 g == self.escalatedGroup)'
             - message: allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers
               rule: '!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders)
