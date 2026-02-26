@@ -89,7 +89,7 @@ time.Monday, time.January
   `Error` log calls inside ticker-driven or cron-style loops (e.g.,
   cleanup goroutines, expiry checks, flush cycles). These fire every
   iteration and flood logs. Use `Debugw` or `Infow` for expected
-  conditions; reserve `Warn` for first-occurrence or rate-limited events.
+  conditions; reserve `Warnw` / `Errorw` for first-occurrence or rate-limited events.
 - **Misleading messages**: Flag log messages that imply a problem when
   the situation is actually normal. Example: "no activity recorded" for
   a newly-approved session that simply hasn't been used yet is not a

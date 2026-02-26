@@ -49,10 +49,10 @@ is defined but never used, or used but never initialized.
 - Flag config options that are parsed but never used.
 - **Example config alignment**: Verify that `config.example.yaml` places
   each option under the correct YAML section matching the Go config struct
-  hierarchy. For example, a field in `ServerConfig` must appear under
-  `server:` in the example YAML, not under `kubernetes:` or another section.
-  Cross-reference struct field YAML tags (`yaml:"…"`) against the example
-  file's nesting to catch misplaced options.
+  hierarchy. For example, a field in `config.Config.Server` (the `Server`
+  struct) must appear under `server:` in the example YAML, not under
+  `kubernetes:` or another section. Cross-reference struct field YAML tags
+  (`yaml:"…"`) against the example file's nesting to catch misplaced options.
 
 ### 6. Metric Registration → Recording → Documentation
 

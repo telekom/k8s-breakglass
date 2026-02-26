@@ -61,8 +61,8 @@ consistent, and synchronized with the actual code.
 
 - Verify that `config.example.yaml` mirrors the Go config struct hierarchy
   exactly. Each YAML key must appear under the section that matches its
-  parent struct (e.g., `ServerConfig` fields under `server:`,
-  `KubernetesConfig` fields under `kubernetes:`).
+  parent struct (e.g., `config.Config.Server` fields under `server:`,
+  `config.Config.Kubernetes` fields under `kubernetes:`).
 - Cross-reference struct YAML tags (`yaml:"…"`) against the example file.
   Flag options placed in the wrong YAML section — this misleads operators
   and causes silent misconfiguration where the value is parsed but ignored.
