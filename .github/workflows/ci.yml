@@ -336,7 +336,8 @@ jobs:
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, crd-validation, frontend-tests, helm-lint]
+    # No dependency on quality gates — builds in parallel with lint/tests.
+    # E2E jobs enforce quality gates via their own 'needs' lists.
     permissions:
       contents: read
       packages: write
@@ -599,7 +600,7 @@ jobs:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: build-image
+    needs: [build-image, lint, unit-tests, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1014,7 +1015,7 @@ jobs:
     name: UI E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: build-image
+    needs: [build-image, lint, unit-tests, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1587,7 +1588,7 @@ jobs:
     name: Multi-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: build-image
+    needs: [build-image, lint, unit-tests, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

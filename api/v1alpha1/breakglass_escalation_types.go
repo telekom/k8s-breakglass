@@ -50,11 +50,11 @@ const (
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
 //
-// +kubebuilder:validation:XValidation:rule="size(self.approvers.users) > 0 || size(self.approvers.groups) > 0",message="at least one approver (user or group) must be specified"
-// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || size(self.approvers.groups) > 0",message="blockSelfApproval requires at least one approver group"
-// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || !self.approvers.groups.exists(g, g == self.escalatedGroup)",message="escalatedGroup cannot be an approver group when blockSelfApproval is enabled"
-// +kubebuilder:validation:XValidation:rule="size(self.allowedIdentityProviders) == 0 || (size(self.allowedIdentityProvidersForRequests) == 0 && size(self.allowedIdentityProvidersForApprovers) == 0)",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers"
-// +kubebuilder:validation:XValidation:rule="(size(self.allowedIdentityProvidersForRequests) == 0) == (size(self.allowedIdentityProvidersForApprovers) == 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
+// +kubebuilder:validation:XValidation:rule="has(self.approvers) && ((has(self.approvers.users) && size(self.approvers.users) > 0) || (has(self.approvers.groups) && size(self.approvers.groups) > 0))",message="at least one approver (user or group) must be specified"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || (has(self.approvers) && has(self.approvers.groups) && size(self.approvers.groups) > 0)",message="blockSelfApproval requires at least one approver group"
+// +kubebuilder:validation:XValidation:rule="!has(self.blockSelfApproval) || !self.blockSelfApproval || !has(self.approvers) || !has(self.approvers.groups) || !self.approvers.groups.exists(g, g == self.escalatedGroup)",message="escalatedGroup cannot be an approver group when blockSelfApproval is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders) == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0))",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers"
+// +kubebuilder:validation:XValidation:rule="(!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) == (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`

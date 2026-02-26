@@ -24,7 +24,7 @@ func TestCELValidationRulesInCRD(t *testing.T) {
 			crdFile: "config/crd/bases/breakglass.t-caas.telekom.com_breakglassescalations.yaml",
 			expected: []string{
 				// CEL rule expressions (may be wrapped across lines in YAML, match key fragments)
-				"size(self.approvers.users) > 0 || size(self.approvers.groups)",
+				"has(self.approvers) && ((has(self.approvers.users) && size(self.approvers.users)",
 				"at least one approver (user or group) must be specified",
 				"blockSelfApproval requires at least one approver group",
 				"escalatedGroup cannot be an approver group when blockSelfApproval",
