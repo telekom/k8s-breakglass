@@ -251,7 +251,7 @@ type NotificationExclusions struct {
 // SessionLimitsOverride allows an escalation to override the IdentityProvider's session limits.
 // This enables differentiated access for platform teams vs tenants.
 //
-// +kubebuilder:validation:XValidation:rule="!self.unlimited || (!has(self.maxActiveSessionsPerUser) && !has(self.maxActiveSessionsTotal))",message="unlimited=true is mutually exclusive with maxActiveSessionsPerUser and maxActiveSessionsTotal"
+// +kubebuilder:validation:XValidation:rule="!(has(self.unlimited) && self.unlimited) || (!has(self.maxActiveSessionsPerUser) && !has(self.maxActiveSessionsTotal))",message="unlimited=true is mutually exclusive with maxActiveSessionsPerUser and maxActiveSessionsTotal"
 type SessionLimitsOverride struct {
 	// unlimited disables session limits entirely for this escalation.
 	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.

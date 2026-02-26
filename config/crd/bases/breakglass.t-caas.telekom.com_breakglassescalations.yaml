@@ -430,8 +430,8 @@ spec:
                 x-kubernetes-validations:
                 - message: unlimited=true is mutually exclusive with maxActiveSessionsPerUser
                     and maxActiveSessionsTotal
-                  rule: '!self.unlimited || (!has(self.maxActiveSessionsPerUser) &&
-                    !has(self.maxActiveSessionsTotal))'
+                  rule: '!(has(self.unlimited) && self.unlimited) || (!has(self.maxActiveSessionsPerUser)
+                    && !has(self.maxActiveSessionsTotal))'
             required:
             - allowed
             type: object

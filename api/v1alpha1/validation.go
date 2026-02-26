@@ -148,17 +148,18 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 				specPath.Child("blockSelfApproval"), true,
 				"blockSelfApproval requires at least one approver group"))
 		}
-		for _, g := range escalation.Spec.Approvers.Groups {
+		for i, g := range escalation.Spec.Approvers.Groups {
 			if g == escalation.Spec.EscalatedGroup {
 				result.Errors = append(result.Errors, field.Invalid(
-					specPath.Child("approvers").Child("groups"), g,
+					approverGroupsPath.Index(i), g,
 					"escalatedGroup cannot be an approver group when blockSelfApproval is enabled"))
 			}
 		}
-		for _, g := range escalation.Spec.Approvers.HiddenFromUI {
+		hiddenFromUIPath := specPath.Child("approvers").Child("hiddenFromUI")
+		for i, g := range escalation.Spec.Approvers.HiddenFromUI {
 			if g == escalation.Spec.EscalatedGroup {
 				result.Errors = append(result.Errors, field.Invalid(
-					specPath.Child("approvers").Child("hiddenFromUI"), g,
+					hiddenFromUIPath.Index(i), g,
 					"escalatedGroup cannot be a hidden approver group (hiddenFromUI) when blockSelfApproval is enabled"))
 			}
 		}
