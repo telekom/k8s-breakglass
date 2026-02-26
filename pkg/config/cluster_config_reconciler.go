@@ -180,6 +180,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 
 		// Skip already terminal sessions
 		if session.Status.State == breakglassv1alpha1.SessionStateExpired ||
+			session.Status.State == breakglassv1alpha1.SessionStateIdleExpired ||
 			session.Status.State == breakglassv1alpha1.SessionStateRejected ||
 			session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
 			session.Status.State == breakglassv1alpha1.SessionStateTimeout {

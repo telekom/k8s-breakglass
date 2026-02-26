@@ -258,6 +258,7 @@ type WebhookController struct {
 	namespaceLabelsFetchFn NamespaceLabelsFetchFunction // optional override for testing
 	auditService           *audit.Service               // optional audit service for access decision events
 	rateLimiter            *ratelimit.IPRateLimiter     // per-IP rate limiter for SAR requests
+	activityTracker        *ActivityTracker             // optional buffered session activity tracker (#314)
 }
 
 // checkDebugSessionAccess checks if a pod operation is allowed by an active debug session.
@@ -835,6 +836,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				allowDetail = fmt.Sprintf("group=%s session=%s impersonated=%s", grp, sesName, impersonated)
 				// Emit a single correlated info log showing the final accepted impersonated group for observability
 				reqLog.Infow("Final accepted impersonated group", "username", username, "cluster", clusterName, "grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
+
+				// Record session activity for idle timeout detection and usage analytics (#314)
+				wc.recordSessionActivity(sessions, sesName, clusterName, grp)
 			}
 		}
 		phaseTracker.EndPhase(PhaseSessionSARs) // End session_sars phase
@@ -1316,6 +1320,28 @@ func (wc *WebhookController) WithAuditService(svc *audit.Service) *WebhookContro
 	return wc
 }
 
+// WithActivityTracker sets the activity tracker for buffered session activity updates.
+// When set, the webhook records activity for each session-authorized request.
+func (wc *WebhookController) WithActivityTracker(at *ActivityTracker) *WebhookController {
+	wc.activityTracker = at
+	return wc
+}
+
+// ActivityTrackerCleaner returns the activity tracker, or nil if activity
+// tracking is not enabled. The returned *ActivityTracker satisfies the
+// breakglass.ActivityCleaner interface for use in the cleanup routine.
+func (wc *WebhookController) ActivityTrackerCleaner() *ActivityTracker {
+	return wc.activityTracker
+}
+
+// StopActivityTracker stops the background activity tracker goroutine and flushes remaining entries.
+// Safe to call even if no tracker is set.
+func (wc *WebhookController) StopActivityTracker(ctx context.Context) {
+	if wc.activityTracker != nil {
+		wc.activityTracker.Stop(ctx)
+	}
+}
+
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
 func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string, clusterCfg *breakglassv1alpha1.ClusterConfig) ([]string, []breakglassv1alpha1.BreakglassSession, string, error) {
@@ -1361,6 +1387,12 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	now := time.Now()
 	for _, s := range all {
 		if breakglass.IsSessionRetained(s) {
+			continue
+		}
+		// Only include sessions that are in Approved state with a valid time window.
+		// Terminal states (IdleExpired, Expired, Rejected, Withdrawn, etc.) must be excluded
+		// even if their ExpiresAt is still in the future.
+		if s.Status.State != breakglassv1alpha1.SessionStateApproved {
 			continue
 		}
 		if s.Status.RejectedAt.IsZero() && !s.Status.ExpiresAt.IsZero() && s.Status.ExpiresAt.After(now) {
@@ -1625,4 +1657,25 @@ func (wc *WebhookController) fetchNamespaceLabels(ctx context.Context, clusterNa
 		return nil, fmt.Errorf("failed to get namespace %s from cluster %s: %w", namespace, clusterName, err)
 	}
 	return ns.Labels, nil
+}
+
+// recordSessionActivity records activity for the named session using the buffered activity tracker.
+// It looks up the session's namespace from the provided sessions list and records the current time.
+// This is a non-blocking operation: activity is buffered and flushed periodically.
+func (wc *WebhookController) recordSessionActivity(sessions []breakglassv1alpha1.BreakglassSession, sessionName, clusterName, grantedGroup string) {
+	metrics.SessionActivityRequests.WithLabelValues(clusterName, grantedGroup).Inc()
+
+	if wc.activityTracker == nil {
+		return
+	}
+
+	// Find the session namespace. This is a linear O(n) scan, but the sessions
+	// slice is per-user-per-cluster so typically contains 1-3 items, making a
+	// map lookup unnecessary overhead for the common case.
+	for i := range sessions {
+		if sessions[i].Name == sessionName {
+			wc.activityTracker.RecordActivity(sessions[i].Namespace, sessions[i].Name, time.Now())
+			return
+		}
+	}
 }

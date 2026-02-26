@@ -43,6 +43,7 @@ export interface SessionSpec {
   user?: string;
   denyPolicyRefs?: string[];
   requestReason?: string;
+  idleTimeout?: string;
   // Snapshots of escalation config at session creation time
   requestReasonConfig?: { mandatory?: boolean; description?: string };
   approvalReasonConfig?: { mandatory?: boolean; description?: string };
@@ -59,6 +60,8 @@ export interface SessionStatus {
   approver?: string;
   approvers?: string[];
   reasonEnded?: string;
+  lastActivity?: string;
+  activityCount?: number;
   [key: string]: any;
 }
 

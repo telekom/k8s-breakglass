@@ -94,6 +94,17 @@ func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader,
 	return sm
 }
 
+// Reader returns the underlying client.Reader used for consistent reads.
+// This is typically the uncached APIReader when the SessionManager was constructed
+// via NewSessionManagerWithClientAndReader. Other components (e.g., ActivityTracker)
+// can use this to bypass the informer cache for up-to-date reads.
+func (c SessionManager) Reader() client.Reader {
+	if c.reader != nil {
+		return c.reader
+	}
+	return c.Client
+}
+
 func (c SessionManager) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	if c.reader != nil {
 		return c.reader.List(ctx, list, opts...)

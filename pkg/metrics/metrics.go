@@ -132,6 +132,10 @@ var (
 		Name: "breakglass_session_expired_total",
 		Help: "Total number of Breakglass sessions that expired",
 	}, []string{"cluster"})
+	SessionIdleExpired = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_idle_expired_total",
+		Help: "Total number of Breakglass sessions that expired due to idle timeout",
+	}, []string{"cluster"})
 	SessionScheduled = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_session_scheduled_total",
 		Help: "Total number of Breakglass sessions created with scheduled start time",
@@ -542,6 +546,35 @@ var (
 		Name: "breakglass_audit_sink_last_success_timestamp",
 		Help: "Unix timestamp of the last successful write to the sink",
 	}, []string{"sink"})
+
+	// Session activity tracking metrics
+	SessionActivityRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_activity_requests_total",
+		Help: "Total number of authorization requests that matched a breakglass session",
+	}, []string{"cluster", "granted_group"})
+
+	SessionActivityFlushes = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "breakglass_session_activity_flushes_total",
+		Help: "Total number of activity tracker flush cycles",
+	})
+
+	SessionActivityFlushErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "breakglass_session_activity_flush_errors_total",
+		Help: "Total number of failed activity status updates during flush",
+	})
+
+	SessionActivityDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "breakglass_session_activity_dropped_total",
+		Help: "Total number of activity entries dropped due to tracker capacity limit",
+	})
+
+	// SessionActivityBufferSize tracks the number of sessions with buffered activity
+	// entries awaiting the next flush cycle. Useful for detecting capacity pressure
+	// before entries start being dropped.
+	SessionActivityBufferSize = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "breakglass_session_activity_buffer_size",
+		Help: "Number of sessions with buffered activity entries awaiting flush",
+	})
 )
 
 func init() {
@@ -578,6 +611,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(SessionUpdated)
 	ctrlmetrics.Registry.MustRegister(SessionDeleted)
 	ctrlmetrics.Registry.MustRegister(SessionExpired)
+	ctrlmetrics.Registry.MustRegister(SessionIdleExpired)
 	ctrlmetrics.Registry.MustRegister(SessionScheduled)
 	ctrlmetrics.Registry.MustRegister(SessionActivated)
 	ctrlmetrics.Registry.MustRegister(SessionApproved)
@@ -693,6 +727,13 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(AuditSinkHealthy)
 	ctrlmetrics.Registry.MustRegister(AuditSinkConsecutiveFailures)
 	ctrlmetrics.Registry.MustRegister(AuditSinkLastSuccessTime)
+
+	// Register session activity tracking metrics
+	ctrlmetrics.Registry.MustRegister(SessionActivityRequests)
+	ctrlmetrics.Registry.MustRegister(SessionActivityFlushes)
+	ctrlmetrics.Registry.MustRegister(SessionActivityFlushErrors)
+	ctrlmetrics.Registry.MustRegister(SessionActivityDropped)
+	ctrlmetrics.Registry.MustRegister(SessionActivityBufferSize)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.

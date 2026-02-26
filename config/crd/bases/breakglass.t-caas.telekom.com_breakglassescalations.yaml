@@ -36,6 +36,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
+        description: BreakglassEscalation is the Schema for the breakglassescalations
+          API.
         properties:
           apiVersion:
             description: |-
@@ -189,6 +191,14 @@ spec:
                 description: escalatedGroup is the group to be granted by this escalation.
                 minLength: 1
                 pattern: ^[a-zA-Z0-9._:-]+$
+                type: string
+              idleTimeout:
+                description: |-
+                  idleTimeout is the duration of inactivity (no authorization requests) after which sessions
+                  for this escalation are automatically expired with state IdleExpired.
+                  If not set, idle timeout is not enforced for sessions created from this escalation.
+                  Must not exceed maxValidFor when both are set.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               mailProvider:
                 description: |-

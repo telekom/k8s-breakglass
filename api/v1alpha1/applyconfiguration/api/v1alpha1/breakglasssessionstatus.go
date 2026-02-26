@@ -59,6 +59,13 @@ type BreakglassSessionStatusApplyConfiguration struct {
 	// reasonEnded stores a short reason for why the session ended or entered a terminal state.
 	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected", "duplicateCleanup", "idleTimeout"
 	ReasonEnded *string `json:"reasonEnded,omitempty"`
+	// lastActivity is the time of the most recent authorization request associated with this session.
+	// Updated by the authorization webhook when a SubjectAccessReview matches this session.
+	// Used by idle timeout detection (#312) and usage analytics.
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+	// activityCount is the total number of authorization requests that matched this session.
+	// Incremented by the authorization webhook on each matching SubjectAccessReview.
+	ActivityCount *int64 `json:"activityCount,omitempty"`
 }
 
 // BreakglassSessionStatusApplyConfiguration constructs a declarative configuration of the BreakglassSessionStatus type for use with
@@ -183,5 +190,21 @@ func (b *BreakglassSessionStatusApplyConfiguration) WithApprovalReason(value str
 // If called multiple times, the ReasonEnded field is set to the value of the last call.
 func (b *BreakglassSessionStatusApplyConfiguration) WithReasonEnded(value string) *BreakglassSessionStatusApplyConfiguration {
 	b.ReasonEnded = &value
+	return b
+}
+
+// WithLastActivity sets the LastActivity field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastActivity field is set to the value of the last call.
+func (b *BreakglassSessionStatusApplyConfiguration) WithLastActivity(value metav1.Time) *BreakglassSessionStatusApplyConfiguration {
+	b.LastActivity = &value
+	return b
+}
+
+// WithActivityCount sets the ActivityCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ActivityCount field is set to the value of the last call.
+func (b *BreakglassSessionStatusApplyConfiguration) WithActivityCount(value int64) *BreakglassSessionStatusApplyConfiguration {
+	b.ActivityCount = &value
 	return b
 }

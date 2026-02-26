@@ -106,6 +106,7 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 		{name: "waiting to approved", from: SessionStateWaitingForScheduledTime, to: SessionStateApproved, wantErr: false},
 		{name: "waiting to withdrawn", from: SessionStateWaitingForScheduledTime, to: SessionStateWithdrawn, wantErr: false},
 		{name: "approved to expired", from: SessionStateApproved, to: SessionStateExpired, wantErr: false},
+		{name: "approved to idleExpired", from: SessionStateApproved, to: SessionStateIdleExpired, wantErr: false},
 		// Same-state transitions (idempotent reconciliation)
 		{name: "pending to pending", from: SessionStatePending, to: SessionStatePending, wantErr: false},
 		{name: "approved to approved", from: SessionStateApproved, to: SessionStateApproved, wantErr: false},
@@ -113,6 +114,7 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 		{name: "expired to expired", from: SessionStateExpired, to: SessionStateExpired, wantErr: false},
 		{name: "withdrawn to withdrawn", from: SessionStateWithdrawn, to: SessionStateWithdrawn, wantErr: false},
 		{name: "timeout to timeout", from: SessionStateTimeout, to: SessionStateTimeout, wantErr: false},
+		{name: "idleExpired to idleExpired", from: SessionStateIdleExpired, to: SessionStateIdleExpired, wantErr: false},
 		// Invalid transitions
 		{name: "approved to pending", from: SessionStateApproved, to: SessionStatePending, wantErr: true},
 		{name: "rejected to approved", from: SessionStateRejected, to: SessionStateApproved, wantErr: true},
@@ -123,6 +125,12 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 		{name: "expired to pending", from: SessionStateExpired, to: SessionStatePending, wantErr: true},
 		{name: "timeout to approved", from: SessionStateTimeout, to: SessionStateApproved, wantErr: true},
 		{name: "timeout to pending", from: SessionStateTimeout, to: SessionStatePending, wantErr: true},
+		// IdleExpired is terminal
+		{name: "idleExpired to approved", from: SessionStateIdleExpired, to: SessionStateApproved, wantErr: true},
+		{name: "idleExpired to pending", from: SessionStateIdleExpired, to: SessionStatePending, wantErr: true},
+		// Cannot idle-expire from non-approved states
+		{name: "pending to idleExpired", from: SessionStatePending, to: SessionStateIdleExpired, wantErr: true},
+		{name: "rejected to idleExpired", from: SessionStateRejected, to: SessionStateIdleExpired, wantErr: true},
 		// Invalid transition from waiting (cannot go to rejected)
 		{name: "waiting to rejected", from: SessionStateWaitingForScheduledTime, to: SessionStateRejected, wantErr: true},
 		{name: "waiting to pending", from: SessionStateWaitingForScheduledTime, to: SessionStatePending, wantErr: true},
@@ -359,4 +367,109 @@ func TestBreakglassSession_ValidateCreate_ScheduledStartTimeTooSoon(t *testing.T
 	if err == nil {
 		t.Fatal("expected error when scheduledStartTime is less than 5 minutes in the future")
 	}
+}
+
+func TestValidateUpdate_MonotonicActivityCount(t *testing.T) {
+	spec := BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"}
+
+	t.Run("increasing activityCount is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, ActivityCount: 5,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.ActivityCount = 10
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for increasing activityCount, got: %v", err)
+		}
+	})
+
+	t.Run("same activityCount is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, ActivityCount: 5,
+		}}
+		updated := old.DeepCopy()
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for same activityCount, got: %v", err)
+		}
+	})
+
+	t.Run("decreasing activityCount is rejected", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, ActivityCount: 10,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.ActivityCount = 5
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err == nil {
+			t.Fatal("expected error for decreasing activityCount")
+		}
+	})
+}
+
+func TestValidateUpdate_MonotonicLastActivity(t *testing.T) {
+	spec := BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"}
+	now := metav1.Now()
+	earlier := metav1.NewTime(now.Add(-10 * time.Minute))
+	later := metav1.NewTime(now.Add(10 * time.Minute))
+
+	t.Run("advancing lastActivity is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &earlier,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = &later
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for advancing lastActivity, got: %v", err)
+		}
+	})
+
+	t.Run("same lastActivity is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &now,
+		}}
+		updated := old.DeepCopy()
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for same lastActivity, got: %v", err)
+		}
+	})
+
+	t.Run("regressing lastActivity is rejected", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &later,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = &earlier
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err == nil {
+			t.Fatal("expected error for regressing lastActivity")
+		}
+	})
+
+	t.Run("nil to set lastActivity is allowed", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = &now
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err != nil {
+			t.Fatalf("expected no error for nil-to-set lastActivity, got: %v", err)
+		}
+	})
+
+	t.Run("clearing lastActivity is rejected", func(t *testing.T) {
+		old := &BreakglassSession{Spec: spec, Status: BreakglassSessionStatus{
+			State: SessionStateApproved, LastActivity: &now,
+		}}
+		updated := old.DeepCopy()
+		updated.Status.LastActivity = nil
+		_, err := updated.ValidateUpdate(context.Background(), old, updated)
+		if err == nil {
+			t.Fatal("expected error for clearing lastActivity")
+		}
+	})
 }

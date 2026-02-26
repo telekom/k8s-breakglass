@@ -38,6 +38,8 @@ type (
 )
 
 const (
+	// SessionConditionTypeIdle indicates the session has been idle (no authorization requests)
+	// for longer than the configured idle timeout.
 	SessionConditionTypeIdle     BreakglassSessionConditionType = "Idle"
 	SessionConditionTypeApproved BreakglassSessionConditionType = "Approved"
 	SessionConditionTypeRejected BreakglassSessionConditionType = "Rejected"
@@ -49,10 +51,14 @@ const (
 	SessionConditionTypeSessionExpired     BreakglassSessionConditionType   = "SessionExpired"
 	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
 
-	SessionStatePending                 BreakglassSessionState = "Pending"
-	SessionStateApproved                BreakglassSessionState = "Approved"
-	SessionStateRejected                BreakglassSessionState = "Rejected"
-	SessionStateExpired                 BreakglassSessionState = "Expired"
+	SessionStatePending  BreakglassSessionState = "Pending"
+	SessionStateApproved BreakglassSessionState = "Approved"
+	SessionStateRejected BreakglassSessionState = "Rejected"
+	SessionStateExpired  BreakglassSessionState = "Expired"
+	// SessionStateIdleExpired indicates the session was automatically expired due to
+	// exceeding its configured idle timeout (no webhook activity for the specified duration).
+	// This is a terminal state — the user must create a new request.
+	SessionStateIdleExpired             BreakglassSessionState = "IdleExpired"
 	SessionStateWithdrawn               BreakglassSessionState = "Withdrawn"
 	SessionStateTimeout                 BreakglassSessionState = "ApprovalTimeout"
 	SessionStateWaitingForScheduledTime BreakglassSessionState = "WaitingForScheduledTime"
@@ -75,6 +81,14 @@ type BreakglassSessionSpec struct {
 	// maxValidFor is the maximum amount of time the session will be active for after it is approved.
 	// +default="1h"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
+
+	// idleTimeout is the duration of inactivity (no authorization requests) after which the session
+	// is automatically expired with state IdleExpired. If not set, idle timeout is not enforced.
+	// Parsed by ParseDuration; supports day units (e.g., "15m", "1h", "1d").
+	// Must be less than or equal to maxValidFor when both are set.
+	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	IdleTimeout string `json:"idleTimeout,omitempty"`
 
 	// retainFor is the amount of time to wait before removing the session object after it was expired.
 	// +default="720h"
@@ -208,6 +222,17 @@ type BreakglassSessionStatus struct {
 	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected", "duplicateCleanup", "idleTimeout"
 	// +optional
 	ReasonEnded string `json:"reasonEnded,omitempty"`
+
+	// lastActivity is the time of the most recent authorization request associated with this session.
+	// Updated by the authorization webhook when a SubjectAccessReview matches this session.
+	// Used by idle timeout detection (#312) and usage analytics.
+	// +optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// activityCount is the total number of authorization requests that matched this session.
+	// Incremented by the authorization webhook on each matching SubjectAccessReview.
+	// +optional
+	ActivityCount int64 `json:"activityCount,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Namespaced,shortName=bgs
@@ -283,6 +308,11 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("state"), newObj.Status.State,
 			fmt.Sprintf("invalid state transition from %q to %q", oldObj.Status.State, newObj.Status.State)))
 	}
+
+	// Monotonic enforcement: status counters and timestamps must never go backwards.
+	// This prevents buggy controllers or concurrent writers from corrupting activity data.
+	allErrs = append(allErrs, validateMonotonicStatusFields(oldObj, newObj)...)
+
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, newObj.Namespace, newObj.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
@@ -290,10 +320,55 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, newObj.Name, allErrs)
 }
 
+// validateMonotonicStatusFields ensures activity-tracking status fields never
+// regress. ActivityCount must be non-decreasing, and LastActivity must not
+// move backwards (it may stay the same during idempotent reconciliation).
+//
+// SCOPE NOTE: This validation fires on full-object updates only. Internal
+// controllers use the status subresource (client.Status().Patch), which
+// bypasses admission webhooks. The primary monotonic guarantee for those
+// writes is the in-code merge logic in ActivityTracker.updateSessionActivity.
+// This webhook validation acts as defense-in-depth for non-standard callers
+// (e.g., kubectl edit, manual API calls).
+func validateMonotonicStatusFields(oldObj, newObj *BreakglassSession) field.ErrorList {
+	var errs field.ErrorList
+	statusPath := field.NewPath("status")
+
+	// ActivityCount must never decrease
+	if newObj.Status.ActivityCount < oldObj.Status.ActivityCount {
+		errs = append(errs, field.Invalid(
+			statusPath.Child("activityCount"),
+			newObj.Status.ActivityCount,
+			fmt.Sprintf("activityCount must be monotonically non-decreasing (was %d)", oldObj.Status.ActivityCount),
+		))
+	}
+
+	// LastActivity must not move backwards or be cleared once set
+	if oldObj.Status.LastActivity != nil && !oldObj.Status.LastActivity.IsZero() {
+		if newObj.Status.LastActivity == nil || newObj.Status.LastActivity.IsZero() {
+			errs = append(errs, field.Invalid(
+				statusPath.Child("lastActivity"),
+				nil,
+				"lastActivity must not be cleared once set (prevents discarding activity history)",
+			))
+		} else if newObj.Status.LastActivity.Time.Before(oldObj.Status.LastActivity.Time) {
+			errs = append(errs, field.Invalid(
+				statusPath.Child("lastActivity"),
+				newObj.Status.LastActivity.Time,
+				fmt.Sprintf("lastActivity must not move backwards (was %s)", oldObj.Status.LastActivity.Time.Format("2006-01-02T15:04:05Z")),
+			))
+		}
+	}
+
+	return errs
+}
+
 // isValidBreakglassSessionStateTransition validates state transitions for BreakglassSession.
 // The state machine follows this flow:
 //
 //	(initial) --> Pending --> Approved --> Expired
+//	                  |          |
+//	                  |          +--> IdleExpired (terminal)
 //	                  |          |
 //	                  |          └--> (terminal)
 //	                  |
@@ -305,7 +380,7 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 //	                  +--> Withdrawn (terminal)
 //	                  +--> Timeout (terminal)
 //
-// Terminal states (Rejected, Withdrawn, Expired, Timeout) cannot transition to any other state.
+// Terminal states (Rejected, Withdrawn, Expired, IdleExpired, Timeout) cannot transition to any other state.
 // Same-state transitions are allowed for idempotent reconciliation.
 func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bool {
 	if from == to {
@@ -324,8 +399,8 @@ func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bo
 	case SessionStateWaitingForScheduledTime:
 		return to == SessionStateApproved || to == SessionStateWithdrawn
 	case SessionStateApproved:
-		return to == SessionStateExpired
-	case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateTimeout:
+		return to == SessionStateExpired || to == SessionStateIdleExpired
+	case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateIdleExpired, SessionStateTimeout:
 		return false
 	default:
 		return false

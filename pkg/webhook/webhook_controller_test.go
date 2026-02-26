@@ -541,6 +541,7 @@ func TestDenyPolicySessionScope(t *testing.T) {
 			GrantedGroup: "breakglass-create-all",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateApproved,
 			ApprovedAt:    metav1.NewTime(now.Add(-1 * time.Minute)),
 			ExpiresAt:     metav1.NewTime(now.Add(30 * time.Minute)),
 			RetainedUntil: metav1.NewTime(now.Add(24 * time.Hour)),

@@ -201,6 +201,45 @@ func TestValidateBreakglassEscalation(t *testing.T) {
 		result := ValidateBreakglassEscalation(e)
 		assert.True(t, result.IsValid())
 	})
+
+	t.Run("escalation idleTimeout valid", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.IdleTimeout = "5m"
+		result := ValidateBreakglassEscalation(e)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("escalation idleTimeout below minimum floor", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.IdleTimeout = "30s"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "at least 1m")
+	})
+
+	t.Run("escalation idleTimeout invalid format", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.IdleTimeout = "garbage"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "invalid duration")
+	})
+
+	t.Run("escalation idleTimeout exceeds maxValidFor", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.MaxValidFor = "1h"
+		e.Spec.IdleTimeout = "2h"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "must not exceed maxValidFor")
+	})
+
+	t.Run("escalation idleTimeout exactly at minimum floor", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.IdleTimeout = "1m"
+		result := ValidateBreakglassEscalation(e)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
 }
 
 // ==================== BreakglassSession Validation Tests ====================
@@ -270,6 +309,76 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.Contains(t, msg, "cluster")
 		assert.Contains(t, msg, "user")
 		assert.Contains(t, msg, "grantedGroup")
+	})
+
+	t.Run("valid idleTimeout", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "10m"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("invalid idleTimeout format", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "not-a-duration"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "idleTimeout")
+	})
+
+	t.Run("idleTimeout exceeds maxValidFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "2h"
+		s.Spec.MaxValidFor = "1h"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "idleTimeout")
+		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
+	})
+
+	t.Run("idleTimeout within maxValidFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "30m"
+		s.Spec.MaxValidFor = "1h"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("idleTimeout with day unit", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "1d"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("empty idleTimeout is valid", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = ""
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("idleTimeout below minimum floor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "30s"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "at least 1m")
+	})
+
+	t.Run("idleTimeout exactly at minimum floor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "1m"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("zero idleTimeout is invalid", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "0s"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "positive")
 	})
 }
 

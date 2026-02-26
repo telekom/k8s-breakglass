@@ -21,6 +21,11 @@ type BreakglassEscalationSpecApplyConfiguration struct {
 	EscalatedGroup *string `json:"escalatedGroup,omitempty"`
 	// maxValidFor is the maximum amount of time a session for this escalation will be active for after it is approved.
 	MaxValidFor *string `json:"maxValidFor,omitempty"`
+	// idleTimeout is the duration of inactivity (no authorization requests) after which sessions
+	// for this escalation are automatically expired with state IdleExpired.
+	// If not set, idle timeout is not enforced for sessions created from this escalation.
+	// Must not exceed maxValidFor when both are set.
+	IdleTimeout *string `json:"idleTimeout,omitempty"`
 	// retainFor is the amount of time to wait before removing a session for this escalation after it expired
 	RetainFor *string `json:"retainFor,omitempty"`
 	// approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
@@ -118,6 +123,14 @@ func (b *BreakglassEscalationSpecApplyConfiguration) WithEscalatedGroup(value st
 // If called multiple times, the MaxValidFor field is set to the value of the last call.
 func (b *BreakglassEscalationSpecApplyConfiguration) WithMaxValidFor(value string) *BreakglassEscalationSpecApplyConfiguration {
 	b.MaxValidFor = &value
+	return b
+}
+
+// WithIdleTimeout sets the IdleTimeout field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdleTimeout field is set to the value of the last call.
+func (b *BreakglassEscalationSpecApplyConfiguration) WithIdleTimeout(value string) *BreakglassEscalationSpecApplyConfiguration {
+	b.IdleTimeout = &value
 	return b
 }
 

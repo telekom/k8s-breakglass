@@ -25,6 +25,11 @@ type BreakglassSessionSpecApplyConfiguration struct {
 	GrantedGroup *string `json:"grantedGroup,omitempty"`
 	// maxValidFor is the maximum amount of time the session will be active for after it is approved.
 	MaxValidFor *string `json:"maxValidFor,omitempty"`
+	// idleTimeout is the duration of inactivity (no authorization requests) after which the session
+	// is automatically expired with state IdleExpired. If not set, idle timeout is not enforced.
+	// Parsed by ParseDuration; supports day units (e.g., "15m", "1h", "1d").
+	// Must be less than or equal to maxValidFor when both are set.
+	IdleTimeout *string `json:"idleTimeout,omitempty"`
 	// retainFor is the amount of time to wait before removing the session object after it was expired.
 	RetainFor *string `json:"retainFor,omitempty"`
 	// clusterConfigRef references the ClusterConfig object associated with this session (if different from spec.cluster parsing result).
@@ -100,6 +105,14 @@ func (b *BreakglassSessionSpecApplyConfiguration) WithGrantedGroup(value string)
 // If called multiple times, the MaxValidFor field is set to the value of the last call.
 func (b *BreakglassSessionSpecApplyConfiguration) WithMaxValidFor(value string) *BreakglassSessionSpecApplyConfiguration {
 	b.MaxValidFor = &value
+	return b
+}
+
+// WithIdleTimeout sets the IdleTimeout field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdleTimeout field is set to the value of the last call.
+func (b *BreakglassSessionSpecApplyConfiguration) WithIdleTimeout(value string) *BreakglassSessionSpecApplyConfiguration {
+	b.IdleTimeout = &value
 	return b
 }
 

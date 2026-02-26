@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -1134,4 +1135,98 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// mockActivityCleaner records Cleanup calls for testing.
+type mockActivityCleaner struct {
+	cleanupCalls []map[types.NamespacedName]bool
+}
+
+func (m *mockActivityCleaner) Cleanup(activeSessionIDs map[types.NamespacedName]bool) int {
+	m.cleanupCalls = append(m.cleanupCalls, activeSessionIDs)
+	return 0
+}
+
+func TestCleanupRoutine_pruneActivityTracker(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	logger := zaptest.NewLogger(t).Sugar()
+
+	stateIndexer := func(o client.Object) []string {
+		s := o.(*breakglassv1alpha1.BreakglassSession)
+		if s.Status.State == "" {
+			return nil
+		}
+		return []string{string(s.Status.State)}
+	}
+
+	t.Run("only passes approved sessions to Cleanup", func(t *testing.T) {
+		sessions := []client.Object{
+			&breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "approved-1", Namespace: "ns"},
+				Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"},
+				Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved},
+			},
+			&breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "expired-1", Namespace: "ns"},
+				Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"},
+				Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired},
+			},
+			&breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "pending-1", Namespace: "ns"},
+				Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"},
+				Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(sessions...).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexer).
+			Build()
+
+		mock := &mockActivityCleaner{}
+		cr := CleanupRoutine{
+			Log:             logger,
+			Manager:         &SessionManager{Client: fakeClient},
+			ActivityTracker: mock,
+		}
+
+		cr.pruneActivityTracker(context.Background())
+
+		require.Len(t, mock.cleanupCalls, 1)
+		activeIDs := mock.cleanupCalls[0]
+		assert.Len(t, activeIDs, 1, "Only 1 approved session should be passed")
+		assert.True(t, activeIDs[types.NamespacedName{Namespace: "ns", Name: "approved-1"}])
+		assert.False(t, activeIDs[types.NamespacedName{Namespace: "ns", Name: "expired-1"}])
+		assert.False(t, activeIDs[types.NamespacedName{Namespace: "ns", Name: "pending-1"}])
+	})
+
+	t.Run("no approved sessions passes empty map", func(t *testing.T) {
+		expired := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "expired-only", Namespace: "ns"},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c", User: "u", GrantedGroup: "g"},
+			Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(expired).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexer).
+			Build()
+
+		mock := &mockActivityCleaner{}
+		cr := CleanupRoutine{
+			Log:             logger,
+			Manager:         &SessionManager{Client: fakeClient},
+			ActivityTracker: mock,
+		}
+
+		cr.pruneActivityTracker(context.Background())
+
+		require.Len(t, mock.cleanupCalls, 1)
+		assert.Empty(t, mock.cleanupCalls[0])
+	})
 }

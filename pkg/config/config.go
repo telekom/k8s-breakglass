@@ -172,6 +172,13 @@ type Server struct {
 	// Default: "30s"
 	// +optional
 	ShutdownTimeout string `yaml:"shutdownTimeout,omitempty"`
+
+	// EnableActivityTracking enables buffered session activity tracking.
+	// When true, the webhook records per-session LastActivity timestamps and
+	// request counts via a background flush goroutine. When false (default),
+	// only Prometheus counters are incremented — no status writes occur.
+	// +optional
+	EnableActivityTracking bool `yaml:"enableActivityTracking,omitempty"`
 }
 
 // ServerTimeouts configures HTTP server timeouts.

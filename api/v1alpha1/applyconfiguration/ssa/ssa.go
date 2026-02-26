@@ -37,12 +37,17 @@ import (
 // FieldOwnerController is the field manager name for the breakglass controller.
 const FieldOwnerController = "breakglass-controller"
 
-// applyStatusViaUnstructured applies a typed ApplyConfiguration by first converting it to
-// unstructured and then using the SubResource status patch. This works with both real API
-// servers and fake clients in tests.
+// applyStatusViaUnstructured applies a typed ApplyConfiguration using the default FieldOwnerController.
+func applyStatusViaUnstructured(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration) error {
+	return applyStatusViaUnstructuredWithOwner(ctx, c, applyConfig, FieldOwnerController)
+}
+
+// applyStatusViaUnstructuredWithOwner applies a typed ApplyConfiguration by first converting it to
+// unstructured and then using the SubResource status patch with the specified field manager.
+// This works with both real API servers and fake clients in tests.
 //
 // Following cluster-api patterns: https://github.com/kubernetes-sigs/cluster-api/blob/main/util/patch/patch.go
-func applyStatusViaUnstructured(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration) error {
+func applyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration, fieldOwner string) error {
 	// Marshal to JSON and unmarshal to unstructured - this is the same approach
 	// used by the fake client internally
 	data, err := json.Marshal(applyConfig)
@@ -77,7 +82,7 @@ func applyStatusViaUnstructured(ctx context.Context, c client.Client, applyConfi
 
 	// Use SubResource("status").Patch with client.Apply which works with the fake client
 	//nolint:staticcheck // SA1019: client.Apply patch type works reliably with fake client
-	err = c.SubResource("status").Patch(ctx, u, client.Apply, client.FieldOwner(FieldOwnerController), client.ForceOwnership)
+	err = c.SubResource("status").Patch(ctx, u, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership)
 
 	// Fallback: if the fake client still rejects managed fields, use MergeFrom patch
 	// Following cluster-api pattern from util/patch/patch.go:patchStatus
@@ -153,9 +158,16 @@ func ApplyDebugSessionClusterBindingStatus(ctx context.Context, c client.Client,
 }
 
 // ApplyViaUnstructured exports the internal applyStatusViaUnstructured helper for use by reconcilers
-// that build custom apply configurations.
+// that build custom apply configurations. Uses the default FieldOwnerController.
 func ApplyViaUnstructured(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration) error {
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
+}
+
+// ApplyViaUnstructuredWithOwner is like ApplyViaUnstructured but uses the specified
+// field manager for SSA ownership. Use this when a component (e.g., activity-tracker)
+// needs to own a subset of status fields independently from the main controller.
+func ApplyViaUnstructuredWithOwner(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration, fieldOwner string) error {
+	return applyStatusViaUnstructuredWithOwner(ctx, c, applyConfig, fieldOwner)
 }
 
 // BreakglassSessionStatusFrom converts a BreakglassSessionStatus to its ApplyConfiguration.
@@ -215,6 +227,11 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 	if status.ReasonEnded != "" {
 		result.WithReasonEnded(status.ReasonEnded)
 	}
+
+	// NOTE: LastActivity and ActivityCount are intentionally NOT included here.
+	// These fields are managed exclusively by the activity tracker
+	// (see pkg/webhook/activity_tracker.go) via status merge-patch and must
+	// not be set by the main controller to avoid conflicting updates.
 
 	return result
 }
