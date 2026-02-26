@@ -42,8 +42,8 @@ jobs:
       - name: Lint
         run: make lint
 
-  unit-tests:
-    name: Unit Tests
+  unit-tests-controller:
+    name: Controller Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -52,8 +52,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Unit tests (excluding e2e)
-        run: make test
+      - name: Controller unit tests (excluding bgctl and e2e)
+        run: make test-controller
+      - name: Upload coverage
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: cover-controller.out
+          flags: controller
+          fail_ci_if_error: false
+
+  unit-tests-cli:
+    name: CLI Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: bgctl unit tests
         run: make test-cli
       - name: bgctl e2e tests (mocked)
@@ -63,8 +82,8 @@ jobs:
         if: always()
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: cover.out
-          flags: unittests
+          files: cover-cli.out
+          flags: cli
           fail_ci_if_error: false
 
   crd-validation:
@@ -338,11 +357,10 @@ jobs:
     runs-on: ubuntu-latest
     # No dependency on quality gates — builds in parallel with lint/tests.
     # E2E jobs enforce quality gates via their own 'needs' lists.
+    # Registry push, SBOM, and attestation are in a separate 'publish-image' job
+    # so E2E tests can start as soon as the image artifact is ready.
     permissions:
       contents: read
-      packages: write
-      id-token: write  # Required for actions/attest-build-provenance
-      attestations: write  # Required to persist attestations
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set up QEMU
@@ -359,44 +377,6 @@ jobs:
           restore-keys: |
             buildx-${{ github.ref_name }}-
             buildx-
-      - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Determine if PR is from fork
-        id: fork_check
-        run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            # For PRs, check if the repo owner matches (not a fork from 3rd party)
-            PR_REPO_OWNER="${{ github.event.pull_request.head.repo.owner.login }}"
-            MAIN_REPO_OWNER="${{ github.repository_owner }}"
-            if [ "$PR_REPO_OWNER" == "$MAIN_REPO_OWNER" ]; then
-              echo "push_to_registry=true" >> $GITHUB_OUTPUT
-              echo "PR from internal repo, will push to registry"
-            else
-              echo "push_to_registry=false" >> $GITHUB_OUTPUT
-              echo "PR from fork, skipping registry push"
-            fi
-          else
-            echo "push_to_registry=true" >> $GITHUB_OUTPUT
-            echo "Not a PR, will push to registry"
-          fi
-      - name: Determine registry push eligibility
-        id: push_check
-        run: |
-          # Dependabot PRs receive a read-only GITHUB_TOKEN even though they
-          # originate from the same repo (not a fork). Pushing images and
-          # attestations would fail with 404/403 errors.
-          if [ "${{ github.actor }}" == "dependabot[bot]" ]; then
-            echo "can_push=false" >> $GITHUB_OUTPUT
-            echo "Dependabot PR — GITHUB_TOKEN is read-only, skipping registry push"
-          elif [ "${{ github.event_name }}" != "pull_request" ] || [ "${{ steps.fork_check.outputs.push_to_registry }}" == "true" ]; then
-            echo "can_push=true" >> $GITHUB_OUTPUT
-          else
-            echo "can_push=false" >> $GITHUB_OUTPUT
-          fi
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
@@ -405,7 +385,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=raw,value=pr-${{ github.event.number }},enable=${{ github.event_name == 'pull_request' && steps.fork_check.outputs.push_to_registry == 'true' }}
+            type=raw,value=pr-${{ github.event.number }},enable=${{ github.event_name == 'pull_request' }}
             type=sha
           labels: |
             org.opencontainers.image.title=Kubernetes Breakglass
@@ -426,9 +406,6 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          # Never push during build — avoids digest mismatch between
-          # buildx load and registry manifest that causes attestation 404s.
-          # We push explicitly in a later step using `docker push`.
           push: false
           load: true
           # CI builds amd64 only for speed; arm64 is validated in the release
@@ -473,12 +450,99 @@ jobs:
           rm -rf /tmp/.buildx-cache-old
           mv /tmp/.buildx-cache /tmp/.buildx-cache-old || true
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+
+  # ============================================================================
+  # Publish Image — SBOM, registry push, attestation, Artifactory push
+  # Runs in parallel with E2E tests (does not block them).
+  # ============================================================================
+
+  publish-image:
+    name: Publish Image
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # Required for actions/attest-build-provenance
+      attestations: write  # Required to persist attestations
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: image=moby/buildkit:rootless
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: breakglass-e2e-image
+          path: /tmp/image-artifacts
+      - name: Load Docker image
+        run: |
+          docker load -i /tmp/image-artifacts/breakglass-e2e.tar
+          docker images | grep breakglass
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Determine if PR is from fork
+        id: fork_check
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            PR_REPO_OWNER="${{ github.event.pull_request.head.repo.owner.login }}"
+            MAIN_REPO_OWNER="${{ github.repository_owner }}"
+            if [ "$PR_REPO_OWNER" == "$MAIN_REPO_OWNER" ]; then
+              echo "push_to_registry=true" >> $GITHUB_OUTPUT
+              echo "PR from internal repo, will push to registry"
+            else
+              echo "push_to_registry=false" >> $GITHUB_OUTPUT
+              echo "PR from fork, skipping registry push"
+            fi
+          else
+            echo "push_to_registry=true" >> $GITHUB_OUTPUT
+            echo "Not a PR, will push to registry"
+          fi
+      - name: Determine registry push eligibility
+        id: push_check
+        run: |
+          # Dependabot PRs receive a read-only GITHUB_TOKEN even though they
+          # originate from the same repo (not a fork). Pushing images and
+          # attestations would fail with 404/403 errors.
+          if [ "${{ github.actor }}" == "dependabot[bot]" ]; then
+            echo "can_push=false" >> $GITHUB_OUTPUT
+            echo "Dependabot PR — GITHUB_TOKEN is read-only, skipping registry push"
+          elif [ "${{ github.event_name }}" != "pull_request" ] || [ "${{ steps.fork_check.outputs.push_to_registry }}" == "true" ]; then
+            echo "can_push=true" >> $GITHUB_OUTPUT
+          else
+            echo "can_push=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=pr-${{ github.event.number }},enable=${{ github.event_name == 'pull_request' && steps.fork_check.outputs.push_to_registry == 'true' }}
+            type=sha
+      - name: Tag image with metadata tags
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          # The loaded image is tagged as breakglass:e2e — re-tag with metadata tags for registry push
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "Tagging breakglass:e2e -> $tag"
+            docker tag breakglass:e2e "$tag"
+          done <<< "$TAGS"
+          docker images | grep breakglass | head -10
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         id: sbom
         if: ${{ steps.push_check.outputs.can_push == 'true' }}
         with:
-          # Use local image (loaded via buildx load: true) to avoid registry timing issues
           image: breakglass:e2e
           format: spdx-json
           output-file: sbom.json
@@ -495,7 +559,6 @@ jobs:
             echo "Pushing ${tag}..."
             OUTPUT=$(docker push "$tag" 2>&1)
             echo "$OUTPUT"
-            # Extract digest from push output (e.g. "digest: sha256:abc123 size: 1234")
             LINE_DIGEST=$(echo "$OUTPUT" | grep -oP 'digest: \Ksha256:\S+' | tail -1 || true)
             if [ -n "$LINE_DIGEST" ] && [ -z "$PUSH_DIGEST" ]; then
               PUSH_DIGEST="$LINE_DIGEST"
@@ -503,10 +566,8 @@ jobs:
           done <<< "$TAGS"
           if [ -z "$PUSH_DIGEST" ]; then
             echo "::warning::Could not extract digest from docker push output"
-            # Fallback: inspect the first tag via registry API using a stable, single-line digest computation
             FIRST_TAG=$(echo "$TAGS" | head -n1)
             if [ -n "$FIRST_TAG" ]; then
-              # Compute the digest from the raw manifest to avoid buildx --format incompatibilities
               RAW_MANIFEST=$(docker buildx imagetools inspect "$FIRST_TAG" --raw 2>/dev/null) || true
               if [ -n "$RAW_MANIFEST" ]; then
                 PUSH_DIGEST=$(echo "$RAW_MANIFEST" | sha256sum | awk '{print "sha256:" $1}')
@@ -545,7 +606,6 @@ jobs:
         with:
           name: sbom
           path: sbom.json
-
       - name: Push image to Artifactory (OCI)
         # Skip for Dependabot PRs (no access to secrets) and fork PRs
         if: ${{ github.actor != 'dependabot[bot]' && steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
@@ -557,9 +617,7 @@ jobs:
         run: |
           set -e
           echo "Preparing to push image to Artifactory"
-          # login to artifactory non-interactively
           echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
-          # check access to repo
           REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
           echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"
@@ -567,11 +625,7 @@ jobs:
             echo "Warning: Artifactory repo ${REPO_KEY} not accessible (HTTP ${HTTP_STATUS}). The push may fail due to permissions."
           fi
 
-          # Use the local image (breakglass:e2e) which was loaded via buildx
-          # This avoids race conditions with GHCR manifest propagation
           echo "Using local image breakglass:e2e for Artifactory push"
-
-          # tag using the git sha as tag to Artifactory
           ART_TAG=${GITHUB_SHA}
           ART_IMG=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${ART_TAG}
           echo "Tagging breakglass:e2e -> ${ART_IMG}"
@@ -581,7 +635,6 @@ jobs:
           docker push "${ART_IMG}"
           set +x
 
-          # give Artifactory a short moment to index
           sleep 3
           CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
           HTTP_STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${CHECK_PATH}?list" ) || true
@@ -600,7 +653,7 @@ jobs:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [build-image, lint, unit-tests, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1015,7 +1068,7 @@ jobs:
     name: UI E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [build-image, lint, unit-tests, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1588,7 +1641,7 @@ jobs:
     name: Multi-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [build-image, lint, unit-tests, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
