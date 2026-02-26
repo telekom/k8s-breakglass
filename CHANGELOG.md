@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Split `pkg/breakglass/` god package into 4 sub-packages** ([#416](https://github.com/telekom/k8s-breakglass/issues/416)): Extracted `clusterconfig/` (cluster config checker, binding API), `debug/` (debug session API, reconciler, kubectl), `escalation/` (escalation controller, manager, status updater), and `eventrecorder/` (Kubernetes event recorder) from the root `breakglass` package. Introduced `EscalationLookup` interface to break the import cycle between root and escalation sub-packages. All import paths updated; no public API changes.
+
 - **Migrated `fake.NewSimpleClientset` to `fake.NewClientset`**: Replaced deprecated `fake.NewSimpleClientset()` calls with `fake.NewClientset()` in `pkg/breakglass/event_recorder_test.go` and removed associated `//nolint:staticcheck` suppressions (resolves #381)
 
 - **Multi-arch release builds on native runners**:

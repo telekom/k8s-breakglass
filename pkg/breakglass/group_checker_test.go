@@ -1290,9 +1290,9 @@ func TestStripOIDCPrefixes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := stripOIDCPrefixes(tt.groups, tt.oidcPrefixes)
+			result := StripOIDCPrefixes(tt.groups, tt.oidcPrefixes)
 			if !reflect.DeepEqual(result, tt.expectedGroups) {
-				t.Errorf("stripOIDCPrefixes() = %v, want %v", result, tt.expectedGroups)
+				t.Errorf("StripOIDCPrefixes() = %v, want %v", result, tt.expectedGroups)
 			}
 		})
 	}

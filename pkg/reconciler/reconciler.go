@@ -9,7 +9,8 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
-	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -100,7 +101,7 @@ func Setup(
 	ccProvider *cluster.ClientProvider,
 	auditService *audit.Service,
 	mailService *mail.Service,
-	escalationManager *breakglass.EscalationManager,
+	escalationManager *escalation.EscalationManager,
 	log *zap.SugaredLogger,
 ) error {
 	// Register health check handlers for liveness and readiness probes
@@ -143,7 +144,7 @@ func Setup(
 					// The resolver will continue using its current (possibly stale) config
 					return nil
 				}
-				newResolver := breakglass.SetupResolver(idpConfig, log)
+				newResolver := escalation.SetupResolver(idpConfig, log)
 				escalationManager.SetResolver(newResolver)
 				log.Infow("Updated EscalationManager resolver after IdentityProvider change")
 			}
@@ -258,7 +259,7 @@ func Setup(
 
 	// Register DebugSession Reconciler with controller-runtime manager
 	log.Debugw("Setting up DebugSession reconciler")
-	debugSessionReconciler := breakglass.NewDebugSessionController(log, mgr.GetClient(), ccProvider)
+	debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider)
 	if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 	}

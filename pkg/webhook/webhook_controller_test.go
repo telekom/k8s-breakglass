@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -189,7 +190,7 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 	sesmanager := breakglass.SessionManager{
 		Client: cli,
 	}
-	escmanager := breakglass.EscalationManager{
+	escmanager := escalation.EscalationManager{
 		Client: cli,
 	}
 

@@ -21,6 +21,12 @@ type KeycloakIdentityProvider struct {
 	log *zap.SugaredLogger
 }
 
+// NewKeycloakIdentityProvider creates a KeycloakIdentityProvider with the given logger.
+// Exported for use by sub-packages that cannot access the unexported log field.
+func NewKeycloakIdentityProvider(log *zap.SugaredLogger) KeycloakIdentityProvider {
+	return KeycloakIdentityProvider{log: log}
+}
+
 // getLogger returns the injected logger or falls back to the global logger.
 func (kip KeycloakIdentityProvider) getLogger() *zap.SugaredLogger {
 	if kip.log != nil {

@@ -36,7 +36,7 @@ func TestInstrumentedHandler_Success(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	}
 
-	router.GET("/test", instrumentedHandler("test-endpoint", successHandler))
+	router.GET("/test", InstrumentedHandler("test-endpoint", successHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestInstrumentedHandler_Error(t *testing.T) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
 	}
 
-	router.GET("/test-error", instrumentedHandler("test-error-endpoint", errorHandler))
+	router.GET("/test-error", InstrumentedHandler("test-error-endpoint", errorHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/test-error", nil)
 	w := httptest.NewRecorder()
@@ -70,7 +70,7 @@ func TestInstrumentedHandler_ServerError(t *testing.T) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 	}
 
-	router.GET("/test-server-error", instrumentedHandler("test-server-error-endpoint", serverErrorHandler))
+	router.GET("/test-server-error", InstrumentedHandler("test-server-error-endpoint", serverErrorHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/test-server-error", nil)
 	w := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestInstrumentedHandler_PreservesContext(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"received": capturedHeader})
 	}
 
-	router.GET("/test-context", instrumentedHandler("test-context-endpoint", handler))
+	router.GET("/test-context", InstrumentedHandler("test-context-endpoint", handler))
 
 	req := httptest.NewRequest(http.MethodGet, "/test-context", nil)
 	req.Header.Set("X-Test-Header", "test-value")
@@ -104,11 +104,11 @@ func TestInstrumentedHandler_PreservesContext(t *testing.T) {
 func TestInstrumentedHandler_MultipleEndpoints(t *testing.T) {
 	router := gin.New()
 
-	router.GET("/endpoint1", instrumentedHandler("endpoint1", func(c *gin.Context) {
+	router.GET("/endpoint1", InstrumentedHandler("endpoint1", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"endpoint": "1"})
 	}))
 
-	router.GET("/endpoint2", instrumentedHandler("endpoint2", func(c *gin.Context) {
+	router.GET("/endpoint2", InstrumentedHandler("endpoint2", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"endpoint": "2"})
 	}))
 

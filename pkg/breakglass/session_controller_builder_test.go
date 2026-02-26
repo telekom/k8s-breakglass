@@ -19,7 +19,7 @@ import (
 func TestWithQueue(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -49,7 +49,7 @@ func TestWithQueue(t *testing.T) {
 func TestWithMailService(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -79,7 +79,7 @@ func TestWithMailService(t *testing.T) {
 func TestWithAuditService(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -109,7 +109,7 @@ func TestWithAuditService(t *testing.T) {
 func TestWithBuilderChaining(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -140,7 +140,7 @@ func TestWithBuilderChaining(t *testing.T) {
 func TestSendSessionApprovalEmail_NoMailAvailable(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -174,7 +174,7 @@ func TestSendSessionApprovalEmail_NoMailAvailable(t *testing.T) {
 func TestSendSessionApprovalEmail_WithMailService(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockMailService := NewMockMailEnqueuer(true)
@@ -220,7 +220,7 @@ func TestSendSessionApprovalEmail_WithMailService(t *testing.T) {
 func TestSendSessionApprovalEmail_WithScheduledTime(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockMailService := NewMockMailEnqueuer(true)
@@ -260,7 +260,7 @@ func TestSendSessionApprovalEmail_WithScheduledTime(t *testing.T) {
 func TestSendSessionApprovalEmail_WithMailServiceDisabled(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockMailService := NewMockMailEnqueuer(false)
@@ -298,7 +298,7 @@ func TestSendSessionApprovalEmail_WithMailServiceDisabled(t *testing.T) {
 func TestSendSessionRejectionEmail_NoMailAvailable(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -333,7 +333,7 @@ func TestSendSessionRejectionEmail_NoMailAvailable(t *testing.T) {
 func TestSendSessionRejectionEmail_WithMailService(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockMailService := NewMockMailEnqueuer(true)
@@ -380,7 +380,7 @@ func TestSendSessionRejectionEmail_WithMailService(t *testing.T) {
 func TestSendSessionRejectionEmail_WithMailServiceDisabled(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockMailService := NewMockMailEnqueuer(false)
@@ -419,7 +419,7 @@ func TestSendSessionRejectionEmail_WithMailServiceDisabled(t *testing.T) {
 func TestEmitSessionExpiredAuditEvent_NoAuditService(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -450,7 +450,7 @@ func TestEmitSessionExpiredAuditEvent_NoAuditService(t *testing.T) {
 func TestEmitSessionExpiredAuditEvent_AuditServiceDisabled(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockAudit := NewMockAuditEmitter(false) // Disabled
@@ -485,7 +485,7 @@ func TestEmitSessionExpiredAuditEvent_AuditServiceDisabled(t *testing.T) {
 func TestEmitSessionExpiredAuditEvent_TimeExpired(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockAudit := NewMockAuditEmitter(true)
@@ -522,7 +522,7 @@ func TestEmitSessionExpiredAuditEvent_TimeExpired(t *testing.T) {
 func TestEmitSessionExpiredAuditEvent_ApprovalTimeout(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockAudit := NewMockAuditEmitter(true)
@@ -559,7 +559,7 @@ func TestEmitSessionExpiredAuditEvent_ApprovalTimeout(t *testing.T) {
 func TestEmitSessionAuditEvent_NoAuditService(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	ctrl := NewBreakglassSessionController(
@@ -593,7 +593,7 @@ func TestEmitSessionAuditEvent_NoAuditService(t *testing.T) {
 func TestEmitSessionAuditEvent_AuditServiceDisabled(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockAudit := NewMockAuditEmitter(false) // Disabled
@@ -631,7 +631,7 @@ func TestEmitSessionAuditEvent_AuditServiceDisabled(t *testing.T) {
 func TestEmitSessionAuditEvent_WithAuditService(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger := zaptest.NewLogger(t)
 	mockAudit := NewMockAuditEmitter(true)

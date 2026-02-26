@@ -17,8 +17,8 @@ This document tracks known technical debt, TODOs, and future improvements identi
 **Status:** 🔄 Refactoring  
 **Impact:** Low - Technical debt from deprecated API  
 **Files:**
-- `pkg/breakglass/event_recorder_test.go:16`
-- `pkg/breakglass/event_recorder_test.go:53`
+- `pkg/breakglass/eventrecorder/event_recorder_test.go:16`
+- `pkg/breakglass/eventrecorder/event_recorder_test.go:53`
 
 **Description:**
 ```go
@@ -60,8 +60,8 @@ None - test code usage is acceptable. Production code usage has been fixed.
 **Status:** ✅ Resolved — keep `Create()` (issue #382)  
 **Impact:** Low — Design clarification, no code behavior change  
 **Files:**
-- `pkg/breakglass/debug_session_api.go` (~line 740)
-- `pkg/breakglass/debug_session_api_test.go`
+- `pkg/breakglass/debug/debug_session_api.go` (~line 740)
+- `pkg/breakglass/debug/debug_session_api_test.go`
 
 **Decision:**
 Evaluated replacing `Create()` with a pre-check `Get()` + SSA `Apply()` pattern for debug session creation. Decided to keep `Create()` because: (1) native `AlreadyExists` conflict detection without extra round-trips, (2) `Create()` semantics match the one-shot API operation (SSA's idempotent create-or-update would silently overwrite), (3) no multi-owner benefit since sessions are created by the API and managed by the reconciler, (4) simpler code. The reconciler continues to use SSA for lifecycle management.
@@ -71,7 +71,7 @@ Evaluated replacing `Create()` with a pre-check `Get()` + SSA `Apply()` pattern 
 **Status:** ✅ Fixed (indexed lookups)  
 **Impact:** Low - Optimization for scale  
 **Files:**
-- `pkg/breakglass/debug_session_kubectl.go`
+- `pkg/breakglass/debug/debug_session_kubectl.go`
 - `pkg/indexer/indexer.go`
 
 **Fix:**

@@ -18,7 +18,9 @@ func applyBreakglassSessionStatus(ctx context.Context, c client.Client, session 
 	return ssa.ApplyBreakglassSessionStatus(ctx, c, session)
 }
 
-func applyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
+// ApplyDebugSessionStatus applies the debug session status using server-side apply.
+// Exported so sub-packages (debug/, cleanup/) can use it.
+func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
 	// Set observedGeneration for kstatus compliance
 	if session.Generation > 0 {
 		session.Status.ObservedGeneration = session.Generation
@@ -26,7 +28,9 @@ func applyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 	return ssa.ApplyDebugSessionStatus(ctx, c, session)
 }
 
-func applyBreakglassEscalationStatus(ctx context.Context, c client.Client, escalation *breakglassv1alpha1.BreakglassEscalation) error {
+// ApplyBreakglassEscalationStatus applies the escalation status using server-side apply.
+// Exported so sub-packages (escalation/) can use it.
+func ApplyBreakglassEscalationStatus(ctx context.Context, c client.Client, escalation *breakglassv1alpha1.BreakglassEscalation) error {
 	// Set observedGeneration for kstatus compliance
 	if escalation.Generation > 0 {
 		escalation.Status.ObservedGeneration = escalation.Generation

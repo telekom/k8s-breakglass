@@ -148,7 +148,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	sesmanager := SessionManager{
 		Client: cli,
 	}
-	escmanager := EscalationManager{
+	escmanager := testEscalationLookup{
 		Client: cli,
 	}
 
@@ -309,7 +309,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	})
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	// middleware sets different identities depending on request
@@ -477,7 +477,7 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 	builder.WithObjects(esc)
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -541,7 +541,7 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	}
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -616,7 +616,7 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
@@ -686,7 +686,7 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
@@ -762,7 +762,7 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -832,7 +832,7 @@ func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -915,7 +915,7 @@ func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLook
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -1056,7 +1056,7 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 			cli := builder.WithObjects(clusterConfig, escalation).
 				WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 			sesmanager := SessionManager{Client: cli}
-			escmanager := EscalationManager{Client: cli}
+			escmanager := testEscalationLookup{Client: cli}
 
 			logger, _ := zap.NewDevelopment()
 			// Pass cli as clusterConfigClient - the controller will create its own ClusterConfigManager
@@ -1156,7 +1156,7 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -1247,7 +1247,7 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 
 	cli := builder.WithObjects(pending, esc).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	// Middleware injects a user that is NOT an approver
@@ -1399,7 +1399,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 
 			cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 			sesmanager := SessionManager{Client: cli}
-			escmanager := EscalationManager{Client: cli}
+			escmanager := testEscalationLookup{Client: cli}
 			ccmanager := NewClusterConfigManager(cli)
 
 			logger, _ := zap.NewDevelopment()
@@ -1468,7 +1468,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
@@ -1573,7 +1573,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	// middleware sets email depending on action: creation & drop -> requester, approve -> approver
@@ -1710,7 +1710,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	// middleware sets email depending on action
@@ -1827,7 +1827,7 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -1888,7 +1888,7 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -1949,7 +1949,7 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -2015,7 +2015,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).WithObjects(pending, approved).Build()
 	ss := SessionManager{Client: cli}
-	es := EscalationManager{Client: cli}
+	es := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 
@@ -2112,7 +2112,7 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -2168,7 +2168,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	// middleware sets different identities depending on request
@@ -2292,7 +2292,7 @@ func TestLongReasonStored(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
@@ -2360,7 +2360,7 @@ func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
@@ -2398,7 +2398,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	})
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
@@ -2489,7 +2489,7 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -2549,7 +2549,7 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -2609,7 +2609,7 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 	)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -2695,7 +2695,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	builder.WithObjects(pending, approved, waiting, rejected, withdrawn, expired, timeout)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		// Set identity based on requested state so the controller sees the session owner
@@ -2792,7 +2792,7 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 	}
 	cli := builder.WithObjects(pending, approved, rejected).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -2877,7 +2877,7 @@ func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 	}
 	cli := builder.WithObjects(sessApproved, sessWithdrawn, sessNotMine).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -2951,7 +2951,7 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 
 	cli := builder.WithObjects(pending, esc).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	// middleware injects identity of bob (the approver)
@@ -3016,7 +3016,7 @@ func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 	}
 	cli := builder.WithObjects(s).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	// middleware tries to set nothing; identityProvider will error
@@ -3073,7 +3073,7 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 
 	cli := builder.WithObjects(pending, esc, cc).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	// middleware sets identity to the session owner (self) who would otherwise be an approver
@@ -3145,7 +3145,7 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 
 	cli := builder.WithObjects(pending, esc, cc).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	// middleware injects approver with allowed domain
@@ -3224,7 +3224,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 
 	cli := builder.WithObjects(s1, s2, s3, s4, s5, s6).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	// middleware that uses X-Test-Email header to set identity for each request
@@ -3566,7 +3566,7 @@ func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
@@ -3636,88 +3636,6 @@ func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 	}
 }
 
-// TestHiddenFromUI_EscalationResponse_GroupsRemoved tests that hidden groups are not shown in API response
-func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
-
-	// Create escalation with hidden groups
-	escalation := &breakglassv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-escalation",
-			Namespace: "default",
-		},
-		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
-			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{"test"},
-				Groups:   []string{"system:authenticated"},
-			},
-			EscalatedGroup: "admin",
-			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
-				Groups:       []string{"security-team", "flm-on-duty", "on-call"},
-				HiddenFromUI: []string{"flm-on-duty", "on-call"},
-			},
-		},
-	}
-	builder.WithObjects(escalation)
-
-	cli := builder.Build()
-	escmanager := EscalationManager{Client: cli}
-
-	logger, _ := zap.NewDevelopment()
-	ctrl := &BreakglassEscalationController{
-		log:     logger.Sugar(),
-		manager: &escmanager,
-		middleware: func(c *gin.Context) {
-			c.Set("email", "user@example.com")
-			c.Set("groups", []string{"system:authenticated"})
-			c.Next()
-		},
-		identityProvider: KeycloakIdentityProvider{},
-		getUserGroupsFn: func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
-			return []string{"system:authenticated"}, nil
-		},
-	}
-
-	engine := gin.New()
-	rg := engine.Group("/breakglassEscalations", ctrl.middleware)
-	_ = ctrl.Register(rg)
-
-	req, _ := http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
-	w := httptest.NewRecorder()
-	engine.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
-	}
-
-	// Parse response
-	var escList []breakglassv1alpha1.BreakglassEscalation
-	_ = json.Unmarshal(w.Body.Bytes(), &escList)
-
-	if len(escList) != 1 {
-		t.Fatalf("expected 1 escalation, got %d", len(escList))
-	}
-
-	resp := escList[0]
-
-	// Verify hidden groups are removed
-	for _, group := range resp.Spec.Approvers.Groups {
-		if group == "flm-on-duty" || group == "on-call" {
-			t.Fatalf("hidden group should be removed from response: %s", group)
-		}
-	}
-
-	// Verify visible group is present
-	if len(resp.Spec.Approvers.Groups) != 1 || resp.Spec.Approvers.Groups[0] != "security-team" {
-		t.Fatalf("expected only visible group 'security-team', got: %v", resp.Spec.Approvers.Groups)
-	}
-
-	// Verify HiddenFromUI field is removed from response
-	if len(resp.Spec.Approvers.HiddenFromUI) > 0 {
-		t.Fatalf("HiddenFromUI field should be removed from response, got: %v", resp.Spec.Approvers.HiddenFromUI)
-	}
-}
-
 // TestHiddenFromUI_MixedVisibleAndHidden tests escalation with both visible and hidden users
 func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
@@ -3746,7 +3664,7 @@ func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
@@ -4974,7 +4892,7 @@ func TestSessionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5103,7 +5021,7 @@ func TestSessionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5234,7 +5152,7 @@ func TestSessionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5308,7 +5226,7 @@ func TestSessionLimits(t *testing.T) {
 		builder.WithObjects(esc, clusterConfig)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5450,7 +5368,7 @@ func TestSessionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5582,7 +5500,7 @@ func TestSessionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5704,7 +5622,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		builder.WithObjects(existingSessions...)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5839,7 +5757,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -5965,7 +5883,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		builder.WithObjects(existingSessions...)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6097,7 +6015,7 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6194,7 +6112,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6295,7 +6213,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6410,7 +6328,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6577,7 +6495,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		builder.WithObjects(existingSessions...)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6686,7 +6604,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6791,7 +6709,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6891,7 +6809,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		builder.WithObjects(idp, esc, clusterConfig)
 		cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.IdentityProvider{}).Build()
 		sesmanager := SessionManager{Client: cli}
-		escmanager := EscalationManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -6972,7 +6890,7 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 	})
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
@@ -7057,7 +6975,7 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 	})
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := EscalationManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},

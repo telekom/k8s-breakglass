@@ -23,7 +23,7 @@ The breakglass controller runs several background loops in goroutines that requi
 ### 2. **EscalationStatusUpdater** (Keycloak Group Sync) ✅ LEADER ELECTION ENABLED
 
 - **Purpose**: Periodically resolves approver groups from Keycloak and updates BreakglassEscalation.Status.ApproverGroupMembers
-- **Location**: `pkg/breakglass/escalation_status_updater.go:Start()`
+- **Location**: `pkg/breakglass/escalation/escalation_status_updater.go:Start()`
 - **Interval**: 10 minutes (configurable via `--escalation-status-update-interval`)
 - **Startup**: Always launched
 - **Shared State**: Updates BreakglassEscalation.Status with resolved group members
@@ -34,7 +34,7 @@ The breakglass controller runs several background loops in goroutines that requi
 ### 3. **ClusterConfigChecker** (Validation Loop) ✅ LEADER ELECTION ENABLED
 
 - **Purpose**: Validates ClusterConfig resources, verifies kubeconfig secrets exist and are readable
-- **Location**: `pkg/breakglass/cluster_config_checker.go:Start()`
+- **Location**: `pkg/breakglass/clusterconfig/checker.go:Start()`
 - **Interval**: 10 minutes (configurable via `--cluster-config-check-interval`)
 - **Startup**: Always launched
 - **Shared State**: Updates ClusterConfig.Status with validation results, emits Kubernetes events

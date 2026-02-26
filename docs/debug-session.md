@@ -1860,12 +1860,12 @@ The debug session feature is fully implemented and ready for use. Below is the c
 | `DebugPodTemplate` CRD | ✅ Complete | `api/v1alpha1/debug_pod_template_types.go` |
 | `DebugSessionTemplate` CRD | ✅ Complete | `api/v1alpha1/debug_session_template_types.go` |
 | `DebugSession` CRD | ✅ Complete | `api/v1alpha1/debug_session_types.go` |
-| Debug session controller | ✅ Complete | `pkg/breakglass/debug_session_reconciler.go` |
+| Debug session controller | ✅ Complete | `pkg/breakglass/debug/debug_session_reconciler.go` |
 | Webhook pod whitelisting | ✅ Complete | `pkg/webhook/controller.go` (checkDebugSessionAccess) |
-| REST API endpoints | ✅ Complete | `pkg/breakglass/debug_session_api.go` |
-| Kubectl-debug API endpoints | ✅ Complete | `pkg/breakglass/debug_session_kubectl.go` |
-| Terminal sharing configuration | ✅ Complete | `pkg/breakglass/debug_session_reconciler.go` |
-| Auto-approve by group | ✅ Complete | `pkg/breakglass/debug_session_reconciler.go` |
+| REST API endpoints | ✅ Complete | `pkg/breakglass/debug/debug_session_api.go` |
+| Kubectl-debug API endpoints | ✅ Complete | `pkg/breakglass/debug/debug_session_kubectl.go` |
+| Terminal sharing configuration | ✅ Complete | `pkg/breakglass/debug/debug_session_reconciler.go` |
+| Auto-approve by group | ✅ Complete | `pkg/breakglass/debug/debug_session_reconciler.go` |
 | Prometheus metrics | ✅ Complete | `pkg/metrics/metrics.go` |
 | Cleanup routine | ✅ Complete | `pkg/breakglass/cleanup_task.go` |
 | Unit tests | ✅ Complete | `*_test.go` files with bad case coverage |

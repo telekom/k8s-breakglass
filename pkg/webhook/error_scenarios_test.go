@@ -17,6 +17,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,7 +45,7 @@ func TestHandleAuthorize_MalformedJSON(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -77,7 +78,7 @@ func TestHandleAuthorize_NilResourceAttributes(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -117,7 +118,7 @@ func TestHandleAuthorize_SpecialCharactersInReason(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -161,7 +162,7 @@ func TestHandleAuthorize_EmptyUserField(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -205,7 +206,7 @@ func TestHandleAuthorize_ConcurrentRequests(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -258,7 +259,7 @@ func TestHandleAuthorize_InvalidResourceName(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -303,7 +304,7 @@ func TestHandleAuthorize_InvalidGroupFormat(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -343,7 +344,7 @@ func TestHandleAuthorize_BothAttributeTypesPresent(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -391,7 +392,7 @@ func TestHandleAuthorize_UnicodeCharactersInUser(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -435,7 +436,7 @@ func TestHandleAuthorize_MissingContentType(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	logger, _ := zap.NewDevelopment()
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))

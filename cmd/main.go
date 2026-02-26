@@ -25,6 +25,10 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/clusterconfig"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/eventrecorder"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -211,12 +215,12 @@ func main() {
 		idpConfig = nil
 	}
 
-	resolver := breakglass.SetupResolver(idpConfig, log)
+	resolver := escalation.SetupResolver(idpConfig, log)
 
 	// Create cached config loader to avoid disk reads per request
 	cfgLoader := config.NewCachedLoader(cliConfig.ConfigPath, 5*time.Second)
 
-	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver, breakglass.WithLogger(log), breakglass.WithConfigLoader(cfgLoader))
+	escalationManager := escalation.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver, escalation.WithLogger(log), escalation.WithConfigLoader(cfgLoader))
 
 	// Build shared cluster config provider & deny policy evaluator reusing kubernetes client
 	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
@@ -249,7 +253,7 @@ func main() {
 	// Setup debug session API controller with mail and audit services
 	// Uses combined auth + rate limiting middleware
 	// Uses APIReader for consistent reads after writes (avoids cache coherence issues)
-	debugSessionAPICtrl := breakglass.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.MiddlewareWithRateLimiting(apiRateLimiter)).
+	debugSessionAPICtrl := debug.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.MiddlewareWithRateLimiting(apiRateLimiter)).
 		WithAPIReader(reconcilerMgr.GetAPIReader()).
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
@@ -336,7 +340,7 @@ func main() {
 
 	// Events recorder for components using the events.k8s.io API
 	// Host is set to the pod name (hostname) for better event attribution
-	eventsRecorder := &breakglass.K8sEventRecorder{
+	eventsRecorder := &eventrecorder.K8sEventRecorder{
 		Clientset: kubeClientset,
 		Source:    corev1.EventSource{Component: "breakglass-controller", Host: hostname},
 		Scheme:    scheme,
@@ -350,7 +354,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		breakglass.EscalationStatusUpdater{
+		escalation.EscalationStatusUpdater{
 			Log:           log,
 			K8sClient:     escalationManager.Client,
 			Resolver:      escalationManager.GetResolver(),
@@ -422,7 +426,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		breakglass.ClusterConfigChecker{Log: log, Client: escalationManager.Client, Recorder: recorder, Interval: interval, LeaderElected: leaderElectedCh}.Start(managerCtx)
+		clusterconfig.ClusterConfigChecker{Log: log, Client: escalationManager.Client, Recorder: recorder, Interval: interval, LeaderElected: leaderElectedCh}.Start(managerCtx)
 	}()
 
 	var certsReady chan struct{}
