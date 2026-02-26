@@ -18,15 +18,3 @@ spec:
   approvers:
     users:
       - approver@example.com
-  permissions:
-    - apiGroups: [""]
-      resources: ["pods"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: [""]
-      resources: ["pods/exec"]
-      verbs: ["create"]
-      namespaces: ["default"]
-    - apiGroups: [""]
-      resources: ["pods/log"]
-      verbs: ["get"]
-      namespaces: ["default"]

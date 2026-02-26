@@ -110,6 +110,18 @@ properly validated.
   message or different semantics than the CEL rule, one of them is wrong.
 - **Rule message clarity**: CEL rule messages should clearly explain what
   is wrong and how to fix it, not just state "invalid value".
+- **Test comment enforcement attribution**: Test comments describing CEL
+  validation behavior must explicitly state that the constraint is
+  enforced by a CEL rule (not just Go validation). Write "rejected by
+  CEL rule at admission time" rather than vague "is now invalid". This
+  avoids confusion about which layer enforces which constraint, especially
+  when both Go webhooks and CEL rules exist for overlapping validations.
+- **Test-object compliance**: When adding or tightening a CEL rule, verify
+  that existing test objects still satisfy it. This includes e2e Go
+  builders (`NewEscalationBuilder`, `NewDenyPolicyBuilder`), YAML fixture
+  files (`e2e/fixtures/`, `config/samples/`), and shell heredocs. Objects
+  that pass Go-level unit tests but fail CEL at admission time indicate
+  a gap between unit-test coverage and runtime behavior.
 
 ## Output format
 

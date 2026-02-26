@@ -24,10 +24,6 @@ spec:
       - approver@example.org
     groups:
       - senior-ops
-  permissions:
-    - apiGroups: [""]
-      resources: ["pods"]
-      verbs: ["get", "list", "watch"]
   requestReason:
     mandatory: true
     description: "Please provide a reason for audit test"

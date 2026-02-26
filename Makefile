@@ -3,7 +3,7 @@ include versions.env
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
 
-# ENVTEST_K8S_VERSION is set in versions.env
+# ENVTEST_K8S_VERSION is defined as a Make variable in versions.env (included above)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -102,6 +102,12 @@ validate-crds: manifests setup-envtest ## Validate CRD schemas offline and again
 	@echo "Validating CRDs against envtest API server..."
 	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./api/v1alpha1/... -run TestCRDInstallation -v -count=1
 	@echo "CRD validation passed"
+
+.PHONY: validate-fixtures
+validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass Go validation.
+	@echo "Validating e2e fixture files..."
+	go test ./e2e/helpers/... -run TestFixturesAreValid -v -count=1
+	@echo "Fixture validation passed"
 
 .PHONY: verify
 verify: fmt vet lint-strict test vulncheck ## Run all verification checks (fmt, vet, lint, test, vulncheck).

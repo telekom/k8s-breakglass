@@ -505,11 +505,13 @@ func TestUseCaseBISDebugging(t *testing.T) {
 
 	t.Run("ErrorPath_BlockSelfApproval", func(t *testing.T) {
 		// Create escalation that blocks self-approval
+		// Note: blockSelfApproval requires at least one approver group (CEL rule)
 		blockSelfEscalation := helpers.NewEscalationBuilder("e2e-bis-no-self-approve", namespace).
 			WithEscalatedGroup("bis-no-self-approve").
 			WithMaxValidFor("2h").
 			WithApprovalTimeout("30m").
 			WithBlockSelfApproval(true).
+			WithApproverGroups("senior-ops"). // Required: blockSelfApproval needs at least one approver group
 			WithAllowedClusters(clusterName).
 			Build()
 		cleanup.Add(blockSelfEscalation)

@@ -99,6 +99,8 @@ jobs:
           cache: true
       - name: Validate CRDs (offline schema + envtest API server)
         run: make validate-crds
+      - name: Validate e2e fixtures against Go validation rules
+        run: make validate-fixtures
 
   npm-audit:
     name: Frontend Security Audit
@@ -355,8 +357,9 @@ jobs:
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
-    # No dependency on quality gates — builds in parallel with lint/tests.
-    # E2E jobs enforce quality gates via their own 'needs' lists.
+    # No direct 'needs' on quality-gate jobs — this build runs in parallel with lint/tests.
+    # Quality gates are enforced by the E2E jobs, whose 'needs' include
+    # lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, and helm-lint.
     # Registry push, SBOM, and attestation are in a separate 'publish-image' job
     # so E2E tests can start as soon as the image artifact is ready.
     permissions:

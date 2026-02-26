@@ -43,6 +43,26 @@ consistent, and synchronized with the actual code.
 - Check that godoc comments on exported types and functions describe the
   current behavior, not a previous iteration.
 - Flag TODO / FIXME comments that reference completed work.
+- **Enforcement-mechanism attribution**: Comments describing validation or
+  rejection must name the specific mechanism — "rejected by CEL rule at
+  admission time", "rejected by Go webhook validation", or "enforced by
+  the API server". Vague phrasing like "is now invalid" without stating
+  which layer enforces it is misleading.
+- **Variable scoping precision**: Comments referencing variables must be
+  precise about scope. A variable set in an `include`d file and used as a
+  Make variable is NOT a "shell environment variable". Write "Make
+  variable defined in X (included above)" rather than "set in X".
+- **CI dependency graph accuracy**: Comments about CI job dependencies
+  must reflect the actual `needs` topology. Saying "no dependency on
+  quality gates" is misleading if downstream jobs (e.g., E2E) enforce
+  those gates transitively via their own `needs` lists. State the
+  indirect enforcement path explicitly.
+- **Test comment fidelity**: In `_test.go` files, comments describing
+  what a test case does must match the actual test logic. Flag comments
+  that say "allows X" when the test constructs a deny rule, or "rejects
+  invalid Y" when the test never asserts an error. This applies to
+  inline comments, `t.Run()` description strings, and table-driven test
+  case `name` fields.
 
 ### 6. Cross-Reference Integrity
 
