@@ -7,8 +7,10 @@ package v1alpha1
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCELValidationRulesInCRD verifies that the generated CRD manifests contain
@@ -28,6 +30,7 @@ func TestCELValidationRulesInCRD(t *testing.T) {
 				"at least one approver (user or group) must be specified",
 				"blockSelfApproval requires at least one approver group",
 				"escalatedGroup cannot be an approver group when blockSelfApproval",
+				"escalatedGroup cannot be a hidden approver group (hiddenFromUI)",
 				"allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests",
 				"allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers",
 				"unlimited=true is mutually exclusive with maxActiveSessionsPerUser",
@@ -46,15 +49,12 @@ func TestCELValidationRulesInCRD(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Read the generated CRD from the repo root
 			data, err := os.ReadFile(filepath.Join(crdBasesDir(), filepath.Base(tc.crdFile)))
-			if err != nil {
-				t.Fatalf("CRD file not found at %s (run 'make manifests' first): %v", tc.crdFile, err)
-			}
+			require.NoError(t, err, "CRD file not found at %s (run 'make manifests' first)", tc.crdFile)
 			content := string(data)
 
 			for _, expected := range tc.expected {
-				if !strings.Contains(content, expected) {
-					t.Errorf("CRD %s is missing expected CEL rule/message: %q", tc.crdFile, expected)
-				}
+				assert.Contains(t, content, expected,
+					"CRD %s is missing expected CEL rule/message: %q", tc.crdFile, expected)
 			}
 		})
 	}
@@ -70,12 +70,8 @@ func TestValidateBreakglassEscalation_NoApprovers(t *testing.T) {
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if result.IsValid() {
-		t.Fatal("expected validation error for escalation with no approvers, but got valid")
-	}
-	if !strings.Contains(result.ErrorMessage(), "approver") {
-		t.Errorf("expected error about approvers, got: %s", result.ErrorMessage())
-	}
+	require.False(t, result.IsValid(), "expected validation error for escalation with no approvers")
+	assert.Contains(t, result.ErrorMessage(), "approver")
 }
 
 // TestValidateBreakglassEscalation_BlockSelfApprovalWithoutGroups verifies Go validation
@@ -93,12 +89,8 @@ func TestValidateBreakglassEscalation_BlockSelfApprovalWithoutGroups(t *testing.
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if result.IsValid() {
-		t.Fatal("expected validation error for blockSelfApproval without group approvers, but got valid")
-	}
-	if !strings.Contains(result.ErrorMessage(), "blockSelfApproval") {
-		t.Errorf("expected error about blockSelfApproval, got: %s", result.ErrorMessage())
-	}
+	require.False(t, result.IsValid(), "expected validation error for blockSelfApproval without group approvers")
+	assert.Contains(t, result.ErrorMessage(), "blockSelfApproval")
 }
 
 // TestValidateBreakglassEscalation_EscalatedGroupInApprovers verifies Go validation
@@ -116,12 +108,49 @@ func TestValidateBreakglassEscalation_EscalatedGroupInApprovers(t *testing.T) {
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if result.IsValid() {
-		t.Fatal("expected validation error for escalatedGroup in approver groups with blockSelfApproval, but got valid")
+	require.False(t, result.IsValid(), "expected validation error for escalatedGroup in approver groups with blockSelfApproval")
+	assert.Contains(t, result.ErrorMessage(), "escalatedGroup")
+}
+
+// TestValidateBreakglassEscalation_EscalatedGroupInHiddenFromUI verifies Go validation
+// catches escalatedGroup being in the hiddenFromUI list when blockSelfApproval is enabled.
+func TestValidateBreakglassEscalation_EscalatedGroupInHiddenFromUI(t *testing.T) {
+	blockSelf := true
+	esc := &BreakglassEscalation{
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:    "platform-sre",
+			BlockSelfApproval: &blockSelf,
+			Approvers: BreakglassEscalationApprovers{
+				Groups:       []string{"other-group"},
+				HiddenFromUI: []string{"platform-sre"},
+			},
+		},
 	}
-	if !strings.Contains(result.ErrorMessage(), "escalatedGroup") {
-		t.Errorf("expected error about escalatedGroup, got: %s", result.ErrorMessage())
+
+	result := ValidateBreakglassEscalation(esc)
+	require.False(t, result.IsValid(), "expected validation error for escalatedGroup in hiddenFromUI with blockSelfApproval")
+	assert.Contains(t, result.ErrorMessage(), "hiddenFromUI")
+}
+
+// TestValidateBreakglassEscalation_BlockSelfApprovalExplicitFalse verifies that
+// blockSelfApproval explicitly set to false with only user approvers passes validation.
+func TestValidateBreakglassEscalation_BlockSelfApprovalExplicitFalse(t *testing.T) {
+	blockSelf := false
+	esc := &BreakglassEscalation{
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:    "test-group",
+			BlockSelfApproval: &blockSelf,
+			Allowed: BreakglassEscalationAllowed{
+				Groups: []string{"test-group"},
+			},
+			Approvers: BreakglassEscalationApprovers{
+				Users: []string{"admin@example.com"},
+			},
+		},
 	}
+
+	result := ValidateBreakglassEscalation(esc)
+	require.True(t, result.IsValid(), "expected valid escalation with blockSelfApproval=false and user-only approvers, got: %s", result.ErrorMessage())
 }
 
 // TestValidateBreakglassEscalation_MutuallyExclusiveIDPFields verifies that
@@ -140,12 +169,8 @@ func TestValidateBreakglassEscalation_MutuallyExclusiveIDPFields(t *testing.T) {
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if result.IsValid() {
-		t.Fatal("expected validation error for mutually exclusive IDP fields, but got valid")
-	}
-	if !strings.Contains(result.ErrorMessage(), "cannot use allowedIdentityProvidersForRequests together with") {
-		t.Errorf("expected error about mutually exclusive IDP fields, got: %s", result.ErrorMessage())
-	}
+	require.False(t, result.IsValid(), "expected validation error for mutually exclusive IDP fields")
+	assert.Contains(t, result.ErrorMessage(), "cannot use allowedIdentityProvidersForRequests together with")
 }
 
 // TestValidateBreakglassEscalation_SessionLimitsUnlimitedWithLimits verifies that
@@ -166,12 +191,8 @@ func TestValidateBreakglassEscalation_SessionLimitsUnlimitedWithLimits(t *testin
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if result.IsValid() {
-		t.Fatal("expected validation error for unlimited=true with maxActiveSessionsPerUser set, but got valid")
-	}
-	if !strings.Contains(result.ErrorMessage(), "unlimited") {
-		t.Errorf("expected error about unlimited, got: %s", result.ErrorMessage())
-	}
+	require.False(t, result.IsValid(), "expected validation error for unlimited=true with maxActiveSessionsPerUser")
+	assert.Contains(t, result.ErrorMessage(), "unlimited")
 }
 
 // TestValidateDenyPolicy_NoRulesOrPodSecurityRules verifies Go validation catches
@@ -182,12 +203,8 @@ func TestValidateDenyPolicy_NoRulesOrPodSecurityRules(t *testing.T) {
 	}
 
 	result := ValidateDenyPolicy(dp)
-	if result.IsValid() {
-		t.Fatal("expected validation error for DenyPolicy with no rules or podSecurityRules, but got valid")
-	}
-	if !strings.Contains(result.ErrorMessage(), "at least one") {
-		t.Errorf("expected error about requiring at least one rule, got: %s", result.ErrorMessage())
-	}
+	require.False(t, result.IsValid(), "expected validation error for DenyPolicy with no rules or podSecurityRules")
+	assert.Contains(t, result.ErrorMessage(), "at least one")
 }
 
 // TestValidateBreakglassEscalation_ValidSpec verifies that a well-formed escalation
@@ -207,9 +224,7 @@ func TestValidateBreakglassEscalation_ValidSpec(t *testing.T) {
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if !result.IsValid() {
-		t.Fatalf("expected valid escalation, got errors: %s", result.ErrorMessage())
-	}
+	require.True(t, result.IsValid(), "expected valid escalation, got: %s", result.ErrorMessage())
 }
 
 // TestValidateBreakglassEscalation_BlockSelfApprovalNil verifies that a nil
@@ -228,9 +243,7 @@ func TestValidateBreakglassEscalation_BlockSelfApprovalNil(t *testing.T) {
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if !result.IsValid() {
-		t.Fatalf("expected valid escalation with nil blockSelfApproval and user-only approvers, got errors: %s", result.ErrorMessage())
-	}
+	require.True(t, result.IsValid(), "expected valid escalation with nil blockSelfApproval and user-only approvers, got: %s", result.ErrorMessage())
 }
 
 // TestValidateBreakglassEscalation_SessionLimitsUnlimitedWithTotal verifies that
@@ -251,10 +264,6 @@ func TestValidateBreakglassEscalation_SessionLimitsUnlimitedWithTotal(t *testing
 	}
 
 	result := ValidateBreakglassEscalation(esc)
-	if result.IsValid() {
-		t.Fatal("expected validation error for unlimited=true with maxActiveSessionsTotal set, but got valid")
-	}
-	if !strings.Contains(result.ErrorMessage(), "unlimited") {
-		t.Errorf("expected error about unlimited, got: %s", result.ErrorMessage())
-	}
+	require.False(t, result.IsValid(), "expected validation error for unlimited=true with maxActiveSessionsTotal")
+	assert.Contains(t, result.ErrorMessage(), "unlimited")
 }
