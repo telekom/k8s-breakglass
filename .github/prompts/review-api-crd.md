@@ -73,6 +73,30 @@ properly validated.
 - Verify that sample values exercise validation edge cases (min, max,
   pattern boundaries).
 
+### 8. CEL Validation Expressions (`x-kubernetes-validations`)
+
+- **`has()` guards for optional fields**: Every CEL rule that accesses an
+  optional field (marked `+optional`, `omitempty`, or pointer type) MUST
+  use `has(self.field)` before accessing the field with `size()`,
+  `.exists()`, or any other operator. Without this guard, the CEL rule
+  throws a runtime `"no such key"` error when the field is absent.
+  - **WRONG**: `size(self.optionalList) == 0` — fails when field is absent.
+  - **RIGHT**: `!has(self.optionalList) || size(self.optionalList) == 0`
+  - **WRONG**: `size(self.parent.optionalChild) > 0` — fails when child absent.
+  - **RIGHT**: `has(self.parent.optionalChild) && size(self.parent.optionalChild) > 0`
+  - Also applies to nested optional fields within optional structs — guard
+    each level of the access path that is optional.
+- **CEL cost budget**: CEL rules on unbounded lists can exceed the
+  Kubernetes API server's cost budget. Ensure every list field accessed in
+  a CEL rule has a `+kubebuilder:validation:MaxItems` constraint. Check
+  that `make validate-crds` passes (which runs the offline CRD schema
+  validation including CEL cost estimation).
+- **Consistency with Go webhooks**: CEL rules should match the equivalent
+  Go webhook validation logic. If a Go validation uses a different error
+  message or different semantics than the CEL rule, one of them is wrong.
+- **Rule message clarity**: CEL rule messages should clearly explain what
+  is wrong and how to fix it, not just state "invalid value".
+
 ## Output format
 
 For each finding:
