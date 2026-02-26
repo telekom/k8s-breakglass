@@ -55,6 +55,16 @@ properly validated.
   webhooks enforce constraints that cannot be expressed in CRD markers alone.
 - Check that immutable fields are rejected on update.
 - Verify defaulting webhooks set sensible defaults for new optional fields.
+- **Nil-clearing transitions**: For fields with monotonic or append-only
+  semantics (timestamps, counters, status fields), verify that the
+  validation webhook rejects clearing the field (non-nil → nil), not just
+  backwards movement. A missing nil check allows callers to bypass
+  monotonic validation by nullifying the field before setting a lower value.
+- **Status subresource bypass awareness**: Note that internal controllers
+  using `client.Status().Patch()` bypass validating webhooks entirely.
+  Webhook validation is defense-in-depth for non-standard callers
+  (`kubectl edit`, direct API writes). Document this scope explicitly in
+  webhook code comments.
 
 ### 7. CRD Sample Validity
 
