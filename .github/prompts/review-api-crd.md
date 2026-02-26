@@ -65,6 +65,13 @@ properly validated.
   Webhook validation is defense-in-depth for non-standard callers
   (`kubectl edit`, direct API writes). Document this scope explicitly in
   webhook code comments.
+- **Field path precision in list validation**: When validating elements in
+  a slice/list field (e.g., `spec.approvers.groups`), errors must use
+  `fieldPath.Index(i)` to identify the specific offending element, not just
+  the parent list path. An error on `spec.approvers.groups` without an
+  index tells the user "something in the list is wrong" but not which entry.
+  - **WRONG**: `field.Invalid(groupsPath, group, "msg")` inside a `for _, g` loop.
+  - **RIGHT**: `field.Invalid(groupsPath.Index(i), group, "msg")` inside a `for i, g` loop.
 
 ### 7. CRD Sample Validity
 
@@ -86,6 +93,13 @@ properly validated.
   - **RIGHT**: `has(self.parent.optionalChild) && size(self.parent.optionalChild) > 0`
   - Also applies to nested optional fields within optional structs — guard
     each level of the access path that is optional.
+  - **Boolean fields with `+kubebuilder:default`**: Even when a boolean
+    field has a default value (e.g., `+kubebuilder:default=false`), prefer
+    guarding with `has()` for consistency with other CEL rules. While the
+    API server defaults the field before CEL runs, `has()` is defensive
+    against intermediate states and keeps the pattern uniform.
+    - **AVOID**: `!self.boolField || condition` — fragile if defaulting changes.
+    - **PREFER**: `!(has(self.boolField) && self.boolField) || condition`
 - **CEL cost budget**: CEL rules on unbounded lists can exceed the
   Kubernetes API server's cost budget. Ensure every list field accessed in
   a CEL rule has a `+kubebuilder:validation:MaxItems` constraint. Check

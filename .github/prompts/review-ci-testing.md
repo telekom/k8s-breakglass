@@ -37,6 +37,10 @@ and that CI configuration is correct.
 - Verify that negative tests (expected failures) assert the specific error
   type or message, not just `err != nil`.
 - Check for assertions on mock call counts when order/frequency matters.
+- **Blank-identifier suppression**: Flag Go tests that assign function
+  return values to `_` (blank identifier) instead of asserting them.
+  `_ = someFunction()` always passes regardless of the result — use
+  `require.NoError(t, err)` or assert the return value explicitly.
 
 ### 5. Test Isolation
 
@@ -68,6 +72,11 @@ and that CI configuration is correct.
   include the new code paths.
 - Flag any test that requires external services without a CI-compatible
   mock or skip annotation.
+- **Version pinning**: Verify that all tool versions in `versions.env` and
+  CI workflow files are pinned to exact versions — never `latest`, `HEAD`,
+  or floating tags. For tools using Go pseudo-versions (e.g., setup-envtest),
+  pin the full pseudo-version string. Non-deterministic versions cause
+  unreproducible builds and silent behavior changes.
 
 ### 9. Helm & Manifest Tests
 
