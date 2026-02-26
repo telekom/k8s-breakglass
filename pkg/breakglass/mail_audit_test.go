@@ -17,7 +17,6 @@ limitations under the License.
 package breakglass
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
@@ -25,7 +24,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -101,47 +99,6 @@ func (m *MockMailEnqueuer) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages = make([]EnqueuedEmail, 0)
-}
-
-// MockAuditEmitter is a test double for AuditEmitter
-type MockAuditEmitter struct {
-	mu      sync.Mutex
-	enabled bool
-	events  []*audit.Event
-}
-
-// NewMockAuditEmitter creates a new mock audit emitter
-func NewMockAuditEmitter(enabled bool) *MockAuditEmitter {
-	return &MockAuditEmitter{
-		enabled: enabled,
-		events:  make([]*audit.Event, 0),
-	}
-}
-
-// Emit implements AuditEmitter
-func (m *MockAuditEmitter) Emit(_ context.Context, event *audit.Event) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.events = append(m.events, event)
-}
-
-// IsEnabled implements AuditEmitter
-func (m *MockAuditEmitter) IsEnabled() bool {
-	return m.enabled
-}
-
-// GetEvents returns all emitted events
-func (m *MockAuditEmitter) GetEvents() []*audit.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]*audit.Event{}, m.events...)
-}
-
-// Clear clears all events
-func (m *MockAuditEmitter) Clear() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.events = make([]*audit.Event, 0)
 }
 
 // ============================================================================
@@ -554,164 +511,6 @@ func TestSendDebugSessionExpiredEmail_NilStartsAt(t *testing.T) {
 
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1, "email should still be sent with creation time fallback")
-}
-
-// ============================================================================
-// Tests for DebugSessionAPIController audit service integration
-// ============================================================================
-
-func TestDebugSessionAPIController_WithAuditService(t *testing.T) {
-	// Tests the WithAuditService builder method
-
-	logger := zaptest.NewLogger(t).Sugar()
-	mockAudit := NewMockAuditEmitter(true)
-
-	scheme := runtime.NewScheme()
-	err := breakglassv1alpha1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-	assert.Nil(t, ctrl.auditService, "audit service should be nil before WithAuditService")
-
-	result := ctrl.WithAuditService(mockAudit)
-	assert.Same(t, ctrl, result, "WithAuditService should return the same instance")
-	assert.Equal(t, mockAudit, ctrl.auditService)
-}
-
-func TestEmitDebugSessionAuditEvent_HappyPath(t *testing.T) {
-	// TestEmitDebugSessionAuditEvent_HappyPath
-	//
-	// Purpose:
-	//   Verifies that emitDebugSessionAuditEvent properly creates and emits
-	//   an audit event with all required fields.
-
-	logger := zaptest.NewLogger(t).Sugar()
-	mockAudit := NewMockAuditEmitter(true)
-
-	scheme := runtime.NewScheme()
-	err := breakglassv1alpha1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
-		WithAuditService(mockAudit)
-
-	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-debug-session",
-			Namespace: "breakglass",
-		},
-		Spec: breakglassv1alpha1.DebugSessionSpec{
-			Cluster:     "production",
-			RequestedBy: "developer@example.com",
-		},
-	}
-
-	ctx := context.Background()
-	ctrl.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionCreated, session, "developer@example.com", "Test creation")
-
-	events := mockAudit.GetEvents()
-	require.Len(t, events, 1, "expected exactly one audit event")
-	assert.Equal(t, audit.EventDebugSessionCreated, events[0].Type)
-	assert.Equal(t, "developer@example.com", events[0].Actor.User)
-	assert.Equal(t, "breakglass", events[0].Target.Namespace)
-	assert.Equal(t, "test-debug-session", events[0].Target.Name)
-	assert.Equal(t, "Test creation", events[0].Details["message"])
-}
-
-func TestEmitDebugSessionAuditEvent_AuditNotEnabled(t *testing.T) {
-	// Tests that no event is emitted when audit service is not enabled
-
-	logger := zaptest.NewLogger(t).Sugar()
-	mockAudit := NewMockAuditEmitter(false) // Not enabled
-
-	scheme := runtime.NewScheme()
-	err := breakglassv1alpha1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
-		WithAuditService(mockAudit)
-
-	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-	}
-
-	ctx := context.Background()
-	ctrl.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionCreated, session, "user@example.com", "Test")
-
-	events := mockAudit.GetEvents()
-	assert.Empty(t, events, "no event should be emitted when audit service is not enabled")
-}
-
-func TestEmitDebugSessionAuditEvent_NilAuditService(t *testing.T) {
-	// Tests that no panic occurs when audit service is nil
-
-	logger := zaptest.NewLogger(t).Sugar()
-
-	scheme := runtime.NewScheme()
-	err := breakglassv1alpha1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-	// auditService is nil
-
-	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
-	}
-
-	ctx := context.Background()
-	// Should not panic
-	ctrl.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionCreated, session, "user@example.com", "Test")
-}
-
-func TestEmitDebugSessionAuditEvent_AllEventTypes(t *testing.T) {
-	// Tests that all debug session event types are properly emitted
-
-	eventTypes := []audit.EventType{
-		audit.EventDebugSessionCreated,
-		audit.EventDebugSessionStarted,
-		audit.EventDebugSessionTerminated,
-	}
-
-	for _, eventType := range eventTypes {
-		t.Run(string(eventType), func(t *testing.T) {
-			logger := zaptest.NewLogger(t).Sugar()
-			mockAudit := NewMockAuditEmitter(true)
-
-			scheme := runtime.NewScheme()
-			err := breakglassv1alpha1.AddToScheme(scheme)
-			require.NoError(t, err)
-
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
-				WithAuditService(mockAudit)
-
-			session := &breakglassv1alpha1.DebugSession{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-session",
-					Namespace: "breakglass",
-				},
-				Spec: breakglassv1alpha1.DebugSessionSpec{
-					Cluster: "test-cluster",
-				},
-			}
-
-			ctx := context.Background()
-			ctrl.emitDebugSessionAuditEvent(ctx, eventType, session, "user@example.com", "Test reason")
-
-			events := mockAudit.GetEvents()
-			require.Len(t, events, 1)
-			assert.Equal(t, eventType, events[0].Type)
-		})
-	}
 }
 
 // ============================================================================

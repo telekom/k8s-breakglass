@@ -19,6 +19,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
@@ -37,7 +38,7 @@ func TestWebhookRateLimiting(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -141,7 +142,7 @@ func TestWebhookRateLimiting(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 
 		logger, _ := zap.NewDevelopment()
 
@@ -218,7 +219,7 @@ func TestWebhookControllerWithNilRateLimiter(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := &WebhookController{
@@ -255,7 +256,7 @@ func BenchmarkWebhookWithRateLimiter(b *testing.B) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))

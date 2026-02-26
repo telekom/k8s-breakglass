@@ -24,6 +24,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -1158,10 +1160,10 @@ func isAllowedOIDCProxyResponseHeader(name string) bool {
 	return ok
 }
 
-func Setup(sessionController *breakglass.BreakglassSessionController, escalationManager *breakglass.EscalationManager,
+func Setup(sessionController *breakglass.BreakglassSessionController, escalationManager *escalation.EscalationManager,
 	sessionManager *breakglass.SessionManager, enableFrontend, enableAPI bool, configPath string,
 	auth *AuthHandler, ccProvider *cluster.ClientProvider, denyEval *policy.Evaluator,
-	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *breakglass.DebugSessionAPIController,
+	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *debug.DebugSessionAPIController,
 	auditService *audit.Service) ([]APIController, *webhook.WebhookController) {
 	// Register API controllers based on component flags
 	apiControllers := []APIController{}
@@ -1177,7 +1179,7 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	if enableAPI {
 		apiControllers = append(apiControllers, sessionController)
 		// Use combined auth + rate limiting middleware for escalation controller
-		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, escalationManager, auth.MiddlewareWithRateLimiting(apiRateLimiter), configPath))
+		apiControllers = append(apiControllers, escalation.NewBreakglassEscalationController(log, escalationManager, auth.MiddlewareWithRateLimiting(apiRateLimiter), configPath))
 		// Register debug session API controller if provided
 		if debugSessionCtrl != nil {
 			apiControllers = append(apiControllers, debugSessionCtrl)

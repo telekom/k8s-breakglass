@@ -23,6 +23,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 
@@ -84,7 +85,7 @@ func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -133,7 +134,7 @@ func TestHandleAuthorize_BodyTooLarge(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -169,7 +170,7 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -234,7 +235,7 @@ func TestHandleAuthorize_ImpersonationError_TreatedAsDenied(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -334,7 +335,7 @@ func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -406,7 +407,7 @@ func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -481,7 +482,7 @@ func TestHandleAuthorize_NoIDPRestriction_HappyPath(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -718,7 +719,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 		}
 
 		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 
 		boolPtr := func(v bool) *bool { return &v }
 
@@ -760,7 +761,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 			}
 
 			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
-			escalMgr := &breakglass.EscalationManager{Client: cli}
+			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
@@ -926,7 +927,7 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 			}
 
 			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
-			escalMgr := &breakglass.EscalationManager{Client: cli}
+			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
@@ -952,7 +953,7 @@ func TestIsRequestFromAllowedIDP_FailClosed(t *testing.T) {
 
 	// Wrap the client with an interceptor that forces List to fail
 	errorClient := &listErrorClient{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: errorClient}
+	escalMgr := &escalation.EscalationManager{Client: errorClient}
 
 	wc := &WebhookController{
 		log:          logger.Sugar(),
@@ -1371,7 +1372,7 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
 			}
 			cli := builder.Build()
-			escalMgr := &breakglass.EscalationManager{Client: cli}
+			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
@@ -1659,7 +1660,7 @@ func TestNewWebhookController(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	denyEval := policy.NewEvaluator(cli, logger.Sugar())
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, denyEval)
@@ -1707,7 +1708,7 @@ func TestWebhookController_Register(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -1750,7 +1751,7 @@ func TestWebhookController_SetCanDoFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -1783,7 +1784,7 @@ func TestWebhookController_SetPodFetchFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -1816,7 +1817,7 @@ func TestWebhookController_FetchPodFromCluster_WithFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -1857,7 +1858,7 @@ func TestWebhookController_FetchPodFromCluster_NilProvider(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -2102,7 +2103,7 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 			}
 
 			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objects...).Build()
-			escalMgr := &breakglass.EscalationManager{Client: cli}
+			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
@@ -2276,7 +2277,7 @@ func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 
 	logger, _ := zap.NewDevelopment()
 	eval := policy.NewEvaluator(cli, logger.Sugar())
@@ -2537,7 +2538,7 @@ func TestEmitPodSecurityAudit(t *testing.T) {
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
-			escalMgr := &breakglass.EscalationManager{Client: cli}
+			escalMgr := &escalation.EscalationManager{Client: cli}
 			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 			var auditSvc *audit.Service
@@ -2657,7 +2658,7 @@ func TestEmitAccessDecisionAudit(t *testing.T) {
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
-			escalMgr := &breakglass.EscalationManager{Client: cli}
+			escalMgr := &escalation.EscalationManager{Client: cli}
 			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 			ctx := context.Background()
@@ -2748,7 +2749,7 @@ func TestEmitPolicyDenialAudit(t *testing.T) {
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
-			escalMgr := &breakglass.EscalationManager{Client: cli}
+			escalMgr := &escalation.EscalationManager{Client: cli}
 			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 			ctx := context.Background()
@@ -2776,7 +2777,7 @@ func TestFetchPodFromCluster(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		expectedPod := &corev1.Pod{
@@ -2814,7 +2815,7 @@ func TestFetchPodFromCluster(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		// Inject mock function that returns error
@@ -2834,7 +2835,7 @@ func TestFetchPodFromCluster(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		// Create controller without ccProvider
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
@@ -2853,7 +2854,7 @@ func TestFetchPodFromCluster(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		privilegedPod := &corev1.Pod{
@@ -2903,7 +2904,7 @@ func TestFetchNamespaceLabels(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		expectedLabels := map[string]string{
@@ -2937,7 +2938,7 @@ func TestFetchNamespaceLabels(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		// Inject mock function that returns error
@@ -2957,7 +2958,7 @@ func TestFetchNamespaceLabels(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		// Create controller without ccProvider
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
@@ -2976,7 +2977,7 @@ func TestFetchNamespaceLabels(t *testing.T) {
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
-		escalMgr := &breakglass.EscalationManager{Client: cli}
+		escalMgr := &escalation.EscalationManager{Client: cli}
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		testCases := []struct {
@@ -3031,7 +3032,7 @@ func TestSetPodFetchFn(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Initially nil
@@ -3066,7 +3067,7 @@ func TestSetNamespaceLabelsFetchFn(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Initially nil
@@ -3161,7 +3162,7 @@ func TestEmitAuditWithResourceAndNonResourceAttributes(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Set up audit service
@@ -3242,7 +3243,7 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
-	escalMgr := &breakglass.EscalationManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Set up audit service

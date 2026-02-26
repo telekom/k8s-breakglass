@@ -42,7 +42,7 @@ The following API types and fields have been implemented:
 
 ### ✅ Phase 3 Implemented (Pod Template Rendering)
 
-1. **Pod Template Rendering** (`pkg/breakglass/debug_session_reconciler.go`)
+1. **Pod Template Rendering** (`pkg/breakglass/debug/debug_session_reconciler.go`)
    - `renderPodTemplateString()` - Renders fully templated pod specs with Go template + Sprig functions
    - `renderPodOverridesTemplate()` - Renders templated pod overrides (image, command, args, env)
    - Template context includes `.Session`, `.Template`, `.Cluster`, `.Namespace`, `.Vars`, and `.Impersonation`
@@ -52,7 +52,7 @@ The following API types and fields have been implemented:
    - Type-specific validation: pattern/length for text, min/max for numbers, size ranges for storage
    - Required field validation, select option validation, multiSelect item count constraints
 
-3. **Comprehensive Tests** (`pkg/breakglass/pod_template_rendering_test.go`, `api/v1alpha1/extra_deploy_validation_test.go`)
+3. **Comprehensive Tests** (`pkg/breakglass/debug/pod_template_rendering_test.go`, `api/v1alpha1/extra_deploy_validation_test.go`)
    - Tests for pod template rendering, pod overrides rendering
    - Tests for all validation types and edge cases
 
@@ -953,7 +953,7 @@ spec:
 
 **Files**:
 - `api/v1alpha1/auxiliary_resource_types.go`
-- `pkg/breakglass/auxiliary_resource_manager.go`
+- `pkg/breakglass/debug/auxiliary_resource_manager.go`
 
 **Backward Compatibility**: Full - existing templates with `template` field continue working.
 
@@ -975,7 +975,7 @@ spec:
 - `api/v1alpha1/debug_session_types.go`
 - `api/v1alpha1/debug_session_webhook.go`
 - `api/v1alpha1/debug_session_template_webhook.go`
-- `pkg/breakglass/auxiliary_resource_manager.go`
+- `pkg/breakglass/debug/auxiliary_resource_manager.go`
 
 ### Phase 3: Templatable Pod Specifications (Week 3)
 
@@ -991,8 +991,8 @@ spec:
 **Files**:
 - `api/v1alpha1/debug_pod_template_types.go`
 - `api/v1alpha1/debug_session_template_types.go`
-- `pkg/breakglass/debug_session_reconciler.go`
-- `pkg/breakglass/pod_template_renderer.go` (new)
+- `pkg/breakglass/debug/debug_session_reconciler.go`
+- `pkg/breakglass/debug/template_renderer.go`
 
 ### Phase 4: Frontend Integration (Week 4)
 

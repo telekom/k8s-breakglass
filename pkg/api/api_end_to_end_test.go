@@ -26,6 +26,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -169,7 +170,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 	cli := builder.Build()
 
 	sessionManager := &breakglass.SessionManager{Client: cli}
-	escalationManager := &breakglass.EscalationManager{Client: cli}
+	escalationManager := &escalation.EscalationManager{Client: cli}
 	logger := zaptest.NewLogger(t)
 	provider := cluster.NewClientProvider(cli, logger.Sugar())
 
@@ -178,7 +179,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 
 	middleware := testIdentityMiddleware()
 	sessionController := breakglass.NewBreakglassSessionController(logger.Sugar(), cfg, sessionManager, escalationManager, middleware, "", provider, cli, true)
-	escalationController := breakglass.NewBreakglassEscalationController(logger.Sugar(), escalationManager, middleware, "")
+	escalationController := escalation.NewBreakglassEscalationController(logger.Sugar(), escalationManager, middleware, "")
 	webhookController := webhook.NewWebhookController(logger.Sugar(), cfg, sessionManager, escalationManager, provider, policy.NewEvaluator(cli, logger.Sugar()))
 	webhookController.SetCanDoFn(func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clusterName string) (bool, error) {
 		return false, nil

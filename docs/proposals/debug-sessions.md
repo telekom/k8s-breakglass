@@ -395,7 +395,7 @@ if sar.Spec.ResourceAttributes != nil {
 
 ### Session Lifecycle Controller
 
-New controller in `pkg/breakglass/debug_session_controller.go`:
+New controller in `pkg/breakglass/debug/debug_session_reconciler.go`:
 
 ```go
 type DebugSessionController struct {
@@ -610,7 +610,7 @@ var (
 ### Phase 1: Core CRDs and Controller
 - `api/v1alpha1/debug_session_types.go`
 - `api/v1alpha1/debug_session_template_types.go`
-- `pkg/breakglass/debug_session_controller.go`
+- `pkg/breakglass/debug/debug_session_reconciler.go`
 - `make generate && make manifests`
 
 ### Phase 2: Webhook Integration
@@ -1238,8 +1238,8 @@ spec:
 | `DebugSessionTemplate` CRD | ✅ Implemented | `api/v1alpha1/debug_session_template_types.go` |
 | `DebugSession` CRD | ✅ Implemented | `api/v1alpha1/debug_session_types.go` |
 | Admission webhooks | ✅ Implemented | `api/v1alpha1/debug_*_webhook.go` |
-| Debug session controller | ✅ Implemented | `pkg/breakglass/debug_session_controller.go` |
-| State machine (Pending→Active→Expired) | ✅ Implemented | `pkg/breakglass/debug_session_controller.go` |
+| Debug session controller | ✅ Implemented | `pkg/breakglass/debug/debug_session_reconciler.go` |
+| State machine (Pending→Active→Expired) | ✅ Implemented | `pkg/breakglass/debug/debug_session_reconciler.go` |
 | Pod deployment (DaemonSet/Deployment) | ✅ Implemented | Deploys to target clusters |
 | Template resolution & caching | ✅ Implemented | Status stores resolved template |
 | Approval workflow | ✅ Implemented | Auto-approve and manual approval |

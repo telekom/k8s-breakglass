@@ -8,9 +8,9 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
-// instrumentedHandler wraps a gin handler to record API metrics consistently.
+// InstrumentedHandler wraps a gin handler to record API metrics consistently.
 // It tracks request counts, latency, and error status codes for the provided endpoint label.
-func instrumentedHandler(endpoint string, handler gin.HandlerFunc) gin.HandlerFunc {
+func InstrumentedHandler(endpoint string, handler gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		metrics.APIEndpointRequests.WithLabelValues(endpoint).Inc()

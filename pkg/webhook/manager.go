@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
@@ -153,7 +153,7 @@ func Setup(
 				Client:       mgr.GetClient(),
 				Log:          log,
 				Decoder:      admission.NewDecoder(mgr.GetScheme()),
-				DebugHandler: breakglass.NewKubectlDebugHandler(mgr.GetClient(), nil),
+				DebugHandler: debug.NewKubectlDebugHandler(mgr.GetClient(), nil),
 			},
 		})
 	} else {

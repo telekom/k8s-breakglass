@@ -109,8 +109,8 @@ func CanGroupsDoLegacy(ctx context.Context, groups []string, sar authorizationv1
 	return CanGroupsDo(ctx, rc, groups, sar, clustername)
 }
 
-// stripOIDCPrefixes removes configured OIDC prefixes from user groups to allow matching with cluster groups
-func stripOIDCPrefixes(groups []string, oidcPrefixes []string) []string {
+// StripOIDCPrefixes removes configured OIDC prefixes from user groups to allow matching with cluster groups
+func StripOIDCPrefixes(groups []string, oidcPrefixes []string) []string {
 	if len(oidcPrefixes) == 0 {
 		zap.S().Debug("No OIDC prefixes configured, returning groups unchanged")
 		return groups
@@ -196,7 +196,7 @@ func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath
 	originalGroups := ui.Groups
 	finalGroups := originalGroups
 	if configLoaded && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
-		finalGroups = stripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
+		finalGroups = StripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
 		zap.S().Infow("Applied OIDC prefix stripping", "originalGroups", originalGroups, "finalGroups", finalGroups, "oidcPrefixes", cfg.Kubernetes.OIDCPrefixes)
 	} else {
 		zap.S().Debug("No OIDC prefixes configured, using original groups")

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"go.uber.org/zap"
 )
@@ -219,7 +219,7 @@ func DisableHTTP2(c *tls.Config) {
 
 func ParseEscalationStatusUpdateInterval(interval string, log *zap.SugaredLogger) time.Duration {
 	// Determine escalation status update interval from CLI flag (fallback to 10m)
-	escalationInterval, err := parseDuration("escalation-status-update-interval", interval, breakglass.DefaultEscalationStatusUpdateInterval)
+	escalationInterval, err := parseDuration("escalation-status-update-interval", interval, escalation.DefaultEscalationStatusUpdateInterval)
 	if err != nil {
 		log.Warn(err)
 	}
@@ -227,8 +227,8 @@ func ParseEscalationStatusUpdateInterval(interval string, log *zap.SugaredLogger
 }
 
 func ParseClusterConfigCheckInterval(interval string, log *zap.SugaredLogger) time.Duration {
-	// Determine escalation status update interval from CLI flag (fallback to 10m)
-	checkInterval, err := parseDuration("cluster-config-check-interval'", interval, breakglass.DefaultClusterConfigCheckInterval)
+	// Determine cluster config check interval from CLI flag (fallback to 10m)
+	checkInterval, err := parseDuration("cluster-config-check-interval", interval, escalation.DefaultClusterConfigCheckInterval)
 	if err != nil {
 		log.Warn(err)
 	}

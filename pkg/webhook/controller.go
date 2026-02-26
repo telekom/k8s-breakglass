@@ -24,6 +24,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -250,7 +251,7 @@ type WebhookController struct {
 	log                    *zap.SugaredLogger
 	config                 config.Config
 	sesManager             *breakglass.SessionManager
-	escalManager           *breakglass.EscalationManager
+	escalManager           *escalation.EscalationManager
 	canDoFn                breakglass.CanGroupsDoFunction
 	ccProvider             *cluster.ClientProvider
 	denyEval               *policy.Evaluator
@@ -1296,7 +1297,7 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 func NewWebhookController(log *zap.SugaredLogger,
 	cfg config.Config,
 	sesManager *breakglass.SessionManager,
-	escalManager *breakglass.EscalationManager,
+	escalManager *escalation.EscalationManager,
 	ccProvider *cluster.ClientProvider,
 	denyEval *policy.Evaluator,
 ) *WebhookController {

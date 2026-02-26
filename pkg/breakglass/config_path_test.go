@@ -13,31 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TestEscalationControllerUsesConfigPath verifies that the controller uses the provided config path for OIDC prefix stripping
-func TestEscalationControllerUsesConfigPath(t *testing.T) {
-	// Create a temporary config file with OIDC prefix stripping settings
-	tempDir := t.TempDir()
-	configFile := filepath.Join(tempDir, "config.yaml")
-
-	configContent := `
-kubernetes:
-  oidcPrefixes:
-    - "oidc:"
-`
-	err := os.WriteFile(configFile, []byte(configContent), 0644)
-	require.NoError(t, err)
-
-	// Create controller with custom config path
-	logger := zap.NewNop().Sugar()
-	manager := &EscalationManager{}
-
-	middleware := func(c *gin.Context) {}
-	controller := NewBreakglassEscalationController(logger, manager, middleware, configFile)
-
-	// Verify the controller has the config path set
-	assert.Equal(t, configFile, controller.configPath)
-}
-
 // TestSessionControllerUsesConfigPath verifies that the session controller uses the provided config path
 func TestSessionControllerUsesConfigPath(t *testing.T) {
 	// Create a temporary config file with OIDC prefix stripping settings
@@ -56,7 +31,7 @@ kubernetes:
 	logger := zap.NewNop().Sugar()
 	cfg := config.Config{}
 	sessionManager := &SessionManager{}
-	escalationManager := &EscalationManager{}
+	escalationManager := &testEscalationLookup{}
 
 	middleware := func(c *gin.Context) {}
 	controller := NewBreakglassSessionController(logger, cfg, sessionManager, escalationManager, middleware, configFile, nil, nil)
@@ -173,7 +148,7 @@ kubernetes:
 
 	// Test stripping
 	originalGroups := []string{"oidc:admin", "custom:user", "system:admin"}
-	strippedGroups := stripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
+	strippedGroups := StripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
 
 	// Verify prefixes were stripped
 	assert.Equal(t, []string{"admin", "user", "system:admin"}, strippedGroups)

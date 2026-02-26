@@ -22,7 +22,11 @@ Hub-and-spoke topology: central breakglass service manages temporary privilege e
 ```
 cmd/main.go                    Entry point (5 deployment patterns)
 api/v1alpha1/                  CRD types, webhooks, fuzz tests
-pkg/breakglass/                Session/escalation business logic
+pkg/breakglass/                Session lifecycle, group checking, identity
+  clusterconfig/               Cluster config checker & binding API
+  debug/                       Debug session API, reconciler, kubectl exec
+  escalation/                  Escalation controller, manager, status updater
+  eventrecorder/               Kubernetes event recorder wrapper
 pkg/api/                       Gin HTTP server, REST API
 pkg/webhook/                   K8s authorization webhook
 pkg/reconciler/                Controller-runtime manager
@@ -44,7 +48,7 @@ config/                        Kustomize overlays
 7. **Documentation mandatory**: Update `docs/` with every code change.
 8. **CHANGELOG mandatory**: Update `CHANGELOG.md` for user-facing changes.
 9. **E2E sessions**: Use API helpers (`e2e/helpers/api.go`), not direct K8s client creation.
-10. **Fuzz tests**: Exist at `api/v1alpha1/fuzz_test.go` and `pkg/breakglass/fuzz_test.go`.
+10. **Fuzz tests**: Exist at `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`, and `pkg/breakglass/debug/fuzz_test.go`.
 
 ## Build Tags
 

@@ -509,7 +509,7 @@ func TestRegressionScenario_409ConflictWithdrawnSession(t *testing.T) {
 // documents the logic: if EITHER condition is true, the API returns 409.
 //
 // Location: session_controller.go line 443
-// Code: if ses.Status.State == breakglassv1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero()
+// Code: if ses.Status.State == v1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero()
 func TestEdgeCase_ApprovedWithBothTimestamps(t *testing.T) {
 	now := time.Now()
 
@@ -699,7 +699,7 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 // state checks.
 //
 // Location: session_controller.go line 789
-// Code: if currState == breakglassv1alpha1.SessionStateRejected || currState == breakglassv1alpha1.SessionStateWithdrawn || ...
+// Code: if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || ...
 //
 // This is critical: these states should be immutable once reached.
 func TestEdgeCase_RejectedAndWithdrawnAreTerminal(t *testing.T) {

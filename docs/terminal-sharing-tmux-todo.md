@@ -28,7 +28,7 @@ exec: "tmux": executable file not found in $PATH
 
 ## Related Files
 
-- Core implementation: `pkg/breakglass/debug_session_*.go`
+- Core implementation: `pkg/breakglass/debug/debug_session_*.go`
 - API types: `api/v1alpha1/debug_session_types.go`
 - Test fixtures: `e2e/**/*test.go` (search for "tmux")
 

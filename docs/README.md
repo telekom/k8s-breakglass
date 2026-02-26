@@ -73,6 +73,7 @@ Complete documentation for the breakglass privilege escalation system.
 ## Development & Maintenance
 
 - **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
+- **[Package Structure](./package-structure.md)** - Sub-package layout of `pkg/breakglass/`
 - **[Release Process](./release-process.md)** - Release signing, provenance, and checklist
 
 ## Contributing

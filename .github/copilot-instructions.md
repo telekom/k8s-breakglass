@@ -115,8 +115,8 @@ npm test           # Vitest
 | API types & webhooks | `api/v1alpha1/*_types.go`, `validation_helpers.go` |
 | Deployment patterns | `cmd/main.go` (DEPLOYMENT PATTERNS comment block) |
 | Session lifecycle | `pkg/breakglass/session_controller.go`, `cleanup_task.go` |
-| Escalation logic | `pkg/breakglass/escalation_manager.go`, `escalation_controller.go` |
-| Debug sessions | `pkg/breakglass/debug_session_*.go`, `api/v1alpha1/debug_session_types.go` |
+| Escalation logic | `pkg/breakglass/escalation/escalation_manager.go`, `escalation_controller.go` |
+| Debug sessions | `pkg/breakglass/debug/debug_session_*.go`, `api/v1alpha1/debug_session_types.go` |
 | REST API | `pkg/api/server.go`, handlers in `pkg/api/` |
 | Cluster connectivity | `pkg/cluster/client_provider.go` |
 | Policy evaluation | `pkg/policy/evaluator.go` |
@@ -126,7 +126,7 @@ npm test           # Vitest
 ## Testing Patterns
 
 - Unit tests colocated: `*_test.go` alongside source
-- Fuzz tests: `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`
+- Fuzz tests: `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`, `pkg/breakglass/debug/fuzz_test.go`
 - Frontend: `frontend/tests/`, `npm test` (Vitest)
 - E2E: See "Running E2E Tests Locally" section below
 
@@ -297,7 +297,7 @@ All CRDs with `// +kubebuilder:subresource:status` marker (e.g., `ClusterConfig`
       Build()
   ```
 - Without this, `Status().Update()` will fail silently in tests
-- See `pkg/breakglass/cluster_config_checker_test.go` for example helper function `newTestFakeClient()`
+- See `pkg/breakglass/clusterconfig/checker_test.go` for example helper function `newTestFakeClient()`
 
 **Testing status updates:**
 - Always verify status was persisted by reading the object back after update
