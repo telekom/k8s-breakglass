@@ -406,7 +406,7 @@ spec:
                   unlimited:
                     description: |-
                       unlimited disables session limits entirely for this escalation.
-                      When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
+                      When true, maxActiveSessionsPerUser and maxActiveSessionsTotal must not be set.
                       Use with caution - this should only be granted to trusted platform teams.
                     type: boolean
                 type: object
