@@ -25,6 +25,10 @@ const errorMessage = computed(() => {
 const handleGoHome = () => {
   router.push("/");
 };
+
+const handleViewSessions = () => {
+  router.push("/sessions");
+};
 </script>
 
 <template>
@@ -57,7 +61,7 @@ const handleGoHome = () => {
           <scale-icon-home slot="icon-before"></scale-icon-home>
           Return to Home
         </scale-button>
-        <scale-button variant="secondary" @click="() => $router.push('/sessions')"> View All Sessions </scale-button>
+        <scale-button variant="secondary" @click="handleViewSessions"> View All Sessions </scale-button>
       </div>
     </div>
   </div>

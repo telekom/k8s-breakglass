@@ -93,3 +93,6 @@ export { useMultiIDP, type UseMultiIDPOptions, type UseMultiIDPReturn } from "./
 
 // Withdraw confirmation dialog
 export { useWithdrawConfirmation } from "./useWithdrawConfirmation";
+
+// Radio grid keyboard navigation
+export { useRadioGridNavigation } from "./useRadioGridNavigation";
