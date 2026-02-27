@@ -13,6 +13,8 @@ import ErrorToasts from "@/components/ErrorToasts.vue";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
 import { ErrorBoundary } from "@/components/common";
 import { getMultiIDPConfig } from "@/services/multiIDP";
+import { debug, warn } from "@/services/logger";
+import { pushWarning } from "@/services/toast";
 
 const auth = inject(AuthKey);
 const user = useUser();
@@ -217,47 +219,49 @@ function handleMobileNavItemClick(event: Event, item: PrimaryNavItem) {
 }
 
 async function refreshGroups() {
-  console.debug("[App.refreshGroups] Starting groups and IDP refresh");
+  debug("App", "refreshGroups: Starting groups and IDP refresh");
   try {
     const at = await auth?.getAccessToken();
     if (at) {
-      const decoded: any = decodeJwt(at);
-      console.debug("[App.refreshGroups] Decoded access token keys:", Object.keys(decoded));
-      console.debug("[App.refreshGroups] Full decoded access token:", decoded);
+      const decoded = decodeJwt(at);
+      debug("App", "refreshGroups: Decoded access token keys:", Object.keys(decoded));
+      debug("App", "refreshGroups: Full decoded access token:", decoded);
 
       // Extract groups from various possible locations
-      let g = decoded?.groups || decoded?.group || decoded?.realm_access?.roles || [];
-      console.debug("[App.refreshGroups] Extracted groups from token:", g);
+      const realmAccess = decoded?.realm_access as Record<string, unknown> | undefined;
+      let g: unknown = decoded?.groups || decoded?.group || realmAccess?.roles || [];
+      debug("App", "refreshGroups: Extracted groups from token:", g);
 
       if (typeof g === "string") g = [g];
       if (Array.isArray(g)) groupsRef.value = g as string[];
       else groupsRef.value = [];
-      console.debug("[App.refreshGroups] Final groups from access token:", groupsRef.value);
+      debug("App", "refreshGroups: Final groups from access token:", groupsRef.value);
 
       // Also extract IDP info from token if available
       if (decoded?.iss) {
-        console.debug("[App.refreshGroups] Found issuer in token:", decoded.iss);
+        debug("App", "refreshGroups: Found issuer in token:", decoded.iss);
       }
 
       return;
     }
-    console.warn("[App.refreshGroups] No access token available");
+    warn("App", "refreshGroups: No access token available");
   } catch (err) {
-    console.warn("[App.refreshGroups] Error decoding access token for groups:", err);
+    warn("App", "refreshGroups: Error decoding access token for groups:", err);
   }
 
   // Fallback to user profile claims
-  const claims: any = user.value?.profile || {};
-  console.debug("[App.refreshGroups] User profile available:", !!user.value?.profile);
-  console.debug("[App.refreshGroups] User profile keys:", Object.keys(claims));
-  console.debug("[App.refreshGroups] User profile claims:", claims);
+  const claims: Record<string, unknown> = (user.value?.profile as Record<string, unknown>) || {};
+  debug("App", "refreshGroups: User profile available:", !!user.value?.profile);
+  debug("App", "refreshGroups: User profile keys:", Object.keys(claims));
+  debug("App", "refreshGroups: User profile claims:", claims);
 
-  let g = claims["groups"] || claims["group"] || claims["realm_access"]?.roles || [];
-  console.debug("[App.refreshGroups] Extracted groups from user profile:", g);
+  const claimsRealmAccess = claims["realm_access"] as Record<string, unknown> | undefined;
+  let g: unknown = claims["groups"] || claims["group"] || claimsRealmAccess?.roles || [];
+  debug("App", "refreshGroups: Extracted groups from user profile:", g);
 
   if (typeof g === "string") g = [g];
   groupsRef.value = Array.isArray(g) ? g : [];
-  console.debug("[App.refreshGroups] Final groups from user profile:", groupsRef.value);
+  debug("App", "refreshGroups: Final groups from user profile:", groupsRef.value);
 }
 
 onMounted(refreshGroups);
@@ -266,7 +270,7 @@ onMounted(refreshGroups);
 watch(
   () => user.value,
   () => {
-    console.debug("[App] User changed, refreshing groups and IDP info");
+    debug("App", "User changed, refreshing groups and IDP info");
     refreshGroups();
   },
   { deep: true },
@@ -282,16 +286,16 @@ watch(
 // Check if multi-IDP is available
 async function checkMultiIDP() {
   try {
-    console.debug("[App] Checking for multi-IDP configuration");
+    debug("App", "Checking for multi-IDP configuration");
     const config = await getMultiIDPConfig();
     const idpCount = config && config.identityProviders ? config.identityProviders.length : 0;
     hasMultipleIDPs.value = idpCount > 1;
-    console.debug(`[App] Multi-IDP check completed: found ${idpCount} IDPs`, {
+    debug("App", `Multi-IDP check completed: found ${idpCount} IDPs`, {
       hasMultiple: hasMultipleIDPs.value,
       idps: config?.identityProviders?.map((idp) => ({ name: idp.name, displayName: idp.displayName })),
     });
   } catch (err) {
-    console.warn("[App] Multi-IDP config not available or error:", err);
+    warn("App", "Multi-IDP config not available or error:", err);
     hasMultipleIDPs.value = false;
   }
 }
@@ -299,7 +303,7 @@ async function checkMultiIDP() {
 onMounted(checkMultiIDP);
 
 function login() {
-  console.debug("[App] Login initiated", {
+  debug("App", "Login initiated", {
     selectedIDP: selectedIDPName.value,
     hasMultipleIDPs: hasMultipleIDPs.value,
     redirectPath: route.fullPath,
@@ -307,8 +311,8 @@ function login() {
 
   // If multiple IDPs available, require explicit selection
   if (hasMultipleIDPs.value && !selectedIDPName.value) {
-    console.warn("[App] Login blocked: Multiple IDPs available but none selected");
-    alert("Please select an identity provider before logging in");
+    warn("App", "Login blocked: Multiple IDPs available but none selected");
+    pushWarning("Please select an identity provider before logging in");
     return;
   }
 
@@ -320,7 +324,7 @@ function login() {
 }
 
 function logout() {
-  console.debug("[App] Logout initiated");
+  debug("App", "Logout initiated");
   auth?.logout();
 }
 
@@ -328,11 +332,11 @@ watch(
   () => profileMenuRef.value,
   (element) => {
     if (!element) return;
-    (element as any).logoutHandler = (event?: Event) => {
+    (element as unknown as Record<string, unknown>).logoutHandler = (event?: Event) => {
       event?.preventDefault();
       logout();
     };
-    (element as any).logoutUrl = "javascript:void(0);";
+    (element as unknown as Record<string, unknown>).logoutUrl = "javascript:void(0);";
   },
   { immediate: true },
 );

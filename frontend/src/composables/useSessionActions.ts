@@ -261,8 +261,8 @@ export function useSessionActions(handlers: ActionHandlers, permissions?: Action
 
       debug(`${TAG}.executeAction`, `Action completed: ${action}`, { session: getSessionKey(session) });
       return true;
-    } catch (err: any) {
-      const errorMsg = err?.message || config.errorMessage;
+    } catch (err: unknown) {
+      const errorMsg = (err instanceof Error ? err.message : undefined) || config.errorMessage;
       lastError.value = errorMsg;
       pushError(errorMsg);
       options.onError?.(errorMsg);

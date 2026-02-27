@@ -79,6 +79,7 @@ function loadFromStorage(): FilterState {
       name: typeof f.name === "string" ? f.name : defaults.name,
     };
   } catch {
+    // Stored filter JSON is corrupt or schema-incompatible — reset to defaults
     return defaultFilters();
   }
 }
@@ -88,7 +89,7 @@ function saveToStorage(filters: FilterState): void {
     const payload: StoredPayload = { version: SCHEMA_VERSION, filters };
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch {
-    // sessionStorage quota exceeded or unavailable — ignore silently
+    // sessionStorage quota exceeded or unavailable — non-critical, ignore
   }
 }
 

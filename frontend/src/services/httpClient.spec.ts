@@ -4,7 +4,7 @@ import type AuthService from "@/services/auth";
 import { AxiosError, type InternalAxiosRequestConfig } from "axios";
 
 function createResolvedAdapter() {
-  return async (config: any) => ({
+  return async (config: InternalAxiosRequestConfig) => ({
     data: {
       authorization:
         typeof config.headers?.get === "function" ? config.headers.get("Authorization") : config.headers?.Authorization,
@@ -20,8 +20,10 @@ describe("createAuthenticatedApiClient", () => {
   afterEach(() => {
     vi.restoreAllMocks();
 
-    const globalWindow = (globalThis as any).window;
-    if (globalWindow && "__DEV_TOKEN_LOG" in globalWindow) {
+    const globalWindow = (globalThis as unknown as Record<string, unknown>).window as
+      | Record<string, unknown>
+      | undefined;
+    if (globalWindow && "__DEV_TOKEN_LOG" in (globalWindow as object)) {
       delete globalWindow.__DEV_TOKEN_LOG;
     }
   });
@@ -66,10 +68,11 @@ describe("createAuthenticatedApiClient", () => {
     const client = createAuthenticatedApiClient(auth, { enableDevTokenLogging: true });
     const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
 
-    const globalWindow = ((globalThis as any).window = (globalThis as any).window || {});
+    const globalWindow = ((globalThis as unknown as Record<string, unknown>).window =
+      (globalThis as unknown as Record<string, unknown>).window || {}) as Record<string, unknown>;
     globalWindow.__DEV_TOKEN_LOG = true;
 
-    client.defaults.adapter = async (config: any) => ({
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => ({
       data: {
         authorization: typeof config.headers?.get === "function" ? config.headers.get("Authorization") : undefined,
       },
@@ -80,7 +83,12 @@ describe("createAuthenticatedApiClient", () => {
     });
 
     await client.get("/ping");
-    expect(debugSpy).toHaveBeenCalledWith("[httpClient] Authorization header:", "Bearer dev-token");
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      "[HttpClient]",
+      "Authorization header:",
+      "Bearer dev-token",
+    );
   });
 });
 
@@ -99,7 +107,7 @@ describe("timeout detection", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Simulate a timeout error from axios (no response, has request, ECONNABORTED code)
-    client.defaults.adapter = async (config: any) => {
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
       const error = new AxiosError(
         "timeout of 30000ms exceeded",
         "ECONNABORTED",
@@ -113,9 +121,9 @@ describe("timeout detection", () => {
     };
 
     await expect(client.get("/slow-endpoint")).rejects.toThrow();
-    // Verify that error was logged as "Request timeout" - logger formats as: ts, [tag], message|json
-    // The first argument is timestamp+tag+message combined in a single formatted string
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Request timeout"));
+    // Verify that error was logged as "Request timeout" - logger formats as: ts, [tag], message, ...args
+    const allArgs = errorSpy.mock.calls.flat().map(String);
+    expect(allArgs.some((a) => a.includes("Request timeout"))).toBe(true);
   });
 
   it("does not falsely detect timeout when message contains 'timeout' but code is different", async () => {
@@ -123,7 +131,7 @@ describe("timeout detection", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Simulate network error with "timeout" in message but different code
-    client.defaults.adapter = async (config: any) => {
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
       const error = new AxiosError(
         "Connection timeout while establishing TLS",
         "ENETUNREACH", // Not ECONNABORTED
@@ -138,10 +146,10 @@ describe("timeout detection", () => {
 
     await expect(client.get("/endpoint")).rejects.toThrow();
     // Should be logged as "No response received", not "Request timeout"
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No response received"));
+    const allArgs = errorSpy.mock.calls.flat().map(String);
+    expect(allArgs.some((a) => a.includes("No response received"))).toBe(true);
     // Ensure "Request timeout" is NOT in any call
-    const allCalls = errorSpy.mock.calls.map((call) => call.join(" "));
-    expect(allCalls.some((c) => c.includes("Request timeout"))).toBe(false);
+    expect(allArgs.some((c) => c.includes("Request timeout"))).toBe(false);
   });
 
   it("handles network errors without timeout", async () => {
@@ -149,7 +157,7 @@ describe("timeout detection", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Simulate a network error (no response, has request, different code)
-    client.defaults.adapter = async (config: any) => {
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
       const error = new AxiosError(
         "Network Error",
         "ERR_NETWORK",
@@ -163,6 +171,7 @@ describe("timeout detection", () => {
     };
 
     await expect(client.get("/endpoint")).rejects.toThrow();
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No response received"));
+    const allArgs = errorSpy.mock.calls.flat().map(String);
+    expect(allArgs.some((a) => a.includes("No response received"))).toBe(true);
   });
 });

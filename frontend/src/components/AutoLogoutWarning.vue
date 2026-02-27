@@ -40,6 +40,7 @@
 <script lang="ts">
 import { inject, onMounted, onUnmounted, ref } from "vue";
 import { AuthKey } from "@/keys";
+import { warn } from "@/services/logger";
 
 export default {
   name: "AutoLogoutWarning",
@@ -70,7 +71,7 @@ export default {
         show.value = false;
         dismissed.value = false;
       } catch (err) {
-        console.warn("[AutoLogoutWarning] Silent renew failed", err);
+        warn("AutoLogoutWarning", "Silent renew failed", err);
       } finally {
         renewing.value = false;
       }
@@ -99,7 +100,9 @@ export default {
               }
             }
           }
-        } catch {}
+        } catch (e) {
+          warn("AutoLogoutWarning", "Failed to parse OIDC user data from localStorage", e);
+        }
       }
     }
 

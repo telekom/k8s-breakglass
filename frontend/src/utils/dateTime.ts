@@ -1,3 +1,5 @@
+import { debug, error as logError } from "@/services/logger";
+
 /**
  * DateTime formatting utilities with 24-hour format preference
  * Respects browser locale while enforcing 24-hour time format
@@ -8,11 +10,14 @@ const browserLocale = navigator.language || "en-US";
 const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const use12Hour = /^en-US|^en-PH|^ja-JP|^ko-KR/.test(browserLocale);
 
-console.log("[DateTime] Initialization:");
-console.log(`  Browser locale: ${browserLocale}`);
-console.log(`  User timezone: ${userTimeZone}`);
-console.log(`  Browser prefers 12-hour format: ${use12Hour}`);
-console.log(`  Using 24-hour format override: true`);
+debug(
+  "DateTime",
+  "Initialization:",
+  `Browser locale: ${browserLocale}`,
+  `User timezone: ${userTimeZone}`,
+  `Browser prefers 12-hour format: ${use12Hour}`,
+  `Using 24-hour format override: true`,
+);
 
 /**
  * Format a date/time string to 24-hour format
@@ -45,7 +50,7 @@ export function format24Hour(
 
     return formatted;
   } catch (e) {
-    console.error("[DateTime] Error formatting date:", isoString, e);
+    logError("DateTime", "Error formatting date:", isoString, e);
     return isoString;
   }
 }
@@ -67,7 +72,7 @@ export function formatDate(isoString: string | null | undefined): string {
       hour12: false,
     });
   } catch (e) {
-    console.error("[DateTime] Error formatting date:", isoString, e);
+    logError("DateTime", "Error formatting date:", isoString, e);
     return isoString;
   }
 }
@@ -89,7 +94,7 @@ export function formatTime(isoString: string | null | undefined): string {
       hour12: false,
     });
   } catch (e) {
-    console.error("[DateTime] Error formatting time:", isoString, e);
+    logError("DateTime", "Error formatting time:", isoString, e);
     return isoString;
   }
 }
@@ -110,7 +115,7 @@ export function formatTimeShort(isoString: string | null | undefined): string {
       hour12: false,
     });
   } catch (e) {
-    console.error("[DateTime] Error formatting time:", isoString, e);
+    logError("DateTime", "Error formatting time:", isoString, e);
     return isoString;
   }
 }
@@ -138,7 +143,7 @@ export function format24HourWithTZ(isoString: string | null | undefined): string
 
     return formatted;
   } catch (e) {
-    console.error("[DateTime] Error formatting date with TZ:", isoString, e);
+    logError("DateTime", "Error formatting date with TZ:", isoString, e);
     return isoString;
   }
 }
@@ -160,7 +165,7 @@ export function getLocaleInfo() {
  */
 export function debugLogDateTime(label: string, isoString: string | null | undefined): void {
   if (!isoString) {
-    console.debug(`[DateTime] ${label}: (empty)`);
+    debug("DateTime", `${label}: (empty)`);
     return;
   }
 
@@ -168,7 +173,7 @@ export function debugLogDateTime(label: string, isoString: string | null | undef
   const formatted24hr = format24Hour(isoString);
   const withTZ = format24HourWithTZ(isoString);
 
-  console.debug(`[DateTime] ${label}:`, {
+  debug("DateTime", `${label}:`, {
     isoString,
     formatted24hr,
     withTZ,

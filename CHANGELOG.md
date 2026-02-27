@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Added `importas` linter rule** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Configured `importas` in `.golangci.yml` with `no-unaliased: true` to enforce the canonical `breakglassv1alpha1` alias
 - **Removed duplicate scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Deleted dead-code `pkg/config/scheme.go`
 
+### Removed
+
+- **Gateway API documentation** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Removed `docs/gateway-api-configuration.md` — feature not shipped yet
+- **OpenTelemetry tracing documentation and Helm values** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Removed `docs/opentelemetry-tracing.md`, `configmap-telemetry.yaml` template, and `cluster.telemetry` Helm values — tracing not yet implemented
+- **Deprecated `logger-console` module** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Deleted `frontend/src/services/logger-console.ts` — all logging consolidated into `@/services/logger`
+
 ### Added
 
 - **Package-level godoc** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Added missing godoc comments to all exported types and functions in `api/v1alpha1/`
@@ -46,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Split `pkg/breakglass/` god package into 4 sub-packages** ([#416](https://github.com/telekom/k8s-breakglass/issues/416)): Extracted `clusterconfig/` (cluster config checker, binding API), `debug/` (debug session API, reconciler, kubectl), `escalation/` (escalation controller, manager, status updater), and `eventrecorder/` (Kubernetes event recorder) from the root `breakglass` package. Introduced `EscalationLookup` interface to break the import cycle between root and escalation sub-packages. All import paths updated; no public API changes.
 - **Decomposed god functions into focused helpers** ([#417](https://github.com/telekom/k8s-breakglass/issues/417)): Extracted `handleAuthorize` (706 → 46 lines) into `authorize_helpers.go` with `authorizeState` struct and 11 single-responsibility methods. Extracted `handleRequestBreakglassSession` (~760 → ~140 lines) into `session_request_helpers.go` with 3 types and 10 helpers. Extracted `main()` into `run()` with 7 helpers and 2 structs in `cmd/main.go`. No behavioural changes; all existing tests pass.
+- **Consolidated frontend logger services** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Merged `logger-console.ts` into `logger.ts` with `request()`, `response()`, `action()`, `stateChange()` helpers. Migrated all ~144 raw `console.*` calls across 12 source files to use the structured logger. Added ESLint `no-console` rule to prevent regressions.
+- **Eliminated all `any` types from frontend** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Re-enabled `@typescript-eslint/no-explicit-any` and fixed all ~89 violations — `catch` clauses, component props, JWT decodes, API responses, and model index signatures now use proper types (`unknown`, typed narrowing, or concrete interfaces).
+- **Replaced `alert()` with toast notification** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Login IDP-selection prompt now uses the accessible `pushWarning()` toast system instead of the blocking `window.alert()`.
+- **Added error context to all bare catch blocks** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): All 15 empty/bare `catch {}` blocks now include descriptive comments or structured logger calls explaining the expected failure mode.
+- **Documented CSRF mitigation model** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Added CSRF section to `docs/security-best-practices.md` explaining why Bearer token auth inherently prevents CSRF and noting the risk if cookie-based sessions were added in the future.
 
 - **Migrated `fake.NewSimpleClientset` to `fake.NewClientset`**: Replaced deprecated `fake.NewSimpleClientset()` calls with `fake.NewClientset()` in `pkg/breakglass/event_recorder_test.go` and removed associated `//nolint:staticcheck` suppressions (resolves #381)
 

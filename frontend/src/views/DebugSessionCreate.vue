@@ -2,6 +2,7 @@
 import { computed, inject, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
+import { debug } from "@/services/logger";
 import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState } from "@/components/common";
 import VariableForm from "@/components/debug-session/VariableForm.vue";
@@ -65,7 +66,7 @@ watch(
   () => form.templateRef,
   (newVal, oldVal) => {
     if (oldVal && newVal !== oldVal) {
-      console.debug("[DebugSessionCreate] TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
+      debug("DebugSessionCreate", "TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
       form.cluster = "";
       form.selectedBindingIndex = 0;
       form.requestedDuration = "1h";

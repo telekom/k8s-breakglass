@@ -5,13 +5,17 @@ vi.mock("@/services/multiIDP", () => ({
 }));
 
 vi.mock("@/services/logger", () => ({
+  debug: vi.fn(),
   info: vi.fn(),
+  warn: vi.fn(),
   error: vi.fn(),
 }));
 
 import AuthService, { useUser, AuthRedirect, AuthSilentRedirect } from "./auth";
 import { User } from "oidc-client-ts";
 import { getMultiIDPConfig } from "@/services/multiIDP";
+import type { MultiIDPConfig } from "@/services/multiIDP";
+import type Config from "@/model/config";
 
 const mockedGetMultiIDPConfig = getMultiIDPConfig as Mock<typeof getMultiIDPConfig>;
 const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
@@ -213,10 +217,18 @@ describe("AuthService", () => {
           },
         ],
         escalationIDPMapping: {},
-      } as any);
+      } as MultiIDPConfig);
 
-      const fakeManager = { signinRedirect: vi.fn().mockResolvedValue(undefined), settings: {} } as any;
-      const managerSpy = vi.spyOn(authService as any, "getOrCreateUserManagerForIDP").mockReturnValue(fakeManager);
+      const fakeManager = {
+        signinRedirect: vi.fn().mockResolvedValue(undefined),
+        settings: {},
+      } as unknown as ReturnType<AuthService["getOrCreateUserManagerForIDP"]>;
+      const managerSpy = vi
+        .spyOn(
+          authService as unknown as { getOrCreateUserManagerForIDP: () => unknown },
+          "getOrCreateUserManagerForIDP",
+        )
+        .mockReturnValue(fakeManager);
 
       await authService.login({ path: "/secure", idpName });
 
@@ -238,7 +250,7 @@ describe("AuthService", () => {
       mockedGetMultiIDPConfig.mockResolvedValue({
         identityProviders: [{ name: "corp", displayName: "corp", issuer: "https://corp", enabled: true }],
         escalationIDPMapping: {},
-      } as any);
+      } as MultiIDPConfig);
       await authService.login({ path: "/secure", idpName: "corp" });
       expect(defaultSignin).toHaveBeenCalledTimes(2);
     });
@@ -246,7 +258,9 @@ describe("AuthService", () => {
 
   describe("persistent session preference", () => {
     it("enables persistent mode and reinitializes the manager", () => {
-      const reinitSpy = vi.spyOn(authService as any, "reinitializeDefaultManager").mockImplementation(() => {});
+      const reinitSpy = vi
+        .spyOn(authService as unknown as { reinitializeDefaultManager: () => void }, "reinitializeDefaultManager")
+        .mockImplementation(() => {});
 
       authService.setPersistentSessionEnabled(true);
 
@@ -257,7 +271,9 @@ describe("AuthService", () => {
 
     it("toggles back to session mode only when preference changes", () => {
       localStorage.setItem(TOKEN_PERSISTENCE_KEY, "persistent");
-      const reinitSpy = vi.spyOn(authService as any, "reinitializeDefaultManager").mockImplementation(() => {});
+      const reinitSpy = vi
+        .spyOn(authService as unknown as { reinitializeDefaultManager: () => void }, "reinitializeDefaultManager")
+        .mockImplementation(() => {});
 
       authService.setPersistentSessionEnabled(false);
 
@@ -303,15 +319,15 @@ describe("AuthService", () => {
         signinCallback: vi.fn().mockResolvedValue({ state: { idpName: "corp" } }),
       };
 
-      (authService as any).idpManagers = new Map([
-        ["other", { manager: failingManager as any, directAuthority: "https://direct-other" }],
-        ["corp", { manager: successManager as any, directAuthority: "https://direct-corp" }],
+      (authService as unknown as Record<string, unknown>).idpManagers = new Map([
+        ["other", { manager: failingManager as unknown, directAuthority: "https://direct-other" }],
+        ["corp", { manager: successManager as unknown, directAuthority: "https://direct-corp" }],
       ]);
-      (authService as any).userManager = {
+      (authService as unknown as Record<string, unknown>).userManager = {
         settings: { authority: "https://default", client_id: "default" },
         signinCallback: vi.fn().mockResolvedValue(null),
         events: { addUserLoaded: vi.fn() },
-      } as any;
+      };
 
       const result = await authService.handleSigninCallback();
 
@@ -367,7 +383,7 @@ describe("AuthService", () => {
     beforeEach(() => {
       sessionStorage.clear();
       localStorage.clear();
-      mockAuthService = new AuthService(baseConfig as any, { mock: true });
+      mockAuthService = new AuthService(baseConfig as Config, { mock: true });
     });
 
     it("performs mock login and exposes synthetic token/email", async () => {

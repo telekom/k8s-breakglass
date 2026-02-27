@@ -9,7 +9,7 @@ import getConfig from "@/services/config";
 import { BrandingKey } from "@/keys";
 import type Config from "@/model/config";
 import { exposeDebugControls, debug } from "@/services/logger";
-import logger from "@/services/logger-console";
+import logger from "@/services/logger";
 import { pushError } from "@/services/toast";
 
 const CONFIG_CACHE_KEY = "breakglass_runtime_config";
@@ -31,7 +31,7 @@ function cacheRuntimeConfig(config: Config) {
   try {
     sessionStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
   } catch (error) {
-    console.warn("[ConfigCache] Failed to persist runtime config", error);
+    logger.warn("ConfigCache", "Failed to persist runtime config", error);
   }
 }
 
@@ -42,7 +42,7 @@ function readCachedRuntimeConfig(): Config | null {
       return JSON.parse(cached) as Config;
     }
   } catch (error) {
-    console.warn("[ConfigCache] Failed to read runtime config cache", error);
+    logger.warn("ConfigCache", "Failed to read runtime config cache", error);
   }
   return null;
 }
@@ -98,15 +98,15 @@ async function initializeApp() {
       faviconLink.href = faviconLink.href.replace(/\/$/, "");
     }
   } catch (e) {
-    console.warn("[favicon] swap failed", e);
+    logger.warn("App", "Favicon swap failed", e);
   }
 
   // Expose flavour for e2e/UI tests & theming hooks
   try {
-    (window as any).__BREAKGLASS_UI_FLAVOUR = flavour;
+    (window as unknown as Record<string, unknown>).__BREAKGLASS_UI_FLAVOUR = flavour;
     document.documentElement.setAttribute("data-ui-flavour", flavour);
   } catch (e) {
-    console.warn("[ui-flavour] expose failed", e);
+    logger.warn("App", "UI flavour expose failed", e);
   }
 
   // Load appropriate Scale components based on runtime flavour
@@ -151,11 +151,11 @@ async function initializeApp() {
 
   const auth = new AuthService(config, { mock: USE_MOCK_AUTH });
   if (USE_MOCK_AUTH) {
-    console.info("[AuthService] Mock authentication enabled (dev default)");
+    logger.info("AuthService", "Mock authentication enabled (dev default)");
     logger.info("App", "Mock authentication enabled");
     // Expose auth service and router for Playwright/E2E testing
-    (window as any).__BREAKGLASS_AUTH = auth;
-    (window as any).__VUE_ROUTER__ = router;
+    (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH = auth;
+    (window as unknown as Record<string, unknown>).__VUE_ROUTER__ = router;
   }
   app.provide(AuthKey, auth);
   // Provide optional branding name for the UI. Fallbacks will be used by components
@@ -191,7 +191,6 @@ async function initializeApp() {
     } catch (error) {
       // Log and surface a friendly message
       logger.error("App", "OIDC signin callback failed", error);
-      console.error("[AuthCallback]", error);
     }
   } else {
     // Wait for initial auth state to be loaded before mounting
@@ -210,7 +209,6 @@ async function initializeSilentRenew() {
   logger.info("SilentRenew", "Initializing silent renew callback");
 
   if (USE_MOCK_AUTH) {
-    console.info("[SilentRenew] Mock auth enabled, skipping silent renew callback");
     logger.info("SilentRenew", "Skipping silent renew - mock auth enabled");
     return;
   }
@@ -225,7 +223,6 @@ async function initializeSilentRenew() {
     logger.info("SilentRenew", "Silent renew callback completed successfully");
   } catch (error) {
     logger.error("SilentRenew", "Silent renew callback failed", error);
-    console.error("[SilentRenew]", error);
   }
 }
 
@@ -238,13 +235,11 @@ logger.info("App", "Bootstrap check", {
 if (isSilentRenew) {
   initializeSilentRenew().catch((error) => {
     logger.error("SilentRenew", "Initialization error", error);
-    console.error("[SilentRenewInit]", error);
   });
 } else {
   // Bootstrap the application
   initializeApp().catch((error) => {
     logger.error("App", "Application initialization failed", error);
-    console.error("[AppInitialization]", error);
     // Show error message to user if initialization fails
     const app = document.getElementById("app");
     if (app) {

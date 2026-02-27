@@ -7,7 +7,8 @@ import BreakglassSessionService from "@/services/breakglassSession";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import type { SessionCR } from "@/model/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
-import { handleAxiosError } from "@/services/logger";
+import { handleAxiosError, debug, error as logError } from "@/services/logger";
+import type { AxiosLikeError } from "@/model/errors";
 
 // Type for the approval metadata returned by the API
 interface SessionApprovalMeta {
@@ -76,7 +77,7 @@ const loadSession = async () => {
   error.value = null;
   errorDetails.value = null;
 
-  console.log("[SessionApprovalView] Loading session:", sessionName.value);
+  debug("SessionApprovalView", "Loading session:", sessionName.value);
 
   if (!sessionName.value) {
     error.value = "No session name provided in URL";
@@ -88,7 +89,7 @@ const loadSession = async () => {
     // Use dedicated endpoint GET /breakglassSessions/:name to get the specific session
     const response = await service.getSessionByName(sessionName.value);
 
-    console.log("[SessionApprovalView] Response:", response.data);
+    debug("SessionApprovalView", "Response:", response.data);
 
     // Handle new response format with session and approvalMeta
     const data = response.data;
@@ -100,11 +101,11 @@ const loadSession = async () => {
     if (!foundSession || !foundSession.metadata) {
       error.value = "Session Not Found";
       errorDetails.value = `Session "${sessionName.value}" does not exist or has been deleted.`;
-      console.log("[SessionApprovalView] Session not found");
+      debug("SessionApprovalView", "Session not found");
     } else if (meta) {
       // Use approval metadata to determine if user can approve
       approvalMeta.value = meta;
-      console.log("[SessionApprovalView] Approval metadata:", meta);
+      debug("SessionApprovalView", "Approval metadata:", meta);
 
       if (meta.stateMessage) {
         // Session is not in pending state - show the specific state message
@@ -137,7 +138,7 @@ const loadSession = async () => {
     } else {
       // Fallback for old API response format (backward compatibility)
       const found = foundSession as SessionCR;
-      console.log("[SessionApprovalView] Found session:", found.metadata?.name, "state:", found.status?.state);
+      debug("SessionApprovalView", "Found session:", found.metadata?.name, "state:", found.status?.state);
       if (found.status?.state !== "pending") {
         error.value = "Cannot Approve Session";
         errorDetails.value = `Session is ${found.status?.state}. Only pending sessions can be approved.`;
@@ -145,29 +146,30 @@ const loadSession = async () => {
         session.value = found;
       }
     }
-  } catch (e: any) {
-    console.error("[SessionApprovalView] Failed to load session:", e);
-    if (e.response?.status === 404) {
+  } catch (e: unknown) {
+    const axiosLike = e as AxiosLikeError;
+    logError("SessionApprovalView", "Failed to load session:", e);
+    if (axiosLike.response?.status === 404) {
       error.value = "Session Not Found";
       errorDetails.value = `Session "${sessionName.value}" does not exist. It may have been deleted or the link is incorrect.`;
-    } else if (e.response?.status === 403) {
+    } else if (axiosLike.response?.status === 403) {
       error.value = "Access Denied";
       errorDetails.value = "You are not authorized to view this session.";
-    } else if (e.response?.status === 401) {
+    } else if (axiosLike.response?.status === 401) {
       error.value = "Authentication Required";
       errorDetails.value = "Please log in to continue. Redirecting...";
       if (redirectTimer) {
         clearTimeout(redirectTimer);
       }
       redirectTimer = setTimeout(() => router.push("/"), 3000);
-    } else if (e.code === "ECONNABORTED" || e.code === "ERR_NETWORK") {
+    } else if (axiosLike.code === "ECONNABORTED" || axiosLike.code === "ERR_NETWORK") {
       error.value = "Network Error";
       errorDetails.value = "Unable to connect to the server. Please check your connection and try again.";
-    } else if (e.response?.status === 500) {
+    } else if (axiosLike.response?.status === 500) {
       error.value = "Server Error";
       errorDetails.value = "An unexpected error occurred. Please try again later or contact support.";
     } else {
-      const { message } = handleAxiosError("Failed to load session", e);
+      const { message } = handleAxiosError("SessionApprovalView", e, "Failed to load session");
       error.value = "Error Loading Session";
       errorDetails.value = message;
     }
@@ -190,21 +192,23 @@ const handleApprove = async () => {
     });
     pushSuccess("Session approved successfully");
     router.push("/sessions");
-  } catch (e: any) {
-    console.error("[SessionApprovalView] Failed to approve session:", e);
-    if (e.response?.status === 404) {
+  } catch (e: unknown) {
+    const axiosLike = e as AxiosLikeError;
+    logError("SessionApprovalView", "Failed to approve session:", e);
+    if (axiosLike.response?.status === 404) {
       pushError("Session not found - it may have been deleted or already processed");
-    } else if (e.response?.status === 403) {
+    } else if (axiosLike.response?.status === 403) {
       pushError("You are not authorized to approve this session");
-    } else if (e.response?.status === 409) {
+    } else if (axiosLike.response?.status === 409) {
       pushError("Session has already been approved or rejected by another approver");
-    } else if (e.response?.status === 400) {
-      pushError(`Invalid request: ${e.response?.data?.error || "Please check the session details"}`);
-    } else if (e.code === "ECONNABORTED" || e.code === "ERR_NETWORK") {
+    } else if (axiosLike.response?.status === 400) {
+      pushError(
+        `Invalid request: ${(axiosLike.response?.data?.error as string) || "Please check the session details"}`,
+      );
+    } else if (axiosLike.code === "ECONNABORTED" || axiosLike.code === "ERR_NETWORK") {
       pushError("Network error - please check your connection and try again");
     } else {
-      handleAxiosError("Failed to approve session", e);
-      pushError("Failed to approve session - please try again");
+      handleAxiosError("SessionApprovalView", e, "Failed to approve session");
     }
     isApproving.value = false;
   }
@@ -224,21 +228,23 @@ const handleReject = async () => {
     });
     pushSuccess("Session rejected successfully");
     router.push("/sessions");
-  } catch (e: any) {
-    console.error("[SessionApprovalView] Failed to reject session:", e);
-    if (e.response?.status === 404) {
+  } catch (e: unknown) {
+    const axiosLike = e as AxiosLikeError;
+    logError("SessionApprovalView", "Failed to reject session:", e);
+    if (axiosLike.response?.status === 404) {
       pushError("Session not found - it may have been deleted or already processed");
-    } else if (e.response?.status === 403) {
+    } else if (axiosLike.response?.status === 403) {
       pushError("You are not authorized to reject this session");
-    } else if (e.response?.status === 409) {
+    } else if (axiosLike.response?.status === 409) {
       pushError("Session has already been approved or rejected by another approver");
-    } else if (e.response?.status === 400) {
-      pushError(`Invalid request: ${e.response?.data?.error || "Please check the session details"}`);
-    } else if (e.code === "ECONNABORTED" || e.code === "ERR_NETWORK") {
+    } else if (axiosLike.response?.status === 400) {
+      pushError(
+        `Invalid request: ${(axiosLike.response?.data?.error as string) || "Please check the session details"}`,
+      );
+    } else if (axiosLike.code === "ECONNABORTED" || axiosLike.code === "ERR_NETWORK") {
       pushError("Network error - please check your connection and try again");
     } else {
-      handleAxiosError("Failed to reject session", e);
-      pushError("Failed to reject session - please try again");
+      handleAxiosError("SessionApprovalView", e, "Failed to reject session");
     }
     isApproving.value = false;
   }
@@ -249,15 +255,15 @@ const handleCancel = () => {
 };
 
 onMounted(async () => {
-  console.log("[SessionApprovalView] Mounted, sessionName:", sessionName.value, "authenticated:", authenticated.value);
+  debug("SessionApprovalView", "Mounted, sessionName:", sessionName.value, "authenticated:", authenticated.value);
 
   // Check authentication before attempting to load session
   if (!authenticated.value) {
-    console.log("[SessionApprovalView] User not authenticated, initiating login with redirect back");
+    debug("SessionApprovalView", "User not authenticated, initiating login with redirect back");
     // Initiate login with the current approval path stored in state
     // After OIDC callback, user will be redirected back to this approval page
     const currentPath = route.fullPath;
-    console.log("[SessionApprovalView] Storing path for post-login redirect:", currentPath);
+    debug("SessionApprovalView", "Storing path for post-login redirect:", currentPath);
     await auth.login({ path: currentPath });
     return;
   }

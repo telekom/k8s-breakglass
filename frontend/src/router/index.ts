@@ -14,7 +14,7 @@ import DebugSessionCreate from "@/views/DebugSessionCreate.vue";
 import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
 
 import { createRouter, createWebHistory } from "vue-router";
-import logger from "@/services/logger-console";
+import logger from "@/services/logger";
 
 const isDev = import.meta.env.DEV;
 

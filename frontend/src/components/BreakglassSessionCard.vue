@@ -21,6 +21,7 @@ import humanizeDuration from "humanize-duration";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
 import { statusToneFor } from "@/utils/statusStyles";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
+import type { SessionCR } from "@/model/breakglass";
 
 const humanizeConfig: humanizeDuration.Options = {
   round: true,
@@ -28,7 +29,7 @@ const humanizeConfig: humanizeDuration.Options = {
 };
 
 const props = defineProps<{
-  breakglass: any;
+  breakglass: SessionCR;
   time: number;
   currentUserEmail?: string;
 }>();
@@ -59,12 +60,16 @@ const isActive = computed(() => {
 
 const retained = computed(
   () =>
-    props.breakglass.status.retainedUntil !== null &&
+    props.breakglass.status?.retainedUntil !== null &&
+    props.breakglass.status?.retainedUntil !== undefined &&
     Date.parse(props.breakglass.status.retainedUntil) - props.time > 0,
 );
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _approved = computed(
-  () => props.breakglass.status.expiresAt !== null && Date.parse(props.breakglass.status.expiresAt) - props.time > 0,
+  () =>
+    props.breakglass.status?.expiresAt !== null &&
+    props.breakglass.status?.expiresAt !== undefined &&
+    Date.parse(props.breakglass.status.expiresAt) - props.time > 0,
 );
 
 function openReview() {
@@ -84,13 +89,13 @@ const expiryHumanized = computed(() => {
   if (!retained.value) {
     return "already expired";
   }
-  const until = Date.parse(props.breakglass.status.expiresAt);
+  const until = Date.parse(props.breakglass.status?.expiresAt || "");
   const duration = until - props.time;
   return humanizeDuration(duration, humanizeConfig);
 });
 
 const approvedAt = computed(() => {
-  if (props.breakglass.status.approvedAt) {
+  if (props.breakglass.status?.approvedAt) {
     debugLogDateTime("approvedAt", props.breakglass.status.approvedAt);
     return format24Hour(props.breakglass.status.approvedAt);
   }
@@ -98,7 +103,7 @@ const approvedAt = computed(() => {
 });
 
 const rejectedAt = computed(() => {
-  if (props.breakglass.status.rejectedAt) {
+  if (props.breakglass.status?.rejectedAt) {
     debugLogDateTime("rejectedAt", props.breakglass.status.rejectedAt);
     return format24Hour(props.breakglass.status.rejectedAt);
   }
@@ -106,9 +111,10 @@ const rejectedAt = computed(() => {
 });
 
 const withdrawnAt = computed(() => {
-  if (props.breakglass.status.withdrawnAt) {
-    debugLogDateTime("withdrawnAt", props.breakglass.status.withdrawnAt);
-    return format24Hour(props.breakglass.status.withdrawnAt);
+  const val = props.breakglass.status?.withdrawnAt;
+  if (val) {
+    debugLogDateTime("withdrawnAt", val);
+    return format24Hour(val);
   }
   return null;
 });
@@ -125,12 +131,13 @@ const requestedAt = computed(() => {
 const _approver = computed(() => {
   // Prefer explicit approver field
   if (props.breakglass.status) {
-    const st: any = props.breakglass.status;
+    const st = props.breakglass.status;
     if (st.approver) return st.approver;
     if (Array.isArray(st.approvers) && st.approvers.length > 0) return st.approvers[st.approvers.length - 1];
     // fallback to conditions parsing for older servers
-    if (Array.isArray(st.conditions)) {
-      const approvedCond = st.conditions.find((c: any) => c.type === "Approved");
+    const conditions = st.conditions as Array<{ type?: string; message?: string }> | undefined;
+    if (Array.isArray(conditions)) {
+      const approvedCond = conditions.find((c) => c.type === "Approved");
       if (approvedCond && approvedCond.message) {
         const match = approvedCond.message.match(/User \"([^\"]+)\" set session to/);
         if (match) return match[1];
@@ -184,7 +191,7 @@ const requestReasonText = computed(() => {
   >
     <template #status>
       <scale-tag :variant="chipVariant" data-testid="session-status">{{
-        breakglass.status.state || "Unknown"
+        breakglass.status?.state || "Unknown"
       }}</scale-tag>
     </template>
 

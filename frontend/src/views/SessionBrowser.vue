@@ -65,26 +65,26 @@ const stateOptions = [
 
 function startedFor(session: SessionCR): string | null {
   return (
-    (session as any).started ||
+    session.started ||
     session.status?.actualStartTime ||
     session.status?.startedAt ||
     session.metadata?.creationTimestamp ||
-    (session as any).createdAt ||
+    session.createdAt ||
     null
   );
 }
 
 function endedFor(session: SessionCR): string | null {
-  const state = (session.status?.state || (session as any).state || "").toString().toLowerCase();
+  const state = (session.status?.state || session.state || "").toString().toLowerCase();
   if (state === "approved" || state === "active") {
     return null;
   }
-  return session.status?.endedAt || session.status?.expiresAt || (session as any).ended || null;
+  return session.status?.endedAt || session.status?.expiresAt || session.ended || null;
 }
 
 function reasonEndedLabel(session: SessionCR): string {
-  const status = session.status || {};
-  const rawReason = (status as any).reasonEnded as string | undefined;
+  const status = session.status;
+  const rawReason = status?.reasonEnded;
   if (rawReason) {
     // Map known backend values to human-readable labels
     const reasonLabels: Record<string, string> = {
@@ -98,10 +98,10 @@ function reasonEndedLabel(session: SessionCR): string {
     };
     return reasonLabels[rawReason] ?? rawReason;
   }
-  if ((status as any).reason) return (status as any).reason as string;
-  if ((session as any).terminationReason) return (session as any).terminationReason as string;
-  if ((session as any).state) {
-    const normalized = ((session as any).state as string).toLowerCase();
+  if (status?.reason) return status.reason;
+  if (session.terminationReason) return session.terminationReason;
+  if (session.state) {
+    const normalized = session.state.toLowerCase();
     switch (normalized) {
       case "withdrawn":
         return "Withdrawn by user";
@@ -119,14 +119,14 @@ function reasonEndedLabel(session: SessionCR): string {
       case "pending":
         return "Pending";
       default:
-        return (session as any).state as string;
+        return session.state;
     }
   }
   return "";
 }
 
 function sessionState(session: SessionCR): string {
-  return session.status?.state || (session as any).state || "-";
+  return session.status?.state || session.state || "-";
 }
 
 function normalizedState(session: SessionCR): string {
@@ -144,7 +144,7 @@ function sessionStatusVariant(session: SessionCR): TagVariant {
 }
 
 function sessionUser(session: SessionCR): string {
-  return session.spec?.user || session.spec?.requester || (session as any).user || "-";
+  return session.spec?.user || session.spec?.requester || session.user || "-";
 }
 
 function sessionName(session: SessionCR): string {
@@ -203,15 +203,15 @@ async function fetchSessions() {
     });
     sessions.value = Array.from(dedup.values());
     lastQuery.value = describeQuery(statesToQuery);
-  } catch (err: any) {
-    error.value = err?.message || "Failed to load sessions";
+  } catch (err: unknown) {
+    error.value = (err instanceof Error ? err.message : undefined) || "Failed to load sessions";
   } finally {
     loading.value = false;
   }
 }
 
 function onStateToggle(state: string, event: Event | CustomEvent) {
-  const target = event.target as HTMLInputElement | any;
+  const target = event.target as HTMLInputElement | null;
   const checked = !!target?.checked;
   const next = new Set(filters.states);
   if (checked) {
@@ -341,8 +341,8 @@ async function executeSessionAction(session: SessionCR, action: SessionActionKey
         break;
     }
     await fetchSessions();
-  } catch (err: any) {
-    const message = err?.message || `Failed to ${action} session`;
+  } catch (err: unknown) {
+    const message = (err instanceof Error ? err.message : undefined) || `Failed to ${action} session`;
     pushError(message);
   } finally {
     setActionBusy(session);
@@ -425,7 +425,7 @@ onMounted(() => {
             :data-testid="`state-filter-${option.value}`"
             :checked="filters.states.includes(option.value)"
             :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
-            @scaleChange="(event: any) => onStateToggle(option.value, event)"
+            @scaleChange="(event: Event) => onStateToggle(option.value, event)"
           >
             {{ option.label }}
           </scale-checkbox>

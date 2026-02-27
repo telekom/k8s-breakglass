@@ -22,7 +22,7 @@ export default class BreakglassSessionService {
     // RESTful: POST /breakglassSessions
     try {
       // backend expects short schema keys: cluster, user, group
-      const payload: any = {
+      const payload: Record<string, string | boolean | undefined> = {
         cluster: request.cluster,
         user: request.user,
         group: request.group,
@@ -41,7 +41,7 @@ export default class BreakglassSessionService {
   public async getSessionStatus(request: BreakglassSessionRequest) {
     // RESTful: GET /breakglassSessions?user=...&cluster=...&group=...&name=...
     try {
-      const params: Record<string, any> = {};
+      const params: Record<string, string | boolean> = {};
       if (request.user && request.user !== "") params.user = request.user;
       if (request.cluster && request.cluster !== "") params.cluster = request.cluster;
       if (request.group && request.group !== "") params.group = request.group;
@@ -82,7 +82,7 @@ export default class BreakglassSessionService {
     // RESTful: POST /breakglassSessions/:name/approve
     if (!review.name) throw new Error("Missing session name for approve");
     try {
-      const body: Record<string, any> = {};
+      const body: Record<string, string> = {};
       if (review.reason && review.reason.trim().length > 0) body.reason = review.reason;
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/approve`, body);
     } catch (e) {
@@ -95,7 +95,7 @@ export default class BreakglassSessionService {
     // RESTful: POST /breakglassSessions/:name/reject
     if (!review.name) throw new Error("Missing session name for reject");
     try {
-      const body: Record<string, any> = {};
+      const body: Record<string, string> = {};
       if (review.reason && review.reason.trim().length > 0) body.reason = review.reason;
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/reject`, body);
     } catch (e) {

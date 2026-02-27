@@ -9,16 +9,6 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import ErrorBoundary from "@/components/common/ErrorBoundary.vue";
 
-// Mock the logger
-vi.mock("@/services/logger-console", () => ({
-  default: {
-    error: vi.fn(),
-    warn: vi.fn(),
-    info: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
-
 // A child component that throws during setup
 const ThrowingChild = defineComponent({
   name: "ThrowingChild",

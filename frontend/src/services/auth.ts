@@ -3,7 +3,7 @@ import type { IDPInfo } from "@/model/multiIDP";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 import { UserManager, WebStorageStateStore, User, type UserManagerSettings, Log } from "oidc-client-ts";
 import { ref } from "vue";
-import { info as logInfo, error as logError } from "@/services/logger";
+import { debug, info as logInfo, warn, error as logError } from "@/services/logger";
 
 // Store the current direct authority for header injection during OIDC requests
 // We use sessionStorage so it persists across page reloads during OAuth redirect flow
@@ -182,7 +182,7 @@ function setCurrentDirectAuthority(authority: string | undefined) {
   if (!isBrowser || typeof window.sessionStorage === "undefined") {
     return;
   }
-  console.debug("[AuthService] Setting current direct authority for header injection:", {
+  debug("AuthService", "Setting current direct authority for header injection:", {
     newAuthority: authority,
     previousAuthority: getCurrentDirectAuthority(),
   });
@@ -207,7 +207,10 @@ function getCurrentDirectAuthority(): string | undefined {
 
 function safeBtoa(value: string): string {
   if (typeof globalThis !== "undefined") {
-    const globalAny = globalThis as { btoa?: (data: string) => string; Buffer?: any };
+    const globalAny = globalThis as {
+      btoa?: (data: string) => string;
+      Buffer?: { from(value: string, encoding: string): { toString(encoding: string): string } };
+    };
     if (typeof globalAny.btoa === "function") {
       return globalAny.btoa(value);
     }
@@ -224,7 +227,7 @@ function base64UrlEncodeString(value: string): string {
   return safeBtoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlEncodeObject(obj: Record<string, any>): string {
+function base64UrlEncodeObject(obj: Record<string, unknown>): string {
   return base64UrlEncodeString(JSON.stringify(obj));
 }
 
@@ -232,7 +235,7 @@ function base64UrlEncodeObject(obj: Record<string, any>): string {
  * Builds an unsigned JWT purely for mock environments.
  * Consumers must NEVER rely on the signature because the header uses alg "none".
  */
-function createMockJWT(payload: Record<string, any>): string {
+function createMockJWT(payload: Record<string, unknown>): string {
   if (isProdBuild) {
     throw new Error("Mock JWT generation is disabled in production builds.");
   }
@@ -250,11 +253,11 @@ function resolveMockProfile(idpName?: string): MockProfile {
 
 // Direct oidc-client logs into our logger
 Log.setLogger({
-  debug: (...args: any[]) => logInfo("oidc-client", ...args),
-  info: (...args: any[]) => logInfo("oidc-client", ...args),
-  warn: (...args: any[]) => logInfo("oidc-client", ...args),
-  error: (...args: any[]) => logError("oidc-client", ...args),
-} as any);
+  debug: (...args: unknown[]) => logInfo("oidc-client", ...args),
+  info: (...args: unknown[]) => logInfo("oidc-client", ...args),
+  warn: (...args: unknown[]) => logInfo("oidc-client", ...args),
+  error: (...args: unknown[]) => logError("oidc-client", ...args),
+});
 
 export const AuthRedirect = "/auth/callback";
 export const AuthSilentRedirect = "/auth/silent-renew";
@@ -335,11 +338,11 @@ export default class AuthService {
   ): UserManager {
     const existing = this.idpManagers.get(idpName);
     if (existing) {
-      console.debug("[AuthService] Reusing cached UserManager for IDP:", { idpName, authority, directAuthority });
+      debug("AuthService", "Reusing cached UserManager for IDP:", { idpName, authority, directAuthority });
       return existing.manager;
     }
 
-    console.debug("[AuthService] Creating UserManager for IDP:", {
+    debug("AuthService", "Creating UserManager for IDP:", {
       idpName,
       authority,
       clientID,
@@ -384,12 +387,12 @@ export default class AuthService {
         preferred_username: profile.email,
         groups: profile.groups,
         iss: payload.iss,
-      } as any,
+      },
       expires_at: payload.exp,
       scope: "openid profile email",
+      userState: resolveState(state),
     });
 
-    (mockUser as any).state = resolveState(state);
     return mockUser;
   }
 
@@ -423,13 +426,13 @@ export default class AuthService {
 
   public async login(state?: State): Promise<void> {
     if (this.mockMode) {
-      console.debug("[AuthService] Mock login activated", { idpName: state?.idpName });
+      debug("AuthService", "Mock login activated", { idpName: state?.idpName });
       this.performMockLogin(state);
       return;
     }
     // If specific IDP requested, need to get its config and use its UserManager
     if (state?.idpName) {
-      console.debug("[AuthService] Logging in with specific IDP:", {
+      debug("AuthService", "Logging in with specific IDP:", {
         idpName: state.idpName,
         redirectPath: state.path,
       });
@@ -442,27 +445,25 @@ export default class AuthService {
         const idpConfig = idpConfigFound as IDPInfo | undefined;
 
         if (!idpConfig) {
-          console.error("[AuthService] IDP not found in config:", state.idpName);
-          logError("AuthService", "IDP not found", state.idpName);
+          logError("AuthService", "IDP not found in config:", state.idpName);
           // Fall back to default UserManager
           return this.userManager.signinRedirect({ state: resolveState(state) });
         }
 
-        console.debug("[AuthService] Found IDP config:", {
+        debug("AuthService", "Found IDP config:", {
           name: idpConfig.name,
           displayName: idpConfig.displayName,
           issuer: idpConfig.issuer,
-          oidcAuthority: (idpConfig as any).oidcAuthority,
-          oidcClientID: (idpConfig as any).oidcClientID,
+          oidcAuthority: idpConfig.oidcAuthority,
+          oidcClientID: idpConfig.oidcClientID,
         });
 
         // Check if we have the OIDC credentials for this IDP
-        const directAuthority = (idpConfig as any).oidcAuthority;
-        const oidcClientID = (idpConfig as any).oidcClientID;
+        const directAuthority = idpConfig.oidcAuthority;
+        const oidcClientID = idpConfig.oidcClientID;
 
         if (!directAuthority || !oidcClientID) {
-          console.error("[AuthService] IDP missing OIDC configuration", idpConfig);
-          logError("AuthService", "IDP missing OIDC config", idpConfig);
+          logError("AuthService", "IDP missing OIDC configuration", idpConfig);
           // Fall back to default UserManager
           return this.userManager.signinRedirect({ state: resolveState(state) });
         }
@@ -479,7 +480,7 @@ export default class AuthService {
         // Also store IDP name in sessionStorage so it survives the OAuth redirect
         if (state.idpName) {
           sessionStorage.setItem("oidc_idp_name", state.idpName);
-          console.debug("[AuthService] Stored IDP name in sessionStorage:", {
+          debug("AuthService", "Stored IDP name in sessionStorage:", {
             idpName: state.idpName,
           });
         }
@@ -488,7 +489,7 @@ export default class AuthService {
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
         const manager = this.getOrCreateUserManagerForIDP(state.idpName, proxyAuthority, oidcClientID, directAuthority);
 
-        console.debug("[AuthService] About to initiate signin redirect for IDP:", {
+        debug("AuthService", "About to initiate signin redirect for IDP:", {
           idpName: state.idpName,
           proxyAuthority,
           directAuthority,
@@ -498,7 +499,7 @@ export default class AuthService {
 
         // Set the direct authority globally so fetch interceptor can inject the header
         setCurrentDirectAuthority(directAuthority);
-        console.debug("[AuthService] Set global directAuthority for header injection:", {
+        debug("AuthService", "Set global directAuthority for header injection:", {
           directAuthority,
         });
 
@@ -510,14 +511,13 @@ export default class AuthService {
 
         return manager.signinRedirect({ state: redirectedState });
       } catch (err) {
-        console.error("[AuthService] Error getting IDP config:", err);
-        logError("AuthService", "Error getting IDP config", err);
+        logError("AuthService", "Error getting IDP config:", err);
         // Fall back to default UserManager
         return this.userManager.signinRedirect({ state: resolveState(state) });
       }
     }
 
-    console.debug("[AuthService] Logging in with default IDP (no specific IDP selected)");
+    debug("AuthService", "Logging in with default IDP (no specific IDP selected)");
     if (isBrowser) {
       sessionStorage.removeItem("oidc_idp_name");
     }
@@ -535,7 +535,7 @@ export default class AuthService {
       this.clearMockSession();
       return Promise.resolve();
     }
-    console.debug("[AuthService] Logging out");
+    debug("AuthService", "Logging out");
     // Clear the current IDP name on logout
     this.currentIDPName = undefined;
     currentIDPName.value = undefined;
@@ -553,7 +553,7 @@ export default class AuthService {
     const isExpired = expiresAt ? now >= expiresAt : false;
     const expiresIn = expiresAt ? expiresAt - now : undefined;
 
-    console.debug("[AuthService] Retrieved access token", {
+    debug("AuthService", "Retrieved access token", {
       hasToken: !!token,
       tokenLength: token.length,
       expiresAt: expiresAt ? new Date(expiresAt * 1000).toISOString() : undefined,
@@ -562,7 +562,7 @@ export default class AuthService {
     });
 
     if (isExpired) {
-      console.warn("[AuthService] Token is expired, API calls will likely fail with 401");
+      warn("AuthService", "Token is expired, API calls will likely fail with 401");
       logError("AuthService", "Returning expired token - user needs to re-authenticate");
     }
 
@@ -594,43 +594,42 @@ export default class AuthService {
    */
   public async trySilentRenew(): Promise<boolean> {
     if (this.mockMode) {
-      console.debug("[AuthService] Silent renew skipped in mock mode");
+      debug("AuthService", "Silent renew skipped in mock mode");
       return true;
     }
 
     // First, check if we have a valid user with a refresh token
     const currentUser = await this.userManager.getUser();
     if (!currentUser) {
-      console.warn("[AuthService] No user found for silent renew");
+      warn("AuthService", "No user found for silent renew");
       return false;
     }
 
     try {
-      console.debug("[AuthService] Attempting silent renew (iframe method)");
+      debug("AuthService", "Attempting silent renew (iframe method)");
       const renewedUser = await this.userManager.signinSilent();
       if (renewedUser) {
-        console.debug("[AuthService] Silent renew successful (iframe)", {
+        debug("AuthService", "Silent renew successful (iframe)", {
           email: renewedUser.profile?.email,
           expiresAt: renewedUser.expires_at,
         });
         user.value = renewedUser;
         return true;
       }
-      console.warn("[AuthService] Silent renew returned no user");
+      warn("AuthService", "Silent renew returned no user");
       return false;
     } catch (iframeError) {
       // iframe method failed - likely CSP blocking
-      console.warn("[AuthService] Silent renew via iframe failed, trying refresh token fallback", iframeError);
+      warn("AuthService", "Silent renew via iframe failed, trying refresh token fallback", iframeError);
 
       // Check if we have a refresh token to try
       if (!currentUser.refresh_token) {
-        console.error("[AuthService] No refresh token available for fallback");
         logError("AuthService", "Silent renew failed and no refresh token available", iframeError);
         return false;
       }
 
       try {
-        console.debug("[AuthService] Attempting token refresh via refresh_token");
+        debug("AuthService", "Attempting token refresh via refresh_token");
         // Use the token endpoint directly via signinSilent with refresh token
         // oidc-client-ts will use the refresh_token if available when signinSilent fails
         const renewedUser = await this.userManager.signinSilent({
@@ -638,7 +637,7 @@ export default class AuthService {
           extraTokenParams: { grant_type: "refresh_token" },
         });
         if (renewedUser) {
-          console.debug("[AuthService] Refresh token renewal successful", {
+          debug("AuthService", "Refresh token renewal successful", {
             email: renewedUser.profile?.email,
             expiresAt: renewedUser.expires_at,
           });
@@ -646,7 +645,6 @@ export default class AuthService {
           return true;
         }
       } catch (refreshError) {
-        console.error("[AuthService] Refresh token fallback also failed", refreshError);
         logError("AuthService", "Both iframe and refresh token renewal failed", refreshError);
       }
 
@@ -660,7 +658,7 @@ export default class AuthService {
     }
     const data = await this.userManager.getUser();
     const email = data?.profile?.email || ""; // Extract email from user profile
-    console.debug("[AuthService] Retrieved user email:", { email });
+    debug("AuthService", "Retrieved user email:", { email });
     return email;
   }
 
@@ -694,7 +692,7 @@ export default class AuthService {
     const stateParam = urlParams.get("state");
     const issuerParam = urlParams.get("iss"); // The Keycloak instance that issued the auth code
 
-    console.debug("[AuthService] Processing signin callback", {
+    debug("AuthService", "Processing signin callback", {
       stateParam,
       issuerParam,
       hasIssuer: !!issuerParam,
@@ -741,7 +739,7 @@ export default class AuthService {
       seenManagers.add(this.userManager);
     }
 
-    console.debug("[AuthService] Candidate managers for callback:", {
+    debug("AuthService", "Candidate managers for callback:", {
       candidateCount: candidateManagers.length,
       preferredIdpName,
       issuerParam,
@@ -750,7 +748,7 @@ export default class AuthService {
     for (const candidate of candidateManagers) {
       try {
         const directAuthority = candidate.directAuthority;
-        console.debug("[AuthService] Attempting signin callback with manager", {
+        debug("AuthService", "Attempting signin callback with manager", {
           authority: candidate.manager.settings.authority,
           client_id: candidate.manager.settings.client_id,
           hasDirectAuthority: !!directAuthority,
@@ -762,33 +760,33 @@ export default class AuthService {
         // Set the direct authority for this manager so header injection works during callback
         if (directAuthority) {
           setCurrentDirectAuthority(directAuthority);
-          console.debug("[AuthService] Set directAuthority for callback processing:", {
+          debug("AuthService", "Set directAuthority for callback processing:", {
             directAuthority,
           });
         }
 
         const result = await candidate.manager.signinCallback();
-        console.debug("[AuthService] Successfully processed signin callback with manager", {
+        debug("AuthService", "Successfully processed signin callback with manager", {
           authority: candidate.manager.settings.authority,
           directAuthority,
         });
 
         let restoredIdpName: string | undefined;
         if (result && result.state && typeof result.state === "object" && "idpName" in result.state) {
-          restoredIdpName = (result.state as any).idpName as string | undefined;
-          console.debug("[AuthService] Restored IDP name from state payload:", {
+          restoredIdpName = (result.state as Record<string, unknown>).idpName as string | undefined;
+          debug("AuthService", "Restored IDP name from state payload:", {
             idpName: restoredIdpName,
             directAuthority,
           });
         } else if (preferredIdpName) {
           restoredIdpName = preferredIdpName;
-          console.debug("[AuthService] Restored IDP name from sessionStorage hint:", {
+          debug("AuthService", "Restored IDP name from sessionStorage hint:", {
             idpName: restoredIdpName,
             directAuthority,
           });
         } else if (candidate.idpName) {
           restoredIdpName = candidate.idpName;
-          console.debug("[AuthService] Using candidate IDP context for name:", {
+          debug("AuthService", "Using candidate IDP context for name:", {
             idpName: restoredIdpName,
             directAuthority,
           });
@@ -805,7 +803,7 @@ export default class AuthService {
         // Check if this is an authority mismatch error
         const errorMsg = String(error);
         if (errorMsg.includes("authority mismatch")) {
-          console.debug("[AuthService] Authority mismatch with this manager, trying next", {
+          debug("AuthService", "Authority mismatch with this manager, trying next", {
             authority: candidate.manager.settings.authority,
             error: errorMsg,
           });
@@ -813,7 +811,7 @@ export default class AuthService {
           continue;
         } else {
           // This is a different error, re-throw it
-          console.error("[AuthService] Non-authority-mismatch error during callback", {
+          logError("AuthService", "Non-authority-mismatch error during callback", {
             authority: candidate.manager.settings.authority,
             error,
           });
@@ -823,7 +821,7 @@ export default class AuthService {
     }
 
     // If we get here, no manager worked
-    console.error("[AuthService] No UserManager could process the signin callback");
+    logError("AuthService", "No UserManager could process the signin callback");
     throw new Error("Failed to process signin callback: no matching UserManager found");
   }
 
@@ -864,14 +862,14 @@ export default class AuthService {
     // Guard: Some mock/test managers may not have all event methods
     const events = manager.events;
     if (!events) {
-      console.debug("[AuthService] No events object on manager, skipping event registration");
+      debug("AuthService", "No events object on manager, skipping event registration");
       return;
     }
 
     // User loaded (after login or silent renew)
     if (typeof events.addUserLoaded === "function") {
       events.addUserLoaded((loadedUser) => {
-        console.debug("[AuthService] User loaded event", {
+        debug("AuthService", "User loaded event", {
           sub: loadedUser.profile?.sub,
           email: loadedUser.profile?.email,
           expiresAt: loadedUser.expires_at,
@@ -884,7 +882,7 @@ export default class AuthService {
     // User unloaded (logout or session expired)
     if (typeof events.addUserUnloaded === "function") {
       events.addUserUnloaded(() => {
-        console.debug("[AuthService] User unloaded event - session cleared");
+        debug("AuthService", "User unloaded event - session cleared");
         user.value = undefined;
       });
     }
@@ -892,14 +890,14 @@ export default class AuthService {
     // Token about to expire
     if (typeof events.addAccessTokenExpiring === "function") {
       events.addAccessTokenExpiring(() => {
-        console.debug("[AuthService] Access token expiring soon, silent renew should trigger");
+        debug("AuthService", "Access token expiring soon, silent renew should trigger");
       });
     }
 
     // Token expired (silent renew didn't work)
     if (typeof events.addAccessTokenExpired === "function") {
       events.addAccessTokenExpired(() => {
-        console.warn("[AuthService] Access token expired - silent renew failed or not configured");
+        warn("AuthService", "Access token expired - silent renew failed or not configured");
         logError("AuthService", "Access token expired, user needs to re-authenticate");
       });
     }
@@ -907,12 +905,11 @@ export default class AuthService {
     // Silent renew error
     if (typeof events.addSilentRenewError === "function") {
       events.addSilentRenewError((error) => {
-        console.error("[AuthService] Silent renew error", {
+        logError("AuthService", "Silent renew error", {
           message: error.message,
           name: error.name,
           stack: error.stack,
         });
-        logError("AuthService", "Silent renew failed", error.message);
         // If silent renew fails (e.g., due to CSP frame-ancestors), the user will need to re-authenticate
         // The next API call will get 401 and the error handling should redirect to login
       });
@@ -921,7 +918,7 @@ export default class AuthService {
     // User session changed (e.g., another tab logged out)
     if (typeof events.addUserSignedOut === "function") {
       events.addUserSignedOut(() => {
-        console.debug("[AuthService] User signed out event (possibly from another tab)");
+        debug("AuthService", "User signed out event (possibly from another tab)");
         user.value = undefined;
       });
     }

@@ -1,14 +1,24 @@
 import { vi, type Mock } from "vitest";
 import BreakglassService from "./breakglass";
 import { createAuthenticatedApiClient } from "@/services/httpClient";
+import type { Breakglass, SessionCR } from "@/model/breakglass";
+import type { AxiosInstance } from "axios";
 
 vi.mock("@/services/httpClient");
 const mockedCreateClient = createAuthenticatedApiClient as Mock<typeof createAuthenticatedApiClient>;
 
+type MockAxiosClient = {
+  get: Mock;
+  post: Mock;
+  interceptors: { request: { use: Mock }; response: { use: Mock } };
+};
+
+type FakeAuth = ConstructorParameters<typeof BreakglassService>[0];
+
 describe("BreakglassService", () => {
-  const fakeAuth = { getAccessToken: async () => "fake-token" } as any;
+  const fakeAuth = { getAccessToken: async () => "fake-token" } as unknown as FakeAuth;
   let service: BreakglassService;
-  let mockClient: any;
+  let mockClient: MockAxiosClient;
 
   beforeEach(() => {
     mockClient = {
@@ -19,7 +29,7 @@ describe("BreakglassService", () => {
         response: { use: vi.fn() },
       },
     };
-    mockedCreateClient.mockReturnValue(mockClient as any);
+    mockedCreateClient.mockReturnValue(mockClient as unknown as AxiosInstance);
     service = new BreakglassService(fakeAuth);
   });
 
@@ -71,8 +81,10 @@ describe("BreakglassService", () => {
       ],
     });
 
-    const escalations = await (service as any).fetchAvailableEscalations();
-    const durationByCluster = new Map(escalations.map((e: any) => [e.cluster, e.duration]));
+    const escalations = await (
+      service as unknown as { fetchAvailableEscalations: () => Promise<Record<string, unknown>[]> }
+    ).fetchAvailableEscalations();
+    const durationByCluster = new Map(escalations.map((e: Record<string, unknown>) => [e.cluster, e.duration]));
 
     expect(durationByCluster.get("alpha")).toBe(15);
     expect(durationByCluster.get("beta")).toBe(600);
@@ -105,13 +117,13 @@ describe("BreakglassService", () => {
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] });
 
-    const service = new BreakglassService({ getAccessToken: async () => "t" } as any);
+    const service = new BreakglassService({ getAccessToken: async () => "t" } as unknown as FakeAuth);
     const res = await service.getBreakglasses();
     expect(res).toHaveLength(1);
-    const first: any = res[0];
+    const first = res[0] as Breakglass;
     expect(first.sessionActive).not.toBeNull();
-    expect(first.sessionActive.metadata).toBeDefined();
-    expect(first.sessionActive.spec).toBeDefined();
+    expect(first.sessionActive?.metadata).toBeDefined();
+    expect(first.sessionActive?.spec).toBeDefined();
   });
 
   it("populates pending and historical matches when combining breakglass sources", async () => {
@@ -146,29 +158,32 @@ describe("BreakglassService", () => {
     const breakglasses = await service.getBreakglasses();
     expect(breakglasses).toHaveLength(2);
 
-    const pendingEntry = breakglasses.find((bg) => bg.cluster === "alpha") as any;
+    const pendingEntry = breakglasses.find((bg) => bg.cluster === "alpha") as Breakglass;
     expect(pendingEntry.state).toBe("Pending");
-    expect(pendingEntry.sessionPending.metadata.name).toBe("pending-1");
+    expect(pendingEntry.sessionPending?.metadata?.name).toBe("pending-1");
     expect(pendingEntry.sessionActive).toBeNull();
 
-    const historicalEntry = breakglasses.find((bg) => bg.cluster === "beta") as any;
+    const historicalEntry = breakglasses.find((bg) => bg.cluster === "beta") as Breakglass;
     expect(historicalEntry.state).toBe("Withdrawn");
     expect(historicalEntry.sessionPending).toBeNull();
     expect(historicalEntry.sessionActive).toBeNull();
   });
 
   it("includes provided reason when requesting breakglass for test-user", async () => {
-    const fakeAuth2 = { getAccessToken: async () => "tok", getUserEmail: async () => "test-user@example.com" } as any;
-    const mockClient2: any = {
+    const fakeAuth2 = {
+      getAccessToken: async () => "tok",
+      getUserEmail: async () => "test-user@example.com",
+    } as unknown as FakeAuth;
+    const mockClient2: MockAxiosClient = {
       post: vi.fn(),
       get: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2 as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth2);
     mockClient2.post.mockResolvedValueOnce({ status: 201 });
 
-    const transition = { cluster: "c1", to: "g1", duration: 3600 } as any;
+    const transition = { cluster: "c1", to: "g1", duration: 3600 } as unknown as Breakglass;
     await svc.requestBreakglass(transition, "needed for testing");
     expect(mockClient2.post).toHaveBeenCalledWith(
       "/breakglassSessions",
@@ -177,17 +192,20 @@ describe("BreakglassService", () => {
   });
 
   it("includes custom duration when requesting breakglass", async () => {
-    const fakeAuth = { getAccessToken: async () => "tok", getUserEmail: async () => "user@example.com" } as any;
-    const mockClient: any = {
+    const fakeAuth = {
+      getAccessToken: async () => "tok",
+      getUserEmail: async () => "user@example.com",
+    } as unknown as FakeAuth;
+    const mockClient: MockAxiosClient = {
       post: vi.fn(),
       get: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient);
+    mockedCreateClient.mockReturnValueOnce(mockClient as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient.post.mockResolvedValueOnce({ status: 201 });
 
-    const transition = { cluster: "c1", to: "g1", duration: 3600 } as any;
+    const transition = { cluster: "c1", to: "g1", duration: 3600 } as unknown as Breakglass;
     const customDuration = 1800; // 30 minutes instead of 3600
     await svc.requestBreakglass(transition, "testing", customDuration);
     expect(mockClient.post).toHaveBeenCalledWith(
@@ -197,17 +215,20 @@ describe("BreakglassService", () => {
   });
 
   it("includes scheduled start time when requesting breakglass", async () => {
-    const fakeAuth = { getAccessToken: async () => "tok", getUserEmail: async () => "user@example.com" } as any;
-    const mockClient: any = {
+    const fakeAuth = {
+      getAccessToken: async () => "tok",
+      getUserEmail: async () => "user@example.com",
+    } as unknown as FakeAuth;
+    const mockClient: MockAxiosClient = {
       post: vi.fn(),
       get: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient);
+    mockedCreateClient.mockReturnValueOnce(mockClient as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient.post.mockResolvedValueOnce({ status: 201 });
 
-    const transition = { cluster: "c1", to: "g1", duration: 3600 } as any;
+    const transition = { cluster: "c1", to: "g1", duration: 3600 } as unknown as Breakglass;
     const futureTime = new Date(Date.now() + 3600000).toISOString(); // 1 hour from now
     await svc.requestBreakglass(transition, "scheduled access", 3600, futureTime);
     expect(mockClient.post).toHaveBeenCalledWith(
@@ -221,17 +242,20 @@ describe("BreakglassService", () => {
   });
 
   it("omits duration when not provided (uses server default)", async () => {
-    const fakeAuth = { getAccessToken: async () => "tok", getUserEmail: async () => "user@example.com" } as any;
-    const mockClient: any = {
+    const fakeAuth = {
+      getAccessToken: async () => "tok",
+      getUserEmail: async () => "user@example.com",
+    } as unknown as FakeAuth;
+    const mockClient: MockAxiosClient = {
       post: vi.fn(),
       get: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient);
+    mockedCreateClient.mockReturnValueOnce(mockClient as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient.post.mockResolvedValueOnce({ status: 201 });
 
-    const transition = { cluster: "c1", to: "g1" } as any;
+    const transition = { cluster: "c1", to: "g1" } as unknown as Breakglass;
     await svc.requestBreakglass(transition, "needs access");
     // When duration is not provided, it should be 0 or not sent
     expect(mockClient.post).toHaveBeenCalledWith(
@@ -241,11 +265,12 @@ describe("BreakglassService", () => {
   });
 
   it("rejects a breakglass session with reason", async () => {
-    const mockClient2: any = {
+    const mockClient2: MockAxiosClient = {
+      get: vi.fn(),
       post: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2 as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -255,11 +280,12 @@ describe("BreakglassService", () => {
   });
 
   it("rejects a breakglass session without reason", async () => {
-    const mockClient2: any = {
+    const mockClient2: MockAxiosClient = {
+      get: vi.fn(),
       post: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2 as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -269,11 +295,12 @@ describe("BreakglassService", () => {
   });
 
   it("rejects a breakglass session and ignores empty reason string", async () => {
-    const mockClient2: any = {
+    const mockClient2: MockAxiosClient = {
+      get: vi.fn(),
       post: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2 as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -283,11 +310,12 @@ describe("BreakglassService", () => {
   });
 
   it("approves a breakglass session with reason", async () => {
-    const mockClient2: any = {
+    const mockClient2: MockAxiosClient = {
+      get: vi.fn(),
       post: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2 as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -297,11 +325,12 @@ describe("BreakglassService", () => {
   });
 
   it("approves a breakglass session without reason", async () => {
-    const mockClient2: any = {
+    const mockClient2: MockAxiosClient = {
+      get: vi.fn(),
       post: vi.fn(),
       interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
-    mockedCreateClient.mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2 as unknown as AxiosInstance);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -369,7 +398,7 @@ describe("BreakglassService", () => {
       });
 
     const pending = await service.fetchPendingSessionsForApproval();
-    const enriched = pending[0] as any;
+    const enriched = pending[0] as unknown as Record<string, unknown>;
     expect(enriched.approvalReason).toEqual({ mandatory: true, description: "Need manager approval" });
   });
 
@@ -380,7 +409,7 @@ describe("BreakglassService", () => {
 
     const pending = await service.fetchPendingSessionsForApproval();
     expect(pending).toHaveLength(1);
-    expect((pending[0] as any).approvalReason).toBeUndefined();
+    expect((pending[0] as unknown as Record<string, unknown>).approvalReason).toBeUndefined();
   });
 
   it("searches sessions with arbitrary parameters and handles failures", async () => {
@@ -408,12 +437,12 @@ describe("BreakglassService", () => {
       sessionActive: {
         metadata: { name: "session/1" },
       },
-    } as any;
+    } as unknown as Breakglass;
 
     await service.dropBreakglass(bg);
     expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/session%2F1/drop", {});
 
-    await expect(service.dropBreakglass({} as any)).rejects.toThrow("Missing session name");
+    await expect(service.dropBreakglass({} as unknown as Breakglass)).rejects.toThrow("Missing session name");
   });
 
   it("merges approved, timed-out and historical sessions for fetchMySessions", async () => {
@@ -455,16 +484,18 @@ describe("BreakglassService", () => {
 
   it("withdraws pending requests and errors when metadata is missing", async () => {
     mockClient.post.mockResolvedValueOnce({ status: 204 });
-    await service.withdrawMyRequest({ metadata: { name: "pending" } } as any);
+    await service.withdrawMyRequest({ metadata: { name: "pending" } } as SessionCR);
     expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/pending/withdraw", {});
 
-    await expect(service.withdrawMyRequest({ metadata: {} } as any)).rejects.toThrow("Missing session name");
+    await expect(service.withdrawMyRequest({ metadata: {} } as SessionCR)).rejects.toThrow("Missing session name");
   });
 
   it("rethrows errors when withdrawing requests fails", async () => {
     mockClient.post.mockRejectedValueOnce(new Error("withdraw failed"));
 
-    await expect(service.withdrawMyRequest({ metadata: { name: "oops" } } as any)).rejects.toThrow("withdraw failed");
+    await expect(service.withdrawMyRequest({ metadata: { name: "oops" } } as SessionCR)).rejects.toThrow(
+      "withdraw failed",
+    );
     expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/withdraw", {});
   });
 

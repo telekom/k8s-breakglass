@@ -7,6 +7,7 @@ export interface AvailableBreakglass {
   duration: number; // seconds
   selfApproval: boolean; // true if no approvers defined
   approvalGroups: string[]; // approver groups (if any)
+  requestingGroups?: string[]; // optional array of groups that can request this escalation
   // optional reason configuration shown to requesters
   requestReason?: { mandatory?: boolean; description?: string };
   // optional reason configuration shown to approvers
@@ -34,7 +35,9 @@ export interface ActiveBreakglass {
 export interface SessionMetadata {
   name?: string;
   creationTimestamp?: string;
-  [key: string]: any;
+  annotations?: Record<string, string>;
+  labels?: Record<string, string>;
+  [key: string]: unknown;
 }
 
 export interface SessionSpec {
@@ -44,10 +47,15 @@ export interface SessionSpec {
   denyPolicyRefs?: string[];
   requestReason?: string;
   idleTimeout?: string;
+  requester?: string;
+  approverGroup?: string | string[];
+  approverGroups?: string | string[];
+  scheduledStartTime?: string;
+  identityProviderName?: string;
   // Snapshots of escalation config at session creation time
   requestReasonConfig?: { mandatory?: boolean; description?: string };
   approvalReasonConfig?: { mandatory?: boolean; description?: string };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface SessionStatus {
@@ -62,7 +70,16 @@ export interface SessionStatus {
   reasonEnded?: string;
   lastActivity?: string;
   activityCount?: number;
-  [key: string]: any;
+  actualStartTime?: string;
+  startedAt?: string;
+  endedAt?: string;
+  reason?: string;
+  withdrawnAt?: string;
+  approvalReason?: string;
+  approverGroup?: string | string[];
+  approverGroups?: string | string[];
+  conditions?: Array<{ type?: string; message?: string; lastTransitionTime?: string }>;
+  [key: string]: unknown;
 }
 
 export interface SessionCR {
@@ -74,4 +91,11 @@ export interface SessionCR {
   group?: string;
   cluster?: string;
   expiry?: number;
+  user?: string;
+  started?: string;
+  ended?: string;
+  createdAt?: string;
+  state?: string;
+  terminationReason?: string;
+  [key: string]: unknown;
 }

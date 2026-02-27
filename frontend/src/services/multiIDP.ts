@@ -1,5 +1,5 @@
 import axios from "axios";
-import { error as logError } from "@/services/logger";
+import { debug, error as logError } from "@/services/logger";
 
 /**
  * Phase 8: Multi-IDP Configuration Service
@@ -28,6 +28,10 @@ export interface IDPInfo {
   issuer: string;
   /** Whether this IDP is currently active/enabled */
   enabled: boolean;
+  /** OIDC authority endpoint for direct IDP login (optional) */
+  oidcAuthority?: string;
+  /** OIDC client ID for direct IDP login (optional) */
+  oidcClientID?: string;
 }
 
 /**
@@ -56,10 +60,10 @@ export interface MultiIDPConfig {
  */
 export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
   try {
-    console.debug("[MultiIDP] Fetching multi-IDP configuration from /api/config/idps");
+    debug("MultiIDP", "Fetching multi-IDP configuration from /api/config/idps");
     const res = await axios.get<MultiIDPConfig>("/api/config/idps");
     const config = res.data || { identityProviders: [], escalationIDPMapping: {} };
-    console.debug("[MultiIDP] Successfully fetched config:", {
+    debug("MultiIDP", "Successfully fetched config:", {
       idpCount: config.identityProviders.length,
       idps: config.identityProviders.map((idp) => ({
         name: idp.name,
@@ -71,7 +75,6 @@ export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
     return config;
   } catch (err) {
     logError("MultiIDPService", "Failed to fetch multi-IDP configuration", err);
-    console.error("[MultiIDP] Error fetching config:", err);
     // Return empty config so UI can gracefully handle missing data
     return { identityProviders: [], escalationIDPMapping: {} };
   }
@@ -87,23 +90,25 @@ export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
  */
 export function getAllowedIDPsForEscalation(escalationName: string, config: MultiIDPConfig): IDPInfo[] {
   const allowedIDPNames = config.escalationIDPMapping[escalationName];
-  console.debug(`[MultiIDP] Getting allowed IDPs for escalation "${escalationName}":`, {
+  debug("MultiIDP", `Getting allowed IDPs for escalation "${escalationName}":`, {
     escalationMapping: allowedIDPNames,
     availableIDPs: config.identityProviders.map((idp) => idp.name),
   });
 
   // Empty array [] means all IDPs allowed (backward compatibility)
   if (allowedIDPNames === undefined || allowedIDPNames.length === 0) {
-    console.debug(
-      `[MultiIDP] No restrictions for escalation "${escalationName}", returning all ${config.identityProviders.length} IDPs`,
+    debug(
+      "MultiIDP",
+      `No restrictions for escalation "${escalationName}", returning all ${config.identityProviders.length} IDPs`,
     );
     return config.identityProviders;
   }
 
   // Filter to only allowed IDPs
   const filtered = config.identityProviders.filter((idp) => allowedIDPNames.includes(idp.name));
-  console.debug(
-    `[MultiIDP] Filtered to ${filtered.length} allowed IDPs for escalation "${escalationName}":`,
+  debug(
+    "MultiIDP",
+    `Filtered to ${filtered.length} allowed IDPs for escalation "${escalationName}":`,
     filtered.map((idp) => idp.name),
   );
   return filtered;

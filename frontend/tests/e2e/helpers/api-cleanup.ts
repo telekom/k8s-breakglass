@@ -65,7 +65,7 @@ export class APICleanupHelper {
    * Get pending sessions for the current user.
    * Makes an authenticated API call using the OIDC Bearer token.
    */
-  async getPendingSessions(): Promise<any[]> {
+  async getPendingSessions(): Promise<unknown[]> {
     try {
       const token = await this.getAccessToken();
       if (!token) {

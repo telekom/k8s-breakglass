@@ -1,6 +1,6 @@
 import axios, { AxiosHeaders, type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 import type AuthService from "@/services/auth";
-import logger from "@/services/logger-console";
+import logger from "@/services/logger";
 
 export interface ApiClientOptions {
   baseURL?: string;
@@ -34,10 +34,10 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore - dev flag injected via window
           if (typeof window !== "undefined" && (window.__DEV_TOKEN_LOG === true || window.__DEV_TOKEN_LOG === "true")) {
-            console.debug("[httpClient] Authorization header:", headers.get("Authorization"));
+            logger.debug("HttpClient", "Authorization header:", headers.get("Authorization"));
           }
         } catch {
-          // ignore outside browser contexts
+          // Window object unavailable (SSR / test) — dev token logging not applicable
         }
       }
 
@@ -71,12 +71,12 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
 
       // Handle 401 errors with optional retry after silent renew
       if (error.response?.status === 401 && options?.retryOn401 !== false && !config?.[RETRY_FLAG]) {
-        console.debug("[httpClient] Received 401, attempting silent token renew before retry");
+        logger.debug("HttpClient", "Received 401, attempting silent token renew before retry");
 
         try {
           const renewed = await auth.trySilentRenew();
           if (renewed) {
-            console.debug("[httpClient] Silent renew successful, retrying request");
+            logger.debug("HttpClient", "Silent renew successful, retrying request");
             // Mark this request as retried to avoid infinite loops
             config[RETRY_FLAG] = true;
             // Update the authorization header with the new token
@@ -86,10 +86,10 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
             // Retry the request
             return client.request(config);
           } else {
-            console.warn("[httpClient] Silent renew failed, not retrying request");
+            logger.warn("HttpClient", "Silent renew failed, not retrying request");
           }
         } catch (renewError) {
-          console.error("[httpClient] Error during silent renew attempt", renewError);
+          logger.error("HttpClient", "Error during silent renew attempt", renewError);
         }
       }
 

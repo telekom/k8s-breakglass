@@ -17,6 +17,7 @@ vi.mock("axios", () => ({
 
 vi.mock("@/services/logger", () => ({
   __esModule: true,
+  debug: vi.fn(),
   error: vi.fn(),
 }));
 

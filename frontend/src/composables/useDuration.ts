@@ -163,6 +163,7 @@ export function computeEndTime(
 
     return new Date(startTime.getTime() + parsed.totalSeconds * 1000);
   } catch {
+    // Date arithmetic or parsing failed — cannot compute end time
     return null;
   }
 }

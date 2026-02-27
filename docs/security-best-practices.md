@@ -353,6 +353,22 @@ This enables a single template to serve multiple personas with different capabil
 2. **Prevent self-approval** - The system automatically prevents users from approving their own requests
 3. **Multi-person approval** - Consider requiring multiple approvers for sensitive escalations
 
+## Cross-Site Request Forgery (CSRF) Protection
+
+The breakglass frontend is **not vulnerable to CSRF** because it uses **OIDC Bearer token authentication** rather than cookie-based sessions:
+
+- All API requests include an `Authorization: Bearer <token>` header injected by the HTTP client interceptor (`frontend/src/services/httpClient.ts`).
+- OIDC access tokens are stored in the browser's `sessionStorage` via `oidc-client-ts`, **not** in cookies.
+- The browser never automatically attaches credentials to cross-origin requests, so a malicious site cannot forge authenticated API calls.
+
+This architecture inherently mitigates CSRF because:
+
+1. **No ambient credentials** — Unlike session cookies, Bearer tokens must be explicitly attached to each request by JavaScript code.
+2. **Same-origin policy** — A cross-origin page cannot read `sessionStorage` of the breakglass domain.
+3. **No `withCredentials`** — The axios client does not set `withCredentials: true`, so cookies (if any existed) would not be sent cross-origin.
+
+> **If you add cookie-based session state in the future**, you must implement CSRF protection (e.g., `SameSite=Strict` cookies, double-submit token pattern, or the `Synchronizer Token Pattern`).
+
 ## Related Documentation
 
 - [Identity Provider Configuration](identity-provider.md)

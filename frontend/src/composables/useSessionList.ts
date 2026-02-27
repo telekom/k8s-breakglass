@@ -68,7 +68,7 @@ export function getSessionKey(session: SessionCR): string {
  * Get session state from CR
  */
 export function getSessionState(session: SessionCR): string {
-  return session.status?.state || (session as any).state || "unknown";
+  return session.status?.state || session.state || "unknown";
 }
 
 /**
@@ -82,7 +82,7 @@ export function normalizeState(state: string): string {
  * Get session user/requester
  */
 export function getSessionUser(session: SessionCR): string {
-  return session.spec?.user || session.spec?.requester || (session as any).user || "—";
+  return session.spec?.user || session.spec?.requester || session.user || "—";
 }
 
 /**
@@ -111,11 +111,11 @@ export function getSessionExpiry(session: SessionCR): string | undefined {
  */
 export function getSessionStarted(session: SessionCR): string | undefined {
   return (
-    (session as any).started ||
+    session.started ||
     session.status?.actualStartTime ||
-    (session.status as any)?.startedAt ||
+    session.status?.startedAt ||
     session.metadata?.creationTimestamp ||
-    (session as any).createdAt
+    session.createdAt
   );
 }
 
@@ -127,7 +127,7 @@ export function getSessionEnded(session: SessionCR): string | undefined {
   if (state === "approved" || state === "active") {
     return undefined;
   }
-  return session.status?.endedAt || session.status?.expiresAt || (session as any).ended;
+  return session.status?.endedAt || session.status?.expiresAt || session.ended;
 }
 
 /**
@@ -158,12 +158,12 @@ export function collectApproverGroups(session: SessionCR): string[] {
   tryAdd(session.metadata?.labels?.["breakglass.t-caas.telekom.com/approver-groups"]);
 
   // Check spec
-  tryAdd((session.spec as any)?.approverGroup);
-  tryAdd((session.spec as any)?.approverGroups);
+  tryAdd(session.spec?.approverGroup);
+  tryAdd(session.spec?.approverGroups);
 
   // Check status
-  tryAdd((session.status as any)?.approverGroup);
-  tryAdd((session.status as any)?.approverGroups);
+  tryAdd(session.status?.approverGroup);
+  tryAdd(session.status?.approverGroups);
 
   return Array.from(groups).sort();
 }
@@ -189,10 +189,12 @@ export function dedupeSessions(sessions: SessionCR[]): SessionCR[] {
     }
 
     // Merge approver groups
-    const existingGroups = new Set<string>((existing as any).matchingApproverGroups || []);
+    const existingGroups = new Set<string>(
+      ((existing as unknown as Record<string, unknown>).matchingApproverGroups as string[]) || [],
+    );
     collectApproverGroups(session).forEach((g) => existingGroups.add(g));
     if (existingGroups.size) {
-      (existing as any).matchingApproverGroups = Array.from(existingGroups).sort();
+      (existing as unknown as Record<string, string[]>).matchingApproverGroups = Array.from(existingGroups).sort();
     }
   });
 
@@ -358,8 +360,8 @@ export function useSessionList<T extends SessionCR = SessionCR>(
       const data = await fetchFn();
       rawSessions.value = dedupeSessions(data) as T[];
       debug(`${TAG}.loadSessions`, "Loaded sessions", { count: data.length });
-    } catch (err: any) {
-      const message = err?.message || "Failed to load sessions";
+    } catch (err: unknown) {
+      const message = (err instanceof Error ? err.message : undefined) || "Failed to load sessions";
       error.value = message;
       warn(`${TAG}.loadSessions`, "Failed to load sessions", { errorMessage: message });
     } finally {

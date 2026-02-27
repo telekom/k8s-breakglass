@@ -19,7 +19,7 @@
 import { computed, ref, watch } from "vue";
 import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 import { getMultiIDPConfig, getAllowedIDPsForEscalation, isIDPAllowedForEscalation } from "@/services/multiIDP";
-import { error as logError } from "@/services/logger";
+import { debug, error as logError } from "@/services/logger";
 import type { Ref, ComputedRef } from "vue";
 import { onMounted } from "vue";
 
@@ -181,10 +181,10 @@ export function useMultiIDP(
   watch(
     () => getEscalationName(),
     (newEscalationName) => {
-      console.debug("[useMultiIDP] Escalation changed via watch", { newEscalationName });
+      debug("useMultiIDP", "Escalation changed via watch", { newEscalationName });
       // When escalation changes, validate current selection
       if (selectedIDP.value && !validateSelection(selectedIDP.value, newEscalationName)) {
-        console.debug("[useMultiIDP] Current IDP selection invalid for new escalation, clearing");
+        debug("useMultiIDP", "Current IDP selection invalid for new escalation, clearing");
         clearSelection();
       }
     },

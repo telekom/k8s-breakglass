@@ -42,8 +42,8 @@ async function fetchAll() {
   try {
     // getBreakglasses() returns merged escalation/session info
     state.breakglasses = await breakglassService.getBreakglasses();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to load escalations");
+  } catch (e: unknown) {
+    pushError((e instanceof Error ? e.message : undefined) || "Failed to load escalations");
     state.breakglasses = [];
   } finally {
     state.loading = false;
@@ -166,40 +166,49 @@ const filteredBreakglasses = computed(() => {
   return bgs;
 });
 
-async function onRequest(bg: any, reason?: string, duration?: number, scheduledStartTime?: string) {
+async function onRequest(bg: Breakglass, reason?: string, duration?: number, scheduledStartTime?: string) {
   try {
     await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime);
     // Success path: created/ok
     pushSuccess(`Requested group '${bg.to}' for cluster '${bg.cluster}': request submitted successfully!`);
     await refresh();
-  } catch (e: any) {
+  } catch (e: unknown) {
     // Axios throws on non-2xx responses — handle 409 conflict specially
-    const resp = e?.response;
+    const axiosLike = e as {
+      response?: { status?: number; data?: Record<string, unknown> | string };
+      message?: string;
+    };
+    const resp = axiosLike?.response;
     if (resp && resp.status === 409) {
       const data = resp.data;
       // Expecting { error: '<code>', message: '...', session: { ... } } OR legacy plain string like 'already requested'
       if (data && typeof data === "object") {
-        const code = data.error;
-        const session = data.session;
+        const code = (data as Record<string, unknown>).error;
+        const session = (data as Record<string, unknown>).session as Record<string, unknown> | undefined;
+        const sessionMeta = session?.metadata as Record<string, unknown> | undefined;
+        const sessionStatus = session?.status as Record<string, unknown> | undefined;
         if (code === "already requested") {
           // Show informative toast linking to existing request
-          if (session && session.metadata && session.metadata.name) {
+          if (session && sessionMeta && sessionMeta.name) {
             pushError(
-              `You already requested '${bg.to}' on '${bg.cluster}' (session ${session.metadata.name}, state=${session.status?.state || "unknown"}).`,
+              `You already requested '${bg.to}' on '${bg.cluster}' (session ${sessionMeta.name}, state=${sessionStatus?.state || "unknown"}).`,
             );
           } else {
             pushError(`You have already requested group '${bg.to}' for cluster '${bg.cluster}'.`);
           }
         } else if (code === "already approved") {
-          if (session && session.metadata && session.metadata.name) {
-            pushError(
-              `A session for '${bg.to}' on '${bg.cluster}' is already approved (session ${session.metadata.name}).`,
-            );
+          if (session && sessionMeta && sessionMeta.name) {
+            pushError(`A session for '${bg.to}' on '${bg.cluster}' is already approved (session ${sessionMeta.name}).`);
           } else {
             pushError(`A session for group '${bg.to}' on cluster '${bg.cluster}' is already approved.`);
           }
         } else {
-          pushError(data.message || `Request conflict for group '${bg.to}' on cluster '${bg.cluster}'.`);
+          pushError(
+            String(
+              (data as Record<string, unknown>).message ||
+                `Request conflict for group '${bg.to}' on cluster '${bg.cluster}'.`,
+            ),
+          );
         }
       } else if (typeof data === "string") {
         // legacy simple string response
@@ -217,18 +226,17 @@ async function onRequest(bg: any, reason?: string, duration?: number, scheduledS
       try {
         await refresh();
       } catch {
-        /* noop */
+        // Best-effort refresh after conflict — failure is non-critical
       }
       return;
     }
 
     // Fallback for other errors
     handleAxiosError("BreakglassView.onRequest", e, "Failed to request breakglass");
-    pushError(e?.message || "Failed to create request");
   }
 }
 
-async function onWithdraw(bg: any) {
+async function onWithdraw(bg: Breakglass) {
   const pending = bg.sessionPending;
   if (!pending || !pending.metadata?.name || !pending.spec?.cluster || !pending.spec?.grantedGroup) {
     pushError("Cannot withdraw: session information is missing or invalid.");
@@ -238,19 +246,20 @@ async function onWithdraw(bg: any) {
     await breakglassService.withdrawMyRequest(pending);
     pushSuccess(`Withdrawn request for group '${bg.to}' on cluster '${bg.cluster}'.`);
     await refresh();
-  } catch (e: any) {
-    if (e?.response?.data && typeof e.response.data === "object" && e.response.data.session) {
+  } catch (e: unknown) {
+    const axiosLike = e as { response?: { data?: Record<string, unknown> }; message?: string };
+    if (axiosLike?.response?.data && typeof axiosLike.response.data === "object" && axiosLike.response.data.session) {
       pushError(
-        `Withdraw failed: ${e.response.data.message || e.message}. Session: ${JSON.stringify(e.response.data.session)}`,
+        `Withdraw failed: ${axiosLike.response.data.message || axiosLike.message}. Session: ${JSON.stringify(axiosLike.response.data.session)}`,
       );
     } else {
-      pushError(e?.message || "Failed to withdraw request");
+      pushError(axiosLike?.message || "Failed to withdraw request");
     }
-    handleAxiosError("BreakglassView.onWithdraw", e, "Withdraw failed");
+    handleAxiosError("BreakglassView.onWithdraw", e, "Withdraw failed", false);
   }
 }
 
-async function onDrop(bg: any) {
+async function onDrop(bg: Breakglass) {
   try {
     await breakglassService.dropBreakglass(bg);
     await refresh();
