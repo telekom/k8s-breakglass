@@ -8,7 +8,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
 
 - [ ] Kubernetes cluster version 1.27+ (tested with up to 1.32)
 - [ ] cert-manager installed (for webhook TLS certificates)
-- [ ] Ingress controller configured (nginx, traefik, or similar)
+- [ ] Ingress controller configured (nginx, traefik, or similar) **or** Gateway API with HTTPRoute (see [Gateway API Configuration](gateway-api-configuration.md))
 - [ ] TLS certificates for external access (production CA, not self-signed)
 - [ ] DNS configured for breakglass service endpoint
 - [ ] Storage for audit logs (optional, if using persistent audit)
@@ -47,7 +47,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
 
 - [ ] Breakglass API only accessible via HTTPS (TLS 1.2+)
 - [ ] Network policies restrict pod-to-pod communication
-- [ ] Ingress rate limiting enabled
+- [ ] Ingress/Gateway rate limiting enabled
 - [ ] CORS origins properly configured (`--frontend-base-url`)
 - [ ] Webhook endpoint secured with client certificate or network policy
 

@@ -271,6 +271,10 @@ kubectl get crd | grep breakglass
 
 ## Step 8: Expose Breakglass Service
 
+Choose **one** of the following options to expose the breakglass service.
+
+### Option A: Ingress (traditional)
+
 Create Ingress for external access:
 
 ```yaml
@@ -302,6 +306,25 @@ Apply:
 ```bash
 kubectl apply -f ingress.yaml
 ```
+
+See [Ingress Configuration](ingress-configuration.md) for NGINX, Traefik, and HAProxy examples.
+
+### Option B: Gateway API
+
+If your cluster uses [Gateway API](https://gateway-api.sigs.k8s.io/), use the built-in kustomize component instead.
+
+> **Prerequisite**: Ensure Gateway API CRDs are installed before applying.
+> Run `kubectl get crd httproutes.gateway.networking.k8s.io` to verify.
+
+Add the component to your overlay:
+
+```yaml
+# In your kustomization.yaml
+components:
+  - ../../components/gateway-api
+```
+
+This creates an HTTPRoute and ReferenceGrant, and removes the default Ingress. Customize via kustomize patches — see [Gateway API Configuration](gateway-api-configuration.md) for full setup with Istio, Envoy Gateway, and Kong.
 
 Verify DNS resolution:
 
