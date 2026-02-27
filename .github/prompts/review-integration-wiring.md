@@ -73,6 +73,11 @@ is defined but never used, or used but never initialized.
   6. Frontend (if displayed in `frontend/src/`)
   7. CLI (`pkg/bgctl/cmd/`)
 - Flag fields that are defined but never read by any controller or handler.
+- **Generated artifact staleness**: If a Go doc comment on a CRD field is
+  modified (description change, validation wording), verify `make manifests`
+  was re-run. Compare the CRD YAML description against the Go comment —
+  a mismatch means the generated file is stale. Apply the same check after
+  CEL rule changes, marker annotation edits, or `+kubebuilder` tag changes.
 
 ### 8. Error Path Completeness
 

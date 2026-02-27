@@ -32,6 +32,14 @@ that would slip past routine test coverage.
     comparison logic?
   - Session expiry in the far future (year 9999) or far past.
   - Clock skew between replicas > idle timeout duration.
+- **State × time interactions**: For functions that branch on both session
+  state and timestamp (e.g., `isSessionExpired`), test the cross-product:
+  - Zero `ExpiresAt` on an Approved session — should it expire or not?
+  - Nil/zero `StartedAt` with a valid `ExpiresAt` — does expiry still work?
+  - Non-Approved states (Pending, Rejected, Withdrawn, Timeout) with a
+    past `ExpiresAt` — the function must return false for these states.
+  - Near-future boundary (a few seconds out) — verify no time-of-check /
+    time-of-use race in the test itself (use a small offset, not exact now).
 - Counter boundaries:
   - `activityCount` at `math.MaxInt64` — does incrementing overflow?
   - Counter reset to 0 on status patch failure — is this handled?
