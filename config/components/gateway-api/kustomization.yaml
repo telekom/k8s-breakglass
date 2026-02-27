@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Kustomize Component: Gateway API Support
+#
+# This component replaces the default Ingress resource with a Gateway API
+# HTTPRoute for exposing the breakglass API server endpoint.
+#
+# Usage — add to any overlay's kustomization.yaml:
+#
+#   components:
+#     - ../../components/gateway-api
+#
+# Customize parentRefs and hostnames via kustomize patches in your overlay.
+# See docs/gateway-api-configuration.md for details.
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - httproute.yaml
+  - referencegrant.yaml
+
+# Remove the default Ingress resource when Gateway API is enabled
+patches:
+  - target:
+      kind: Ingress
+      name: breakglass-ingress
+    patch: |
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: breakglass-ingress
+      $patch: delete

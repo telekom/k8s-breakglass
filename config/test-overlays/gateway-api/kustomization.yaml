@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Test overlay for validating the Gateway API component.
+# Run: kustomize build config/test-overlays/gateway-api/
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/gateway-api

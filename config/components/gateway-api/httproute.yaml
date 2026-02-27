@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# HTTPRoute — Gateway API alternative to Ingress for exposing the breakglass
+# API server and frontend. Requires a Gateway resource to be provisioned by the
+# platform team (e.g., Istio, Envoy Gateway, Kong).
+#
+# Customize parentRefs and hostnames via kustomize patches in your overlay:
+#
+#   patches:
+#     - target:
+#         kind: HTTPRoute
+#         name: breakglass
+#       patch: |
+#         - op: replace
+#           path: /spec/parentRefs/0/name
+#           value: my-gateway
+#         - op: replace
+#           path: /spec/hostnames/0
+#           value: breakglass.my-domain.com
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: breakglass
+  # Explicit namespace required — kustomize namespace transformer does not
+  # recognize Gateway API GVKs. Override in your overlay if needed.
+  namespace: breakglass-system
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: breakglass
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  parentRefs:
+    - name: api-gateway
+      namespace: gateway-system
+  hostnames:
+    - breakglass.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        # Name includes kustomize namePrefix "breakglass-" from config/base — update if namePrefix changes
+        - name: breakglass-breakglass
+          port: 8080

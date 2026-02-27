@@ -2,6 +2,8 @@
 
 This document covers how to properly configure breakglass behind a Kubernetes ingress controller, including security headers, CORS, and proxy configuration.
 
+> **Using Gateway API?** If your cluster uses Gateway API instead of Ingress, see [Gateway API Configuration](gateway-api-configuration.md) for HTTPRoute setup with Istio, Envoy Gateway, and Kong.
+
 ## Overview
 
 When deploying breakglass behind an ingress controller (NGINX, Traefik, HAProxy, etc.), several considerations apply:
@@ -335,6 +337,7 @@ If rate limiting logs show ingress IPs instead of client IPs:
 
 ## Related Documentation
 
+- [Gateway API Configuration](gateway-api-configuration.md) — HTTPRoute-based alternative to Ingress
 - [Security Best Practices](security-best-practices.md)
 - [Configuration Reference](configuration-reference.md)
 - [Installation Guide](installation.md)
