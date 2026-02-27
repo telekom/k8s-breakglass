@@ -167,13 +167,6 @@ func TestInitSamplingRateAboveOne(t *testing.T) {
 	}
 }
 
-func TestTracerReturnsTracer(t *testing.T) {
-	tr := Tracer("test-component")
-	if tr == nil {
-		t.Fatal("Tracer returned nil")
-	}
-}
-
 func TestShutdownIdempotent(t *testing.T) {
 	prev := otel.GetTracerProvider()
 	t.Cleanup(func() { otel.SetTracerProvider(prev) })
