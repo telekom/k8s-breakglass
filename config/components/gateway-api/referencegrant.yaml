@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# ReferenceGrant — allows HTTPRoutes in the gateway namespace to reference
+# the breakglass Service in the breakglass-system namespace.
+#
+# This is ONLY required when the Gateway's HTTPRoute lives in a different
+# namespace than the breakglass Service. In the default deployment (both in
+# breakglass-system), cross-namespace authorization is not needed.
+#
+# If your Gateway controller creates HTTPRoutes in a separate namespace
+# (e.g., gateway-system), uncomment/adjust the "from" namespace below.
+# If your Gateway and breakglass are co-located, you can exclude this
+# resource entirely via a kustomize patch:
+#
+#   patches:
+#     - target:
+#         kind: ReferenceGrant
+#         name: allow-gateway-to-breakglass
+#       patch: |
+#         $patch: delete
+#         apiVersion: gateway.networking.k8s.io/v1
+#         kind: ReferenceGrant
+#         metadata:
+#           name: allow-gateway-to-breakglass
+#
+# Adjust the "from" namespace to match your Gateway's namespace:
+#
+#   patches:
+#     - target:
+#         kind: ReferenceGrant
+#         name: allow-gateway-to-breakglass
+#       patch: |
+#         - op: replace
+#           path: /spec/from/0/namespace
+#           value: my-gateway-namespace
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: allow-gateway-to-breakglass
+  # Explicit namespace required — kustomize namespace transformer does not
+  # recognize Gateway API GVKs. Override in your overlay if needed.
+  namespace: breakglass-system
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: breakglass
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      # Default: same namespace as the Service. Change to your Gateway's
+      # namespace if using cross-namespace HTTPRoutes (e.g., gateway-system).
+      namespace: breakglass-system
+  to:
+    - group: ""
+      kind: Service
+      # Restrict to only the breakglass service (prefixed by kustomize namePrefix "breakglass-" — update if namePrefix changes)
+      name: breakglass-breakglass
