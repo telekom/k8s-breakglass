@@ -34,6 +34,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/version"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 )
 
@@ -201,6 +202,12 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		c.Writer.Header().Set("X-Request-ID", cid)
 		c.Next()
 	})
+
+	// OpenTelemetry tracing middleware — creates a span per HTTP request.
+	// When tracing is disabled, OTel installs a no-op provider so this
+	// middleware becomes a near-zero-cost pass-through.
+	engine.Use(otelgin.Middleware("k8s-breakglass"))
+
 	engine.Use(
 		ginzap.Ginzap(log, time.RFC3339, true),
 		ginzap.RecoveryWithZap(log, false),

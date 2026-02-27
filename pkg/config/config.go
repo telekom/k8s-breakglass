@@ -313,6 +313,16 @@ type Config struct {
 	Server     Server
 	Frontend   Frontend
 	Kubernetes Kubernetes
+	Telemetry  Telemetry
+}
+
+// Telemetry configures OpenTelemetry tracing.
+type Telemetry struct {
+	Enabled      bool     `yaml:"enabled"`
+	Exporter     string   `yaml:"exporter"`     // otlp, stdout, none
+	Endpoint     string   `yaml:"endpoint"`     // OTLP collector address
+	Insecure     bool     `yaml:"insecure"`     // disable TLS for OTLP
+	SamplingRate *float64 `yaml:"samplingRate"` // 0.0-1.0; pointer to distinguish absent from explicit 0
 }
 
 // HardenedIDPHintsEnabled returns true when IDP hints should be hardened.

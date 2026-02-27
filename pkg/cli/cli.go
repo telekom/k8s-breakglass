@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +50,13 @@ type Config struct {
 	// Interval flags
 	ClusterConfigCheckInterval string
 	EscalationStatusUpdateInt  string
+
+	// OpenTelemetry tracing flags
+	OTelEnabled      bool
+	OTelExporter     string
+	OTelEndpoint     string
+	OTelInsecure     bool
+	OTelSamplingRate float64
 
 	// Webhook-related config
 	Webhook WebhookConfig
@@ -154,6 +162,18 @@ func Parse() *Config {
 	flag.StringVar(&config.EscalationStatusUpdateInt, "escalation-status-update-interval", getEnvString("ESCALATION_STATUS_UPDATE_INTERVAL", "10m"),
 		"Interval for updating escalation status from identity provider (e.g., '10m', '5m')")
 
+	// OpenTelemetry tracing configuration
+	flag.BoolVar(&config.OTelEnabled, "otel-enabled", getEnvBool("OTEL_ENABLED", false),
+		"Enable OpenTelemetry tracing")
+	flag.StringVar(&config.OTelExporter, "otel-exporter", getEnvString("OTEL_EXPORTER", ""),
+		"OTel trace exporter: otlp, stdout, none (default: otlp)")
+	flag.StringVar(&config.OTelEndpoint, "otel-endpoint", getEnvString("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		"OTLP collector gRPC endpoint (default: localhost:4317)")
+	flag.BoolVar(&config.OTelInsecure, "otel-insecure", getEnvBool("OTEL_INSECURE", false),
+		"Disable TLS for the OTLP gRPC connection")
+	flag.Float64Var(&config.OTelSamplingRate, "otel-sampling-rate", getEnvFloat64("OTEL_SAMPLING_RATE", -1),
+		"Trace sampling rate (0.0-1.0; -1 means use config-file value or default 1.0)")
+
 	// Configuration flags
 	flag.StringVar(&config.ConfigPath, "config-path", getEnvString("BREAKGLASS_CONFIG_PATH", "./config.yaml"),
 		"Path to the breakglass configuration file")
@@ -208,6 +228,12 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"config_path", c.ConfigPath,
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
+		// OpenTelemetry
+		"otel_enabled", c.OTelEnabled,
+		"otel_exporter", c.OTelExporter,
+		"otel_endpoint", c.OTelEndpoint,
+		"otel_insecure", c.OTelInsecure,
+		"otel_sampling_rate", c.OTelSamplingRate,
 	)
 }
 
@@ -265,6 +291,17 @@ func getEnvBool(key string, defaultVal bool) bool {
 			return true
 		case "false", "0", "no":
 			return false
+		}
+	}
+	return defaultVal
+}
+
+// getEnvFloat64 returns the value of an environment variable as a float64,
+// or the provided default if not set or unparseable.
+func getEnvFloat64(key string, defaultVal float64) float64 {
+	if val, ok := os.LookupEnv(key); ok {
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			return f
 		}
 	}
 	return defaultVal

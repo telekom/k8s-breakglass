@@ -60,3 +60,12 @@ kubernetes:
   # Valid values: "email" (default), "preferred_username", "sub"
   # This must match the OIDC claimMappings.username.claim on spoke clusters.
   # userIdentifierClaim: "email"
+
+# OpenTelemetry distributed tracing configuration.
+# See docs/opentelemetry-tracing.md for details.
+# telemetry:
+#   enabled: false         # Enable tracing (default: false)
+#   exporter: otlp         # Exporter type: otlp | stdout | none (default: otlp)
+#   endpoint: localhost:4317  # Collector gRPC endpoint (default: localhost:4317)
+#   insecure: false        # Disable TLS for the collector connection (default: false)
+#   samplingRate: 1.0      # Sampling probability 0.0-1.0 (default: 1.0)
