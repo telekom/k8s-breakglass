@@ -43,6 +43,11 @@ consistent, and synchronized with the actual code.
 - Check that godoc comments on exported types and functions describe the
   current behavior, not a previous iteration.
 - Flag TODO / FIXME comments that reference completed work.
+- **Generated artifact freshness**: When a Go doc comment on a CRD type
+  or field is modified, verify that `make manifests` has been re-run so
+  the generated CRD YAML (`config/crd/bases/`) reflects the updated
+  description. A Go comment saying "must not be set" while the CRD YAML
+  still says "are ignored" is a consistency violation.
 - **Enforcement-mechanism attribution**: Comments describing validation or
   rejection must name the specific mechanism — "rejected by CEL rule at
   admission time", "rejected by Go webhook validation", or "enforced by

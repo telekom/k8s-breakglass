@@ -12,6 +12,12 @@ incidents — clarity and accessibility are critical.
 - **Keyboard navigation**: Every interactive element (buttons, links, form
   controls, filters) must be reachable and operable via keyboard alone.
   Check for proper `tabindex`, `:focus-visible` styles, and no focus traps.
+- **Roving tabindex after filtering**: When a list or grid uses roving
+  `tabindex` (one item has `tabindex="0"`, rest have `tabindex="-1"`),
+  verify the focused-item logic handles filtering. If the currently
+  selected item is filtered out of the visible list, `tabindex="0"` must
+  fall back to the first visible item — otherwise NO item is tabbable
+  and keyboard users are trapped.
 - **Screen reader support**: Verify `aria-label`, `aria-describedby`,
   `aria-live` regions for dynamic content (session status changes,
   notifications, filter results).
@@ -30,6 +36,14 @@ incidents — clarity and accessibility are critical.
 - Check that component props have explicit TypeScript interfaces defined.
 - Verify emits are typed using the `defineEmits<>()` syntax.
 - Flag unused imports and variables.
+- **Identifier spelling**: Check component names, route constants, and
+  variable names for typos — especially names derived from domain terms
+  (e.g., `Breakglass` not `Breaglass`). Lazy-loaded route constants must
+  match the actual component name exactly.
+- **DRY type definitions**: Flag interfaces or types defined locally in a
+  component that duplicate or closely mirror types already exported from
+  shared model files (`@/model/`, `@/api/`). Use imports with type
+  aliases when the local name differs from the canonical one.
 
 ### 3. Vue 3 Composition API Patterns
 

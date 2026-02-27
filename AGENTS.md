@@ -107,18 +107,18 @@ The 16 reviewer personas cover every issue class found by automated reviewers
 - **Performance** catches webhook latency regressions, unbounded memory, high-cardinality metrics
 
 **Correctness** (4 personas):
-- **Integration wiring** catches new code that is defined but never called or connected, state pipeline overwrites, dead channel branches, error swallowing at shutdown
+- **Integration wiring** catches new code that is defined but never called or connected, state pipeline overwrites, dead channel branches, error swallowing at shutdown, **stale generated CRD descriptions after Go comment changes**
 - **API & CRD** catches missing validation markers, backwards-compatibility breaks
-- **Edge cases** catches untested boundary conditions, zero-value bugs, clock skew issues
+- **Edge cases** catches untested boundary conditions, zero-value bugs, clock skew issues, **state × time interaction gaps** (e.g., missing edge-case tests for expiry functions across session states and timestamp combinations)
 - **QA regression** catches state machine violations, data migration gaps, rollback hazards
 
 **Security & documentation** (3 personas):
 - **Security** catches privilege escalation, credential leaks, input injection, CSRF gaps
-- **Docs consistency** catches field name mismatches, missing metrics docs, duplicate headings, duplicate comment lines, log-level claim inaccuracies, function-description table drift
-- **CI & testing** catches coverage gaps, wrong test names in docs, missing enum cases
+- **Docs consistency** catches field name mismatches, missing metrics docs, duplicate headings, duplicate comment lines, log-level claim inaccuracies, function-description table drift, **generated artifact staleness** (Go comment ↔ CRD YAML description divergence)
+- **CI & testing** catches coverage gaps, wrong test names in docs, missing enum cases, **count-only assertions** (tests asserting `.length` without verifying item content)
 
 **User-facing** (5 personas):
-- **Frontend UI** catches missing session states in filters, accessibility gaps, XSS risks
+- **Frontend UI** catches missing session states in filters, accessibility gaps, XSS risks, **roving tabindex bugs after filtering**, **duplicate type definitions** that mirror shared models, **identifier misspellings** in route constants and component names
 - **CLI usability** catches unclear error messages, missing completions, flag inconsistencies
 - **REST API** catches validation gaps, inconsistent response formats, auth bypasses, 401-vs-403 misuse
 - **Helm chart** catches RBAC drift, stale CRDs, upgrade failures, missing security contexts

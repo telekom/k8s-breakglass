@@ -42,6 +42,11 @@ and that CI configuration is correct.
 - Verify that negative tests (expected failures) assert the specific error
   type or message, not just `err != nil`.
 - Check for assertions on mock call counts when order/frequency matters.
+- **Count-only assertions**: Flag tests that assert only `.length`,
+  `.toHaveLength()`, or element count without verifying the *content* of
+  the results. Asserting "4 items rendered" passes even when the wrong 4
+  items are shown. Tests for filtering, searching, or sorting must verify
+  the actual values (names, IDs, text content) of retained items.
 - **Blank-identifier suppression**: Flag Go tests that assign function
   return values to `_` (blank identifier) instead of asserting them.
   `_ = someFunction()` always passes regardless of the result — use
