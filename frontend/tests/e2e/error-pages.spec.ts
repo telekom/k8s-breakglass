@@ -118,10 +118,9 @@ test.describe("Session Error View", () => {
     // Click sessions button
     const sessionsButton = page.getByRole("button", { name: /View All Sessions/i });
     await sessionsButton.click();
-    await page.waitForLoadState("networkidle");
 
-    // Should be at sessions page
-    expect(page.url()).toContain("/sessions");
+    // Wait for the router to navigate to the sessions page
+    await page.waitForURL(/\/sessions$/, { timeout: 10000 });
   });
 
   test("shows expected link format in error message", async ({ page }) => {

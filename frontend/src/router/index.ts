@@ -1,19 +1,21 @@
-import MyPendingRequests from "@/views/MyPendingRequests.vue";
+import { createRouter, createWebHistory } from "vue-router";
 
+// Route-level code splitting — each view is lazily loaded on first navigation.
+// The home view (BreakglassView) is kept eager since it is always the first page.
 import BreakglassView from "@/views/BreakglassView.vue";
-import BreaglassSessionReviewView from "@/views/BreakglassSessionReview.vue";
-import SessionApprovalView from "@/views/SessionApprovalView.vue";
-import SessionErrorView from "@/views/SessionErrorView.vue";
-import PendingApprovalsView from "@/views/PendingApprovalsView.vue";
-import SessionBrowser from "@/views/SessionBrowser.vue";
-import NotFoundView from "@/views/NotFoundView.vue";
+
+const BreakglassSessionReviewView = () => import("@/views/BreakglassSessionReview.vue");
+const SessionApprovalView = () => import("@/views/SessionApprovalView.vue");
+const SessionErrorView = () => import("@/views/SessionErrorView.vue");
+const PendingApprovalsView = () => import("@/views/PendingApprovalsView.vue");
+const MyPendingRequests = () => import("@/views/MyPendingRequests.vue");
+const SessionBrowser = () => import("@/views/SessionBrowser.vue");
+const NotFoundView = () => import("@/views/NotFoundView.vue");
 
 // Debug Session Views
-import DebugSessionBrowser from "@/views/DebugSessionBrowser.vue";
-import DebugSessionCreate from "@/views/DebugSessionCreate.vue";
-import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
-
-import { createRouter, createWebHistory } from "vue-router";
+const DebugSessionBrowser = () => import("@/views/DebugSessionBrowser.vue");
+const DebugSessionCreate = () => import("@/views/DebugSessionCreate.vue");
+const DebugSessionDetails = () => import("@/views/DebugSessionDetails.vue");
 import logger from "@/services/logger";
 
 const isDev = import.meta.env.DEV;
@@ -30,7 +32,7 @@ const router = createRouter({
       path: "/sessions/review",
       alias: "/review",
       name: "breakglassSessionReview",
-      component: BreaglassSessionReviewView,
+      component: BreakglassSessionReviewView,
     },
     {
       path: "/session/:sessionName/approve",

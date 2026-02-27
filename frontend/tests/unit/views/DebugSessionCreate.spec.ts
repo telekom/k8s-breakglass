@@ -615,34 +615,48 @@ describe("DebugSessionCreate", () => {
 
       const vm = wrapper.vm as unknown as {
         goToStep2: () => void;
-        filteredClusterDetails: { name: string }[];
       };
       vm.goToStep2();
       await flushPromises();
 
-      // All 8 should be shown initially
-      expect(vm.filteredClusterDetails).toHaveLength(8);
+      // All 8 should be shown initially (via cluster cards in the DOM)
+      const clusterCards = () => wrapper.findAll('[data-testid="cluster-card"]');
+      expect(clusterCards()).toHaveLength(8);
 
-      // Set the clusterFilter ref directly to simulate user typing
-      const clusterFilter = wrapper.vm as unknown as { clusterFilter: string };
-      clusterFilter.clusterFilter = "staging";
+      // Find the ClusterSelectGrid child and set clusterFilter via its internal state
+      const clusterSelectGrid = wrapper.findComponent({ name: "ClusterSelectGrid" });
+      expect(clusterSelectGrid.exists()).toBe(true);
+
+      const gridVm = clusterSelectGrid.vm as unknown as { clusterFilter: string };
+      gridVm.clusterFilter = "staging";
       await wrapper.vm.$nextTick();
 
       // Only clusters 4-7 have environment "staging"
-      expect(vm.filteredClusterDetails).toHaveLength(4);
-      expect(vm.filteredClusterDetails.every((c) => c.name.match(/cluster-[4-7]/))).toBe(true);
+      const stagingCards = clusterCards();
+      expect(stagingCards).toHaveLength(4);
+      const stagingNames = stagingCards.map((c) => c.text());
+      expect(stagingNames.every((t) => t.includes("staging"))).toBe(true);
+      for (let i = 4; i <= 7; i++) {
+        expect(stagingNames.some((t) => t.includes(`Cluster ${i}`))).toBe(true);
+      }
 
       // Filter by location
-      clusterFilter.clusterFilter = "Frankfurt";
+      gridVm.clusterFilter = "Frankfurt";
       await wrapper.vm.$nextTick();
 
       // Even-numbered clusters (0, 2, 4, 6) are in Frankfurt
-      expect(vm.filteredClusterDetails).toHaveLength(4);
+      const frankfurtCards = clusterCards();
+      expect(frankfurtCards).toHaveLength(4);
+      const frankfurtNames = frankfurtCards.map((c) => c.text());
+      expect(frankfurtNames.every((t) => t.includes("Frankfurt"))).toBe(true);
+      for (const i of [0, 2, 4, 6]) {
+        expect(frankfurtNames.some((t) => t.includes(`Cluster ${i}`))).toBe(true);
+      }
 
       // Filter with no match
-      clusterFilter.clusterFilter = "nonexistent";
+      gridVm.clusterFilter = "nonexistent";
       await wrapper.vm.$nextTick();
-      expect(vm.filteredClusterDetails).toHaveLength(0);
+      expect(clusterCards()).toHaveLength(0);
     });
 
     it("shows cluster count when filter is active", async () => {
