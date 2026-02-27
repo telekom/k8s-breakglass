@@ -27,7 +27,14 @@ const SessionSummaryCardStub = {
   props: ["eyebrow", "title", "subtitle", "statusTone", "dense"],
 };
 
-function makeSession(overrides: Record<string, unknown> = {}) {
+interface SessionOverrides {
+  metadata?: Record<string, unknown>;
+  spec?: Record<string, unknown>;
+  status?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+function makeSession(overrides: SessionOverrides = {}) {
   return {
     metadata: {
       name: "test-session-001",
@@ -54,7 +61,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function mountCard(sessionOverrides: Record<string, unknown> = {}, props: Record<string, unknown> = {}) {
+function mountCard(sessionOverrides: SessionOverrides = {}, props: Record<string, unknown> = {}) {
   return mount(BreakglassSessionCard, {
     props: {
       breakglass: makeSession(sessionOverrides),
