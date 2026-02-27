@@ -42,6 +42,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/reconciler"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/telemetry"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 )
@@ -187,6 +188,31 @@ func run() error {
 
 	// Setup authentication
 	auth := api.NewAuth(log, cfg)
+
+	// Initialise OpenTelemetry tracing.
+	// CLI flags override config-file values; disabled by default.
+	otelExporter := resolveStringConfig(cliConfig.OTelExporter, cfg.Telemetry.Exporter, "otlp")
+	otelEndpoint := resolveStringConfig(cliConfig.OTelEndpoint, cfg.Telemetry.Endpoint, "localhost:4317")
+	// Sampling rate uses -1 as sentinel for "not explicitly set" because 0.0 is a
+	// valid value (disable sampling). See resolveOTelSamplingRate.
+	otelSamplingRate := resolveOTelSamplingRate(cliConfig.OTelSamplingRate, cfg.Telemetry.SamplingRate, 1.0)
+	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer initCancel()
+	_, otelShutdown, err := telemetry.Init(initCtx, telemetry.Options{
+		Enabled:        cliConfig.OTelEnabled || cfg.Telemetry.Enabled,
+		ServiceName:    "k8s-breakglass",
+		ServiceVersion: system.Version,
+		Exporter:       otelExporter,
+		Endpoint:       otelEndpoint,
+		Insecure:       cliConfig.OTelInsecure || cfg.Telemetry.Insecure,
+		SamplingRate:   otelSamplingRate,
+		Logger:         log,
+	})
+	if err != nil {
+		log.Warnw("OpenTelemetry initialization failed, tracing disabled", "error", err)
+		otelShutdown = func(context.Context) error { return nil }
+	}
+
 	server := api.NewServer(zapLogger, cfg, cliConfig.Debug, auth)
 
 	// Create a unified scheme with all CRDs registered
@@ -319,7 +345,7 @@ func run() error {
 
 	runErr := awaitShutdownSignal(sigChan, errCh, log)
 
-	shutdownServices(cfg, server, svcs.mailService, svcs.auditService, svcs.webhookCtrl, shouldEnableHTTPServer, log)
+	shutdownServices(cfg, server, svcs.mailService, svcs.auditService, svcs.webhookCtrl, shouldEnableHTTPServer, otelShutdown, log)
 
 	cancel()
 	log.Info("Waiting for all goroutines to finish")
@@ -651,7 +677,8 @@ func awaitShutdownSignal(sigChan <-chan os.Signal, errCh <-chan error, log *zap.
 
 // shutdownServices performs graceful shutdown of HTTP server, mail, audit, and activity tracker.
 func shutdownServices(cfg config.Config, server *api.Server, mailService *mail.Service,
-	auditService *audit.Service, webhookCtrl *webhook.WebhookController, httpEnabled bool, log *zap.SugaredLogger,
+	auditService *audit.Service, webhookCtrl *webhook.WebhookController, httpEnabled bool,
+	otelShutdown func(context.Context) error, log *zap.SugaredLogger,
 ) {
 	// Create shutdown context with timeout for graceful shutdown of all components
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Server.GetShutdownTimeout())
@@ -667,6 +694,15 @@ func shutdownServices(cfg config.Config, server *api.Server, mailService *mail.S
 
 	// Close rate limiters and other server resources
 	server.Close()
+
+	// Shutdown OpenTelemetry tracing (flush pending spans)
+	if otelShutdown != nil {
+		if err := otelShutdown(shutdownCtx); err != nil {
+			log.Warnw("OpenTelemetry shutdown error", "error", err)
+		} else {
+			log.Infow("OpenTelemetry tracing shut down successfully")
+		}
+	}
 
 	// Shutdown mail service
 	if mailService != nil {
@@ -688,4 +724,31 @@ func shutdownServices(cfg config.Config, server *api.Server, mailService *mail.S
 
 	// Stop activity tracker (flushes remaining session activity entries)
 	webhookCtrl.StopActivityTracker(shutdownCtx)
+}
+
+// resolveStringConfig returns the first non-empty value in precedence order:
+// CLI flag, config-file, hard-coded default.
+func resolveStringConfig(cliValue, configValue, defaultValue string) string {
+	if cliValue != "" {
+		return cliValue
+	}
+	if configValue != "" {
+		return configValue
+	}
+	return defaultValue
+}
+
+// resolveOTelSamplingRate resolves the trace sampling rate. The CLI flag uses
+// -1 as a sentinel for "not explicitly set" so that an explicit
+// --otel-sampling-rate=0 (disable all sampling) is not confused with "unset".
+// The config-file field is a *float64 so the YAML decoder can distinguish an
+// absent field (nil) from an explicit zero ("samplingRate: 0").
+func resolveOTelSamplingRate(cliValue float64, configValue *float64, defaultValue float64) float64 {
+	if cliValue >= 0 {
+		return cliValue
+	}
+	if configValue != nil {
+		return *configValue
+	}
+	return defaultValue
 }

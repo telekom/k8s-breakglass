@@ -1,0 +1,21 @@
+{{- if .Values.cluster.telemetry }}
+{{- if .Values.cluster.telemetry.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-telemetry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  telemetry.yaml: |
+    telemetry:
+      enabled: {{ .Values.cluster.telemetry.enabled }}
+      exporter: {{ .Values.cluster.telemetry.exporter | default "otlp" | quote }}
+      endpoint: {{ .Values.cluster.telemetry.endpoint | quote }}
+      insecure: {{ .Values.cluster.telemetry.insecure | default false }}
+      samplingRate: {{ .Values.cluster.telemetry.samplingRate | default 1.0 }}
+{{- end }}
+{{- end }}

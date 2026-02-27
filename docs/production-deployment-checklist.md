@@ -170,6 +170,14 @@ affinity:
 | BreakglassNoLeader | No leader for 2m | Critical |
 | BreakglassDown | No healthy replicas | Critical |
 
+### Distributed Tracing (Optional)
+
+- [ ] Deploy an OpenTelemetry Collector (or compatible backend like Tempo/Jaeger)
+- [ ] Enable tracing via `--otel-enabled` / `OTEL_ENABLED=true`
+- [ ] Set the collector endpoint (`--otel-endpoint` / `OTEL_EXPORTER_OTLP_ENDPOINT`)
+- [ ] Adjust sampling rate for your traffic volume (`--otel-sampling-rate=0.1`)
+- [ ] See [OpenTelemetry Tracing](./opentelemetry-tracing.md) for full configuration
+
 ### Health Checks
 
 - [ ] Liveness probe configured (`/healthz`)
