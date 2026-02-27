@@ -111,7 +111,17 @@ that would slip past routine test coverage.
 - Signal handling: ctrl-C during long-running `bgctl` operation — clean
   exit?
 
-### 10. Fuzz & Property-Based Testing
+### 10. String Formatting Edge Cases
+
+- When a diagnostic/reason string is built by concatenating fragments,
+  what happens when a fragment is the *only* content? If it has a leading
+  space (e.g., `" Note: ..."` designed for appending), it looks wrong
+  when used standalone. Verify fragments are whitespace-neutral and
+  separators are added at the concatenation site.
+- What happens when `reason` is empty and only the diagnostic note is
+  set? Is the final user-facing message well-formed?
+
+### 11. Fuzz & Property-Based Testing
 
 - Do fuzz tests in `api/v1alpha1/fuzz_test.go` cover the new fields?
 - Can random byte sequences in CRD fields cause the controller to panic?

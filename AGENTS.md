@@ -101,25 +101,25 @@ The 16 reviewer personas cover every issue class found by automated reviewers
 (Copilot, etc.) and more:
 
 **Code quality** (4 personas):
-- **Go style** catches import alias violations, `%v` error wrapping, string literals, lint failures
-- **Concurrency** catches SSA races, lost updates, stale cache reads, `time.Now()` vs `.UTC()`
-- **K8s patterns** catches missing context timeouts, non-idempotent reconcilers, unbounded lists
+- **Go style** catches import alias violations, `%v` error wrapping, string literals, lint failures, duplicate comment lines, string whitespace hygiene
+- **Concurrency** catches SSA races, lost updates, stale cache reads, `time.Now()` vs `.UTC()`, failure-path channel deadlocks, mis-wired channel targets, unbuffered channel drops, premature channel closes
+- **K8s patterns** catches missing context timeouts, non-idempotent reconcilers, unbounded lists, exit code integrity
 - **Performance** catches webhook latency regressions, unbounded memory, high-cardinality metrics
 
 **Correctness** (4 personas):
-- **Integration wiring** catches new code that is defined but never called or connected
+- **Integration wiring** catches new code that is defined but never called or connected, state pipeline overwrites, dead channel branches, error swallowing at shutdown
 - **API & CRD** catches missing validation markers, backwards-compatibility breaks
 - **Edge cases** catches untested boundary conditions, zero-value bugs, clock skew issues
 - **QA regression** catches state machine violations, data migration gaps, rollback hazards
 
 **Security & documentation** (3 personas):
 - **Security** catches privilege escalation, credential leaks, input injection, CSRF gaps
-- **Docs consistency** catches field name mismatches, missing metrics docs, duplicate headings
+- **Docs consistency** catches field name mismatches, missing metrics docs, duplicate headings, duplicate comment lines, log-level claim inaccuracies, function-description table drift
 - **CI & testing** catches coverage gaps, wrong test names in docs, missing enum cases
 
 **User-facing** (5 personas):
 - **Frontend UI** catches missing session states in filters, accessibility gaps, XSS risks
 - **CLI usability** catches unclear error messages, missing completions, flag inconsistencies
-- **REST API** catches validation gaps, inconsistent response formats, auth bypasses
+- **REST API** catches validation gaps, inconsistent response formats, auth bypasses, 401-vs-403 misuse
 - **Helm chart** catches RBAC drift, stale CRDs, upgrade failures, missing security contexts
 - **End-user** catches UX pain for SREs during incidents, admin config friction, audit gaps

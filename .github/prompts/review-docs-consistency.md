@@ -63,6 +63,23 @@ consistent, and synchronized with the actual code.
   invalid Y" when the test never asserts an error. This applies to
   inline comments, `t.Run()` description strings, and table-driven test
   case `name` fields.
+- **Duplicate comment lines**: Flag consecutive comment lines that repeat
+  the same text verbatim, whether in doc comments (`//` above a type or
+  function) or inline comments. These are copy-paste artifacts that
+  confuse readers and may cause stale-comment drift.
+- **Log-level claim accuracy**: Comments claiming data is "not logged" or
+  "logged only at level X" must be verified against all call sites in the
+  same function AND downstream functions. A comment saying "individual
+  approvers not logged to reduce PII" is wrong if the items are logged at
+  Debug level in the same function and at Info level in a downstream caller
+  like `sendSessionNotifications`. Verify claims by tracing log statements
+  for the data in question across the entire call chain.
+- **Function-description table accuracy**: Tables in `docs/` that describe
+  helper function responsibilities (e.g., "Symbol | Description") must
+  match the actual implementation. A table saying a function "runs SAR
+  against session impersonation" when it actually performs standard RBAC
+  via `canDoFn` is misleading. Cross-reference each description against
+  the function body.
 
 ### 6. Cross-Reference Integrity
 

@@ -96,6 +96,38 @@ is defined but never used, or used but never initialized.
 - Flag mocks that implement a stale version of an interface (missing
   new methods).
 
+### 11. State Pipeline Integrity
+
+- When a large function is decomposed into a sequence of helper calls
+  (pipeline pattern), verify that later-stage helpers do **not**
+  unconditionally overwrite state fields set by earlier stages.
+- Example: if Stage A sets `result.allowed = true` and `result.reason =
+  "matched rule X"`, Stage B must not unconditionally execute
+  `result.reason = "default deny message"` — it must guard with
+  `if !result.allowed`.
+- Flag any helper that writes to a shared state struct without checking
+  whether a previous helper already set a definitive value.
+
+### 12. Channel Wiring Completeness
+
+- For every channel created and passed to a blocking consumer (e.g.,
+  `certMgrErr` passed to `cert.Ensure()`), verify that at least one
+  goroutine actually sends to that channel on the relevant code path.
+- Flag channels that are created, passed to a receiver, but never sent
+  to by any sender — this makes the receiver's select branch dead code.
+- Trace each channel from creation → parameter passing → send sites.
+  If the send goes to a *different* channel (e.g., `errCh` instead of
+  `certMgrErr`), the wiring is broken.
+
+### 13. Exit Code & Error Propagation at Shutdown Boundary
+
+- Verify that `run()` (or the top-level orchestrator) propagates errors
+  from failed background components through its return value.
+- Flag patterns where a shutdown helper logs an error but returns nothing,
+  causing `main` to exit with status 0 on component failure.
+- The process exit code must reflect whether shutdown was clean (signal)
+  or caused by a failure (non-zero).
+
 ## Output format
 
 For each finding:
