@@ -13,6 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import BreakglassSessionCard from "../BreakglassSessionCard.vue";
+import type { SessionMetadata, SessionSpec, SessionStatus } from "@/model/breakglass";
 
 // Minimal stub for SessionSummaryCard to avoid full component tree
 const SessionSummaryCardStub = {
@@ -28,9 +29,9 @@ const SessionSummaryCardStub = {
 };
 
 interface SessionOverrides {
-  metadata?: Record<string, unknown>;
-  spec?: Record<string, unknown>;
-  status?: Record<string, unknown>;
+  metadata?: Partial<SessionMetadata>;
+  spec?: Partial<SessionSpec>;
+  status?: Partial<SessionStatus>;
   [key: string]: unknown;
 }
 
@@ -54,8 +55,8 @@ function makeSession(overrides: SessionOverrides = {}) {
       approvedAt: "2026-02-20T10:05:00Z",
       expiresAt: new Date(Date.now() + 3600000).toISOString(), // 1h in future
       retainedUntil: new Date(Date.now() + 86400000).toISOString(), // 1d in future
-      rejectedAt: null,
-      withdrawnAt: null,
+      rejectedAt: undefined,
+      withdrawnAt: undefined,
       ...overrides.status,
     },
   };
@@ -170,8 +171,8 @@ describe("BreakglassSessionCard", () => {
       const wrapper = mountCard({
         status: {
           state: "Pending",
-          approvedAt: null,
-          expiresAt: null,
+          approvedAt: undefined,
+          expiresAt: undefined,
           retainedUntil: new Date(Date.now() + 86400000).toISOString(),
         },
       });
@@ -252,8 +253,8 @@ describe("BreakglassSessionCard", () => {
       const wrapper = mountCard({
         status: {
           state: "WaitingForScheduledTime",
-          approvedAt: null,
-          expiresAt: null,
+          approvedAt: undefined,
+          expiresAt: undefined,
           retainedUntil: new Date(Date.now() + 86400000).toISOString(),
         },
       });
@@ -267,8 +268,8 @@ describe("BreakglassSessionCard", () => {
       const wrapper = mountCard({
         status: {
           state: "Pending",
-          approvedAt: null,
-          expiresAt: null,
+          approvedAt: undefined,
+          expiresAt: undefined,
           retainedUntil: new Date(Date.now() + 86400000).toISOString(),
         },
       });
@@ -333,7 +334,7 @@ describe("BreakglassSessionCard", () => {
 
     it("handles null state gracefully", () => {
       const wrapper = mountCard({
-        status: { state: null },
+        status: { state: undefined },
       });
       const statusTag = wrapper.find("[data-testid='session-status']");
       // Should show "Unknown" as fallback
