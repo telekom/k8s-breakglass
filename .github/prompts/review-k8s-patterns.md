@@ -84,6 +84,32 @@ observability, and production behavior.
 - Graceful shutdown should still execute before the error is returned —
   do not `os.Exit(1)` before draining connections and flushing buffers.
 
+### 10. Resilience Mechanism Wiring
+
+- When a circuit breaker, retry policy, or rate limiter is defined,
+  verify it is actually **wired** into the execution path. Common gaps:
+  - Configuration struct is populated but never passed to the
+    constructor that uses it.
+  - Circuit breaker is created but the transport wrapper that calls
+    `Allow()` / `RecordSuccess()` / `RecordFailure()` is not installed
+    on the HTTP client.
+  - Retry policy exists but the call site uses a plain `http.Client`
+    instead of the wrapped one.
+- Verify that the resilience mechanism is tested end-to-end: a test
+  should trigger the failure condition and assert the mechanism
+  activates (e.g., breaker opens after N failures).
+
+### 11. Prometheus Metric Lifecycle
+
+- Gauge metrics that track per-resource state (e.g., per-cluster
+  breaker state, per-session status) **must** be cleaned up when the
+  resource is deleted. Otherwise, the last observed value persists
+  forever and misleads dashboards.
+- Verify `Delete()` or `DeletePartialMatch()` is called on removal of
+  the tracked entity — not just on controller shutdown.
+- Counter metrics (`_total`) do not need cleanup (monotonic by
+  definition), but their label sets must still be bounded.
+
 ## Output format
 
 For each finding:

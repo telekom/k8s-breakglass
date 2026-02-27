@@ -77,19 +77,19 @@ Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name
 | `review-go-style` | Lint | golangci-lint v2 compliance: `importas`, `errorlint`, `usestdlibvars`, formatting |
 | `review-concurrency` | Safety | Multi-replica races, SSA ownership, monotonic merges, cache staleness, time handling |
 | `review-k8s-patterns` | Ops | Error handling, context propagation, reconciler idempotency, structured logging |
-| `review-performance` | Perf | Webhook latency, API server load, memory allocation, informer indexes, metrics cardinality |
-| `review-integration-wiring` | Wiring | Dead code, unwired fields, unused interfaces, uncalled functions, config propagation |
+| `review-performance` | Perf | Webhook latency, API server load, memory allocation, informer indexes, metrics cardinality, monotonic clock, read-only vs mutating state checks |
+| `review-integration-wiring` | Wiring | Dead code, unwired fields, unused interfaces, uncalled functions, config propagation, error classification granularity |
 | **API & Security Reviewers** | | |
 | `review-api-crd` | API | CRD schema correctness, backwards compatibility, webhook validation |
 | `review-security` | Security | RBAC least privilege, webhook safety, input validation, credential handling |
 | `review-rest-api` | API | Gin HTTP endpoints: validation, response format, auth, pagination, concurrency |
 | **Documentation & Testing Reviewers** | | |
-| `review-docs-consistency` | Docs | Documentation ↔ code alignment: field names, metrics tables, headings, links |
-| `review-ci-testing` | Testing | Test coverage, assertion quality, switch exhaustiveness, CI workflow alignment |
+| `review-docs-consistency` | Docs | Documentation ↔ code alignment: field names, metrics tables, headings, links, silent-fallback attribution |
+| `review-ci-testing` | Testing | Test coverage, assertion quality, switch exhaustiveness, CI workflow alignment, Playwright navigation assertions |
 | `review-edge-cases` | Testing | Zero/nil/empty values, boundary conditions, clock edge cases, fuzz properties |
 | `review-qa-regression` | QA | Regression impact, state machine integrity, backwards compat, rollback safety |
 | **Domain-Specific Reviewers** | | |
-| `review-frontend-ui` | Frontend | Vue 3 accessibility (WCAG 2.1 AA), TypeScript strict, state display, filters |
+| `review-frontend-ui` | Frontend | Vue 3 accessibility (WCAG 2.1 AA), TypeScript strict, state display, filters, Scale/Stencil migration |
 | `review-cli-usability` | CLI | `bgctl` command structure, flag naming, output formats, error messages, completion |
 | `review-helm-chart` | Helm | Chart values, template correctness, CRD sync, RBAC alignment, upgrade safety |
 | `review-end-user` | UX | End-user experience: SRE during incidents, platform admin, security auditor |
@@ -101,25 +101,25 @@ The 16 reviewer personas cover every issue class found by automated reviewers
 (Copilot, etc.) and more:
 
 **Code quality** (4 personas):
-- **Go style** catches import alias violations, `%v` error wrapping, string literals, lint failures, duplicate comment lines, string whitespace hygiene
-- **Concurrency** catches SSA races, lost updates, stale cache reads, `time.Now()` vs `.UTC()`, failure-path channel deadlocks, mis-wired channel targets, unbuffered channel drops, premature channel closes
-- **K8s patterns** catches missing context timeouts, non-idempotent reconcilers, unbounded lists, exit code integrity
-- **Performance** catches webhook latency regressions, unbounded memory, high-cardinality metrics
+- **Go style** catches import alias violations, `%v` error wrapping, string literals, lint failures, duplicate comment lines, string whitespace hygiene, **import alias consistency** across files
+- **Concurrency** catches SSA races, lost updates, stale cache reads, `time.Now()` vs `.UTC()`, failure-path channel deadlocks, mis-wired channel targets, unbuffered channel drops, premature channel closes, **circuit breaker probe-slot lifecycle** (Allow increment, Record* decrement, eviction cleanup)
+- **K8s patterns** catches missing context timeouts, non-idempotent reconcilers, unbounded lists, exit code integrity, **resilience mechanism wiring** (breaker/retry actually connected to HTTP client), **Prometheus metric lifecycle** (gauge cleanup on resource deletion)
+- **Performance** catches webhook latency regressions, unbounded memory, high-cardinality metrics, **circuit breaker key normalization** inconsistencies across create/lookup/eviction paths
 
 **Correctness** (4 personas):
-- **Integration wiring** catches new code that is defined but never called or connected, state pipeline overwrites, dead channel branches, error swallowing at shutdown, **stale generated CRD descriptions after Go comment changes**
+- **Integration wiring** catches new code that is defined but never called or connected, state pipeline overwrites, dead channel branches, error swallowing at shutdown, **stale generated CRD descriptions after Go comment changes**, **cache/registry key normalization** mismatches (creation vs. eviction using different key forms), **deleted functions with surviving test references** across PRs
 - **API & CRD** catches missing validation markers, backwards-compatibility breaks
-- **Edge cases** catches untested boundary conditions, zero-value bugs, clock skew issues, **state × time interaction gaps** (e.g., missing edge-case tests for expiry functions across session states and timestamp combinations)
-- **QA regression** catches state machine violations, data migration gaps, rollback hazards
+- **Edge cases** catches untested boundary conditions, zero-value bugs, clock skew issues, **state × time interaction gaps** (e.g., missing edge-case tests for expiry functions across session states and timestamp combinations), **circuit breaker edge cases** (half-open probe exhaustion, concurrent state transitions, unbounded breaker creation)
+- **QA regression** catches state machine violations, data migration gaps, rollback hazards, **resilience mechanism regression** (error reclassification, threshold changes), **verification discipline** (search codebase before flagging missing features)
 
 **Security & documentation** (3 personas):
-- **Security** catches privilege escalation, credential leaks, input injection, CSRF gaps
-- **Docs consistency** catches field name mismatches, missing metrics docs, duplicate headings, duplicate comment lines, log-level claim inaccuracies, function-description table drift, **generated artifact staleness** (Go comment ↔ CRD YAML description divergence)
-- **CI & testing** catches coverage gaps, wrong test names in docs, missing enum cases, **count-only assertions** (tests asserting `.length` without verifying item content)
+- **Security** catches privilege escalation, credential leaks, input injection, CSRF gaps, **log-volume DoS** from unbounded warning logs in hot paths, **error classification breadth** (treating broad error interfaces like `net.Error` / `url.Error` as uniformly transient)
+- **Docs consistency** catches field name mismatches, missing metrics docs, duplicate headings, duplicate comment lines, log-level claim inaccuracies, function-description table drift, **generated artifact staleness** (Go comment ↔ CRD YAML description divergence), **runtime behavior claims without hot-reload support**, **misleading API method docs** that cause double-counting
+- **CI & testing** catches coverage gaps, wrong test names in docs, missing enum cases, **count-only assertions** (tests asserting `.length` without verifying item content), **orphaned test references** to deleted/renamed symbols, **`no-explicit-any`** violations in test files
 
 **User-facing** (5 personas):
-- **Frontend UI** catches missing session states in filters, accessibility gaps, XSS risks, **roving tabindex bugs after filtering**, **duplicate type definitions** that mirror shared models, **identifier misspellings** in route constants and component names
+- **Frontend UI** catches missing session states in filters, accessibility gaps, XSS risks, **roving tabindex bugs after filtering**, **duplicate type definitions** that mirror shared models, **identifier misspellings** in route constants and component names, **`any` in all forms** (`Record<string, any>`, `as any`, explicit `any` params) in source and test files
 - **CLI usability** catches unclear error messages, missing completions, flag inconsistencies
 - **REST API** catches validation gaps, inconsistent response formats, auth bypasses, 401-vs-403 misuse
-- **Helm chart** catches RBAC drift, stale CRDs, upgrade failures, missing security contexts
+- **Helm chart** catches RBAC drift, stale CRDs, upgrade failures, missing security contexts, **orphaned resources** (ConfigMaps/Secrets rendered but never consumed or documented)
 - **End-user** catches UX pain for SREs during incidents, admin config friction, audit gaps

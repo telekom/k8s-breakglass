@@ -32,6 +32,12 @@ is defined but never used, or used but never initialized.
 - Flag functions that exist only in tests without production call sites
   (test-only helpers are fine, but production code that only tests call
   is suspicious).
+- **Inverse: deleted functions with surviving references**: When a
+  function or method is removed or renamed, search for stale references
+  in tests (`*_test.go`, `*.spec.ts`), documentation, and other packages.
+  A test calling `Tracer()` after `func Tracer()` was deleted will compile
+  per-package but break CI when both PRs merge. Cross-reference deleted
+  symbols against the full repo.
 
 ### 4. New Constants/Variables — Are They Referenced?
 
@@ -86,6 +92,13 @@ is defined but never used, or used but never initialized.
   2. It is handled (checked with `errors.Is()`) by at least one caller
   3. It surfaces to the user (via status condition, API response, or log)
 - Flag errors that are returned but silently swallowed by callers.
+- **Error classification granularity**: When a function classifies errors
+  (e.g., `IsTransientError()`), verify that each matched error type is
+  specific enough. Blanket-accepting an entire type family (e.g., all
+  `*net.OpError`) catches configuration errors like DNS "no such host"
+  alongside genuine transient failures like connection timeouts. Require
+  delegation to the wrapped error (`opErr.Err`) or explicit sub-type
+  checks (`*net.DNSError`, `opErr.Timeout()`) before classifying.
 
 ### 9. Cleanup / Shutdown Wiring
 
@@ -132,6 +145,21 @@ is defined but never used, or used but never initialized.
   causing `main` to exit with status 0 on component failure.
 - The process exit code must reflect whether shutdown was clean (signal)
   or caused by a failure (non-zero).
+
+### 14. Cache / Registry Key Normalization
+
+- When a component uses a string key to index a registry or cache (e.g.,
+  circuit breaker registry, client cache), verify that **all sites** that
+  create, lookup, and remove entries use the **same canonical key form**.
+- Common anti-pattern: creation uses a raw user-input "name", but removal
+  or eviction uses a derived canonical key like `cacheKey(namespace, name)`
+  or `namespace/name`. This causes orphaned entries that never get cleaned
+  up, stale metrics, and state divergence.
+- Audit pattern: for each `Get(key)` or `Put(key, …)`, find every
+  `Remove(key)` / `Delete(key)` / `Evict(key)` and verify the key
+  derivation is identical.
+- Also check Prometheus metric label values: if they use raw names but
+  removal uses canonical keys, stale metric series accumulate.
 
 ## Output format
 

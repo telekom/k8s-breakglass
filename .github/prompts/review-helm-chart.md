@@ -71,6 +71,21 @@ chart for the breakglass controller.
 - `helm template` must render valid YAML.
 - Check for YAML indentation issues (common Helm pitfall).
 
+### 10. Orphaned Resources
+
+- Verify that every resource rendered by the chart templates (ConfigMap,
+  Secret, Service, etc.) is actually consumed by at least one other
+  resource in the chart or by the application.
+- Flag a ConfigMap/Secret that is rendered but never mounted as a volume,
+  referenced as an envFrom source, or documented as requiring manual
+  operator action.
+- If a rendered resource is intentionally **not** auto-mounted (e.g., it
+  is a configuration fragment for operators to integrate themselves),
+  the template MUST include a Helm comment (`{{- /* ... */ -}}`) or a
+  `metadata.annotations` entry explaining how to use it.
+- An undocumented, unconsumed resource confuses operators and wastes
+  cluster resources.
+
 ## Output format
 
 For each finding:

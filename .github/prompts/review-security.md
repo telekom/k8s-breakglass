@@ -60,6 +60,37 @@ grant temporary elevated access to production clusters.
 - Flag any `replace` directives pointing to forks or local paths.
 - Verify Dockerfile uses a pinned base image digest.
 
+### 8. Log-Volume DoS Prevention
+
+- Flag warning or error log calls inside paths reachable by unbounded
+  external input (e.g., per-unknown-cluster lookups, per-request auth
+  failures) that are **not** rate-limited.
+- A single `Warnw` inside a registry lookup for unknown keys lets an
+  attacker flood logs by sending requests with fabricated cluster names.
+- Acceptable mitigations: `sync.Once`, counter-modulo (`overflowCount%100`),
+  `rate.Sometimes`, or per-key dedup maps with bounded size.
+- Also check error-level log calls in hot paths that could be triggered
+  by malformed input at high volume.
+
+### 9. Error Classification Breadth in Resilience Mechanisms
+
+- When reviewing circuit breakers, retry logic, or back-off mechanisms,
+  verify that **error classification functions** (e.g., `IsTransientError`,
+  `IsRetryable`) do not treat broad error interfaces/types as uniformly
+  transient.
+- Specific patterns to flag:
+  - Any `net.Error` returning true without checking `Timeout()` or
+    using `errors.As` for specific subtypes (e.g., `*net.DNSError`) —
+    DNS resolution failures for invalid hostnames are `net.Error` but
+    are NOT transient. Note: `Temporary()` is deprecated since Go 1.18
+    and always returns false.
+  - Any `*url.Error` returning true without checking `Timeout()` or
+    recursively classifying the wrapped `.Err` — TLS certificate
+    verification failures (e.g., `x509: unknown authority`) wrap as
+    `url.Error` but are configuration issues, not transient.
+- Demand explicit sub-checks (timeout, wrapped error type) before
+  classifying an error as transient.
+
 ## Output format
 
 For each finding:
