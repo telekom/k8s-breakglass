@@ -39,11 +39,18 @@ breakglass management API. This API is consumed by the Vue 3 frontend and the
 
 - All error paths must return appropriate HTTP status codes:
   - 400 for bad input
-  - 401 for unauthenticated
-  - 403 for unauthorized
+  - 401 for unauthenticated (credentials missing or invalid)
+  - 403 for unauthorized (authenticated but lacks permission)
   - 404 for not found
   - 409 for conflicts
+  - 422 for valid syntax but unprocessable semantics (e.g., limit exceeded)
   - 500 for server errors
+- **401 vs 403 precision**: 401 is ONLY for authentication failures —
+  user didn't provide credentials, or credentials are invalid/expired.
+  If the request has already passed auth middleware (user is authenticated),
+  never return 401 for authorization failures. Missing escalation, wrong
+  group, insufficient role — all 403. Flag any `RespondUnauthorized` call
+  in a handler that runs after auth middleware.
 - Flag endpoints that return 500 for client errors.
 - Verify that internal error details (stack traces, internal paths) are
   not exposed to clients.

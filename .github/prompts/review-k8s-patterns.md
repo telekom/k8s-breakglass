@@ -73,6 +73,17 @@ observability, and production behavior.
   unrecoverable failures at Error.
 - Check that sensitive data (tokens, passwords) is never logged.
 
+### 9. Process Exit Code Integrity
+
+- When the main `run()` function orchestrates background goroutines,
+  verify that errors from failed components are returned (not just
+  logged) so that `main` exits non-zero.
+- Flag shutdown-helper functions that receive an error, log it, but
+  discard it (return nothing). The exit code is the final signal to
+  orchestrators (systemd, Kubernetes) that something went wrong.
+- Graceful shutdown should still execute before the error is returned —
+  do not `os.Exit(1)` before draining connections and flushing buffers.
+
 ## Output format
 
 For each finding:

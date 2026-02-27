@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Split `pkg/breakglass/` god package into 4 sub-packages** ([#416](https://github.com/telekom/k8s-breakglass/issues/416)): Extracted `clusterconfig/` (cluster config checker, binding API), `debug/` (debug session API, reconciler, kubectl), `escalation/` (escalation controller, manager, status updater), and `eventrecorder/` (Kubernetes event recorder) from the root `breakglass` package. Introduced `EscalationLookup` interface to break the import cycle between root and escalation sub-packages. All import paths updated; no public API changes.
+- **Decomposed god functions into focused helpers** ([#417](https://github.com/telekom/k8s-breakglass/issues/417)): Extracted `handleAuthorize` (706 → 46 lines) into `authorize_helpers.go` with `authorizeState` struct and 11 single-responsibility methods. Extracted `handleRequestBreakglassSession` (~760 → ~140 lines) into `session_request_helpers.go` with 3 types and 10 helpers. Extracted `main()` into `run()` with 7 helpers and 2 structs in `cmd/main.go`. No behavioural changes; all existing tests pass.
 
 - **Migrated `fake.NewSimpleClientset` to `fake.NewClientset`**: Replaced deprecated `fake.NewSimpleClientset()` calls with `fake.NewClientset()` in `pkg/breakglass/event_recorder_test.go` and removed associated `//nolint:staticcheck` suppressions (resolves #381)
 

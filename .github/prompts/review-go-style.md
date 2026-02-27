@@ -60,6 +60,10 @@ time.Monday, time.January
 - **`unconvert`**: Flag unnecessary type conversions
 - **`unused`**: Flag unused variables, functions, types
 - **`dupword`**: Flag duplicated words in comments ("the the", "is is")
+- **Duplicate comment lines**: Flag adjacent comment lines with identical
+  or near-identical text (e.g., two consecutive `//` lines that say the
+  same thing). This includes duplicate doc comments on types/functions
+  and duplicate inline comments on declarations.
 
 ### 6. Formatting (`gofmt`, `goimports`)
 
@@ -97,6 +101,17 @@ time.Monday, time.January
 - **Structured logging consistency**: Verify all log calls use the
   structured `w` suffix variants (`Infow`, `Warnw`, `Errorw`) with
   key-value pairs, not `Info`, `Warn`, `Error` with `fmt.Sprintf`.
+
+### 11. String Literal Whitespace Hygiene
+
+- Flag string literals used as reasons, messages, or diagnostic fragments
+  that contain leading or trailing whitespace (e.g., `" Note: ..."` instead
+  of `"Note: ..."`).
+- Strings that will be concatenated should not embed positional whitespace;
+  the concatenation site should add separators. This avoids cosmetic bugs
+  when the string is the sole output.
+- Check format strings for accidental double-spaces (`"foo  bar"`) and
+  stray newlines at string boundaries.
 
 ## Output format
 
