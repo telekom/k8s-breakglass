@@ -6,7 +6,7 @@ state management.
 
 ## Prerequisites
 
-- **Node.js** ≥ 18.11.0 (required for `--watch` flag used by the mock server)
+- **Node.js** ≥ 20.19.0
 - **npm** ≥ 9
 
 ## IDE Setup
