@@ -10,21 +10,25 @@ export function wasApprovedBy(session: SessionCR, email?: string | null): boolea
   if (!session || !normalized) return false;
 
   const status = session.status || {};
-  const direct = normalizeEmail((status as any).approver);
+  const direct = normalizeEmail(status.approver as string | undefined);
   if (direct && direct === normalized) {
     return true;
   }
 
-  if (Array.isArray((status as any).approvers)) {
-    const match = (status as any).approvers.some((item: unknown) => normalizeEmail(item as string) === normalized);
+  if (Array.isArray(status.approvers)) {
+    const match = (status.approvers as unknown[]).some(
+      (item: unknown) => normalizeEmail(item as string) === normalized,
+    );
     if (match) return true;
   }
 
-  if (Array.isArray((status as any).conditions)) {
-    const conditionMatch = (status as any).conditions.some((condition: Record<string, unknown>) => {
-      if (typeof condition?.message !== "string") return false;
-      return condition.message.toLowerCase().includes(normalized);
-    });
+  if (Array.isArray(status.conditions)) {
+    const conditionMatch = (status.conditions as Record<string, unknown>[]).some(
+      (condition: Record<string, unknown>) => {
+        if (typeof condition?.message !== "string") return false;
+        return condition.message.toLowerCase().includes(normalized);
+      },
+    );
     if (conditionMatch) return true;
   }
 
@@ -33,11 +37,12 @@ export function wasApprovedBy(session: SessionCR, email?: string | null): boolea
 
 export function describeApprover(session: SessionCR): string {
   const status = session.status || {};
-  if (typeof (status as any).approver === "string") {
-    return (status as any).approver;
+  if (typeof status.approver === "string") {
+    return status.approver;
   }
-  if (Array.isArray((status as any).approvers) && (status as any).approvers.length > 0) {
-    return (status as any).approvers[(status as any).approvers.length - 1] as string;
+  const approvers = status.approvers as unknown[] | undefined;
+  if (Array.isArray(approvers) && approvers.length > 0) {
+    return approvers[approvers.length - 1] as string;
   }
   return "-";
 }

@@ -2,6 +2,7 @@ import { vi, type Mock } from "vitest";
 import axios from "axios";
 import getConfig from "@/services/config";
 import { getIdentityProvider, extractOIDCConfig } from "@/services/identityProvider";
+import type { IdentityProviderConfig } from "@/services/identityProvider";
 
 vi.mock("axios");
 vi.mock("@/services/identityProvider", () => ({
@@ -30,7 +31,7 @@ describe("Config service", () => {
       type: "Keycloak",
       clientID: "ui",
       keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
-    } as any);
+    } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
       oidcAuthority: "https://keycloak.example.com/realms/schiff",
       oidcClientID: "ui",
@@ -64,7 +65,7 @@ describe("Config service", () => {
       type: "Keycloak",
       clientID: "ui",
       keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
-    } as any);
+    } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
       oidcAuthority: "https://keycloak.example.com/realms/schiff",
       oidcClientID: "ui",
@@ -88,7 +89,7 @@ describe("Config service", () => {
       type: "Keycloak",
       clientID: "ui",
       keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
-    } as any);
+    } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
       oidcAuthority: "https://keycloak.example.com/realms/schiff",
       oidcClientID: "ui",
@@ -111,7 +112,7 @@ describe("Config service", () => {
       type: "Keycloak",
       clientID: "ui",
       keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
-    } as any);
+    } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
       oidcAuthority: "https://keycloak.example.com/realms/schiff",
       oidcClientID: "ui",
@@ -135,7 +136,7 @@ describe("Config service", () => {
       type: "Keycloak",
       clientID: "ui",
       keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
-    } as any);
+    } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
       oidcAuthority: "https://keycloak.example.com/realms/schiff",
       oidcClientID: "ui",

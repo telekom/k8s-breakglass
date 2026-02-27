@@ -225,6 +225,7 @@ import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 import { PageHeader, EmptyState, LoadingState, StatusTag, ReasonPanel, ActionButton } from "@/components/common";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
+import { handleAxiosError } from "@/services/logger";
 import { pushError, pushSuccess } from "@/services/toast";
 import { statusToneFor } from "@/utils/statusStyles";
 import {
@@ -411,8 +412,8 @@ async function fetchPendingApprovals() {
   try {
     const sessions = await breakglassService.fetchPendingSessionsForApproval();
     pendingSessions.value = Array.isArray(sessions) ? dedupeSessions(sessions) : [];
-  } catch {
-    pushError("Failed to fetch pending approvals");
+  } catch (e: unknown) {
+    handleAxiosError("PendingApprovalsView", e, "Failed to fetch pending approvals");
   }
   loading.value = false;
 }
@@ -455,8 +456,8 @@ async function confirmApprove() {
     showApproveModal.value = false;
     modalSession.value = null;
     await fetchPendingApprovals();
-  } catch {
-    pushError("Failed to approve request");
+  } catch (e: unknown) {
+    handleAxiosError("PendingApprovalsView", e, "Failed to approve request");
   }
   approving.value = null;
 }
@@ -474,8 +475,8 @@ async function confirmReject() {
     showApproveModal.value = false;
     modalSession.value = null;
     await fetchPendingApprovals();
-  } catch {
-    pushError("Failed to reject request");
+  } catch (e: unknown) {
+    handleAxiosError("PendingApprovalsView", e, "Failed to reject request");
   }
   approving.value = null;
 }

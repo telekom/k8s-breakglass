@@ -185,7 +185,8 @@ const {
 // Helper functions
 function getRequestReason(req: SessionCR): string {
   if (typeof req.spec?.requestReason === "string") return req.spec.requestReason;
-  return (req.spec?.requestReason as any)?.description || req.status?.reason || "";
+  const reason = req.spec?.requestReason as Record<string, unknown> | undefined;
+  return (reason?.description as string | undefined) || req.status?.reason || "";
 }
 
 function getApproverStatus(req: SessionCR): string {

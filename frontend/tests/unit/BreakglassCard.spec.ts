@@ -155,8 +155,8 @@ describe("BreakglassCard Duration and Reason Handling", () => {
     it("rejects null/undefined", () => {
       expect(validateDuration(null, 3600).valid).toBe(false);
       expect(validateDuration(null, 3600).error).toContain("must be specified");
-      expect(validateDuration(undefined as any, 3600).valid).toBe(false);
-      expect(validateDuration(undefined as any, 3600).error).toContain("must be specified");
+      expect(validateDuration(undefined as unknown as number | null, 3600).valid).toBe(false);
+      expect(validateDuration(undefined as unknown as number | null, 3600).error).toContain("must be specified");
     });
 
     it("rejects duration below 60 seconds", () => {

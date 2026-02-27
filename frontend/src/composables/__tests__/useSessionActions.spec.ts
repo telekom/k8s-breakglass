@@ -32,7 +32,7 @@ describe("useSessionActions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Mock window.confirm
-    (window as any).confirm = vi.fn(() => true);
+    window.confirm = vi.fn(() => true);
   });
 
   describe("isPending", () => {
@@ -122,7 +122,7 @@ describe("useSessionActions", () => {
       const { reject } = useSessionActions({ reject: mockReject });
 
       // User cancels
-      ((window as any).confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
+      (window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
 
       const session = createSession();
       const result = await reject(session);
@@ -138,7 +138,7 @@ describe("useSessionActions", () => {
       const session = createSession();
       await reject(session, { skipConfirm: true });
 
-      expect((window as any).confirm).not.toHaveBeenCalled();
+      expect(window.confirm).not.toHaveBeenCalled();
       expect(mockReject).toHaveBeenCalled();
     });
 
@@ -254,41 +254,41 @@ describe("useSessionActions", () => {
 
     it("shows correct confirmation message for withdraw action", async () => {
       const mockWithdraw = vi.fn().mockResolvedValue(undefined);
-      (window as any).confirm = vi.fn(() => true);
+      window.confirm = vi.fn(() => true);
       const { withdraw } = useSessionActions({ withdraw: mockWithdraw });
 
       const session = createSession();
       await withdraw(session);
 
-      expect((window as any).confirm).toHaveBeenCalledWith(expect.stringContaining("Withdraw this request?"));
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Withdraw this request?"));
     });
 
     it("shows correct confirmation message for drop action", async () => {
       const mockDrop = vi.fn().mockResolvedValue(undefined);
-      (window as any).confirm = vi.fn(() => true);
+      window.confirm = vi.fn(() => true);
       const { drop } = useSessionActions({ drop: mockDrop });
 
       const session = createSession("Approved");
       await drop(session);
 
-      expect((window as any).confirm).toHaveBeenCalledWith(expect.stringContaining("Drop active session"));
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Drop active session"));
     });
 
     it("shows correct confirmation message for cancel action", async () => {
       const mockCancel = vi.fn().mockResolvedValue(undefined);
-      (window as any).confirm = vi.fn(() => true);
+      window.confirm = vi.fn(() => true);
       const { cancel } = useSessionActions({ cancel: mockCancel });
 
       // Cancel requires session to be Active
       const session = createSession("Active");
       await cancel(session);
 
-      expect((window as any).confirm).toHaveBeenCalledWith(expect.stringContaining("Cancel session"));
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Cancel session"));
     });
 
     it("withdraw returns false when user declines confirmation", async () => {
       const mockWithdraw = vi.fn().mockResolvedValue(undefined);
-      (window as any).confirm = vi.fn(() => false);
+      window.confirm = vi.fn(() => false);
       const { withdraw } = useSessionActions({ withdraw: mockWithdraw });
 
       const session = createSession();

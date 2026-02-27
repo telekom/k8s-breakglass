@@ -376,8 +376,8 @@ export class AuthHelper {
       const logoutClicked = await this.page.evaluate(() => {
         // Try to find the profile menu element with the logoutHandler
         const profileMenu = document.querySelector('[data-testid="user-menu"]');
-        if (profileMenu && (profileMenu as any).logoutHandler) {
-          (profileMenu as any).logoutHandler();
+        if (profileMenu && (profileMenu as unknown as Record<string, unknown>).logoutHandler) {
+          ((profileMenu as unknown as Record<string, (() => void) | unknown>).logoutHandler as () => void)();
           return true;
         }
 
@@ -430,7 +430,7 @@ export class AuthHelper {
    */
   private async triggerJsLogout(): Promise<void> {
     await this.page.evaluate(() => {
-      const auth = (window as any).__BREAKGLASS_AUTH;
+      const auth = (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH as Record<string, unknown>;
       if (auth && auth.logout) {
         auth.logout();
       } else {

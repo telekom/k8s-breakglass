@@ -22,15 +22,6 @@ vi.mock("@/services/logger", () => ({
   debug: vi.fn(),
 }));
 
-vi.mock("@/services/logger-console", () => ({
-  default: {
-    error: vi.fn(),
-    warn: vi.fn(),
-    info: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
-
 import BreakglassService from "@/services/breakglass";
 
 describe("BreakglassService", () => {
@@ -39,7 +30,7 @@ describe("BreakglassService", () => {
   const mockAuth = {
     user: { email: "test@example.com" },
     getAccessToken: vi.fn().mockResolvedValue("test-token"),
-  } as any;
+  } as unknown as ConstructorParameters<typeof BreakglassService>[0];
 
   beforeEach(() => {
     vi.clearAllMocks();

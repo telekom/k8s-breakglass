@@ -19,8 +19,9 @@ const router = useRouter();
 const user = useUser();
 
 const currentUserEmail = computed(() => {
-  const profile = (user.value as any)?.profile;
-  return profile?.email || profile?.preferred_username || (user.value as any)?.email || "";
+  const profile = (user.value as { profile?: { email?: string; preferred_username?: string }; email?: string })
+    ?.profile;
+  return profile?.email || profile?.preferred_username || (user.value as { email?: string } | undefined)?.email || "";
 });
 
 type FilterState = {
@@ -67,15 +68,15 @@ async function fetchSessions() {
   error.value = "";
 
   try {
-    const params: any = {};
+    const params: Record<string, string | boolean> = {};
     if (filters.mine) params.mine = true;
     if (filters.cluster) params.cluster = filters.cluster;
     // For simplicity, we fetch all and filter client-side
 
     const result = await debugSessionService.listSessions(params);
     sessions.value = result.sessions;
-  } catch (e: any) {
-    error.value = e?.message || "Failed to load debug sessions";
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug sessions";
     pushError(error.value);
   } finally {
     loading.value = false;
@@ -147,8 +148,8 @@ async function handleJoin(session: DebugSessionSummary) {
     await debugSessionService.joinSession(session.name, { role: "participant" });
     pushSuccess(`Joined debug session ${session.name}`);
     await refresh();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to join session");
+  } catch (e: unknown) {
+    pushError((e instanceof Error ? e.message : undefined) || "Failed to join session");
   }
 }
 
@@ -157,8 +158,8 @@ async function handleLeave(session: DebugSessionSummary) {
     await debugSessionService.leaveSession(session.name);
     pushSuccess(`Left debug session ${session.name}`);
     await refresh();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to leave session");
+  } catch (e: unknown) {
+    pushError((e instanceof Error ? e.message : undefined) || "Failed to leave session");
   }
 }
 
@@ -167,8 +168,8 @@ async function handleTerminate(session: DebugSessionSummary) {
     await debugSessionService.terminateSession(session.name);
     pushSuccess(`Terminated debug session ${session.name}`);
     await refresh();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to terminate session");
+  } catch (e: unknown) {
+    pushError((e instanceof Error ? e.message : undefined) || "Failed to terminate session");
   }
 }
 
@@ -187,8 +188,8 @@ async function confirmRenew() {
     renewDialogOpen.value = false;
     sessionToRenew.value = null;
     await refresh();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to renew session");
+  } catch (e: unknown) {
+    pushError((e instanceof Error ? e.message : undefined) || "Failed to renew session");
   }
 }
 
@@ -197,8 +198,8 @@ async function handleApprove(session: DebugSessionSummary) {
     await debugSessionService.approveSession(session.name);
     pushSuccess(`Approved debug session ${session.name}`);
     await refresh();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to approve session");
+  } catch (e: unknown) {
+    pushError((e instanceof Error ? e.message : undefined) || "Failed to approve session");
   }
 }
 
@@ -207,8 +208,8 @@ async function handleReject(session: DebugSessionSummary, reason: string) {
     await debugSessionService.rejectSession(session.name, { reason });
     pushSuccess(`Rejected debug session ${session.name}`);
     await refresh();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to reject session");
+  } catch (e: unknown) {
+    pushError((e instanceof Error ? e.message : undefined) || "Failed to reject session");
   }
 }
 
@@ -296,7 +297,7 @@ function onStateToggle(state: string, event: Event) {
           :key="opt.value"
           :data-testid="`state-filter-${opt.value}`"
           :checked="filters.states.includes(opt.value)"
-          @scaleChange="(event: any) => onStateToggle(opt.value, event)"
+          @scaleChange="(event: Event) => onStateToggle(opt.value, event)"
         >
           {{ opt.label }}
         </scale-checkbox>

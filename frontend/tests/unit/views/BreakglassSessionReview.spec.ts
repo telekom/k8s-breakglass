@@ -39,6 +39,7 @@ vi.mock("@/services/toast", () => ({
 }));
 
 vi.mock("@/services/logger", () => ({
+  debug: vi.fn(),
   handleAxiosError: vi.fn(),
 }));
 

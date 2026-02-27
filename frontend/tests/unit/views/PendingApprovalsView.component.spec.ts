@@ -9,7 +9,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { ref } from "vue";
 import PendingApprovalsView from "@/views/PendingApprovalsView.vue";
 import { AuthKey } from "@/keys";
-import { pushError } from "@/services/toast";
+import { handleAxiosError } from "@/services/logger";
 
 const mockFetchPendingSessionsForApproval = vi.fn();
 const mockApproveBreakglass = vi.fn();
@@ -26,6 +26,14 @@ vi.mock("@/services/breakglass", () => ({
 vi.mock("@/services/toast", () => ({
   pushError: vi.fn(),
   pushSuccess: vi.fn(),
+}));
+
+vi.mock("@/services/logger", () => ({
+  handleAxiosError: vi.fn(),
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
 }));
 
 vi.mock("@/composables", () => ({
@@ -120,6 +128,10 @@ describe("PendingApprovalsView (component)", () => {
     mockFetchPendingSessionsForApproval.mockRejectedValueOnce(new Error("network error"));
 
     await createWrapper();
-    expect(pushError).toHaveBeenCalledWith("Failed to fetch pending approvals");
+    expect(handleAxiosError).toHaveBeenCalledWith(
+      "PendingApprovalsView",
+      expect.any(Error),
+      "Failed to fetch pending approvals",
+    );
   });
 });

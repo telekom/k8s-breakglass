@@ -14,7 +14,7 @@ describe("DebugPanel Utilities", () => {
    * Utility function that extracts groups from JWT claims
    * Matches the implementation in DebugPanel.vue
    */
-  function extractGroups(claims: any | null): string[] {
+  function extractGroups(claims: Record<string, unknown> | null): string[] {
     if (!claims) return [];
     const groups: Set<string> = new Set();
     if (Array.isArray(claims.groups)) {
@@ -24,8 +24,9 @@ describe("DebugPanel Utilities", () => {
       if (typeof claims.group === "string") groups.add(claims.group);
       if (Array.isArray(claims.group)) claims.group.forEach((g: string) => groups.add(g));
     }
-    if (claims.realm_access?.roles && Array.isArray(claims.realm_access.roles)) {
-      claims.realm_access.roles.forEach((r: string) => groups.add(r));
+    const realmAccess = claims.realm_access as Record<string, unknown> | undefined;
+    if (realmAccess?.roles && Array.isArray(realmAccess.roles)) {
+      realmAccess.roles.forEach((r: string) => groups.add(r));
     }
     return Array.from(groups);
   }
@@ -36,7 +37,7 @@ describe("DebugPanel Utilities", () => {
     });
 
     it("returns empty array for undefined claims", () => {
-      expect(extractGroups(undefined)).toEqual([]);
+      expect(extractGroups(undefined as unknown as Record<string, unknown> | null)).toEqual([]);
     });
 
     it("extracts groups from groups array", () => {
@@ -95,7 +96,7 @@ describe("DebugPanel Utilities", () => {
      * Generates a summary string from access token claims
      * Matches the tokenSummary computed property in DebugPanel.vue
      */
-    function getTokenSummary(claims: any | null): string {
+    function getTokenSummary(claims: Record<string, unknown> | null): string {
       if (!claims) return "No access token";
       return `sub: ${claims.sub}, preferred_username: ${claims.preferred_username}, email: ${claims.email}`;
     }

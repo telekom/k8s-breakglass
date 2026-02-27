@@ -14,25 +14,32 @@ describe("BreakglassSessionCard Utilities", () => {
    * Helper functions for session state and user role detection
    */
 
-  function isSessionOwner(session: any, userEmail: string): boolean {
-    return session?.spec?.user === userEmail;
+  function isSessionOwner(session: Record<string, unknown> | undefined, userEmail: string): boolean {
+    return (session?.spec as Record<string, unknown> | undefined)?.user === userEmail;
   }
 
-  function canDropSession(session: any, userEmail: string): boolean {
+  function canDropSession(session: Record<string, unknown> | undefined, userEmail: string): boolean {
     // Can drop if:
     // 1. User is the owner AND
     // 2. Session is in Approved state
-    return isSessionOwner(session, userEmail) && session?.status?.state === "Approved";
+    return (
+      isSessionOwner(session, userEmail) &&
+      (session?.status as Record<string, unknown> | undefined)?.state === "Approved"
+    );
   }
 
-  function canRejectSession(session: any, userEmail: string): boolean {
+  function canRejectSession(session: Record<string, unknown> | undefined, userEmail: string): boolean {
     // Can reject if user is NOT the owner but session still exists
-    return !isSessionOwner(session, userEmail) && session?.status?.state === "Approved";
+    return (
+      !isSessionOwner(session, userEmail) &&
+      (session?.status as Record<string, unknown> | undefined)?.state === "Approved"
+    );
   }
 
-  function getSessionExpiry(session: any): Date | null {
-    if (!session?.status?.expiresAt) return null;
-    return new Date(session.status.expiresAt);
+  function getSessionExpiry(session: Record<string, unknown> | undefined): Date | null {
+    const status = session?.status as Record<string, unknown> | undefined;
+    if (!status?.expiresAt) return null;
+    return new Date(status.expiresAt as string);
   }
 
   describe("isSessionOwner()", () => {

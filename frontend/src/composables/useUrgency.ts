@@ -29,6 +29,7 @@ export function getTimeRemaining(expiresAt: string | Date | undefined | null): n
     const now = Date.now();
     return Math.max(0, Math.floor((expiry - now) / 1000));
   } catch {
+    // Unparseable date — treat as no deadline (Infinity)
     return Infinity;
   }
 }

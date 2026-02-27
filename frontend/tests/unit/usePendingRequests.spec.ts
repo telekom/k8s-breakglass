@@ -1,6 +1,7 @@
 import { vi, type Mock } from "vitest";
 import { usePendingRequests } from "@/composables/usePendingRequests";
 import type { SessionCR } from "@/model/breakglass";
+import type BreakglassService from "@/services/breakglass";
 
 type MockService = {
   fetchMyOutstandingRequests: Mock<() => Promise<SessionCR[]>>;
@@ -11,8 +12,8 @@ const debugMock = vi.fn();
 const warnMock = vi.fn();
 
 vi.mock("@/services/logger", () => ({
-  debug: (...args: any[]) => debugMock(...args),
-  warn: (...args: any[]) => warnMock(...args),
+  debug: (...args: unknown[]) => debugMock(...args),
+  warn: (...args: unknown[]) => warnMock(...args),
 }));
 
 function createMockService(overrides: Partial<MockService> = {}): MockService {
@@ -52,7 +53,7 @@ describe("usePendingRequests", () => {
     const service = createMockService({
       fetchMyOutstandingRequests: vi.fn().mockResolvedValue([request]),
     });
-    const state = usePendingRequests(service as any);
+    const state = usePendingRequests(service as unknown as BreakglassService);
 
     await state.loadRequests();
 
@@ -66,7 +67,7 @@ describe("usePendingRequests", () => {
     const service = createMockService({
       fetchMyOutstandingRequests: vi.fn().mockRejectedValue(new Error("boom")),
     });
-    const state = usePendingRequests(service as any);
+    const state = usePendingRequests(service as unknown as BreakglassService);
 
     await state.loadRequests();
 
@@ -80,7 +81,7 @@ describe("usePendingRequests", () => {
     const request = sampleRequest("req-1");
     const second = sampleRequest("req-2");
     const service = createMockService();
-    const state = usePendingRequests(service as any);
+    const state = usePendingRequests(service as unknown as BreakglassService);
     state.requests.value = [request, second];
 
     await state.withdrawRequest(request);
@@ -99,7 +100,7 @@ describe("usePendingRequests", () => {
     const service = createMockService({
       withdrawMyRequest: vi.fn().mockRejectedValue(new Error("nope")),
     });
-    const state = usePendingRequests(service as any);
+    const state = usePendingRequests(service as unknown as BreakglassService);
     state.requests.value = [request];
 
     await state.withdrawRequest(request);

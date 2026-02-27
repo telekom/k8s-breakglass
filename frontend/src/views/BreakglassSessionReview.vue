@@ -10,6 +10,7 @@ import useCurrentTime from "@/utils/currentTime";
 import BreakglassSessionCard from "@/components/BreakglassSessionCard.vue";
 import { handleAxiosError } from "@/services/logger";
 import { pushError, pushSuccess } from "@/services/toast";
+import type { AxiosLikeError } from "@/model/errors";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 
 const route = useRoute();
@@ -82,8 +83,9 @@ async function confirmApprove() {
       closeReviewModal();
       await getActiveBreakglasses();
     }
-  } catch (errResponse: any) {
-    if (errResponse?.response?.status === 401 || errResponse?.status === 401) {
+  } catch (errResponse: unknown) {
+    const axiosLike = errResponse as AxiosLikeError;
+    if (axiosLike?.response?.status === 401 || axiosLike?.status === 401) {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmApprove", errResponse, "Failed to approve session");
@@ -104,8 +106,9 @@ async function confirmReject() {
       closeReviewModal();
       await getActiveBreakglasses();
     }
-  } catch (errResponse: any) {
-    if (errResponse?.response?.status === 401 || errResponse?.status === 401) {
+  } catch (errResponse: unknown) {
+    const axiosLike = errResponse as AxiosLikeError;
+    if (axiosLike?.response?.status === 401 || axiosLike?.status === 401) {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmReject", errResponse, "Failed to reject session");
@@ -130,8 +133,9 @@ async function getActiveBreakglasses() {
       state.getBreakglassesMsg = "";
       state.breakglasses = response.data;
     }
-  } catch (errResponse: any) {
-    if (errResponse?.response?.status === 401 || errResponse?.status === 401) {
+  } catch (errResponse: unknown) {
+    const axiosLike = errResponse as AxiosLikeError;
+    if (axiosLike?.response?.status === 401 || axiosLike?.status === 401) {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.getActiveBreakglasses", errResponse, "Failed to list sessions");
@@ -269,8 +273,9 @@ async function onDrop(bg: SessionCR) {
       pushSuccess(`Dropped session for ${bg.spec?.user}`);
       await getActiveBreakglasses();
     }
-  } catch (errResponse: any) {
-    if (errResponse?.response?.status === 401 || errResponse?.status === 401) {
+  } catch (errResponse: unknown) {
+    const axiosLike = errResponse as AxiosLikeError;
+    if (axiosLike?.response?.status === 401 || axiosLike?.status === 401) {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.onDrop", errResponse, "Failed to drop session");
@@ -286,8 +291,9 @@ async function onCancel(bg: SessionCR) {
       pushSuccess(`Cancelled session for ${bg.spec?.user}`);
       await getActiveBreakglasses();
     }
-  } catch (errResponse: any) {
-    if (errResponse?.response?.status === 401 || errResponse?.status === 401) {
+  } catch (errResponse: unknown) {
+    const axiosLike = errResponse as AxiosLikeError;
+    if (axiosLike?.response?.status === 401 || axiosLike?.status === 401) {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.onCancel", errResponse, "Failed to cancel session");

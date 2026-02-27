@@ -46,9 +46,14 @@ const route = useRoute();
 const router = useRouter();
 const user = useUser();
 
+interface OidcUser {
+  profile?: { email?: string; preferred_username?: string };
+  email?: string;
+}
+
 const currentUserEmail = computed(() => {
-  const profile = (user.value as any)?.profile;
-  return profile?.email || profile?.preferred_username || (user.value as any)?.email || "";
+  const u = user.value as OidcUser | undefined;
+  return u?.profile?.email || u?.profile?.preferred_username || u?.email || "";
 });
 
 const sessionName = computed(() => route.params.name as string);
@@ -100,8 +105,8 @@ async function fetchSession() {
 
   try {
     session.value = await debugSessionService.getSession(sessionName.value);
-  } catch (e: any) {
-    error.value = e?.message || "Failed to load debug session";
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug session";
   } finally {
     loading.value = false;
   }

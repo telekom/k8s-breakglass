@@ -21,6 +21,7 @@ vi.mock("@/services/multiIDP", () => ({
 }));
 
 vi.mock("@/services/logger", () => ({
+  debug: vi.fn(),
   error: vi.fn(),
 }));
 

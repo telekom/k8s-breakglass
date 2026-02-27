@@ -150,10 +150,10 @@ describe("dateTime", () => {
 
     it("handles empty/null input gracefully", () => {
       debugLogDateTime("testLabel", null);
-      expect(consoleSpy.debug).toHaveBeenCalledWith("[DateTime] testLabel: (empty)");
+      expect(consoleSpy.debug).toHaveBeenCalledWith(expect.any(String), "[DateTime]", "testLabel: (empty)");
 
       debugLogDateTime("testLabel", undefined);
-      expect(consoleSpy.debug).toHaveBeenCalledWith("[DateTime] testLabel: (empty)");
+      expect(consoleSpy.debug).toHaveBeenCalledWith(expect.any(String), "[DateTime]", "testLabel: (empty)");
     });
   });
 });

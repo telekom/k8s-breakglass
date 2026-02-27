@@ -10,8 +10,9 @@ import {
   validateDuration,
 } from "@/utils/breakglassSession";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
+import type { Breakglass } from "@/model/breakglass";
 
-const props = defineProps<{ breakglass: any; time: number }>();
+const props = defineProps<{ breakglass: Breakglass; time: number }>();
 const emit = defineEmits(["request", "drop", "withdraw"]);
 
 // Unique id suffix for this card instance to avoid duplicate DOM ids in v-for

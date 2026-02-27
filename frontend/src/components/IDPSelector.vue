@@ -19,7 +19,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 import { getMultiIDPConfig, getAllowedIDPsForEscalation } from "@/services/multiIDP";
-import { error as logError } from "@/services/logger";
+import { debug, warn, error as logError } from "@/services/logger";
 
 const props = defineProps<{
   /** Name of the selected escalation (used to determine allowed IDPs) */
@@ -48,12 +48,12 @@ const selectedIDPName = ref<string | undefined>(props.modelValue);
 
 // Load multi-IDP config on mount
 onMounted(async () => {
-  console.debug("[IDPSelector] Component mounted", { escalationName: props.escalationName });
+  debug("IDPSelector", "Component mounted", { escalationName: props.escalationName });
   loading.value = true;
   error.value = undefined;
   try {
     multiIDPConfig.value = await getMultiIDPConfig();
-    console.debug("[IDPSelector] Multi-IDP config loaded", {
+    debug("IDPSelector", "Multi-IDP config loaded", {
       escalationName: props.escalationName,
       idpCount: multiIDPConfig.value?.identityProviders.length,
       idps: multiIDPConfig.value?.identityProviders.map((idp) => ({
@@ -65,12 +65,10 @@ onMounted(async () => {
 
     // If no config returned, log it but don't treat as fatal error
     if (!multiIDPConfig.value || multiIDPConfig.value.identityProviders.length === 0) {
-      console.warn("[IDPSelector] No IDPs available in multi-IDP config");
-      logError("IDPSelector", "No IDPs available in multi-IDP config", multiIDPConfig.value);
+      warn("IDPSelector", "No IDPs available in multi-IDP config");
       error.value = "No identity providers available";
     }
   } catch (err) {
-    console.error("[IDPSelector] Failed to load multi-IDP configuration:", err);
     logError("IDPSelector", "Failed to load multi-IDP configuration", err);
     error.value = "Failed to load identity provider configuration";
   } finally {
@@ -82,7 +80,7 @@ onMounted(async () => {
 watch(
   () => props.modelValue,
   (newValue) => {
-    console.debug("[IDPSelector] modelValue prop changed", { newValue });
+    debug("IDPSelector", "modelValue prop changed", { newValue });
     selectedIDPName.value = newValue;
   },
 );
@@ -91,7 +89,7 @@ watch(
 watch(
   () => props.escalationName,
   () => {
-    console.debug("[IDPSelector] Escalation changed", {
+    debug("IDPSelector", "Escalation changed", {
       newEscalation: props.escalationName,
       currentSelection: selectedIDPName.value,
     });
@@ -101,7 +99,7 @@ watch(
       const stillAllowed = allowedIDPs.value.some((idp) => idp.name === selectedIDPName.value);
       if (!stillAllowed) {
         // Current selection not allowed for new escalation, clear it
-        console.debug("[IDPSelector] Current IDP selection no longer allowed, clearing", {
+        debug("IDPSelector", "Current IDP selection no longer allowed, clearing", {
           currentSelection: selectedIDPName.value,
           allowedIDPs: allowedIDPs.value.map((idp) => idp.name),
         });
@@ -133,7 +131,7 @@ const hasMultipleIDPs = computed((): boolean => {
  * Handle IDP button click for login
  */
 function handleIDPButtonClick(idpName: string) {
-  console.debug("[IDPSelector] IDP button clicked for login", {
+  debug("IDPSelector", "IDP button clicked for login", {
     idpName,
     escalation: props.escalationName,
   });

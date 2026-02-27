@@ -59,7 +59,7 @@ describe("useSessionList", () => {
     });
 
     it("falls back to session.state", () => {
-      const session = createSession({ status: undefined }) as any;
+      const session = createSession({ status: undefined });
       session.state = "Approved";
       expect(getSessionState(session)).toBe("Approved");
     });
@@ -154,7 +154,7 @@ describe("useSessionList", () => {
 
     it("collects from spec", () => {
       const session = createSession();
-      (session.spec as any).approverGroups = ["team-a", "team-b"];
+      session.spec!.approverGroups = ["team-a", "team-b"];
       const groups = collectApproverGroups(session);
       expect(groups).toContain("team-a");
       expect(groups).toContain("team-b");
@@ -166,7 +166,7 @@ describe("useSessionList", () => {
         name: "test",
         annotations: { "breakglass.telekom.com/approver-groups": "admins" },
       };
-      (session.spec as any).approverGroups = ["admins"];
+      session.spec!.approverGroups = ["admins"];
       const groups = collectApproverGroups(session);
       expect(groups.filter((g) => g === "admins").length).toBe(1);
     });
@@ -194,14 +194,14 @@ describe("useSessionList", () => {
 
     it("merges approver groups from duplicates", () => {
       const session1 = createSession({ metadata: { name: "same" } });
-      (session1.spec as any).approverGroups = ["team-a"];
+      session1.spec!.approverGroups = ["team-a"];
 
       const session2 = createSession({ metadata: { name: "same" } });
-      (session2.spec as any).approverGroups = ["team-b"];
+      session2.spec!.approverGroups = ["team-b"];
 
       const result = dedupeSessions([session1, session2]);
-      expect((result[0] as any).matchingApproverGroups).toContain("team-a");
-      expect((result[0] as any).matchingApproverGroups).toContain("team-b");
+      expect((result[0] as unknown as Record<string, unknown>).matchingApproverGroups).toContain("team-a");
+      expect((result[0] as unknown as Record<string, unknown>).matchingApproverGroups).toContain("team-b");
     });
   });
 
@@ -612,10 +612,10 @@ describe("useSessionList", () => {
 
     it("collects approver groups from all duplicates", () => {
       const session1 = createSession({ metadata: { name: "same" } });
-      (session1.spec as any).approverGroups = ["team-a"];
+      session1.spec!.approverGroups = ["team-a"];
 
       const session2 = createSession({ metadata: { name: "same" } });
-      (session2.spec as any).approverGroups = ["team-b"];
+      session2.spec!.approverGroups = ["team-b"];
 
       const session3 = createSession({ metadata: { name: "same" } });
       session3.metadata = {
@@ -625,7 +625,7 @@ describe("useSessionList", () => {
 
       const result = dedupeSessions([session1, session2, session3]);
       expect(result.length).toBe(1);
-      const groups = (result[0] as any).matchingApproverGroups;
+      const groups = (result[0] as unknown as Record<string, unknown>).matchingApproverGroups;
       expect(groups).toContain("team-a");
       expect(groups).toContain("team-b");
       expect(groups).toContain("team-c");
@@ -686,7 +686,7 @@ describe("useSessionList", () => {
       expect(getSessionKey(createSession())).toBe("session-1");
 
       // With name field only
-      expect(getSessionKey({ name: "direct" } as any)).toBe("direct");
+      expect(getSessionKey({ name: "direct" } as SessionCR)).toBe("direct");
 
       // Generated from spec
       const noName = { spec: { cluster: "c1", grantedGroup: "g1" } } as SessionCR;
@@ -714,13 +714,13 @@ describe("useSessionList", () => {
 
     it("getSessionCluster handles fallbacks", () => {
       expect(getSessionCluster(createSession())).toBe("prod");
-      expect(getSessionCluster({ cluster: "fallback" } as any)).toBe("fallback");
+      expect(getSessionCluster({ cluster: "fallback" } as SessionCR)).toBe("fallback");
       expect(getSessionCluster({ spec: {} } as SessionCR)).toBe("—");
     });
 
     it("getSessionGroup handles fallbacks", () => {
       expect(getSessionGroup(createSession())).toBe("ops");
-      expect(getSessionGroup({ group: "fallback" } as any)).toBe("fallback");
+      expect(getSessionGroup({ group: "fallback" } as SessionCR)).toBe("fallback");
       expect(getSessionGroup({ spec: {} } as SessionCR)).toBe("—");
     });
   });

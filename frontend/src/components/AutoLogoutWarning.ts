@@ -25,7 +25,9 @@ export default {
             const expiresIn = parsed.expires_at * 1000 - Date.now();
             show.value = expiresIn < 60000 && expiresIn > 0;
           }
-        } catch {}
+        } catch {
+          // JSON.parse of OIDC user string failed — token may be corrupted
+        }
       }
     }
 

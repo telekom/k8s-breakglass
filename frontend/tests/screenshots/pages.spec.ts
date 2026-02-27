@@ -33,10 +33,12 @@ async function performMockLogin(page: Page) {
   await page.goto("/");
   await page.waitForLoadState("networkidle");
 
-  await page.waitForFunction(() => (window as any).__BREAKGLASS_AUTH !== undefined, { timeout: 10000 });
+  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH !== undefined, {
+    timeout: 10000,
+  });
 
   await page.evaluate(() => {
-    const auth = (window as any).__BREAKGLASS_AUTH;
+    const auth = (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH as Record<string, unknown>;
     if (auth && typeof auth.login === "function") {
       auth.login({ path: "/", idpName: "production-keycloak" });
     }
@@ -50,7 +52,7 @@ async function performMockLogin(page: Page) {
 // Helper to navigate using Vue Router (preserves mock auth state)
 async function navigateTo(page: Page, path: string) {
   await page.evaluate((targetPath) => {
-    const router = (window as any).__VUE_ROUTER__;
+    const router = (window as unknown as Record<string, unknown>).__VUE_ROUTER__ as Record<string, unknown>;
     if (router && typeof router.push === "function") {
       router.push(targetPath);
     } else {

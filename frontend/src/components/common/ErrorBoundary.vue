@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onErrorCaptured } from "vue";
-import logger from "@/services/logger-console";
+import logger from "@/services/logger";
 
 defineProps<{
   /** Heading shown when an error is captured */

@@ -43,7 +43,7 @@ export default class DebugSessionService {
    */
   public async listSessions(params?: DebugSessionSearchParams): Promise<DebugSessionListResponse> {
     try {
-      const queryParams: Record<string, any> = {};
+      const queryParams: Record<string, string | boolean> = {};
       if (params?.cluster) queryParams.cluster = params.cluster;
       if (params?.state) queryParams.state = params.state;
       if (params?.user) queryParams.user = params.user;

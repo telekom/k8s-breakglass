@@ -58,24 +58,33 @@ export default class BreakglassService {
       // We explode multi-cluster escalations into individual entries per cluster so UI can show sessions per cluster.
       const data = Array.isArray(r.data) ? r.data : [];
       const output: AvailableBreakglass[] = [];
-      data.forEach((item: Record<string, any>) => {
-        const spec = item?.spec || {};
-        const allowed = spec.allowed || {};
-        const approvers = spec.approvers || {};
-        const clusters: string[] = Array.isArray(allowed.clusters) ? allowed.clusters : [];
-        const allowedGroups: string[] = Array.isArray(allowed.groups) ? allowed.groups : [];
-        const escalatedGroup: string = spec.escalatedGroup || spec.escalatedgroup || spec.escalated_group || "";
+      data.forEach((item: Record<string, unknown>) => {
+        const spec = (item?.spec || {}) as Record<string, unknown>;
+        const allowed = (spec.allowed || {}) as Record<string, unknown>;
+        const approvers = (spec.approvers || {}) as Record<string, unknown>;
+        const clusters: string[] = Array.isArray(allowed.clusters) ? (allowed.clusters as string[]) : [];
+        const allowedGroups: string[] = Array.isArray(allowed.groups) ? (allowed.groups as string[]) : [];
+        const escalatedGroup: string = (spec.escalatedGroup ||
+          spec.escalatedgroup ||
+          spec.escalated_group ||
+          "") as string;
         const basePartial = {
           from: allowedGroups[0] || "",
           to: escalatedGroup,
-          duration: parseDuration(spec.maxValidFor) || 3600,
+          duration: parseDuration(spec.maxValidFor as string | undefined) || 3600,
           selfApproval: !hasApprovers(approvers),
-          approvalGroups: Array.isArray(approvers.groups) ? approvers.groups : [],
+          approvalGroups: Array.isArray(approvers.groups) ? (approvers.groups as string[]) : [],
           requestReason: spec.requestReason
-            ? { mandatory: !!spec.requestReason.mandatory, description: spec.requestReason.description || "" }
+            ? {
+                mandatory: !!(spec.requestReason as Record<string, unknown>).mandatory,
+                description: ((spec.requestReason as Record<string, unknown>).description || "") as string,
+              }
             : undefined,
           approvalReason: spec.approvalReason
-            ? { mandatory: !!spec.approvalReason.mandatory, description: spec.approvalReason.description || "" }
+            ? {
+                mandatory: !!(spec.approvalReason as Record<string, unknown>).mandatory,
+                description: ((spec.approvalReason as Record<string, unknown>).description || "") as string,
+              }
             : undefined,
         };
         if (clusters.length === 0) {
@@ -140,7 +149,7 @@ export default class BreakglassService {
       // For backward compatibility with older sessions that don't have the config stored,
       // fall back to enriching from escalations if approvalReason is missing
       const sessionsNeedingEnrichment = data.filter(
-        (p: SessionCR) => !(p as any).approvalReason && !(p.spec as any)?.approvalReasonConfig,
+        (p: SessionCR) => !(p as unknown as Record<string, unknown>).approvalReason && !p.spec?.approvalReasonConfig,
       );
 
       if (sessionsNeedingEnrichment.length === 0) {
@@ -148,9 +157,9 @@ export default class BreakglassService {
         return data.map((p: SessionCR) => {
           // Normalize: if approvalReason is at top level (backend enriched), use it
           // Otherwise, fall back to spec.approvalReasonConfig
-          const out = { ...p } as SessionCR & { approvalReason?: any };
-          if (!(p as any).approvalReason && (p.spec as any)?.approvalReasonConfig) {
-            out.approvalReason = (p.spec as any).approvalReasonConfig;
+          const out = { ...p } as SessionCR & { approvalReason?: unknown };
+          if (!(p as unknown as Record<string, unknown>).approvalReason && p.spec?.approvalReasonConfig) {
+            out.approvalReason = p.spec.approvalReasonConfig;
           }
           return out;
         });
@@ -167,22 +176,23 @@ export default class BreakglassService {
       // Map pending sessions to include approvalReason based on cluster+grantedGroup
       return data.map((p: SessionCR) => {
         // Use backend-provided approvalReason or spec.approvalReasonConfig if available
-        if ((p as any).approvalReason) {
+        if ((p as unknown as Record<string, unknown>).approvalReason) {
           return p;
         }
-        if ((p.spec as any)?.approvalReasonConfig) {
-          const out = { ...p } as SessionCR & { approvalReason?: any };
-          out.approvalReason = (p.spec as any).approvalReasonConfig;
+        if (p.spec?.approvalReasonConfig) {
+          const out = { ...p } as SessionCR & { approvalReason?: unknown };
+          out.approvalReason = p.spec.approvalReasonConfig;
           return out;
         }
         // Fallback: look up from escalations (for old sessions without stored config)
         const cluster = (p.spec && p.spec.cluster) || p.cluster || "";
         const group = (p.spec && p.spec.grantedGroup) || p.group || "";
         const match = escalations.find(
-          (e: AvailableBreakglass) => e.cluster === cluster && (e.to === group || (e as any).group === group),
+          (e: AvailableBreakglass) =>
+            e.cluster === cluster && (e.to === group || (e as unknown as Record<string, unknown>).group === group),
         );
         if (match && match.approvalReason) {
-          const out = { ...p } as SessionCR & { approvalReason?: any };
+          const out = { ...p } as SessionCR & { approvalReason?: unknown };
           out.approvalReason = match.approvalReason;
           return out;
         }
@@ -270,7 +280,7 @@ export default class BreakglassService {
     // RESTful: POST /api/breakglassSessions/:sessionName/approve
     try {
       debug("BreakglassService.approveBreakglass", "Approving breakglass", { sessionName });
-      const body: Record<string, any> = {};
+      const body: Record<string, string> = {};
       if (reason && reason.trim().length > 0) body.reason = reason;
       const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/approve`, body);
       debug("BreakglassService.approveBreakglass", "Approval submitted", { status: response.status });
@@ -287,7 +297,7 @@ export default class BreakglassService {
     // RESTful: POST /api/breakglassSessions/:sessionName/reject
     try {
       debug("BreakglassService.rejectBreakglass", "Rejecting breakglass", { sessionName });
-      const body: Record<string, any> = {};
+      const body: Record<string, string> = {};
       if (reason && reason.trim().length > 0) body.reason = reason;
       const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/reject`, body);
       debug("BreakglassService.rejectBreakglass", "Rejection submitted", { status: response.status });
@@ -342,14 +352,14 @@ export default class BreakglassService {
       });
       const all = Array.isArray(response.data) ? response.data : [];
       debug("BreakglassService.fetchHistoricalSessions", "Fetched historical sessions", { count: all.length });
-      return all.map((ses: any) => ({
+      return all.map((ses: SessionCR) => ({
         name: ses?.metadata?.name || "",
         group: ses?.spec?.grantedGroup || "",
         expiry: ses?.status?.expiresAt ? new Date(ses.status.expiresAt).getTime() / 1000 : 0,
         cluster: ses?.spec?.cluster || "",
         state: ses?.status?.state || "Unknown", // Use canonical state from backend
-        started: ses?.status?.startedAt || ses?.metadata?.creationTimestamp || "",
-        ended: ses?.status?.endedAt || ses?.status?.expiresAt || "",
+        started: (ses?.status?.startedAt as string) || ses?.metadata?.creationTimestamp || "",
+        ended: (ses?.status?.endedAt as string) || ses?.status?.expiresAt || "",
         reasonEnded: ses?.status?.reasonEnded || "",
       }));
     } catch (e) {
@@ -376,8 +386,8 @@ export default class BreakglassService {
       const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
 
       // Normalize entries to ActiveBreakglass shape
-      const approvedNormalized = approved.map((ses: any) => this.normalizeSessionRecord(ses));
-      const timedOutNormalized = timedOut.map((ses: any) => this.normalizeSessionRecord(ses));
+      const approvedNormalized = approved.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
+      const timedOutNormalized = timedOut.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
 
       // Merge all session sources (approved + timed-out + historical) and dedupe by session name
       const combined = [...approvedNormalized, ...timedOutNormalized, ...historical];
@@ -405,7 +415,7 @@ export default class BreakglassService {
       });
       const data = Array.isArray(response.data) ? response.data : [];
 
-      const combined = data.map((ses: any) => this.normalizeSessionRecord(ses));
+      const combined = data.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
       const seen = new Map<string, ActiveBreakglass>();
       for (const s of combined) {
         const key = s?.name || `${s.group}-${s.cluster}-${s.expiry}`;
@@ -442,26 +452,29 @@ export default class BreakglassService {
       // Ensure sessionActive is a full session object with metadata/spec for drop/withdraw
       let sessionActive = null;
       if (match && typeof match === "object") {
-        const m: any = match;
+        const m = match;
         sessionActive = {
           metadata: {
             name: m.metadata?.name || m.name || m.group || "",
-            creationTimestamp: m.metadata?.creationTimestamp || "",
+            creationTimestamp: (m.metadata?.creationTimestamp as string) || "",
           },
           spec: { grantedGroup: m.spec?.grantedGroup || m.group, cluster: m.spec?.cluster || m.cluster },
-          status: { expiresAt: m.status?.expiresAt || m.expiry, state: m.status?.state || m.state },
+          status: { expiresAt: m.status?.expiresAt || String(m.expiry), state: m.status?.state || m.state },
         };
       }
       let sessionPending = null;
       if (pendingMatch && typeof pendingMatch === "object") {
-        const p: any = pendingMatch;
+        const p = pendingMatch;
         sessionPending = {
           metadata: {
             name: p.metadata?.name || p.name || p.spec?.grantedGroup || p.group || "",
-            creationTimestamp: p.metadata?.creationTimestamp || "",
+            creationTimestamp: (p.metadata?.creationTimestamp as string) || "",
           },
           spec: { grantedGroup: p.spec?.grantedGroup || p.group, cluster: p.spec?.cluster || p.cluster },
-          status: { expiresAt: p.status?.expiresAt || p.expiry, state: p.status?.state || p.state },
+          status: {
+            expiresAt: p.status?.expiresAt || String(p.expiry),
+            state: p.status?.state || (p.status?.state as string),
+          },
         };
       }
       return {
@@ -478,13 +491,13 @@ export default class BreakglassService {
     return result;
   }
 
-  private normalizeSessionRecord(ses: any): ActiveBreakglass {
+  private normalizeSessionRecord(ses: SessionCR): ActiveBreakglass {
     return {
       name: ses?.metadata?.name || ses?.name || "",
       group: ses?.spec?.grantedGroup || ses?.group || "",
       cluster: ses?.spec?.cluster || ses?.cluster || "",
-      expiry: ses?.status?.expiresAt || 0,
-      state: ses?.status?.state || "Approved",
+      expiry: (ses?.status?.expiresAt as unknown as number) || 0,
+      state: (ses?.status?.state as string) || "Approved",
       metadata: ses?.metadata || {},
       spec: ses?.spec || {},
       status: ses?.status || {},
@@ -534,7 +547,7 @@ function parseDuration(input: string | undefined): number | undefined {
   }
 }
 
-function hasApprovers(appr: any): boolean {
+function hasApprovers(appr: Record<string, unknown>): boolean {
   if (!appr) return false;
   const users = Array.isArray(appr.users) ? appr.users : [];
   const groups = Array.isArray(appr.groups) ? appr.groups : [];

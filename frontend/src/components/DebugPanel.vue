@@ -28,9 +28,9 @@ const MOCK_ACCESS_TOKEN =
 const MOCK_ACCESS_TOKEN_CLAIMS = decodeJwt(MOCK_ACCESS_TOKEN);
 
 interface DebugInfo {
-  user: any;
-  accessTokenClaims: any;
-  idTokenClaims: any;
+  user: Record<string, unknown> | null;
+  accessTokenClaims: Record<string, unknown> | null;
+  idTokenClaims: Record<string, unknown> | null;
   currentIDP: string | undefined;
   groups: string[];
   error: string | null;
@@ -45,7 +45,7 @@ const debugInfo = ref<DebugInfo>({
   error: null,
 });
 
-function extractGroups(claims: any | null): string[] {
+function extractGroups(claims: Record<string, unknown> | null): string[] {
   if (!claims) return [];
   const groups: Set<string> = new Set();
   if (Array.isArray(claims.groups)) {
@@ -55,8 +55,11 @@ function extractGroups(claims: any | null): string[] {
     if (typeof claims.group === "string") groups.add(claims.group);
     if (Array.isArray(claims.group)) claims.group.forEach((g: string) => groups.add(g));
   }
-  if (claims.realm_access?.roles && Array.isArray(claims.realm_access.roles)) {
-    claims.realm_access.roles.forEach((r: string) => groups.add(r));
+  if (claims.realm_access) {
+    const realmAccess = claims.realm_access as Record<string, unknown>;
+    if (realmAccess.roles && Array.isArray(realmAccess.roles)) {
+      realmAccess.roles.forEach((r: string) => groups.add(r));
+    }
   }
   return Array.from(groups);
 }

@@ -36,6 +36,7 @@ vi.mock("@/services/toast", () => ({
 
 // Mock logger
 vi.mock("@/services/logger", () => ({
+  debug: vi.fn(),
   handleAxiosError: vi.fn(),
 }));
 

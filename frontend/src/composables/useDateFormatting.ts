@@ -25,6 +25,7 @@ function toISOString(value: DateValue): string | null {
     }
     return null;
   } catch {
+    // Value is not convertible to ISO date string — return null as sentinel
     return null;
   }
 }
@@ -97,6 +98,7 @@ export function formatRelativeTime(value: DateValue): string {
     // For longer periods, use formatted date
     return formatDateTime(value);
   } catch {
+    // Date arithmetic failed (e.g. invalid ISO string) — return placeholder
     return "—";
   }
 }
@@ -111,6 +113,7 @@ export function isValidDate(value: DateValue): boolean {
     const date = typeof value === "string" || typeof value === "number" ? new Date(value) : value;
     return !isNaN(date.getTime());
   } catch {
+    // Date construction failed — treat as invalid
     return false;
   }
 }

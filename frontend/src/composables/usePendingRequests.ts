@@ -27,8 +27,8 @@ export function usePendingRequests(service: BreakglassService | null) {
       requests.value = data;
       error.value = "";
       debug(`${TAG}.loadRequests`, "Loaded pending requests", { count: data.length });
-    } catch (err: any) {
-      const message = err?.message || "Failed to load requests";
+    } catch (err: unknown) {
+      const message = (err instanceof Error ? err.message : undefined) || "Failed to load requests";
       error.value = message;
       warn(`${TAG}.loadRequests`, "Failed to load pending requests", { errorMessage: message });
     } finally {
@@ -51,8 +51,8 @@ export function usePendingRequests(service: BreakglassService | null) {
       requests.value = requests.value.filter((existing) => existing.metadata?.name !== sessionName);
       error.value = "";
       debug(`${TAG}.withdrawRequest`, "Withdraw complete", { sessionName });
-    } catch (err: any) {
-      const message = err?.message || "Failed to withdraw request";
+    } catch (err: unknown) {
+      const message = (err instanceof Error ? err.message : undefined) || "Failed to withdraw request";
       error.value = message;
       warn(`${TAG}.withdrawRequest`, "Withdraw failed", { sessionName, errorMessage: message });
     } finally {

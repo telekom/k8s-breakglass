@@ -41,14 +41,29 @@ export default defineConfigWithVueTs(
       "vue/attribute-hyphenation": "off",
       "vue/v-on-event-hyphenation": "off",
       "vue/no-deprecated-slot-attribute": "off",
-      "@typescript-eslint/no-explicit-any": "off",
+      "no-console": ["error", { allow: ["warn", "error"] }],
     },
   },
   {
-    // Disable one-component-per-file rule for test files
+    // Disable one-component-per-file rule for test files; relax console usage
     files: ["**/*.spec.ts", "**/*.test.ts", "**/__tests__/**/*.ts"],
     rules: {
       "vue/one-component-per-file": "off",
+      "no-console": "off",
+    },
+  },
+  {
+    // E2E test helpers and Playwright fixtures use console for debug output
+    files: ["tests/e2e/**/*.ts", "tests/screenshots/**/*.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+  {
+    // Mock API server uses console for startup/debug output
+    files: ["mock-api/**/*.mjs", "mock-api/**/*.js"],
+    rules: {
+      "no-console": "off",
     },
   },
   eslintPluginPrettierRecommended,

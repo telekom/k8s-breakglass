@@ -700,7 +700,7 @@ describe("DebugSessionCreate", () => {
       });
 
       const templates = defaultTemplates();
-      (templates[1]!.schedulingOptions!.options as any[]) = [
+      (templates[1]!.schedulingOptions!.options as unknown[]) = [
         {
           name: "worker",
           displayName: "Worker Nodes",
@@ -803,7 +803,7 @@ describe("DebugSessionCreate", () => {
   describe("extra deploy variables", () => {
     it("renders VariableForm when template has extraDeployVariables", async () => {
       const templates = defaultTemplates();
-      (templates[0] as any).extraDeployVariables = [
+      (templates[0] as unknown as Record<string, unknown>).extraDeployVariables = [
         { name: "testVar", displayName: "Test Var", inputType: "text", required: false },
       ];
 

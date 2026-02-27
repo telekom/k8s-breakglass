@@ -1,6 +1,6 @@
 import type Config from "@/model/config";
 import axios from "axios";
-import { error as logError } from "@/services/logger";
+import { debug, info, warn, error as logError } from "@/services/logger";
 import { getIdentityProvider, extractOIDCConfig } from "@/services/identityProvider";
 import { pushError } from "@/services/errors";
 
@@ -14,19 +14,20 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchConfigWithRetry(): Promise<any> {
+async function fetchConfigWithRetry(): Promise<Record<string, unknown>> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= CONFIG_RETRY_ATTEMPTS; attempt++) {
     try {
-      console.debug("[ConfigService] Fetching /api/config", { attempt, maxAttempts: CONFIG_RETRY_ATTEMPTS });
-      const res = await axios.get<any>("/api/config");
+      debug("ConfigService", "Fetching /api/config", { attempt, maxAttempts: CONFIG_RETRY_ATTEMPTS });
+      const res = await axios.get<Record<string, unknown>>("/api/config");
       return res.data || {};
     } catch (err) {
       lastError = err;
       const delay = CONFIG_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
       logError("ConfigService", `Failed to fetch /api/config (attempt ${attempt}/${CONFIG_RETRY_ATTEMPTS})`, err);
-      console.warn(
-        "[ConfigService] /api/config attempt failed, will retry if attempts remain",
+      warn(
+        "ConfigService",
+        "/api/config attempt failed, will retry if attempts remain",
         attempt,
         CONFIG_RETRY_ATTEMPTS,
         err,
@@ -39,24 +40,24 @@ async function fetchConfigWithRetry(): Promise<any> {
   throw lastError;
 }
 
-function parseRuntimeConfigPayload(data: any): Partial<Config> {
+function parseRuntimeConfigPayload(data: Record<string, unknown>): Partial<Config> {
   const result: Partial<Config> = {};
   if (!data || typeof data !== "object") {
     return result;
   }
 
-  const nested = data.frontend ?? {};
+  const nested = (data.frontend ?? {}) as Record<string, unknown>;
 
   if (nested.oidcAuthority && nested.oidcClientID) {
-    result.oidcAuthority = nested.oidcAuthority;
-    result.oidcClientID = nested.oidcClientID;
+    result.oidcAuthority = nested.oidcAuthority as string;
+    result.oidcClientID = nested.oidcClientID as string;
   } else if (data.oidcAuthority && data.oidcClientID) {
-    result.oidcAuthority = data.oidcAuthority;
-    result.oidcClientID = data.oidcClientID;
+    result.oidcAuthority = data.oidcAuthority as string;
+    result.oidcClientID = data.oidcClientID as string;
   }
 
-  result.brandingName = nested.brandingName ?? data.brandingName ?? result.brandingName;
-  result.uiFlavour = nested.uiFlavour ?? data.uiFlavour ?? result.uiFlavour;
+  result.brandingName = (nested.brandingName ?? data.brandingName ?? result.brandingName) as string | undefined;
+  result.uiFlavour = (nested.uiFlavour ?? data.uiFlavour ?? result.uiFlavour) as string | undefined;
 
   return result;
 }
@@ -96,21 +97,21 @@ function readBrowserFlavourOverride(): string | undefined {
 
     if (rawQueryValue && CLEAR_OVERRIDE_TOKENS.has(rawQueryValue.toLowerCase())) {
       window.localStorage?.removeItem(UI_FLAVOUR_STORAGE_KEY);
-      console.info("[ConfigService] Cleared UI flavour override");
+      info("ConfigService", "Cleared UI flavour override");
       return undefined;
     }
 
     const queryValue = normalizeFlavour(rawQueryValue ?? undefined);
     if (queryValue) {
       window.localStorage?.setItem(UI_FLAVOUR_STORAGE_KEY, queryValue);
-      console.info("[ConfigService] Stored UI flavour override from query", queryValue);
+      info("ConfigService", "Stored UI flavour override from query", queryValue);
       return queryValue;
     }
 
     const storedValue = window.localStorage?.getItem(UI_FLAVOUR_STORAGE_KEY);
     return normalizeFlavour(storedValue ?? undefined);
   } catch (err) {
-    console.warn("[ConfigService] Failed to read UI flavour override", err);
+    warn("ConfigService", "Failed to read UI flavour override", err);
     return undefined;
   }
 }
@@ -121,12 +122,12 @@ export default async function getConfig(): Promise<Config> {
   const resolved: Partial<Config> = {};
 
   try {
-    console.debug("[ConfigService] Fetching configuration from /api/identity-provider");
+    debug("ConfigService", "Fetching configuration from /api/identity-provider");
     const idpConfig = await getIdentityProvider();
     if (idpConfig && idpConfig.type) {
       const oidcConfig = extractOIDCConfig(idpConfig);
       if (oidcConfig) {
-        console.debug("[ConfigService] Successfully extracted OIDC config from IdentityProvider", {
+        debug("ConfigService", "Successfully extracted OIDC config from IdentityProvider", {
           authority: oidcConfig.oidcAuthority,
           clientID: oidcConfig.oidcClientID,
         });
@@ -136,7 +137,6 @@ export default async function getConfig(): Promise<Config> {
     }
   } catch (err) {
     logError("ConfigService", "Failed to fetch from /api/identity-provider, falling back to /api/config", err);
-    console.warn("[ConfigService] Failed to fetch from /api/identity-provider, falling back to /api/config", err);
   }
 
   const missingOidc = !resolved.oidcAuthority || !resolved.oidcClientID;
@@ -145,12 +145,12 @@ export default async function getConfig(): Promise<Config> {
   const needsRuntimeConfig = missingOidc || missingBranding || missingFlavour;
 
   if (needsRuntimeConfig) {
-    console.debug("[ConfigService] Fetching /api/config for missing fields", {
+    debug("ConfigService", "Fetching /api/config for missing fields", {
       missingOidc,
       missingBranding,
       missingFlavour,
     });
-    let data: any = {};
+    let data: Record<string, unknown> = {};
     try {
       data = await fetchConfigWithRetry();
     } catch (err) {
@@ -163,9 +163,12 @@ export default async function getConfig(): Promise<Config> {
       logError("ConfigService", "Optional fields unavailable from /api/config", err);
     }
 
-    console.debug("[ConfigService] Received config from /api/config:", {
+    debug("ConfigService", "Received config from /api/config:", {
       hasFlatConfig: !!(data?.oidcAuthority && data?.oidcClientID),
-      hasNestedConfig: !!(data?.frontend?.oidcAuthority && data?.frontend?.oidcClientID),
+      hasNestedConfig: !!(
+        (data?.frontend as Record<string, unknown> | undefined)?.oidcAuthority &&
+        (data?.frontend as Record<string, unknown> | undefined)?.oidcClientID
+      ),
       keys: data ? Object.keys(data).sort() : [],
     });
     mergeConfigValues(resolved, parseRuntimeConfigPayload(data));
@@ -173,7 +176,6 @@ export default async function getConfig(): Promise<Config> {
 
   if (!resolved.oidcAuthority || !resolved.oidcClientID) {
     logError("ConfigService", "Config missing OIDC fields after all attempts", resolved);
-    console.error("[ConfigService] Config missing required OIDC fields", resolved);
     return { oidcAuthority: "", oidcClientID: "", brandingName: resolved.brandingName, uiFlavour: resolved.uiFlavour };
   }
 
