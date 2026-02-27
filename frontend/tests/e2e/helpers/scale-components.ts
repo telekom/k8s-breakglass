@@ -125,24 +125,30 @@ export async function fillScaleTextField(page: Page, selector: string, value: st
 
 /**
  * Wait for a Scale notification toast to appear.
- * Scale's notification toast uses an 'opened' attribute to indicate visibility.
- * The element may exist in the DOM but have a hidden visual state - we check for the 'opened' attribute.
+ * Scale's notification toast uses an internal 'opened' state to control visibility.
+ * In Stencil 4 (Scale beta.159+) the 'opened' @State() no longer reflects as
+ * an HTML attribute, so we check the property value via JS evaluation instead.
  * @param page - Playwright page
  * @param testId - The data-testid of the toast (e.g., 'success-toast' or 'error-toast')
- * @param timeout - Maximum time to wait in milliseconds (default: 10000)
+ * @param timeout - Maximum time to wait in milliseconds (default: 20000)
  */
 export async function waitForScaleToast(
   page: Page,
   testId: "success-toast" | "error-toast",
   timeout = 20000,
 ): Promise<void> {
-  // Wait for the toast element with the 'opened' attribute
-  // The attribute is present when the toast is visible, absent when hidden
-  // Increased default timeout to 20s for CI environments where API calls can be slower
-  await page.waitForSelector(`[data-testid="${testId}"][opened]`, {
-    state: "attached",
-    timeout,
-  });
+  // Poll for element existence AND its 'opened' JS property in one shot.
+  // page.waitForFunction runs in the browser context and does not require
+  // the element to exist before polling starts — unlike locator.evaluateHandle
+  // which times out if the locator can't find the element in the DOM.
+  await page.waitForFunction(
+    (tid: string) => {
+      const el = document.querySelector(`[data-testid="${tid}"]`);
+      return el !== null && (el as HTMLElement & { opened?: boolean }).opened === true;
+    },
+    testId,
+    { timeout },
+  );
   // Additional wait for toast animation to complete and be fully visible
   await page.waitForTimeout(500);
 }
@@ -160,10 +166,7 @@ export async function hasScaleToast(
   timeout = 5000,
 ): Promise<boolean> {
   try {
-    await page.waitForSelector(`[data-testid="${testId}"][opened]`, {
-      state: "attached",
-      timeout,
-    });
+    await waitForScaleToast(page, testId, timeout);
     return true;
   } catch {
     return false;

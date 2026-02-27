@@ -116,14 +116,12 @@ async function initializeApp() {
     await import("@telekom/scale-components-neutral/dist/scale-components/scale-components.css");
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore loader lacks types in neutral package version
-    const { applyPolyfills, defineCustomElements } = await import("@telekom/scale-components-neutral/loader");
-    await applyPolyfills();
+    const { defineCustomElements } = await import("@telekom/scale-components-neutral/loader");
     await defineCustomElements(window);
   } else {
     // Default Telekom-branded components
     await import("@telekom/scale-components/dist/scale-components/scale-components.css");
-    const { applyPolyfills, defineCustomElements } = await import("@telekom/scale-components/loader");
-    await applyPolyfills();
+    const { defineCustomElements } = await import("@telekom/scale-components/loader");
     await defineCustomElements(window);
   }
 
