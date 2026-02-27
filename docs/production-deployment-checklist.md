@@ -31,6 +31,12 @@ This checklist helps ensure a secure and reliable production deployment of the b
   - [ ] Network connectivity verified to target cluster API servers
 - [ ] Test authorization webhook connectivity
 
+### Circuit Breaker (Optional)
+
+- [ ] Enable circuit breaker for spoke cluster resilience (`kubernetes.circuitBreaker.enabled: true`)
+- [ ] Review failure/success thresholds for your environment (see [Circuit Breaker docs](circuit-breaker.md))
+- [ ] Set up alerting on `breakglass_cluster_circuit_breaker_state == 1` (fires only when fully Open, not Half‑Open)
+
 ### Email Notifications
 
 - [ ] **MailProvider CRD configured** (optional but recommended)

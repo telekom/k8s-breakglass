@@ -396,8 +396,31 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	escalationManager := escalation.NewEscalationManagerWithClient(
 		reconcilerMgr.GetClient(), resolver, escalation.WithLogger(log), escalation.WithConfigLoader(cfgLoader))
 
-	// Build shared cluster config provider & deny policy evaluator reusing kubernetes client
-	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
+	// Build shared cluster config provider & deny policy evaluator reusing kubernetes client.
+	// Wire the circuit breaker config from the YAML configuration file so that operators
+	// can enable/tune circuit breaker protection via config.yaml → kubernetes.circuitBreaker.
+	// Apply defaults for zero-value fields to avoid noisy warning logs when config is sparse.
+	defaults := cluster.DefaultClusterCircuitBreakerConfig()
+	cbCfg := cluster.ClusterCircuitBreakerConfig{
+		Enabled:             cfg.Kubernetes.CircuitBreaker.Enabled,
+		FailureThreshold:    cfg.Kubernetes.CircuitBreaker.FailureThreshold,
+		SuccessThreshold:    cfg.Kubernetes.CircuitBreaker.SuccessThreshold,
+		OpenDuration:        cfg.Kubernetes.CircuitBreaker.GetOpenDuration(),
+		HalfOpenMaxRequests: cfg.Kubernetes.CircuitBreaker.HalfOpenMaxRequests,
+	}
+	if cbCfg.FailureThreshold <= 0 {
+		cbCfg.FailureThreshold = defaults.FailureThreshold
+	}
+	if cbCfg.SuccessThreshold <= 0 {
+		cbCfg.SuccessThreshold = defaults.SuccessThreshold
+	}
+	if cbCfg.OpenDuration <= 0 {
+		cbCfg.OpenDuration = defaults.OpenDuration
+	}
+	if cbCfg.HalfOpenMaxRequests <= 0 {
+		cbCfg.HalfOpenMaxRequests = defaults.HalfOpenMaxRequests
+	}
+	ccProvider := cluster.NewClientProviderWithCircuitBreaker(escalationManager.Client, log, cbCfg)
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
 	// Create mail service with hot-reload capability

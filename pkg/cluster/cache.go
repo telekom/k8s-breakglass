@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -71,9 +72,18 @@ type ClientProvider struct {
 	secretToClusters map[string]map[string]struct{}
 	// oidcProvider handles OIDC token acquisition for clusters using OIDC auth
 	oidcProvider *OIDCTokenProvider
+	// circuitBreakers manages per-cluster circuit breakers for spoke cluster resilience.
+	// When a spoke becomes unreachable, the circuit opens and requests are rejected immediately
+	// instead of blocking on TCP timeout.
+	circuitBreakers *CircuitBreakerRegistry
 }
 
 func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvider {
+	return NewClientProviderWithCircuitBreaker(c, log, DefaultClusterCircuitBreakerConfig())
+}
+
+// NewClientProviderWithCircuitBreaker creates a ClientProvider with explicit circuit breaker configuration.
+func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLogger, cbCfg ClusterCircuitBreakerConfig) *ClientProvider {
 	return &ClientProvider{
 		k8s:              c,
 		log:              log,
@@ -82,6 +92,7 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 		clusterToSecret:  map[string]string{},
 		secretToClusters: map[string]map[string]struct{}{},
 		oidcProvider:     NewOIDCTokenProvider(c, log),
+		circuitBreakers:  NewCircuitBreakerRegistry(cbCfg, log),
 	}
 }
 
@@ -217,6 +228,9 @@ func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, na
 // The auth method is determined by the ClusterConfig's authType field.
 // For OIDC clusters, the config uses WrapTransport for dynamic token injection, allowing caching
 // while still refreshing tokens as needed. TTL-based expiry ensures TLS/CA changes are picked up.
+//
+// If a circuit breaker is enabled and open for this cluster, ErrCircuitOpen is returned immediately
+// without attempting any network call.
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
 	now := time.Now()
 
@@ -227,6 +241,27 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		parsedNamespace = ns
 		parsedName = n
 		cacheLookupKey = cacheKey(ns, n)
+	}
+
+	// Circuit breaker fast-fail — use the canonical cache key when available.
+	// If the caller passed a bare name (no namespace), we defer the CB check
+	// until after ClusterConfig resolution, when we can compute the canonical key.
+	//
+	// We perform a read-only state check here instead of calling cb.Allow()
+	// because Allow() consumes a half-open probe slot without executing a real
+	// request — which can leave the breaker stuck in half-open.  The actual
+	// Allow / RecordSuccess / RecordFailure lifecycle is handled by the
+	// circuitBreakerTransport wrapper installed further below.
+	cbChecked := false
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && cacheLookupKey != "" {
+		cb := p.circuitBreakers.Get(cacheLookupKey)
+		if cb.State() == CircuitOpen {
+			// Check whether enough time has passed to allow a probe
+			if lastChange, ok := cb.lastStateChange.Load().(time.Time); ok && time.Since(lastChange) < cb.config.OpenDuration {
+				return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cacheLookupKey)
+			}
+		}
+		cbChecked = true
 	}
 
 	// Check cache with TTL validation (read lock for fast path)
@@ -320,6 +355,33 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		config:    cfg,
 		expiresAt: now.Add(ttl),
 		authType:  authType,
+	}
+
+	// Deferred circuit breaker check for bare-name callers — now that we have
+	// the canonical key we can do a read-only state check against the correctly-
+	// keyed breaker.  We avoid cb.Allow() here for the same reason as above:
+	// it would consume a half-open probe slot without an actual HTTP request.
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && !cbChecked {
+		cb := p.circuitBreakers.Get(finalCacheKey)
+		if cb.State() == CircuitOpen {
+			if lastChange, ok := cb.lastStateChange.Load().(time.Time); ok && time.Since(lastChange) < cb.config.OpenDuration {
+				return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, finalCacheKey)
+			}
+		}
+	}
+
+	// Wrap transport with circuit breaker instrumentation so that every HTTP
+	// request to this spoke cluster automatically records success/failure.
+	// Use the canonical finalCacheKey so that breaker state, metrics, and
+	// eviction cleanup are all keyed consistently.
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+			return &circuitBreakerTransport{
+				inner:       rt,
+				clusterName: finalCacheKey,
+				breakers:    p.circuitBreakers,
+			}
+		})
 	}
 
 	p.log.Debugw("Cached REST config", "cluster", finalCacheKey, "authType", authType, "ttl", ttl)
@@ -435,6 +497,9 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 			p.oidcProvider.Invalidate(ns, name)
 		}
 	}
+	if p.circuitBreakers != nil {
+		p.circuitBreakers.Remove(clusterKey)
+	}
 	if secretKey, ok := p.clusterToSecret[clusterKey]; ok {
 		if clusters, found := p.secretToClusters[secretKey]; found {
 			delete(clusters, clusterKey)
@@ -444,4 +509,31 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 		}
 		delete(p.clusterToSecret, clusterKey)
 	}
+}
+
+// RecordSuccess notifies the circuit breaker that a call to the named cluster succeeded.
+// The circuit breaker transport automatically records outcomes for every HTTP request,
+// so this method is only needed for non-HTTP operations (e.g., watch setup, informer startup).
+// clusterName should be the canonical "namespace/name" key.
+func (p *ClientProvider) RecordSuccess(clusterName string) {
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		p.circuitBreakers.Get(clusterName).RecordSuccess()
+	}
+}
+
+// RecordFailure notifies the circuit breaker that a call to the named cluster failed.
+// Only transient errors (network, timeout) trip the breaker. Auth errors are ignored.
+// The circuit breaker transport automatically records outcomes for every HTTP request,
+// so this method is only needed for non-HTTP operations (e.g., watch setup, informer startup).
+// clusterName should be the canonical "namespace/name" key.
+func (p *ClientProvider) RecordFailure(clusterName string, err error) {
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		p.circuitBreakers.Get(clusterName).RecordFailure(err)
+	}
+}
+
+// CircuitBreakers returns the underlying registry for status inspection.
+// Returns nil if circuit breakers are not configured.
+func (p *ClientProvider) CircuitBreakers() *CircuitBreakerRegistry {
+	return p.circuitBreakers
 }

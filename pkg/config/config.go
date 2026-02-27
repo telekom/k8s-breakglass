@@ -307,6 +307,37 @@ type Kubernetes struct {
 	// Valid values: "email" (default), "preferred_username", "sub"
 	// +optional
 	UserIdentifierClaim string `yaml:"userIdentifierClaim"`
+	// CircuitBreaker configures circuit breaker protection for spoke cluster communication.
+	// When enabled, clusters that become unreachable are marked as degraded and requests
+	// are rejected immediately instead of blocking on TCP timeout.
+	// +optional
+	CircuitBreaker CircuitBreaker `yaml:"circuitBreaker"`
+}
+
+// CircuitBreaker configures the circuit breaker for spoke cluster communication.
+// Invalid or zero values are silently replaced with defaults by cluster.newClusterBreaker
+// (which logs warnings via zap when it overrides a value).
+type CircuitBreaker struct {
+	// Enabled enables circuit breaker protection. Default: false (opt-in).
+	Enabled bool `yaml:"enabled"`
+	// FailureThreshold is consecutive failures before opening the circuit. Default: 3.
+	// Validated by cluster.newClusterBreaker; falls back to 3 if <= 0.
+	FailureThreshold int `yaml:"failureThreshold"`
+	// SuccessThreshold is consecutive successes in half-open before closing. Default: 2.
+	// Validated by cluster.newClusterBreaker; falls back to 2 if <= 0.
+	SuccessThreshold int `yaml:"successThreshold"`
+	// OpenDuration is how long to wait before probing a tripped circuit. Default: "30s".
+	// Validated by cluster.newClusterBreaker; falls back to 30s if <= 0.
+	OpenDuration string `yaml:"openDuration"`
+	// HalfOpenMaxRequests is the max concurrent requests in half-open state. Default: 1.
+	// Validated by cluster.newClusterBreaker; falls back to 1 if <= 0.
+	HalfOpenMaxRequests int `yaml:"halfOpenMaxRequests"`
+}
+
+// GetOpenDuration parses OpenDuration and returns a time.Duration.
+// Returns 30s as the default if the value is empty, invalid, or non-positive.
+func (cb CircuitBreaker) GetOpenDuration() time.Duration {
+	return parseDurationOrDefault(cb.OpenDuration, 30*time.Second)
 }
 
 type Config struct {
