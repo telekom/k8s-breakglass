@@ -46,6 +46,19 @@ responsiveness.
 - Verify that watch predicates filter out irrelevant events (e.g.,
   `GenerationChangedPredicate` for spec-only changes).
 
+### 4a. Cache Key Consistency
+
+- When an in-memory cache stores entries under a normalized key
+  (e.g., `namespace/name`) but callers look up entries using a
+  different key form (e.g., bare cluster name), the lookup will miss
+  even though the entry exists.
+- Verify that all `Get` / `Set` / `Delete` call sites for a cache use
+  the same key derivation function. If the input key is user-provided
+  and the stored key is normalized, store under BOTH forms or normalize
+  at the call site before lookup.
+- Common symptom: "cluster not found in cache" errors immediately after
+  successfully caching the cluster.
+
 ### 5. HTTP/REST API Performance
 
 - Verify that list endpoints (`pkg/api/`) paginate results.

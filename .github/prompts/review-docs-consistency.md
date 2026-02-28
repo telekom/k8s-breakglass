@@ -150,6 +150,13 @@ consistent, and synchronized with the actual code.
   vice versa). This is especially common after port renumbering.
 - Check that example `curl` commands, Kubernetes `Service` definitions,
   and monitoring configs all use the correct port.
+- **URL path accuracy**: Verify that documented scrape/API paths
+  (e.g., `/api/metrics` vs `/metrics`) match the actual handler
+  registrations in Go code. Common after path refactoring.
+- **Scheme accuracy**: Verify documented schemes (`http` vs `https`)
+  match the actual listener configuration. If the server runs plain
+  HTTP internally (with TLS terminated at the ingress), docs showing
+  `https` with `bearer_token` and `tls_config` are misleading.
 
 ## Output format
 
