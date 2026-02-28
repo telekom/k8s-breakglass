@@ -1,18 +1,6 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
 
 package cluster
 
@@ -233,6 +221,31 @@ func TestClusterBreaker_Stats(t *testing.T) {
 	assert.Equal(t, int64(1), stats.TotalFailures)
 	assert.False(t, stats.LastFailureTime.IsZero())
 	assert.NotNil(t, stats.LastError)
+}
+
+func TestClusterBreaker_IsDefinitelyOpen(t *testing.T) {
+	cfg := testConfig()
+	cfg.FailureThreshold = 1
+	cfg.OpenDuration = 50 * time.Millisecond
+	cb := newClusterBreaker("test-cluster", cfg, testLogger())
+
+	// Closed → not definitely open
+	assert.False(t, cb.IsDefinitelyOpen())
+
+	// Trip to Open
+	cb.RecordFailure(fmt.Errorf("connection refused"))
+	assert.Equal(t, CircuitOpen, cb.State())
+	assert.True(t, cb.IsDefinitelyOpen(), "should be true while within OpenDuration")
+
+	// Wait for open duration to elapse
+	require.Eventually(t, func() bool {
+		return !cb.IsDefinitelyOpen()
+	}, 5*time.Second, 10*time.Millisecond, "should become false after OpenDuration elapses")
+}
+
+func TestClusterBreaker_IsDefinitelyOpen_Sentinel(t *testing.T) {
+	// The always-closed sentinel should never report as definitely open
+	assert.False(t, alwaysClosedBreaker.IsDefinitelyOpen())
 }
 
 func TestClusterBreaker_DefaultConfigValidation(t *testing.T) {

@@ -247,19 +247,17 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	// If the caller passed a bare name (no namespace), we defer the CB check
 	// until after ClusterConfig resolution, when we can compute the canonical key.
 	//
-	// We perform a read-only state check here instead of calling cb.Allow()
-	// because Allow() consumes a half-open probe slot without executing a real
-	// request — which can leave the breaker stuck in half-open.  The actual
-	// Allow / RecordSuccess / RecordFailure lifecycle is handled by the
-	// circuitBreakerTransport wrapper installed further below.
+	// We use IsDefinitelyOpen() — a lock-free read-only check that does NOT
+	// consume a half-open probe slot.  The actual Allow / RecordSuccess /
+	// RecordFailure lifecycle is handled by the circuitBreakerTransport wrapper
+	// installed on the REST config further below.
 	cbChecked := false
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && cacheLookupKey != "" {
 		cb := p.circuitBreakers.Get(cacheLookupKey)
-		if cb.State() == CircuitOpen {
-			// Check whether enough time has passed to allow a probe
-			if lastChange, ok := cb.lastStateChange.Load().(time.Time); ok && time.Since(lastChange) < cb.config.OpenDuration {
-				return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cacheLookupKey)
-			}
+		if cb.IsDefinitelyOpen() {
+			cb.totalRejections.Add(1)
+			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
+			return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cacheLookupKey)
 		}
 		cbChecked = true
 	}
@@ -316,6 +314,19 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		return nil, err
 	}
 
+	// Deferred circuit breaker check for bare-name callers — now that we have
+	// the canonical key we can check against the correctly-keyed breaker before
+	// building the REST config (which may involve network calls for secrets).
+	finalCacheKey := cacheKey(cc.Namespace, cc.Name)
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && !cbChecked {
+		cb := p.circuitBreakers.Get(finalCacheKey)
+		if cb.IsDefinitelyOpen() {
+			cb.totalRejections.Add(1)
+			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
+			return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, finalCacheKey)
+		}
+	}
+
 	// Determine auth type - check explicit authType or infer from configuration
 	authType := cc.Spec.AuthType
 	if authType == "" {
@@ -350,24 +361,11 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 
 	// Cache with TTL (keyed by namespace/name)
 	// Note: We already hold the write lock from above
-	finalCacheKey := cacheKey(cc.Namespace, cc.Name)
+	// finalCacheKey was computed above for the deferred CB check
 	p.rest[finalCacheKey] = &cachedRESTConfig{
 		config:    cfg,
 		expiresAt: now.Add(ttl),
 		authType:  authType,
-	}
-
-	// Deferred circuit breaker check for bare-name callers — now that we have
-	// the canonical key we can do a read-only state check against the correctly-
-	// keyed breaker.  We avoid cb.Allow() here for the same reason as above:
-	// it would consume a half-open probe slot without an actual HTTP request.
-	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && !cbChecked {
-		cb := p.circuitBreakers.Get(finalCacheKey)
-		if cb.State() == CircuitOpen {
-			if lastChange, ok := cb.lastStateChange.Load().(time.Time); ok && time.Since(lastChange) < cb.config.OpenDuration {
-				return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, finalCacheKey)
-			}
-		}
 	}
 
 	// Wrap transport with circuit breaker instrumentation so that every HTTP
