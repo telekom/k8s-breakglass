@@ -551,7 +551,7 @@ scrape_configs:
     scrape_interval: 30s
     scrape_timeout: 10s
     static_configs:
-      - targets: ['breakglass.example.com:8080']
+      - targets: ['breakglass.example.com:8081']
     metrics_path: '/api/metrics'
     scheme: 'https'
     bearer_token: 'your-bearer-token'

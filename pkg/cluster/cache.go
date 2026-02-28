@@ -230,17 +230,23 @@ func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, na
 // while still refreshing tokens as needed. TTL-based expiry ensures TLS/CA changes are picked up.
 //
 // If a circuit breaker is enabled and open for this cluster, ErrCircuitOpen is returned immediately
-// without attempting any network call.
+// without attempting any network call. When the breaker is in half-open state, a single probe
+// request is allowed through to test cluster reachability; all other callers still receive
+// ErrCircuitOpen until the probe succeeds.
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
 	now := time.Now()
 
-	// If caller provided namespace/name, use it for exact cache lookup
+	// If caller provided namespace/name, use it for exact cache lookup.
+	// Otherwise, use the bare name as lookup key so the cache is still
+	// hit for subsequent calls with the same cluster name.
 	var cacheLookupKey string
 	var parsedNamespace, parsedName string
 	if ns, n, ok := splitNamespacedName(name); ok {
 		parsedNamespace = ns
 		parsedName = n
 		cacheLookupKey = cacheKey(ns, n)
+	} else {
+		cacheLookupKey = name
 	}
 
 	// Circuit breaker fast-fail — use the canonical cache key when available.
@@ -372,14 +378,19 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	// request to this spoke cluster automatically records success/failure.
 	// Use the canonical finalCacheKey so that breaker state, metrics, and
 	// eviction cleanup are all keyed consistently.
+	// Preserve any existing WrapTransport (e.g., OIDC token injector).
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
-		cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+		existingWrap := cfg.WrapTransport
+		cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+			if existingWrap != nil {
+				rt = existingWrap(rt)
+			}
 			return &circuitBreakerTransport{
 				inner:       rt,
 				clusterName: finalCacheKey,
 				breakers:    p.circuitBreakers,
 			}
-		})
+		}
 	}
 
 	p.log.Debugw("Cached REST config", "cluster", finalCacheKey, "authType", authType, "ttl", ttl)

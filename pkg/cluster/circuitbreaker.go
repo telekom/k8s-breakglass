@@ -293,7 +293,8 @@ func (cb *clusterBreaker) transitionToLocked(newState CircuitState) {
 		"from", oldState.String(),
 		"to", newState.String())
 
-	// Update metrics
+	// Update metrics — reset failure gauge so dashboards reflect the clean slate.
+	metrics.ClusterCircuitBreakerConsecutiveFailures.WithLabelValues(cb.name).Set(0)
 	metrics.ClusterCircuitBreakerState.WithLabelValues(cb.name).Set(float64(newState))
 	metrics.ClusterCircuitBreakerStateTransitions.WithLabelValues(cb.name, oldState.String(), newState.String()).Inc()
 }
