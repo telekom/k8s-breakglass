@@ -115,6 +115,6 @@ observability, and production behavior.
 For each finding:
 1. **File & line**.
 2. **Category** (error handling, context, time, reconciler, metrics,
-   leader election, cleanup, logging).
+   leader election, cleanup, logging, resilience wiring, metric lifecycle).
 3. **What is wrong** and **why it matters in production**.
 4. **Suggested fix**.

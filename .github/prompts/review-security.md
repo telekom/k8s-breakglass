@@ -83,7 +83,8 @@ grant temporary elevated access to production clusters.
     using `errors.As` for specific subtypes (e.g., `*net.DNSError`) —
     DNS resolution failures for invalid hostnames are `net.Error` but
     are NOT transient. Note: `Temporary()` is deprecated since Go 1.18
-    and always returns false.
+    and its return value is unreliable (many implementations still
+    return true); do not rely on it for transient-error classification.
   - Any `*url.Error` returning true without checking `Timeout()` or
     recursively classifying the wrapped `.Err` — TLS certificate
     verification failures (e.g., `x509: unknown authority`) wrap as

@@ -91,6 +91,6 @@ chart for the breakglass controller.
 For each finding:
 1. **File & line** (template or values.yaml).
 2. **Category** (values, template, CRD, RBAC, security, labels, upgrade,
-   health, lint).
+   health, lint, orphaned resources).
 3. **What is wrong**.
 4. **Suggested fix**.
