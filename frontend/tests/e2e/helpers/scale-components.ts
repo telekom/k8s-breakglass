@@ -136,21 +136,31 @@ export async function waitForScaleToast(
   page: Page,
   testId: "success-toast" | "error-toast",
   timeout = 20000,
+  { waitForAnimation = true }: { waitForAnimation?: boolean } = {},
 ): Promise<void> {
   // Poll for element existence AND its 'opened' JS property in one shot.
   // page.waitForFunction runs in the browser context and does not require
   // the element to exist before polling starts — unlike locator.evaluateHandle
   // which times out if the locator can't find the element in the DOM.
+  // Uses querySelectorAll to handle multiple toasts with the same test id.
   await page.waitForFunction(
     (tid: string) => {
-      const el = document.querySelector(`[data-testid="${tid}"]`);
-      return el !== null && (el as HTMLElement & { opened?: boolean }).opened === true;
+      const elements = document.querySelectorAll(`[data-testid="${tid}"]`);
+      for (const el of Array.from(elements)) {
+        const toast = el as HTMLElement & { opened?: boolean };
+        if (toast.opened === true) {
+          return true;
+        }
+      }
+      return false;
     },
     testId,
     { timeout },
   );
   // Additional wait for toast animation to complete and be fully visible
-  await page.waitForTimeout(500);
+  if (waitForAnimation) {
+    await page.waitForTimeout(500);
+  }
 }
 
 /**
@@ -166,7 +176,7 @@ export async function hasScaleToast(
   timeout = 5000,
 ): Promise<boolean> {
   try {
-    await waitForScaleToast(page, testId, timeout);
+    await waitForScaleToast(page, testId, timeout, { waitForAnimation: false });
     return true;
   } catch {
     return false;
