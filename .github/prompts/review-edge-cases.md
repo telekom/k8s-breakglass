@@ -162,6 +162,15 @@ that would slip past routine test coverage.
   is in half-open state, does the new `HalfOpenMaxRequests` apply
   immediately or only after the next full cycle?
 
+### 13. Cache Key Fallback
+
+- When a cache lookup uses a composite key (e.g., `namespace/name`),
+  verify what happens with bare names (no namespace separator). If the
+  code only checks for `namespace/name` format, bare cluster names
+  bypass the cache entirely and cause redundant REST config creation.
+- Flag cache lookups that do not handle both `namespace/name` and
+  bare `name` formats.
+
 ## Output format
 
 For each finding:

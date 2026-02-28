@@ -141,6 +141,16 @@ consistent, and synchronized with the actual code.
   preconditions, especially regarding which key format to use (canonical
   vs. raw input).
 
+### 11. Port & Endpoint Consistency
+
+- Verify that port numbers mentioned in documentation (e.g., Prometheus
+  scrape examples, health check URLs, API endpoints) match the actual
+  port values in code (`pkg/config/`, `cmd/`, Helm values).
+- Flag docs that reference port `8080` when the code uses `8081` (or
+  vice versa). This is especially common after port renumbering.
+- Check that example `curl` commands, Kubernetes `Service` definitions,
+  and monitoring configs all use the correct port.
+
 ## Output format
 
 For each finding, provide:

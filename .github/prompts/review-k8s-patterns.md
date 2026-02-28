@@ -109,6 +109,27 @@ observability, and production behavior.
   the tracked entity — not just on controller shutdown.
 - Counter metrics (`_total`) do not need cleanup (monotonic by
   definition), but their label sets must still be bounded.
+- **Gauge reset on state transition**: When a state machine resets an
+  in-memory counter (e.g., `consecutiveFails = 0` on transition to
+  locked/closed state), the corresponding Prometheus gauge must also
+  be reset to 0. Forgetting the gauge reset causes dashboards to show
+  a stale high value even after recovery.
+
+### 12. `rest.Config` Transport Wiring
+
+- `rest.Config` does **not** have a `Wrap()` method. To add custom
+  round-tripper middleware, use the `cfg.WrapTransport` field:
+  ```go
+  existing := cfg.WrapTransport
+  cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+      if existing != nil { rt = existing(rt) }
+      return myMiddleware(rt)
+  }
+  ```
+- Flag any code calling `cfg.Wrap(...)` — it will not compile.
+- When composing WrapTransport, always preserve the existing
+  `cfg.WrapTransport` chain (e.g., OIDC wrappers added earlier).
+  Overwriting it silently breaks authentication.
 
 ## Output format
 

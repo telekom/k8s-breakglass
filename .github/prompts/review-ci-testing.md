@@ -123,6 +123,12 @@ and that CI configuration is correct.
   or floating tags. For tools using Go pseudo-versions (e.g., setup-envtest),
   pin the full pseudo-version string. Non-deterministic versions cause
   unreproducible builds and silent behavior changes.
+- **go.mod ↔ Dockerfile version alignment**: When a PR bumps the Go
+  version in `Dockerfile` (e.g., `FROM golang:1.26.0`), verify that
+  `go.mod` is updated to the same version. CI workflows use
+  `go-version-file: go.mod` to pick the Go toolchain, so a mismatch
+  means CI and container builds use different Go versions, risking
+  subtle behavior differences.
 
 ### 9. Helm & Manifest Tests
 

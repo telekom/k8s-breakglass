@@ -124,7 +124,40 @@ incidents — clarity and accessibility are critical.
 - Check that props, emits, and computed properties have test coverage.
 - Mock API calls using `msw` or manual mocks — no real network in tests.
 - Snapshot tests should be minimal and focused on structure, not styling.
+### 10. DOM Query Safety
 
+- **`querySelectorAll` for multi-element scenarios**: When the same
+  `data-testid` can match multiple DOM elements (e.g., multiple toast
+  notifications of the same type), use `querySelectorAll` instead of
+  `querySelector`. The latter returns only the first match, which may
+  be a stale/closed element while a newer one is active.
+- Flag `document.querySelector` in test helpers or production code
+  where the selector is not guaranteed to be unique.
+
+### 11. Polyfill Backward Compatibility
+
+- When upgrading Stencil-based component libraries (e.g., Scale
+  components), check whether `applyPolyfills()` is still exported by
+  the loader. Removing the call without a guard breaks older package
+  versions that still export it.
+- Use conditional calling:
+  ```typescript
+  if (typeof applyPolyfills === "function") {
+    await applyPolyfills().then(() => defineCustomElements(window));
+  } else {
+    await defineCustomElements(window);
+  }
+  ```
+
+### 12. Timeout Accuracy in Helpers
+
+- When a test helper adds a fixed post-operation delay (e.g., 500ms
+  animation wait), verify that callers passing a `timeout` parameter
+  are not silently exceeded. A function documented as "Maximum time to
+  wait: N ms" that internally adds a 500ms sleep can actually block
+  for N+500ms.
+- Fix by making the post-delay optional (e.g., `{ waitForAnimation }`
+  option), or subtract the delay from the main timeout budget.
 ## Output format
 
 For each finding:
