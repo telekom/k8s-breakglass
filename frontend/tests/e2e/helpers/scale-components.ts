@@ -40,15 +40,17 @@ export class ScaleComponentHelper {
   }
 
   /**
-   * Fill a scale-input component.
-   * The internal input has class 'input__control'.
-   * @param selector - The selector for the scale-input element
+   * Fill a scale-input or scale-text-field component.
+   * In Scale beta.159+ (Stencil 4), scale-text-field uses class 'text-field__control'
+   * and scale-input uses class 'input__input'. We find the first <input> element
+   * inside the component regardless of class name for maximum compatibility.
+   * @param selector - The selector for the scale-input or scale-text-field element
    * @param value - The text to fill
    */
   async fillInput(selector: string, value: string): Promise<void> {
     const scaleInput = this.page.locator(selector);
     await scaleInput.waitFor({ state: "visible" });
-    const internalInput = scaleInput.locator("input.input__control");
+    const internalInput = scaleInput.locator("input").first();
     await internalInput.fill(value);
   }
 
