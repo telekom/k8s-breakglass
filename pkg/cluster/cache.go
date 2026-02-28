@@ -66,6 +66,9 @@ type ClientProvider struct {
 	mu   sync.RWMutex
 	data map[string]*breakglassv1alpha1.ClusterConfig
 	rest map[string]*cachedRESTConfig
+	// bareToCanonical maps bare-name cache keys to their canonical namespace/name keys.
+	// This allows evictClusterLocked to clean up bare-name aliases when the canonical entry is evicted.
+	bareToCanonical map[string]string
 	// clusterToSecret tracks which kubeconfig secret each ClusterConfig uses (keyed by namespace/name)
 	clusterToSecret map[string]string
 	// secretToClusters tracks all clusters backed by a given secret (keyed by namespace/name)
@@ -89,6 +92,7 @@ func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLo
 		log:              log,
 		data:             map[string]*breakglassv1alpha1.ClusterConfig{},
 		rest:             map[string]*cachedRESTConfig{},
+		bareToCanonical:  map[string]string{},
 		clusterToSecret:  map[string]string{},
 		secretToClusters: map[string]map[string]struct{}{},
 		oidcProvider:     NewOIDCTokenProvider(c, log),
@@ -376,8 +380,10 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	p.rest[finalCacheKey] = entry
 	// When the caller used a bare name (no namespace), also store under
 	// the original lookup key so subsequent bare-name lookups hit the cache.
+	// Track the mapping so evictClusterLocked can clean up both entries.
 	if cacheLookupKey != finalCacheKey {
 		p.rest[cacheLookupKey] = entry
+		p.bareToCanonical[cacheLookupKey] = finalCacheKey
 	}
 
 	// Wrap transport with circuit breaker instrumentation so that every HTTP
@@ -507,6 +513,14 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 	delete(p.data, clusterKey)
 	delete(p.rest, clusterKey)
+	// Also evict any bare-name alias that maps to this canonical key.
+	for bare, canonical := range p.bareToCanonical {
+		if canonical == clusterKey {
+			delete(p.rest, bare)
+			delete(p.bareToCanonical, bare)
+			break
+		}
+	}
 	if p.oidcProvider != nil {
 		if ns, name, ok := splitNamespacedName(clusterKey); ok {
 			p.oidcProvider.Invalidate(ns, name)

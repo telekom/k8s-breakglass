@@ -158,7 +158,7 @@ affinity:
 
 ### Prometheus Metrics
 
-- [ ] Metrics endpoint accessible (`/api/metrics` or separate port)
+- [ ] Metrics endpoint accessible (`/metrics` on controller-runtime metrics port)
 - [ ] ServiceMonitor or PodMonitor configured for Prometheus
 - [ ] Key metrics dashboards created:
   - Session request/approval rates

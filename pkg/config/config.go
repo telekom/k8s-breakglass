@@ -315,7 +315,7 @@ type Kubernetes struct {
 }
 
 // CircuitBreaker configures the circuit breaker for spoke cluster communication.
-// Invalid or zero values are silently replaced with defaults by cluster.newClusterBreaker
+// Invalid or zero values are replaced with defaults by cluster.newClusterBreaker
 // (which logs warnings via zap when it overrides a value).
 type CircuitBreaker struct {
 	// Enabled enables circuit breaker protection. Default: false (opt-in).

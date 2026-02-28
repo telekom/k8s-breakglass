@@ -48,6 +48,20 @@ The `cluster` section defines the target cluster connection:
 | `cluster.site` | Site label (optional) | - |
 | `cluster.location` | Location label (optional) | - |
 
+#### Circuit Breaker
+
+The `cluster.circuitBreaker` section configures circuit breaker protection for spoke
+cluster communication. When enabled, clusters that become unreachable are marked as
+degraded and requests are rejected immediately instead of blocking on TCP timeout.
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `cluster.circuitBreaker.enabled` | Enable circuit breaker protection (opt-in) | `false` |
+| `cluster.circuitBreaker.failureThreshold` | Consecutive failures before opening the circuit | `3` |
+| `cluster.circuitBreaker.successThreshold` | Consecutive successes in half-open state before closing | `2` |
+| `cluster.circuitBreaker.openDuration` | How long to wait before probing a tripped circuit | `"30s"` |
+| `cluster.circuitBreaker.halfOpenMaxRequests` | Max concurrent requests allowed in half-open state | `1` |
+
 #### Kubeconfig Authentication (Default)
 
 ```yaml
