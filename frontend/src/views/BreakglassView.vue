@@ -287,7 +287,7 @@ async function onDrop(bg: Breakglass) {
             label="Search escalations"
             placeholder="Cluster, group or approver"
             :value="state.search"
-            @scaleChange="updateSearch"
+            @scale-change="updateSearch"
           ></scale-text-field>
         </div>
         <div class="toolbar-refresh">

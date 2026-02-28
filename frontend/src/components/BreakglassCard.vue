@@ -551,7 +551,7 @@ function drop() {
         type="text"
         :value="durationInput"
         :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDurationShort(breakglass.duration * 1000)}`"
-        @scaleChange="handleDurationChange"
+        @scale-change="handleDurationChange"
       ></scale-text-field>
       <p class="helper">
         Max allowed: {{ humanizeDurationShort(breakglass.duration * 1000) }}. Minimum: 1 minute. Enter a shorter
@@ -599,7 +599,7 @@ function drop() {
             :min="minScheduleDate"
             :value="scheduleDatePart"
             style="flex: 2"
-            @scaleChange="scheduleDatePart = $event.target.value"
+            @scale-change="scheduleDatePart = $event.target.value"
           ></scale-text-field>
           <scale-dropdown-select
             :id="'scheduled-hour-' + breakglass.to"
@@ -607,7 +607,7 @@ function drop() {
             label="Hour (24h)"
             :value="scheduleHourPart"
             style="flex: 1"
-            @scaleChange="scheduleHourPart = $event.target.value"
+            @scale-change="scheduleHourPart = $event.target.value"
           >
             <scale-dropdown-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{
               hour
@@ -619,7 +619,7 @@ function drop() {
             label="Minute"
             :value="scheduleMinutePart"
             style="flex: 1"
-            @scaleChange="scheduleMinutePart = $event.target.value"
+            @scale-change="scheduleMinutePart = $event.target.value"
           >
             <scale-dropdown-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{
               minute
@@ -659,7 +659,7 @@ function drop() {
         :placeholder="
           (breakglass.requestReason && breakglass.requestReason.description) || 'Optional reason (max 1024 characters)'
         "
-        @scaleChange="handleReasonChange"
+        @scale-change="handleReasonChange"
       ></scale-textarea>
       <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning" aria-live="polite">
         ⚠ Character limit approaching

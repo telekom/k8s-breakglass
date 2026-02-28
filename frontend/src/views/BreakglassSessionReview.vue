@@ -317,14 +317,14 @@ async function onCancel(bg: SessionCR) {
           placeholder="Search by user, group, cluster, or IDP"
           type="text"
           :value="state.search"
-          @scaleChange="state.search = $event.target.value"
+          @scale-change="state.search = $event.target.value"
         ></scale-text-field>
       </div>
 
       <div class="review-toolbar__toggle">
         <scale-checkbox
           :checked="showOnlyActive"
-          @scaleChange="
+          @scale-change="
             showOnlyActive = $event.target.checked;
             getActiveBreakglasses();
           "

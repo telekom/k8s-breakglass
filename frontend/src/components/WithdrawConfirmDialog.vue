@@ -27,7 +27,7 @@ const emit = defineEmits<{
     heading="Withdraw Request"
     size="small"
     data-testid="withdraw-confirm-modal"
-    @scaleClose="emit('cancel')"
+    @scale-close="emit('cancel')"
   >
     <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
     <p v-if="sessionName" class="withdraw-detail"><strong>Request:</strong> {{ sessionName }}</p>

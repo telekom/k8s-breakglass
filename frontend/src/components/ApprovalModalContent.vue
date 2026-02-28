@@ -47,7 +47,7 @@
         :value="approverNote"
         :placeholder="approvalReasonPlaceholder"
         :aria-describedby="isNoteRequired && !approverNote.trim() ? noteErrorId : undefined"
-        @scaleChange="handleNoteChange"
+        @scale-change="handleNoteChange"
       />
     </div>
 

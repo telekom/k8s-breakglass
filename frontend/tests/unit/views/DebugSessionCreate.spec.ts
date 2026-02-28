@@ -160,10 +160,10 @@ describe("DebugSessionCreate", () => {
           "scale-dropdown-select": {
             template: '<select :value="value" :disabled="disabled" @change="handleChange"><slot /></select>',
             props: ["value", "label", "disabled", "required"],
-            emits: ["scaleChange"],
+            emits: ["scale-change"],
             methods: {
               handleChange(e: Event) {
-                this.$emit("scaleChange", e);
+                this.$emit("scale-change", e);
               },
             },
           },
@@ -174,30 +174,30 @@ describe("DebugSessionCreate", () => {
           "scale-textarea": {
             template: '<textarea :value="value" @input="handleInput"></textarea>',
             props: ["value", "label", "placeholder", "rows", "required"],
-            emits: ["scaleChange"],
+            emits: ["scale-change"],
             methods: {
               handleInput(e: Event) {
-                this.$emit("scaleChange", e);
+                this.$emit("scale-change", e);
               },
             },
           },
           "scale-checkbox": {
             template: '<input type="checkbox" :checked="checked" @change="handleChange" />',
             props: ["checked", "label"],
-            emits: ["scaleChange"],
+            emits: ["scale-change"],
             methods: {
               handleChange(e: Event) {
-                this.$emit("scaleChange", e);
+                this.$emit("scale-change", e);
               },
             },
           },
           "scale-text-field": {
             template: '<input type="text" :value="value" @input="handleInput" />',
             props: ["value", "type", "label"],
-            emits: ["scaleChange"],
+            emits: ["scale-change"],
             methods: {
               handleInput(e: Event) {
-                this.$emit("scaleChange", e);
+                this.$emit("scale-change", e);
               },
             },
           },

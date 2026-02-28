@@ -256,7 +256,7 @@ function onStateToggle(state: string, event: Event) {
           label="Search sessions"
           placeholder="Name, cluster, template..."
           :value="filters.search"
-          @scaleChange="updateSearch"
+          @scale-change="updateSearch"
         ></scale-text-field>
       </div>
 
@@ -265,7 +265,7 @@ function onStateToggle(state: string, event: Event) {
           data-testid="my-sessions-filter"
           :checked="filters.mine"
           label="My Sessions Only"
-          @scaleChange="updateMineFilter"
+          @scale-change="updateMineFilter"
         ></scale-checkbox>
       </div>
 
@@ -297,7 +297,7 @@ function onStateToggle(state: string, event: Event) {
           :key="opt.value"
           :data-testid="`state-filter-${opt.value}`"
           :checked="filters.states.includes(opt.value)"
-          @scaleChange="(event: Event) => onStateToggle(opt.value, event)"
+          @scale-change="(event: Event) => onStateToggle(opt.value, event)"
         >
           {{ opt.label }}
         </scale-checkbox>
@@ -340,7 +340,7 @@ function onStateToggle(state: string, event: Event) {
     </div>
 
     <!-- Renew Duration Dialog -->
-    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scaleClose="renewDialogOpen = false">
+    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scale-close="renewDialogOpen = false">
       <p>Select how long to extend the session:</p>
       <scale-dropdown-select v-model="renewDuration" label="Duration" data-testid="renew-duration-select">
         <scale-dropdown-select-item v-for="opt in renewDurationOptions" :key="opt.value" :value="opt.value">
