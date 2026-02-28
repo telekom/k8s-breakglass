@@ -368,10 +368,16 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	// Cache with TTL (keyed by namespace/name)
 	// Note: We already hold the write lock from above
 	// finalCacheKey was computed above for the deferred CB check
-	p.rest[finalCacheKey] = &cachedRESTConfig{
+	entry := &cachedRESTConfig{
 		config:    cfg,
 		expiresAt: now.Add(ttl),
 		authType:  authType,
+	}
+	p.rest[finalCacheKey] = entry
+	// When the caller used a bare name (no namespace), also store under
+	// the original lookup key so subsequent bare-name lookups hit the cache.
+	if cacheLookupKey != finalCacheKey {
+		p.rest[cacheLookupKey] = entry
 	}
 
 	// Wrap transport with circuit breaker instrumentation so that every HTTP

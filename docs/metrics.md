@@ -552,11 +552,8 @@ scrape_configs:
     scrape_timeout: 10s
     static_configs:
       - targets: ['breakglass.example.com:8081']
-    metrics_path: '/api/metrics'
-    scheme: 'https'
-    bearer_token: 'your-bearer-token'
-    tls_config:
-      insecure_skip_verify: false  # Verify TLS certificates
+    metrics_path: '/metrics'
+    scheme: 'http'
     metric_relabel_configs:
       # Drop high-cardinality labels
       - source_labels: [__name__]
@@ -570,7 +567,7 @@ scrape_configs:
 **No metrics appearing:**
 
 - Check bearer token/authentication credentials
-- Verify `/api/metrics` endpoint is accessible
+- Verify `/metrics` endpoint is accessible on port 8081
 - Check firewall rules between Prometheus and breakglass service
 
 **High denial rate:**
