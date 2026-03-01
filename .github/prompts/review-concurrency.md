@@ -97,6 +97,30 @@ conditions, lost-update bugs, and unsafe shared-state patterns.
 - Comparisons between wall-clock times across replicas are inherently
   approximate; verify the code tolerates clock skew (e.g., uses ≥ not ==).
 
+### 9. Circuit Breaker / Resilience State Lifecycle
+
+- **Probe-slot accounting**: When a circuit breaker allows a trial request
+  in half-open state (`Allow()` → increment `halfOpenRequests`), verify
+  that **every** terminal path — `RecordSuccess()`, `RecordFailure()`,
+  and state-transition reset functions — decrements or zeroes the counter.
+  A leak causes the breaker to exhaust its probe budget and reject all
+  subsequent trial requests even though slots are logically free.
+- **Allow() vs. State() usage**: `Allow()` is a mutating call (it
+  consumes a probe slot). Code that merely gates on breaker state without
+  sending a request must use a read-only accessor (`State()` +
+  `time.Since(openedAt)` check). Calling `Allow()` in a read-only path
+  wastes probe slots and can prevent real recovery probes.
+- **Cleanup on eviction**: When a breaker is removed from a registry
+  (cache eviction, cluster deregistration), verify that associated
+  Prometheus metric series are also deleted. Leaked series cause
+  cardinality growth proportional to total-ever clusters, not
+  current-active clusters.
+- **Concurrent access to breaker map**: If breakers are stored in a
+  `sync.Map` or a `map` protected by `sync.RWMutex`, verify that
+  `Load`, `Store`, and `Delete` sequences don't race — especially
+  during hot-reload of cluster config when entries may be concurrently
+  added and evicted.
+
 ## Output format
 
 For each finding:

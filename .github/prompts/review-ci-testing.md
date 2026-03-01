@@ -57,6 +57,12 @@ and that CI configuration is correct.
   assertion always passes and exercises nothing. Every `Test*` / `t.Run`
   must contain at least one `require.*` / `assert.*` call or explicit
   validation invocation whose result is checked.
+- **Orphaned test references**: When a production function, method, or
+  exported symbol is renamed or deleted, verify that ALL tests referencing
+  it are updated or removed. A test calling a deleted function fails to
+  compile — but if it was merged in one PR and the deletion landed in
+  another, the breakage only surfaces after both PRs merge. Search `*_test.go`
+  and `*.spec.ts` for references to any symbol removed in the diff.
 - **Warning completeness in negative tests**: When Go validation returns
   both `(warnings, errors)`, negative tests must assert ALL of:
   1. `err != nil` (validation failed as expected)
@@ -86,6 +92,11 @@ and that CI configuration is correct.
   `frontend/src/**/__tests__/` or `*.spec.ts`.
 - Check that new props, emits, and computed properties have test coverage.
 - Verify TypeScript strict mode compliance (`npm run type-check`).
+- **`no-explicit-any` enforcement**: Flag any test or source file that
+  introduces `any` — whether as `Record<string, any>`, `as any`, or
+  `(x: any)`. The project uses `@typescript-eslint/no-explicit-any` as
+  an error. Prefer `unknown`, a named interface, or
+  `Record<string, unknown>` instead.
 
 ### 8. CI Workflow Alignment
 
@@ -112,6 +123,12 @@ and that CI configuration is correct.
   or floating tags. For tools using Go pseudo-versions (e.g., setup-envtest),
   pin the full pseudo-version string. Non-deterministic versions cause
   unreproducible builds and silent behavior changes.
+- **go.mod ↔ Dockerfile version alignment**: When a PR bumps the Go
+  version in `Dockerfile` (e.g., `FROM golang:1.26.0`), verify that
+  `go.mod` is updated to the same version. CI workflows use
+  `go-version-file: go.mod` to pick the Go toolchain, so a mismatch
+  means CI and container builds use different Go versions, risking
+  subtle behavior differences.
 
 ### 9. Helm & Manifest Tests
 
@@ -160,6 +177,25 @@ and that CI configuration is correct.
   a specific file and can't find it, `t.Skip("file not found")` silently
   passes the test in CI — the missing file will never be caught. Use
   `t.Fatal()` or `require.FileExists()` so CI fails visibly.
+
+### 12. Playwright E2E Navigation Assertions
+
+- When an E2E test clicks a button or link that triggers client-side
+  navigation, use `await page.waitForURL(pattern)` to assert the URL
+  changed.  Do NOT use the pattern:
+  ```ts
+  await page.waitForLoadState("networkidle");
+  expect(page.url()).toContain("/target");
+  ```
+  This is racy — navigation may not have completed before the assertion
+  runs, especially when the target page triggers additional network
+  requests that keep the "networkidle" state from settling.
+- Prefer regex patterns with anchors when the target path is a substring
+  of the source path (e.g., `/\/sessions$/` to avoid matching
+  `/session/foo`).
+- For Scale web component buttons (`<scale-button>`), verify the click
+  handler fires by asserting the URL change, not just that the button
+  was clicked.  Shadow DOM click propagation may silently fail.
 
 ## Output format
 

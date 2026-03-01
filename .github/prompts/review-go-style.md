@@ -113,6 +113,17 @@ time.Monday, time.January
 - Check format strings for accidental double-spaces (`"foo  bar"`) and
   stray newlines at string boundaries.
 
+### 12. Import Alias Consistency
+
+- Project-specific import aliases must be consistent across **all**
+  files. When reviewing a PR, check that newly introduced aliases match
+  the existing convention:
+  - `breakglassv1alpha1` for the project API — NOT `bgv1`, `v1alpha1`
+  - Internal packages should use the final path segment unless it
+    collides (e.g., `debug` from `pkg/breakglass/debug`)
+- Flag alias mismatches that compile but confuse readers (e.g.,
+  `breaker` vs `circuitbreaker` for the same package in different files).
+
 ## Output format
 
 For each finding:

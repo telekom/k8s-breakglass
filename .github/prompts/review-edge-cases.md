@@ -140,6 +140,37 @@ that would slip past routine test coverage.
 - Property: a session in a terminal state can never return to a
   non-terminal state.
 
+### 12. Circuit Breaker Edge Cases
+
+- **Half-open probe exhaustion**: What happens when
+  `HalfOpenMaxRequests` probes are all in-flight and a new request
+  arrives? It must be rejected (Open behavior), not queued indefinitely.
+- **Concurrent state transitions**: Two goroutines both detect the
+  Open→HalfOpen transition window simultaneously. Does the breaker
+  allow `2×HalfOpenMaxRequests` probes, or does the atomic transition
+  prevent double-entry?
+- **Error classification boundary**: A `net.Error` that is NOT
+  `Timeout()` (e.g., DNS `no such host` for an invalid hostname) — is
+  this classified as transient? It should NOT be, because retrying
+  won't help. Note: `net.Error.Temporary()` is deprecated since Go 1.18;
+  use `errors.As` with specific subtypes like `*net.DNSError` instead.
+- **Breaker for a cluster that never existed**: If a request references
+  a cluster name with no breaker entry, does the code create one
+  on-demand or reject the request? On-demand creation with unbounded
+  user input allows memory exhaustion.
+- **Config hot-reload**: If breaker thresholds change while a breaker
+  is in half-open state, does the new `HalfOpenMaxRequests` apply
+  immediately or only after the next full cycle?
+
+### 13. Cache Key Fallback
+
+- When a cache lookup uses a composite key (e.g., `namespace/name`),
+  verify what happens with bare names (no namespace separator). If the
+  code only checks for `namespace/name` format, bare cluster names
+  bypass the cache entirely and cause redundant REST config creation.
+- Flag cache lookups that do not handle both `namespace/name` and
+  bare `name` formats.
+
 ## Output format
 
 For each finding:

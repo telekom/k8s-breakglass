@@ -46,6 +46,19 @@ responsiveness.
 - Verify that watch predicates filter out irrelevant events (e.g.,
   `GenerationChangedPredicate` for spec-only changes).
 
+### 4a. Cache Key Consistency
+
+- When an in-memory cache stores entries under a normalized key
+  (e.g., `namespace/name`) but callers look up entries using a
+  different key form (e.g., bare cluster name), the lookup will miss
+  even though the entry exists.
+- Verify that all `Get` / `Set` / `Delete` call sites for a cache use
+  the same key derivation function. If the input key is user-provided
+  and the stored key is normalized, store under BOTH forms or normalize
+  at the call site before lookup.
+- Common symptom: "cluster not found in cache" errors immediately after
+  successfully caching the cluster.
+
 ### 5. HTTP/REST API Performance
 
 - Verify that list endpoints (`pkg/api/`) paginate results.
@@ -86,8 +99,37 @@ responsiveness.
     healthy clusters
   - Watch/informer count scales linearly with cluster count, not
     quadratically
+  - **Circuit breaker key normalization**: all code paths operating on a
+    per-cluster breaker (create/lookup, Allow check, RecordSuccess/Failure,
+    eviction/Remove) must use the same canonical key form. Using raw user
+    input for creation but a derived canonical key for eviction causes
+    orphaned breakers and stale metric series. Verify consistency across
+    all call sites.
+  - **Read-only vs. mutating state checks**: When code needs to fast-fail
+    on an open circuit breaker, verify it does NOT call `Allow()` or any
+    method that mutates state (e.g. increments `halfOpenRequests`). If the
+    request is rejected or hasn't actually been sent yet, consuming a
+    half-open probe slot without a matching `RecordSuccess()`/
+    `RecordFailure()` can leave the breaker stuck in half-open. Use a
+    read-only state getter (like `State()` + timing check) for gate
+    checks, and reserve `Allow()` for the point where the actual network
+    request is made.
 
-### 10. Metrics Cardinality & Gauge Consistency
+### 10. Monotonic Clock Preservation
+
+- Go's `time.Now()` returns a value with both wall clock and monotonic
+  readings. Calling `.UTC()`, `.In()`, `.Round()`, or `.Truncate()` on it
+  **strips the monotonic component**.
+- When a timestamp is stored for use with `time.Since()` or
+  `time.Until()` (elapsed-time comparisons), it MUST retain the monotonic
+  clock. Flag any `time.Now().UTC()` (or similar) that is later compared
+  with `time.Since()`.
+- Convert to UTC only at display/logging boundaries, not at storage time.
+- This matters for correctness: NTP adjustments or system sleep can shift
+  the wall clock backward, causing premature or delayed state transitions
+  (e.g., circuit breaker Open→Half-Open timing).
+
+### 11. Metrics Cardinality & Gauge Consistency
 
 - High-cardinality label values (session names, user IDs, resource names)
   create unbounded metric series.

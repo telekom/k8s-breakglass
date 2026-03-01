@@ -96,6 +96,32 @@ the change introduces, and whether the change is safe to ship.
 - Check that new CRD fields are optional (rollback to a version without
   the field won't reject existing resources).
 
+### 11. Resilience Mechanism Regression
+
+- If a circuit breaker, retry wrapper, or rate limiter was modified:
+  - Verify the state machine transitions are exhaustively tested
+    (Closed→Open, Open→HalfOpen, HalfOpen→Closed, HalfOpen→Open).
+  - Check that error classification changes don't silently reclassify
+    previously-transient errors as permanent (or vice versa) — this
+    changes when the breaker trips.
+  - Verify that configuration changes (thresholds, timeouts) have
+    sensible defaults so existing deployments aren't broken.
+- If Prometheus metrics were renamed, re-labeled, or removed, verify
+  dashboards and alerting rules in documentation are updated.
+
+### 12. Verification Discipline
+
+- **Before flagging a missing feature**, search the full codebase (not
+  just the diff) for the function, method, or pattern. It may be
+  implemented in a helper, a different file, or a separate package.
+- **Before claiming a test is insufficient**, read the full test
+  function — assertions may use helpers or table-driven patterns that
+  cover the concern.
+- **Before flagging a documentation error**, read the surrounding
+  context. Sentences may be accurate when read in full paragraph scope.
+- Only flag an issue if you can cite the specific file and line where
+  the bug would manifest, not just where you expected to see code.
+
 ## Output format
 
 For each finding:

@@ -32,7 +32,11 @@ incidents — clarity and accessibility are critical.
 ### 2. TypeScript Strict Mode
 
 - Verify the project builds with `strict: true` in `tsconfig.json`.
-- Flag any `as any` type assertions — prefer proper typing.
+- **Ban `any` in all forms**: Flag `Record<string, any>`, explicit `any`
+  parameter/return types, and `as any` casts. The ESLint rule
+  `@typescript-eslint/no-explicit-any` is configured as an error.
+  Use `unknown`, a named interface, or `Record<string, unknown>` instead.
+  This applies equally to test files (`*.spec.ts`).
 - Check that component props have explicit TypeScript interfaces defined.
 - Verify emits are typed using the `defineEmits<>()` syntax.
 - Flag unused imports and variables.
@@ -52,8 +56,25 @@ incidents — clarity and accessibility are critical.
 - Check that `computed()` is used for derived state (not methods).
 - Verify `watch()` / `watchEffect()` have proper cleanup.
 - Flag prop mutation (props should be read-only in child components).
+- **Scale web component event handlers**: Prefer named handler functions
+  (e.g., `@click="handleViewSessions"`) over inline arrow functions
+  (e.g., `@click="() => $router.push('/path')"`) on `<scale-button>` and
+  other Scale web components.  Shadow DOM click propagation can silently
+  fail with inline handlers; named functions using `router` from
+  `useRouter()` are more reliable and easier to test.
 
-### 4. Session State Display
+### 4. Scale / Stencil Major Version Upgrades
+
+- When `@telekom/scale-components` (or `-neutral`) is bumped, check whether
+  the underlying Stencil compiler major version changed (look for "update
+  stencil to N" in the upstream changelog).
+- **Stencil 4 breaking change**: The `applyPolyfills` export was removed
+  from the loader.  If `main.ts` still destructures `{ applyPolyfills,
+  defineCustomElements }` and calls `await applyPolyfills()`, the app will
+  crash at startup — no Scale web component registers. Verify the import
+  only destructures exports that actually exist in the installed version.
+
+### 5. Session State Display
 
 - The UI displays breakglass session states (`Pending`, `Approved`,
   `Denied`, `Expired`, `Revoked`, `IdleExpired`).
@@ -63,7 +84,7 @@ incidents — clarity and accessibility are critical.
 - Check that state transitions are reflected immediately in the UI
   (use `aria-live` for status changes).
 
-### 5. Filter & Search Correctness
+### 6. Filter & Search Correctness
 
 - Session browser filters (by state, cluster, user) must handle all
   valid values including newly added states.
@@ -73,7 +94,7 @@ incidents — clarity and accessibility are critical.
 - Verify URL query parameters are synced with filter state for
   shareable links.
 
-### 6. Error & Loading States
+### 7. Error & Loading States
 
 - Every async operation (API calls, session creation, approval) must
   show a loading indicator.
@@ -81,7 +102,7 @@ incidents — clarity and accessibility are critical.
 - Network failures should not leave the UI in a broken state.
 - Check for proper error boundaries or `onErrorCaptured`.
 
-### 7. Security — Frontend
+### 8. Security — Frontend
 
 - No `v-html` with user-supplied or API-returned content (XSS risk).
 - Verify CSRF tokens are sent with state-mutating requests.
@@ -90,19 +111,54 @@ incidents — clarity and accessibility are critical.
 - Verify that sensitive data (tokens, credentials) is not logged to
   the browser console.
 
-### 8. Responsive Design & Layout
+### 9. Responsive Design & Layout
 
 - The UI should be usable on common screen sizes (1024px+).
 - Tables with session data should handle overflow gracefully (horizontal
   scroll or responsive columns).
 - Modal dialogs should be dismissible via Escape key and backdrop click.
 
-### 9. Component Testing
+### 10. Component Testing
 
 - Verify Vitest specs exist for modified components.
 - Check that props, emits, and computed properties have test coverage.
 - Mock API calls using `msw` or manual mocks — no real network in tests.
 - Snapshot tests should be minimal and focused on structure, not styling.
+
+### 11. DOM Query Safety
+
+- **`querySelectorAll` for multi-element scenarios**: When the same
+  `data-testid` can match multiple DOM elements (e.g., multiple toast
+  notifications of the same type), use `querySelectorAll` instead of
+  `querySelector`. The latter returns only the first match, which may
+  be a stale/closed element while a newer one is active.
+- Flag `document.querySelector` in test helpers or production code
+  where the selector is not guaranteed to be unique.
+
+### 12. Polyfill Backward Compatibility
+
+- When upgrading Stencil-based component libraries (e.g., Scale
+  components), check whether `applyPolyfills()` is still exported by
+  the loader. Removing the call without a guard breaks older package
+  versions that still export it.
+- Use conditional calling:
+  ```typescript
+  if (typeof applyPolyfills === "function") {
+    await applyPolyfills().then(() => defineCustomElements(window));
+  } else {
+    await defineCustomElements(window);
+  }
+  ```
+
+### 13. Timeout Accuracy in Helpers
+
+- When a test helper adds a fixed post-operation delay (e.g., 500ms
+  animation wait), verify that callers passing a `timeout` parameter
+  are not silently exceeded. A function documented as "Maximum time to
+  wait: N ms" that internally adds a 500ms sleep can actually block
+  for N+500ms.
+- Fix by making the post-delay optional (e.g., `{ waitForAnimation }`
+  option), or subtract the delay from the main timeout budget.
 
 ## Output format
 
