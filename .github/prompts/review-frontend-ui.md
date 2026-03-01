@@ -124,6 +124,7 @@ incidents — clarity and accessibility are critical.
 - Check that props, emits, and computed properties have test coverage.
 - Mock API calls using `msw` or manual mocks — no real network in tests.
 - Snapshot tests should be minimal and focused on structure, not styling.
+
 ### 11. DOM Query Safety
 
 - **`querySelectorAll` for multi-element scenarios**: When the same
