@@ -1,11 +1,11 @@
 # Prometheus Metrics
 
-Breakglass exposes comprehensive Prometheus metrics for monitoring system health, performance, and audit trails. Metrics are available at the `/api/metrics` endpoint in standard Prometheus format.
+Breakglass exposes comprehensive Prometheus metrics for monitoring system health, performance, and audit trails. Metrics are registered with the controller-runtime metrics registry and available at the `/metrics` endpoint on the metrics port (default 8081).
 
 **Access Metrics:**
 
 ```bash
-curl https://breakglass.example.com/api/metrics
+curl http://breakglass.example.com:8081/metrics
 ```
 
 **Prometheus Scrape Configuration:**
@@ -14,9 +14,8 @@ curl https://breakglass.example.com/api/metrics
 scrape_configs:
   - job_name: 'breakglass'
     static_configs:
-      - targets: ['breakglass.example.com:8080']
-    metrics_path: '/api/metrics'
-    scheme: 'https'
+      - targets: ['breakglass.example.com:8081']
+    metrics_path: '/metrics'
     bearer_token: '<bearer-token>'  # If authentication required
 ```
 
@@ -319,6 +318,35 @@ sum(rate(breakglass_pod_security_denied_total[5m])) by (cluster)
 | `runAsRoot` | Container runs as UID 0 |
 | `capability:*` | Linux capability detected (e.g., `capability:SYS_ADMIN`) |
 
+## Cluster Circuit Breaker Metrics
+
+These metrics track the per-cluster circuit breaker that protects against cascading failures when spoke clusters become unreachable. See [Circuit Breaker](circuit-breaker.md) for feature documentation.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_cluster_circuit_breaker_state` | Gauge | `cluster` | Current state: 0 = Closed, 1 = Open, 2 = Half-Open |
+| `breakglass_cluster_circuit_breaker_rejections_total` | Counter | `cluster` | Requests rejected because the circuit was open |
+| `breakglass_cluster_circuit_breaker_state_transitions_total` | Counter | `cluster`, `from`, `to` | State transitions (e.g., closed→open) |
+| `breakglass_cluster_circuit_breaker_failures_total` | Counter | `cluster` | Transient failures recorded (network errors, timeouts, 5xx) |
+| `breakglass_cluster_circuit_breaker_successes_total` | Counter | `cluster` | Successful operations recorded |
+| `breakglass_cluster_circuit_breaker_consecutive_failures` | Gauge | `cluster` | Current consecutive-failure count (resets on success) |
+
+**Example Queries:**
+
+```promql
+# Clusters currently in Open state
+breakglass_cluster_circuit_breaker_state == 1
+
+# Rejection rate per cluster (requests failing without reaching the spoke)
+sum by (cluster) (rate(breakglass_cluster_circuit_breaker_rejections_total[5m]))
+
+# State transition frequency
+sum by (from, to) (rate(breakglass_cluster_circuit_breaker_state_transitions_total[5m]))
+
+# Clusters with rising consecutive failures (approaching threshold)
+breakglass_cluster_circuit_breaker_consecutive_failures > 2
+```
+
 ## Alerting Recommendations
 
 Use these alert rules to monitor system health:
@@ -523,12 +551,9 @@ scrape_configs:
     scrape_interval: 30s
     scrape_timeout: 10s
     static_configs:
-      - targets: ['breakglass.example.com:8080']
-    metrics_path: '/api/metrics'
-    scheme: 'https'
-    bearer_token: 'your-bearer-token'
-    tls_config:
-      insecure_skip_verify: false  # Verify TLS certificates
+      - targets: ['breakglass.example.com:8081']
+    metrics_path: '/metrics'
+    scheme: 'http'
     metric_relabel_configs:
       # Drop high-cardinality labels
       - source_labels: [__name__]
@@ -542,7 +567,7 @@ scrape_configs:
 **No metrics appearing:**
 
 - Check bearer token/authentication credentials
-- Verify `/api/metrics` endpoint is accessible
+- Verify `/metrics` endpoint is accessible on port 8081
 - Check firewall rules between Prometheus and breakglass service
 
 **High denial rate:**

@@ -43,6 +43,32 @@ var (
 		Help: "Total number of cluster cache invalidations",
 	}, []string{"reason"})
 
+	// Cluster circuit breaker metrics
+	ClusterCircuitBreakerState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_cluster_circuit_breaker_state",
+		Help: "Current state of the cluster circuit breaker (0=closed, 1=open, 2=half-open)",
+	}, []string{"cluster"})
+	ClusterCircuitBreakerRejections = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_circuit_breaker_rejections_total",
+		Help: "Total number of requests rejected by the cluster circuit breaker",
+	}, []string{"cluster"})
+	ClusterCircuitBreakerStateTransitions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_circuit_breaker_state_transitions_total",
+		Help: "Total number of cluster circuit breaker state transitions",
+	}, []string{"cluster", "from", "to"})
+	ClusterCircuitBreakerFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_circuit_breaker_failures_total",
+		Help: "Total number of transient failures recorded by the cluster circuit breaker",
+	}, []string{"cluster"})
+	ClusterCircuitBreakerSuccesses = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_circuit_breaker_successes_total",
+		Help: "Total number of successes recorded by the cluster circuit breaker",
+	}, []string{"cluster"})
+	ClusterCircuitBreakerConsecutiveFailures = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_cluster_circuit_breaker_consecutive_failures",
+		Help: "Current number of consecutive failures for the cluster circuit breaker",
+	}, []string{"cluster"})
+
 	// Field index metrics
 	IndexLookupTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_index_lookup_total",
@@ -589,6 +615,14 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigLoaded)
 	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigErrors)
 	ctrlmetrics.Registry.MustRegister(ClusterCacheInvalidations)
+
+	// Register cluster circuit breaker metrics
+	ctrlmetrics.Registry.MustRegister(ClusterCircuitBreakerState)
+	ctrlmetrics.Registry.MustRegister(ClusterCircuitBreakerRejections)
+	ctrlmetrics.Registry.MustRegister(ClusterCircuitBreakerStateTransitions)
+	ctrlmetrics.Registry.MustRegister(ClusterCircuitBreakerFailures)
+	ctrlmetrics.Registry.MustRegister(ClusterCircuitBreakerSuccesses)
+	ctrlmetrics.Registry.MustRegister(ClusterCircuitBreakerConsecutiveFailures)
 
 	// Register field index metrics
 	ctrlmetrics.Registry.MustRegister(IndexLookupTotal)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -65,23 +66,37 @@ type ClientProvider struct {
 	mu   sync.RWMutex
 	data map[string]*breakglassv1alpha1.ClusterConfig
 	rest map[string]*cachedRESTConfig
+	// bareToCanonical maps bare-name cache keys to their canonical namespace/name keys.
+	// This allows evictClusterLocked to clean up bare-name aliases when the canonical entry is evicted.
+	bareToCanonical map[string]string
 	// clusterToSecret tracks which kubeconfig secret each ClusterConfig uses (keyed by namespace/name)
 	clusterToSecret map[string]string
 	// secretToClusters tracks all clusters backed by a given secret (keyed by namespace/name)
 	secretToClusters map[string]map[string]struct{}
 	// oidcProvider handles OIDC token acquisition for clusters using OIDC auth
 	oidcProvider *OIDCTokenProvider
+	// circuitBreakers manages per-cluster circuit breakers for spoke cluster resilience.
+	// When a spoke becomes unreachable, the circuit opens and requests are rejected immediately
+	// instead of blocking on TCP timeout.
+	circuitBreakers *CircuitBreakerRegistry
 }
 
 func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvider {
+	return NewClientProviderWithCircuitBreaker(c, log, DefaultClusterCircuitBreakerConfig())
+}
+
+// NewClientProviderWithCircuitBreaker creates a ClientProvider with explicit circuit breaker configuration.
+func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLogger, cbCfg ClusterCircuitBreakerConfig) *ClientProvider {
 	return &ClientProvider{
 		k8s:              c,
 		log:              log,
 		data:             map[string]*breakglassv1alpha1.ClusterConfig{},
 		rest:             map[string]*cachedRESTConfig{},
+		bareToCanonical:  map[string]string{},
 		clusterToSecret:  map[string]string{},
 		secretToClusters: map[string]map[string]struct{}{},
 		oidcProvider:     NewOIDCTokenProvider(c, log),
+		circuitBreakers:  NewCircuitBreakerRegistry(cbCfg, log),
 	}
 }
 
@@ -217,16 +232,44 @@ func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, na
 // The auth method is determined by the ClusterConfig's authType field.
 // For OIDC clusters, the config uses WrapTransport for dynamic token injection, allowing caching
 // while still refreshing tokens as needed. TTL-based expiry ensures TLS/CA changes are picked up.
+//
+// If a circuit breaker is enabled and open for this cluster, ErrCircuitOpen is returned immediately
+// without attempting any network call. When the breaker is in half-open state, a single probe
+// request is allowed through to test cluster reachability; all other callers still receive
+// ErrCircuitOpen until the probe succeeds.
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
 	now := time.Now()
 
-	// If caller provided namespace/name, use it for exact cache lookup
+	// If caller provided namespace/name, use it for exact cache lookup.
+	// Otherwise, use the bare name as lookup key so the cache is still
+	// hit for subsequent calls with the same cluster name.
 	var cacheLookupKey string
 	var parsedNamespace, parsedName string
 	if ns, n, ok := splitNamespacedName(name); ok {
 		parsedNamespace = ns
 		parsedName = n
 		cacheLookupKey = cacheKey(ns, n)
+	} else {
+		cacheLookupKey = name
+	}
+
+	// Circuit breaker fast-fail — use the canonical cache key when available.
+	// If the caller passed a bare name (no namespace), we defer the CB check
+	// until after ClusterConfig resolution, when we can compute the canonical key.
+	//
+	// We use IsDefinitelyOpen() — a lock-free read-only check that does NOT
+	// consume a half-open probe slot.  The actual Allow / RecordSuccess /
+	// RecordFailure lifecycle is handled by the circuitBreakerTransport wrapper
+	// installed on the REST config further below.
+	cbChecked := false
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && parsedNamespace != "" {
+		cb := p.circuitBreakers.Get(cacheLookupKey)
+		if cb.IsDefinitelyOpen() {
+			cb.totalRejections.Add(1)
+			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
+			return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cacheLookupKey)
+		}
+		cbChecked = true
 	}
 
 	// Check cache with TTL validation (read lock for fast path)
@@ -281,6 +324,19 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		return nil, err
 	}
 
+	// Deferred circuit breaker check for bare-name callers — now that we have
+	// the canonical key we can check against the correctly-keyed breaker before
+	// building the REST config (which may involve network calls for secrets).
+	finalCacheKey := cacheKey(cc.Namespace, cc.Name)
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && !cbChecked {
+		cb := p.circuitBreakers.Get(finalCacheKey)
+		if cb.IsDefinitelyOpen() {
+			cb.totalRejections.Add(1)
+			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
+			return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, finalCacheKey)
+		}
+	}
+
 	// Determine auth type - check explicit authType or infer from configuration
 	authType := cc.Spec.AuthType
 	if authType == "" {
@@ -315,11 +371,38 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 
 	// Cache with TTL (keyed by namespace/name)
 	// Note: We already hold the write lock from above
-	finalCacheKey := cacheKey(cc.Namespace, cc.Name)
-	p.rest[finalCacheKey] = &cachedRESTConfig{
+	// finalCacheKey was computed above for the deferred CB check
+	entry := &cachedRESTConfig{
 		config:    cfg,
 		expiresAt: now.Add(ttl),
 		authType:  authType,
+	}
+	p.rest[finalCacheKey] = entry
+	// When the caller used a bare name (no namespace), also store under
+	// the original lookup key so subsequent bare-name lookups hit the cache.
+	// Track the mapping so evictClusterLocked can clean up both entries.
+	if cacheLookupKey != finalCacheKey {
+		p.rest[cacheLookupKey] = entry
+		p.bareToCanonical[cacheLookupKey] = finalCacheKey
+	}
+
+	// Wrap transport with circuit breaker instrumentation so that every HTTP
+	// request to this spoke cluster automatically records success/failure.
+	// Use the canonical finalCacheKey so that breaker state, metrics, and
+	// eviction cleanup are all keyed consistently.
+	// Preserve any existing WrapTransport (e.g., OIDC token injector).
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		existingWrap := cfg.WrapTransport
+		cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+			if existingWrap != nil {
+				rt = existingWrap(rt)
+			}
+			return &circuitBreakerTransport{
+				inner:       rt,
+				clusterName: finalCacheKey,
+				breakers:    p.circuitBreakers,
+			}
+		}
 	}
 
 	p.log.Debugw("Cached REST config", "cluster", finalCacheKey, "authType", authType, "ttl", ttl)
@@ -430,10 +513,21 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 	delete(p.data, clusterKey)
 	delete(p.rest, clusterKey)
+	// Also evict any bare-name alias that maps to this canonical key.
+	for bare, canonical := range p.bareToCanonical {
+		if canonical == clusterKey {
+			delete(p.rest, bare)
+			delete(p.bareToCanonical, bare)
+			break
+		}
+	}
 	if p.oidcProvider != nil {
 		if ns, name, ok := splitNamespacedName(clusterKey); ok {
 			p.oidcProvider.Invalidate(ns, name)
 		}
+	}
+	if p.circuitBreakers != nil {
+		p.circuitBreakers.Remove(clusterKey)
 	}
 	if secretKey, ok := p.clusterToSecret[clusterKey]; ok {
 		if clusters, found := p.secretToClusters[secretKey]; found {
@@ -444,4 +538,31 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 		}
 		delete(p.clusterToSecret, clusterKey)
 	}
+}
+
+// RecordSuccess notifies the circuit breaker that a call to the named cluster succeeded.
+// The circuit breaker transport automatically records outcomes for every HTTP request,
+// so this method is only needed for non-HTTP operations (e.g., watch setup, informer startup).
+// clusterName should be the canonical "namespace/name" key.
+func (p *ClientProvider) RecordSuccess(clusterName string) {
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		p.circuitBreakers.Get(clusterName).RecordSuccess()
+	}
+}
+
+// RecordFailure notifies the circuit breaker that a call to the named cluster failed.
+// Only transient errors (network, timeout) trip the breaker. Auth errors are ignored.
+// The circuit breaker transport automatically records outcomes for every HTTP request,
+// so this method is only needed for non-HTTP operations (e.g., watch setup, informer startup).
+// clusterName should be the canonical "namespace/name" key.
+func (p *ClientProvider) RecordFailure(clusterName string, err error) {
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		p.circuitBreakers.Get(clusterName).RecordFailure(err)
+	}
+}
+
+// CircuitBreakers returns the underlying registry for status inspection.
+// Returns nil if circuit breakers are not configured.
+func (p *ClientProvider) CircuitBreakers() *CircuitBreakerRegistry {
+	return p.circuitBreakers
 }

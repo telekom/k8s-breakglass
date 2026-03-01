@@ -1,0 +1,30 @@
+{{- /*
+  This ConfigMap renders the circuit breaker configuration fragment.
+  To apply it, mount this ConfigMap into the breakglass controller Deployment
+  (e.g. via a volume + volumeMount targeting the controller's --config flag path)
+  or merge its contents into the controller's primary config.yaml.
+  This chart does NOT automatically mount it — operators must configure the
+  Deployment themselves or use the main breakglass Helm chart.
+*/ -}}
+{{- if .Values.cluster.circuitBreaker }}
+{{- if .Values.cluster.circuitBreaker.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-circuit-breaker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  circuit-breaker.yaml: |
+    kubernetes:
+      circuitBreaker:
+        enabled: {{ .Values.cluster.circuitBreaker.enabled }}
+        failureThreshold: {{ .Values.cluster.circuitBreaker.failureThreshold | default 3 }}
+        successThreshold: {{ .Values.cluster.circuitBreaker.successThreshold | default 2 }}
+        openDuration: {{ .Values.cluster.circuitBreaker.openDuration | default "30s" | quote }}
+        halfOpenMaxRequests: {{ .Values.cluster.circuitBreaker.halfOpenMaxRequests | default 1 }}
+{{- end }}
+{{- end }}

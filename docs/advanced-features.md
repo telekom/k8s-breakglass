@@ -347,7 +347,7 @@ API errors are returned in consistent JSON format:
 
 ### Prometheus Metrics
 
-Available at `/api/metrics`:
+Available at `/metrics` (controller-runtime metrics port):
 
 - `breakglass_sessions_total` - Total sessions created
 - `breakglass_sessions_approved_total` - Sessions approved

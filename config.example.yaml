@@ -60,6 +60,17 @@ kubernetes:
   # Valid values: "email" (default), "preferred_username", "sub"
   # This must match the OIDC claimMappings.username.claim on spoke clusters.
   # userIdentifierClaim: "email"
+  #
+  # Circuit breaker for spoke cluster communication (optional).
+  # When enabled, clusters that become unreachable are marked as degraded and
+  # requests are rejected immediately instead of blocking on TCP timeout.
+  # See docs/circuit-breaker.md for details.
+  # circuitBreaker:
+  #   enabled: true
+  #   failureThreshold: 3     # consecutive failures before opening
+  #   successThreshold: 2     # consecutive successes to close in half-open
+  #   openDuration: "30s"     # wait before probing
+  #   halfOpenMaxRequests: 1  # concurrent probes in half-open
 
 # OpenTelemetry distributed tracing configuration.
 # See docs/opentelemetry-tracing.md for details.

@@ -121,6 +121,25 @@ cluster:
     # samplingRate is 0.0-1.0 controlling the fraction of traces sampled.
     samplingRate: 1.0
 
+  # ==========================================
+  # Circuit Breaker Configuration
+  # ==========================================
+  # Circuit breaker for spoke cluster communication.
+  # When enabled, clusters that become unreachable are marked as degraded and
+  # requests are rejected immediately instead of blocking on TCP timeout.
+  # See docs/circuit-breaker.md for details.
+  circuitBreaker:
+    # enabled enables circuit breaker protection. Default: false (opt-in).
+    enabled: false
+    # failureThreshold is consecutive failures before opening the circuit.
+    failureThreshold: 3
+    # successThreshold is consecutive successes in half-open state before closing.
+    successThreshold: 2
+    # openDuration is how long to wait before probing a tripped circuit.
+    openDuration: "30s"
+    # halfOpenMaxRequests is the max concurrent requests in half-open state.
+    halfOpenMaxRequests: 1
+
 escalations: []
   # - name: sample-escalation
   #   allowed:
