@@ -262,7 +262,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	// RecordFailure lifecycle is handled by the circuitBreakerTransport wrapper
 	// installed on the REST config further below.
 	cbChecked := false
-	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && cacheLookupKey != "" {
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && parsedNamespace != "" {
 		cb := p.circuitBreakers.Get(cacheLookupKey)
 		if cb.IsDefinitelyOpen() {
 			cb.totalRejections.Add(1)
