@@ -396,13 +396,13 @@ onMounted(() => {
         <scale-checkbox
           data-testid="filter-mine"
           :checked="filters.mine"
-          @scaleChange="filters.mine = $event.target.checked"
+          @scale-change="filters.mine = $event.target.checked"
           >Mine</scale-checkbox
         >
         <scale-checkbox
           data-testid="filter-approver"
           :checked="filters.approver"
-          @scaleChange="filters.approver = $event.target.checked"
+          @scale-change="filters.approver = $event.target.checked"
           >Approver</scale-checkbox
         >
         <scale-checkbox
@@ -410,7 +410,7 @@ onMounted(() => {
           :checked="filters.onlyApprovedByMe"
           :disabled="!currentUserEmail"
           title="Requires email in profile"
-          @scaleChange="filters.onlyApprovedByMe = $event.target.checked"
+          @scale-change="filters.onlyApprovedByMe = $event.target.checked"
         >
           Only sessions I approved
         </scale-checkbox>
@@ -425,7 +425,7 @@ onMounted(() => {
             :data-testid="`state-filter-${option.value}`"
             :checked="filters.states.includes(option.value)"
             :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
-            @scaleChange="(event: Event) => onStateToggle(option.value, event)"
+            @scale-change="(event: Event) => onStateToggle(option.value, event)"
           >
             {{ option.label }}
           </scale-checkbox>
@@ -438,28 +438,28 @@ onMounted(() => {
           label="Cluster"
           :value="filters.cluster"
           placeholder="cluster name"
-          @scaleChange="filters.cluster = $event.target.value"
+          @scale-change="filters.cluster = $event.target.value"
         ></scale-text-field>
         <scale-text-field
           data-testid="group-filter"
           label="Group"
           :value="filters.group"
           placeholder="group"
-          @scaleChange="filters.group = $event.target.value"
+          @scale-change="filters.group = $event.target.value"
         ></scale-text-field>
         <scale-text-field
           data-testid="user-filter"
           label="User"
           :value="filters.user"
           placeholder="user email"
-          @scaleChange="filters.user = $event.target.value"
+          @scale-change="filters.user = $event.target.value"
         ></scale-text-field>
         <scale-text-field
           data-testid="name-filter"
           label="Session Name"
           :value="filters.name"
           placeholder="metadata.name"
-          @scaleChange="filters.name = $event.target.value"
+          @scale-change="filters.name = $event.target.value"
         ></scale-text-field>
       </div>
 

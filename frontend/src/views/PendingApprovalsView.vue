@@ -15,7 +15,7 @@
           data-testid="sort-select"
           label="Sort by"
           :value="sortBy"
-          @scaleChange="handleSortChange"
+          @scale-change="handleSortChange"
         >
           <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
           <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
@@ -29,7 +29,7 @@
           data-testid="urgency-filter"
           label="Urgency"
           :value="urgencyFilter"
-          @scaleChange="handleUrgencyChange"
+          @scale-change="handleUrgencyChange"
         >
           <scale-dropdown-select-option value="all">All</scale-dropdown-select-option>
           <scale-dropdown-select-option value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-option>

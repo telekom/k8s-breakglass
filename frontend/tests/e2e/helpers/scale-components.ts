@@ -40,15 +40,17 @@ export class ScaleComponentHelper {
   }
 
   /**
-   * Fill a scale-input component.
-   * The internal input has class 'input__control'.
-   * @param selector - The selector for the scale-input element
+   * Fill a scale-input or scale-text-field component.
+   * In Scale beta.159+ (Stencil 4), scale-text-field uses class 'text-field__control'
+   * and scale-input uses class 'input__input'. We find the first <input> element
+   * inside the component regardless of class name for maximum compatibility.
+   * @param selector - The selector for the scale-input or scale-text-field element
    * @param value - The text to fill
    */
   async fillInput(selector: string, value: string): Promise<void> {
     const scaleInput = this.page.locator(selector);
     await scaleInput.waitFor({ state: "visible" });
-    const internalInput = scaleInput.locator("input.input__control");
+    const internalInput = scaleInput.locator("input").first();
     await internalInput.fill(value);
   }
 
@@ -125,26 +127,42 @@ export async function fillScaleTextField(page: Page, selector: string, value: st
 
 /**
  * Wait for a Scale notification toast to appear.
- * Scale's notification toast uses an 'opened' attribute to indicate visibility.
- * The element may exist in the DOM but have a hidden visual state - we check for the 'opened' attribute.
+ * Scale's notification toast uses an internal 'opened' state to control visibility.
+ * In Stencil 4 (Scale beta.159+) the 'opened' @State() no longer reflects as
+ * an HTML attribute, so we check the property value via JS evaluation instead.
  * @param page - Playwright page
  * @param testId - The data-testid of the toast (e.g., 'success-toast' or 'error-toast')
- * @param timeout - Maximum time to wait in milliseconds (default: 10000)
+ * @param timeout - Maximum time to wait in milliseconds (default: 20000)
  */
 export async function waitForScaleToast(
   page: Page,
   testId: "success-toast" | "error-toast",
   timeout = 20000,
+  { waitForAnimation = true }: { waitForAnimation?: boolean } = {},
 ): Promise<void> {
-  // Wait for the toast element with the 'opened' attribute
-  // The attribute is present when the toast is visible, absent when hidden
-  // Increased default timeout to 20s for CI environments where API calls can be slower
-  await page.waitForSelector(`[data-testid="${testId}"][opened]`, {
-    state: "attached",
-    timeout,
-  });
+  // Poll for element existence AND its 'opened' JS property in one shot.
+  // page.waitForFunction runs in the browser context and does not require
+  // the element to exist before polling starts — unlike locator.evaluateHandle
+  // which times out if the locator can't find the element in the DOM.
+  // Uses querySelectorAll to handle multiple toasts with the same test id.
+  await page.waitForFunction(
+    (tid: string) => {
+      const elements = document.querySelectorAll(`[data-testid="${tid}"]`);
+      for (const el of Array.from(elements)) {
+        const toast = el as HTMLElement & { opened?: boolean };
+        if (toast.opened === true) {
+          return true;
+        }
+      }
+      return false;
+    },
+    testId,
+    { timeout },
+  );
   // Additional wait for toast animation to complete and be fully visible
-  await page.waitForTimeout(500);
+  if (waitForAnimation) {
+    await page.waitForTimeout(500);
+  }
 }
 
 /**
@@ -160,10 +178,7 @@ export async function hasScaleToast(
   timeout = 5000,
 ): Promise<boolean> {
   try {
-    await page.waitForSelector(`[data-testid="${testId}"][opened]`, {
-      state: "attached",
-      timeout,
-    });
+    await waitForScaleToast(page, testId, timeout, { waitForAnimation: false });
     return true;
   } catch {
     return false;

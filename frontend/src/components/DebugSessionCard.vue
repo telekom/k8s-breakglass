@@ -188,7 +188,7 @@ function handleRenew() {
       :opened="showRejectModal"
       heading="Reject Debug Session"
       data-testid="reject-modal"
-      @scaleClose="showRejectModal = false"
+      @scale-close="showRejectModal = false"
     >
       <div class="modal-content">
         <p>Provide a reason for rejecting this debug session request.</p>
@@ -220,7 +220,7 @@ function handleRenew() {
       :opened="showRenewModal"
       heading="Renew Debug Session"
       data-testid="renew-modal"
-      @scaleClose="showRenewModal = false"
+      @scale-close="showRenewModal = false"
     >
       <div class="modal-content">
         <p>Extend the duration of this debug session.</p>
