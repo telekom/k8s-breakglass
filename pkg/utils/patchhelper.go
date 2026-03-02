@@ -184,27 +184,33 @@ func applyConfigsEqual(a, b runtime.ApplyConfiguration) bool {
 	return bytes.Equal(aJSON, bJSON)
 }
 
-// unstructuredSpecEqual compares the spec-level fields of two unstructured objects.
-// It compares "spec", "data", "stringData", labels, and annotations —
-// ignoring server-managed metadata (resourceVersion, uid, generation, etc.).
+// unstructuredSpecEqual performs a generic subset comparison of two unstructured
+// objects. For every top-level field the desired object declares (excluding
+// server-managed keys like apiVersion, kind, metadata, and status), the current
+// object must have the same value. This covers spec, data, stringData, rules,
+// subjects, roleRef, and any other kind-specific top-level fields without
+// hard-coding a fixed allowlist.
+//
+// For metadata, labels and annotations are compared with a subset match (extra
+// entries in current from other controllers are tolerated).
 func unstructuredSpecEqual(desired, current *unstructured.Unstructured) bool {
-	// Compare spec (most K8s objects).
-	if !jsonFieldEqual(desired.Object, current.Object, "spec") {
-		return false
-	}
-	// Compare data / stringData (Secrets, ConfigMaps).
-	if !jsonFieldEqual(desired.Object, current.Object, "data") {
-		return false
-	}
-	if !jsonFieldEqual(desired.Object, current.Object, "stringData") {
-		return false
-	}
 	// Compare SSA-owned metadata: labels and annotations.
 	if !mapSubsetMatch(current.GetLabels(), desired.GetLabels()) {
 		return false
 	}
 	if !mapSubsetMatch(current.GetAnnotations(), desired.GetAnnotations()) {
 		return false
+	}
+
+	// Compare all non-metadata top-level fields declared by the desired object.
+	for key := range desired.Object {
+		switch key {
+		case "apiVersion", "kind", "metadata", "status":
+			continue // Server-managed or compared separately above.
+		}
+		if !jsonFieldEqual(desired.Object, current.Object, key) {
+			return false
+		}
 	}
 	return true
 }

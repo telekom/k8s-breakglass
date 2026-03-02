@@ -320,6 +320,70 @@ func TestUnstructuredSpecEqual_DifferentData(t *testing.T) {
 	assert.False(t, unstructuredSpecEqual(a, b))
 }
 
+// TestUnstructuredSpecEqual_ClusterRoleRules ensures that kinds that use
+// top-level fields other than spec/data (e.g. ClusterRole.rules) are compared
+// correctly — regression test for the generic subset comparison.
+func TestUnstructuredSpecEqual_ClusterRoleRules(t *testing.T) {
+	rules := []interface{}{
+		map[string]interface{}{
+			"apiGroups": []interface{}{""},
+			"resources": []interface{}{"pods"},
+			"verbs":     []interface{}{"get", "list"},
+		},
+	}
+	desired := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "rbac.authorization.k8s.io/v1",
+		"kind":       "ClusterRole",
+		"metadata":   map[string]interface{}{"name": "test-role"},
+		"rules":      rules,
+	}}
+	current := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "rbac.authorization.k8s.io/v1",
+		"kind":       "ClusterRole",
+		"metadata": map[string]interface{}{
+			"name":            "test-role",
+			"resourceVersion": "12345",
+			"uid":             "abc-def",
+		},
+		"rules": rules,
+	}}
+	assert.True(t, unstructuredSpecEqual(desired, current), "identical rules should match")
+
+	// Mutate rules in current — should detect the diff.
+	changedRules := []interface{}{
+		map[string]interface{}{
+			"apiGroups": []interface{}{""},
+			"resources": []interface{}{"pods"},
+			"verbs":     []interface{}{"get", "list", "watch"},
+		},
+	}
+	currentChanged := current.DeepCopy()
+	currentChanged.Object["rules"] = changedRules
+	assert.False(t, unstructuredSpecEqual(desired, currentChanged), "different rules should not match")
+}
+
+// TestUnstructuredSpecEqual_ServiceAccount tests a kind with top-level fields
+// other than spec (automountServiceAccountToken, secrets, imagePullSecrets).
+func TestUnstructuredSpecEqual_ServiceAccount(t *testing.T) {
+	desired := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion":                   "v1",
+		"kind":                         "ServiceAccount",
+		"metadata":                     map[string]interface{}{"name": "test-sa", "namespace": "default"},
+		"automountServiceAccountToken": true,
+	}}
+	current := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion":                   "v1",
+		"kind":                         "ServiceAccount",
+		"metadata":                     map[string]interface{}{"name": "test-sa", "namespace": "default", "resourceVersion": "999"},
+		"automountServiceAccountToken": true,
+	}}
+	assert.True(t, unstructuredSpecEqual(desired, current))
+
+	currentDiff := current.DeepCopy()
+	currentDiff.Object["automountServiceAccountToken"] = false
+	assert.False(t, unstructuredSpecEqual(desired, currentDiff))
+}
+
 func TestUnstructuredSpecEqual_ExtraLabelsInCurrent(t *testing.T) {
 	desired := &unstructured.Unstructured{Object: map[string]interface{}{
 		"spec": map[string]interface{}{"replicas": float64(3)},
