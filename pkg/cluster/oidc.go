@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +41,14 @@ var ErrRefreshTokenExpired = fmt.Errorf("refresh token expired or revoked")
 // to client_credentials succeeded. The checker uses this to set DegradedAuth condition.
 var ErrDegradedAuth = fmt.Errorf("primary auth degraded, using fallback credentials")
 
+// fallbackCredentials stores IDP Keycloak SA credentials for fallback auth
+// when the primary refresh token flow fails. Stored separately from the primary
+// OIDCAuthConfig to avoid overwriting the client_id used for refresh token grants.
+type fallbackCredentials struct {
+	clientID        string
+	clientSecretRef *breakglassv1alpha1.SecretKeyReference
+}
+
 // OIDCTokenProvider manages OIDC token acquisition for cluster authentication.
 // It supports both client credentials flow and token exchange flow, with automatic
 // token refresh and TOFU (Trust On First Use) for API server CA certificates.
@@ -57,6 +66,11 @@ type OIDCTokenProvider struct {
 	// issuerTOFUCAs stores discovered CA certificates for OIDC issuers (issuer URL -> CA PEM)
 	issuerTOFUCAs map[string][]byte
 	issuerTOFUMu  sync.RWMutex
+	// fallbackCreds stores IDP Keycloak SA credentials for fallback auth,
+	// keyed by tokenCacheKey(namespace, clusterName). Used instead of
+	// overwriting the primary OIDCAuthConfig.ClientID.
+	fallbackCreds map[string]*fallbackCredentials
+	fallbackMu    sync.RWMutex
 }
 
 // cachedToken stores a token with its expiry time and refresh token
@@ -92,6 +106,7 @@ func NewOIDCTokenProvider(k8s client.Client, log *zap.SugaredLogger) *OIDCTokenP
 		httpClients:   make(map[string]*http.Client),
 		tofuCAs:       make(map[string][]byte),
 		issuerTOFUCAs: make(map[string][]byte),
+		fallbackCreds: make(map[string]*fallbackCredentials),
 	}
 }
 
@@ -258,14 +273,22 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 
 	if oidc.RefreshTokenSecretRef != nil {
 		// Refresh token mode: client secret is NOT required for the primary flow.
-		// However, we still resolve fallback credentials if the IDP has Keycloak SA.
+		// We intentionally do NOT overwrite oidc.ClientID or oidc.ClientSecretRef here,
+		// to avoid changing the client_id used for refresh-token grants (the refresh
+		// token was issued to the original OIDC client, not the Keycloak SA).
+		// Instead, we store the IDP Keycloak SA credentials separately for use as
+		// fallback if the refresh token expires (see evaluateFallback).
 		if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil {
 			p.log.Debugw("Storing IDP Keycloak SA credentials for potential fallback",
 				"cluster", cc.Name, "identityProvider", ref.Name,
 				"fallbackPolicy", string(ref.FallbackPolicy))
-			// Store Keycloak SA credentials for use as fallback if refresh token expires
-			oidc.ClientID = idp.Spec.Keycloak.ClientID
-			oidc.ClientSecretRef = &idp.Spec.Keycloak.ClientSecretRef
+			cacheKey := tokenCacheKey(cc.Namespace, cc.Name)
+			p.fallbackMu.Lock()
+			p.fallbackCreds[cacheKey] = &fallbackCredentials{
+				clientID:        idp.Spec.Keycloak.ClientID,
+				clientSecretRef: &idp.Spec.Keycloak.ClientSecretRef,
+			}
+			p.fallbackMu.Unlock()
 		}
 	} else if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil {
 		// No refresh token and no explicit client secret → use Keycloak SA
@@ -332,12 +355,21 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 		p.log.Warnw("Refresh token from secret failed", "cluster", clusterName, "namespace", namespace, "error", err)
 
 		token, fallbackErr := p.evaluateFallback(ctx, clusterName, oidc, namespace, err)
-		if fallbackErr != nil {
-			return "", fallbackErr
-		}
 		if token != nil {
 			p.cacheTokenWithNamespace(namespace, clusterName, token)
+			if errors.Is(fallbackErr, ErrDegradedAuth) {
+				// Degraded auth: token is valid but using fallback credentials.
+				// Log the degraded state. The DegradedAuth condition on ClusterConfig
+				// requires a design change (e.g., preflight check in GetRESTConfig or
+				// shared state between provider and checker) to be set at check time.
+				// TODO(oidc): propagate degraded state to checker for condition update.
+				p.log.Warnw("Cluster operating in degraded auth mode",
+					"cluster", clusterName, "namespace", namespace)
+			}
 			return token.AccessToken, nil
+		}
+		if fallbackErr != nil {
+			return "", fallbackErr
 		}
 	}
 
@@ -395,6 +427,8 @@ func (p *OIDCTokenProvider) refreshTokenFromSecret(ctx context.Context, oidc *br
 
 // evaluateFallback handles the fallback logic when the primary refresh token flow fails.
 // It evaluates the FallbackPolicy and either falls back to client_credentials or returns an error.
+// For FallbackPolicyWarn, it returns both a valid token and ErrDegradedAuth so the caller
+// can use the token while signalling the degraded state.
 func (p *OIDCTokenProvider) evaluateFallback(ctx context.Context, clusterName string, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string, primaryErr error) (*tokenResponse, error) {
 	policy := oidc.FallbackPolicy
 	if policy == "" {
@@ -403,19 +437,22 @@ func (p *OIDCTokenProvider) evaluateFallback(ctx context.Context, clusterName st
 
 	switch policy {
 	case breakglassv1alpha1.FallbackPolicyNone:
-		// Hard fail — no fallback
+		// Hard fail — no fallback. Propagate the primary error as-is; it is
+		// already wrapped with ErrRefreshTokenExpired by refreshTokenFromSecret
+		// when the failure is actually an expired/revoked refresh token.
 		p.log.Errorw("Refresh token failed and fallbackPolicy=None, cluster is unreachable",
 			"cluster", clusterName, "namespace", namespace, "error", primaryErr)
-		return nil, fmt.Errorf("%w: %w", ErrRefreshTokenExpired, primaryErr)
+		return nil, primaryErr
 
 	case breakglassv1alpha1.FallbackPolicyAuto:
 		// Silent fallback to client_credentials
-		if oidc.ClientSecretRef == nil {
+		fbOIDC := p.applyFallbackCredentials(oidc, namespace, clusterName)
+		if fbOIDC.ClientSecretRef == nil {
 			return nil, fmt.Errorf("%w: fallbackPolicy=Auto but no client credentials available for fallback: %w", ErrRefreshTokenExpired, primaryErr)
 		}
 		p.log.Warnw("Refresh token failed, silently falling back to client_credentials (fallbackPolicy=Auto)",
 			"cluster", clusterName, "namespace", namespace)
-		token, err := p.clientCredentialsFlow(ctx, oidc)
+		token, err := p.clientCredentialsFlow(ctx, fbOIDC)
 		if err != nil {
 			return nil, fmt.Errorf("fallback client_credentials flow also failed: %w", err)
 		}
@@ -423,23 +460,45 @@ func (p *OIDCTokenProvider) evaluateFallback(ctx context.Context, clusterName st
 
 	case breakglassv1alpha1.FallbackPolicyWarn:
 		// Fallback with degraded auth warning
-		if oidc.ClientSecretRef == nil {
+		fbOIDC := p.applyFallbackCredentials(oidc, namespace, clusterName)
+		if fbOIDC.ClientSecretRef == nil {
 			return nil, fmt.Errorf("%w: fallbackPolicy=Warn but no client credentials available for fallback: %w", ErrRefreshTokenExpired, primaryErr)
 		}
 		p.log.Warnw("Refresh token failed, falling back to client_credentials with degraded warning (fallbackPolicy=Warn)",
 			"cluster", clusterName, "namespace", namespace)
-		token, err := p.clientCredentialsFlow(ctx, oidc)
+		token, err := p.clientCredentialsFlow(ctx, fbOIDC)
 		if err != nil {
 			return nil, fmt.Errorf("fallback client_credentials flow also failed: %w", err)
 		}
-		// Log the degraded state — the checker will set the DegradedAuth condition
+		// Signal degraded auth to the caller — the checker sets the DegradedAuth condition
 		p.log.Warnw("Cluster is operating in degraded auth mode (using fallback credentials)",
 			"cluster", clusterName, "namespace", namespace)
-		return token, nil
+		return token, fmt.Errorf("%w: primary refresh token failed, using fallback credentials", ErrDegradedAuth)
 
 	default:
 		return nil, fmt.Errorf("unknown fallback policy %q: %w", policy, primaryErr)
 	}
+}
+
+// applyFallbackCredentials returns a deep copy of the OIDC config with fallback
+// credentials applied (if available). If no fallback credentials are stored or the
+// config already has a ClientSecretRef, the original config is returned as-is.
+func (p *OIDCTokenProvider) applyFallbackCredentials(oidc *breakglassv1alpha1.OIDCAuthConfig, namespace, clusterName string) *breakglassv1alpha1.OIDCAuthConfig {
+	if oidc.ClientSecretRef != nil {
+		return oidc // already has explicit client credentials
+	}
+	cacheKey := tokenCacheKey(namespace, clusterName)
+	p.fallbackMu.RLock()
+	fb := p.fallbackCreds[cacheKey]
+	p.fallbackMu.RUnlock()
+	if fb == nil {
+		return oidc // no fallback credentials available
+	}
+	// Deep copy to avoid mutating the primary OIDC config
+	fbOIDC := oidc.DeepCopy()
+	fbOIDC.ClientID = fb.clientID
+	fbOIDC.ClientSecretRef = fb.clientSecretRef
+	return fbOIDC
 }
 
 // isInvalidGrantError checks if an error indicates an expired or revoked refresh token.

@@ -519,7 +519,7 @@ func TestHandleOIDCAuthError_RefreshTokenExpired(t *testing.T) {
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
-	_, err := checker.handleOIDCAuthError(ctx, cc, fmt.Errorf("wrapping: %w", cluster.ErrRefreshTokenExpired), checker.Log)
+	_, err := checker.handleOIDCAuthError(ctx, cc, nil, fmt.Errorf("wrapping: %w", cluster.ErrRefreshTokenExpired), checker.Log)
 	require.Error(t, err)
 	require.ErrorIs(t, err, cluster.ErrRefreshTokenExpired)
 }
@@ -536,7 +536,7 @@ func TestHandleOIDCAuthError_GenericError(t *testing.T) {
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
-	_, err := checker.handleOIDCAuthError(ctx, cc, errors.New("some OIDC error"), checker.Log)
+	_, err := checker.handleOIDCAuthError(ctx, cc, nil, errors.New("some OIDC error"), checker.Log)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "some OIDC error")
 }

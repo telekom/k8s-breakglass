@@ -369,7 +369,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	restCfg, err := tokenProvider.GetRESTConfig(ctx, cc)
 	if err != nil {
 		// Handle typed errors for more specific conditions
-		return ccc.handleOIDCAuthError(ctx, cc, err, lg)
+		return ccc.handleOIDCAuthError(ctx, cc, restCfg, err, lg)
 	}
 
 	return restCfg, nil
@@ -423,7 +423,24 @@ func (ccc ClusterConfigChecker) validateSecretExists(ctx context.Context, cc *br
 
 // handleOIDCAuthError handles errors from OIDCTokenProvider.GetRESTConfig,
 // checking for typed errors to set more specific conditions.
-func (ccc ClusterConfigChecker) handleOIDCAuthError(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, err error, lg *zap.SugaredLogger) (*rest.Config, error) {
+// When ErrDegradedAuth is returned, the caller must pass the restCfg which is
+// still valid (fallback auth succeeded). handleOIDCAuthError returns it as-is.
+func (ccc ClusterConfigChecker) handleOIDCAuthError(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, restCfg *rest.Config, err error, lg *zap.SugaredLogger) (*rest.Config, error) {
+	if errors.Is(err, cluster.ErrDegradedAuth) {
+		// Degraded auth: primary refresh token failed but fallback succeeded.
+		// Set DegradedAuth condition but don't fail — the cluster is still reachable.
+		msg := "Primary auth degraded, using fallback credentials: " + err.Error()
+		lg.Warnw(msg, "cluster", cc.Name)
+		if err2 := ccc.setCondition(ctx, cc,
+			breakglassv1alpha1.ClusterConfigConditionDegradedAuth,
+			metav1.ConditionTrue,
+			breakglassv1alpha1.ClusterConfigReasonDegradedAuth,
+			msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to set DegradedAuth condition", "cluster", cc.Name, "error", err2)
+		}
+		return restCfg, nil
+	}
+
 	if errors.Is(err, cluster.ErrRefreshTokenExpired) {
 		// Refresh token expired/revoked and fallback policy is None
 		msg := "Refresh token expired or revoked: " + err.Error()
@@ -585,7 +602,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 	restCfg, err := tokenProvider.GetRESTConfig(ctx, cc)
 	if err != nil {
 		// Handle typed errors for more specific conditions
-		return ccc.handleOIDCAuthError(ctx, cc, err, lg)
+		return ccc.handleOIDCAuthError(ctx, cc, restCfg, err, lg)
 	}
 
 	return restCfg, nil

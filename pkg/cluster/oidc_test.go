@@ -1548,11 +1548,19 @@ func TestOIDCTokenProvider_ResolveOIDCFromIDP_RefreshToken(t *testing.T) {
 	assert.Equal(t, "my-refresh-token", resolved.RefreshTokenSecretRef.Name)
 	// FallbackPolicy should be propagated
 	assert.Equal(t, breakglassv1alpha1.FallbackPolicyWarn, resolved.FallbackPolicy)
-	// ClientSecretRef should be set from Keycloak SA for potential fallback
-	assert.NotNil(t, resolved.ClientSecretRef)
-	assert.Equal(t, "keycloak-secret", resolved.ClientSecretRef.Name)
-	// ClientID should be Keycloak SA since clientSecretRef resolved from Keycloak
-	assert.Equal(t, "keycloak-sa", resolved.ClientID)
+	// In refresh-token mode, ClientSecretRef must NOT be overwritten from IDP Keycloak SA,
+	// because the refresh token was issued to the original OIDC client (not the SA).
+	assert.Nil(t, resolved.ClientSecretRef, "ClientSecretRef should remain nil in refresh-token mode")
+	// ClientID should be the IDP's OIDC ClientID, NOT the Keycloak SA ClientID
+	assert.Equal(t, "ui-client", resolved.ClientID, "ClientID should be the IDP's OIDC ClientID for refresh token grants")
+	// Instead, IDP Keycloak SA credentials should be stored as fallback on the provider
+	cacheKey := tokenCacheKey(cc.Namespace, cc.Name)
+	provider.fallbackMu.RLock()
+	fb := provider.fallbackCreds[cacheKey]
+	provider.fallbackMu.RUnlock()
+	assert.NotNil(t, fb, "fallback credentials should be stored on the provider")
+	assert.Equal(t, "keycloak-sa", fb.clientID)
+	assert.Equal(t, "keycloak-secret", fb.clientSecretRef.Name)
 }
 
 // TestOIDCTokenProvider_ResolveOIDCFromIDP_TokenExchange tests resolveOIDCFromIdentityProvider

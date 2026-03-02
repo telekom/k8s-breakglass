@@ -437,7 +437,9 @@ On `oidcAuth` (direct OIDC), both can coexist: the refresh token is tried first,
 
 ```bash
 # Example: Obtain offline refresh token from Keycloak
-curl -sk -X POST \
+# Use --cacert to verify the server's TLS certificate; avoid -k in production.
+curl -s -X POST \
+  --cacert /path/to/ca.crt \
   https://keycloak.example.com/realms/kubernetes/protocol/openid-connect/token \
   -d "grant_type=password" \
   -d "client_id=breakglass-service" \

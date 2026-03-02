@@ -17,6 +17,7 @@ limitations under the License.
 package api
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,17 @@ func TestClusterConfigOIDCFromIDPModes(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	idpName := "breakglass-e2e-idp"
+
+	// Use env vars for issuer/server URLs to avoid hard-coded unreachable endpoints
+	// that cause controller reconciliation noise in the shared E2E environment.
+	issuerURL := os.Getenv("KEYCLOAK_ISSUER_URL")
+	if issuerURL == "" {
+		issuerURL = "https://keycloak.breakglass-system.svc.cluster.local/realms/breakglass"
+	}
+	serverURL := os.Getenv("E2E_CLUSTER_SERVER_URL")
+	if serverURL == "" {
+		serverURL = "https://kubernetes.default.svc:443"
+	}
 
 	t.Run("CC-OIDC-FROM-IDP-001_RefreshTokenOnly", func(t *testing.T) {
 		// Create a refresh token secret
@@ -111,9 +123,9 @@ func TestClusterConfigOIDCFromIDPModes(t *testing.T) {
 			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
 				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
-					IssuerURL: "https://keycloak.example.com/realms/test",
+					IssuerURL: issuerURL,
 					ClientID:  "test-client",
-					Server:    "https://api.test.example.com:6443",
+					Server:    serverURL,
 					RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name: rtSecretName, Namespace: s.Namespace, Key: "refresh-token",
 					},
@@ -214,25 +226,23 @@ func TestClusterConfigOIDCFromIDPModes(t *testing.T) {
 			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
 				OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
-					IssuerURL: "https://keycloak.example.com/realms/test",
+					IssuerURL: issuerURL,
 					ClientID:  "test-client",
-					Server:    "https://api.test.example.com:6443",
+					Server:    serverURL,
 					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name: "some-secret", Namespace: s.Namespace, Key: "client-secret",
 					},
-					// FallbackPolicy without RefreshTokenSecretRef
+					// FallbackPolicy without RefreshTokenSecretRef should be rejected by webhook
 					FallbackPolicy: breakglassv1alpha1.FallbackPolicyAuto,
 				},
 			},
 		}
 
 		err := s.Client.Create(s.Ctx, cc)
-		if err != nil {
-			t.Logf("CC-OIDC-FROM-IDP-005: Webhook correctly rejected: %v", err)
-		} else {
-			// If accepted, the webhook may allow it with a warning
-			t.Logf("CC-OIDC-FROM-IDP-005: Webhook accepted (check for admission warnings)")
-		}
+		require.Error(t, err, "webhook should reject fallbackPolicy without refreshTokenSecretRef")
+		assert.Contains(t, err.Error(), "fallbackPolicy",
+			"rejection error should mention fallbackPolicy")
+		t.Logf("CC-OIDC-FROM-IDP-005: Webhook correctly rejected: %v", err)
 	})
 
 	t.Run("CC-OIDC-FROM-IDP-006_DirectOIDCRefreshToken", func(t *testing.T) {
@@ -248,7 +258,7 @@ func TestClusterConfigOIDCFromIDPModes(t *testing.T) {
 
 		name := helpers.GenerateUniqueName("cc-direct-rt")
 		cc := helpers.NewClusterConfigBuilder(name, s.Namespace).
-			WithOIDCAuth("https://keycloak.example.com/realms/test", "test-client", "https://api.test.example.com:6443").
+			WithOIDCAuth(issuerURL, "test-client", serverURL).
 			WithOIDCRefreshToken(rtSecretName, s.Namespace, "refresh-token").
 			Build()
 		s.MustCreateResource(cc)
