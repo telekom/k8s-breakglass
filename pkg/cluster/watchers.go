@@ -69,12 +69,19 @@ func RegisterInvalidationHandlers(ctx context.Context, mgr ctrl.Manager, provide
 			if sec == nil {
 				return
 			}
-			if !provider.IsSecretTracked(sec.Namespace, sec.Name) {
-				return
+			// Check kubeconfig secrets
+			if provider.IsSecretTracked(sec.Namespace, sec.Name) {
+				provider.InvalidateSecret(sec.Namespace, sec.Name)
+				if log != nil {
+					log.Debugw("ClusterConfig caches invalidated due to Secret update", "secret", fmt.Sprintf("%s/%s", sec.Namespace, sec.Name))
+				}
 			}
-			provider.InvalidateSecret(sec.Namespace, sec.Name)
-			if log != nil {
-				log.Debugw("ClusterConfig caches invalidated due to Secret update", "secret", fmt.Sprintf("%s/%s", sec.Namespace, sec.Name))
+			// Check OIDC-related secrets (refresh tokens, client secrets, subject tokens, CAs)
+			if provider.IsOIDCSecretTracked(sec.Namespace, sec.Name) {
+				provider.InvalidateOIDCSecrets(sec.Namespace, sec.Name)
+				if log != nil {
+					log.Debugw("ClusterConfig OIDC caches invalidated due to Secret update", "secret", fmt.Sprintf("%s/%s", sec.Namespace, sec.Name))
+				}
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -82,12 +89,19 @@ func RegisterInvalidationHandlers(ctx context.Context, mgr ctrl.Manager, provide
 			if sec == nil {
 				return
 			}
-			if !provider.IsSecretTracked(sec.Namespace, sec.Name) {
-				return
+			// Check kubeconfig secrets
+			if provider.IsSecretTracked(sec.Namespace, sec.Name) {
+				provider.InvalidateSecret(sec.Namespace, sec.Name)
+				if log != nil {
+					log.Debugw("ClusterConfig caches invalidated due to Secret delete", "secret", fmt.Sprintf("%s/%s", sec.Namespace, sec.Name))
+				}
 			}
-			provider.InvalidateSecret(sec.Namespace, sec.Name)
-			if log != nil {
-				log.Debugw("ClusterConfig caches invalidated due to Secret delete", "secret", fmt.Sprintf("%s/%s", sec.Namespace, sec.Name))
+			// Check OIDC-related secrets
+			if provider.IsOIDCSecretTracked(sec.Namespace, sec.Name) {
+				provider.InvalidateOIDCSecrets(sec.Namespace, sec.Name)
+				if log != nil {
+					log.Debugw("ClusterConfig OIDC caches invalidated due to Secret delete", "secret", fmt.Sprintf("%s/%s", sec.Namespace, sec.Name))
+				}
 			}
 		},
 	}); err != nil {
