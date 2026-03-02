@@ -203,6 +203,24 @@ spec:
                     - name
                     - namespace
                     type: object
+                  fallbackPolicy:
+                    allOf:
+                    - enum:
+                      - None
+                      - Auto
+                      - Warn
+                    - enum:
+                      - None
+                      - Auto
+                      - Warn
+                    default: None
+                    description: |-
+                      fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
+                      Only valid when refreshTokenSecretRef is set.
+                      - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
+                      - Auto: silently fall back to client_credentials flow (requires clientSecretRef or IDP Keycloak SA).
+                      - Warn: fall back but also set DegradedAuth condition and emit K8s event.
+                    type: string
                   insecureSkipTLSVerify:
                     description: insecureSkipTLSVerify skips TLS verification for
                       the target cluster (NOT recommended for production).
@@ -214,6 +232,32 @@ spec:
                     minLength: 1
                     pattern: ^https://.+
                     type: string
+                  refreshTokenSecretRef:
+                    description: |-
+                      refreshTokenSecretRef references a secret containing an offline refresh token.
+                      When set, the controller uses the refresh token to obtain access tokens
+                      instead of client_credentials flow. This allows reusing an existing OIDC client
+                      without registering a new one for each cluster.
+                      Mutually exclusive with clientSecretRef on OIDCFromIdentityProviderConfig,
+                      but can coexist with clientSecretRef on OIDCAuthConfig (enables explicit fallback).
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
                   scopes:
                     description: |-
                       scopes specifies additional OIDC scopes to request.
@@ -321,6 +365,11 @@ spec:
                       allowTOFU enables Trust On First Use (TOFU) for cluster CAs when no CA is provided.
                       When false (default), the controller relies on system trust or explicit CA configuration.
                     type: boolean
+                  audience:
+                    description: |-
+                      audience specifies the intended audience for the token (typically the cluster's API server).
+                      If empty, defaults to the target server URL.
+                    type: string
                   caSecretRef:
                     description: caSecretRef references a secret containing the CA
                       certificate for the target cluster.
@@ -352,6 +401,7 @@ spec:
                     description: |-
                       clientSecretRef references a secret containing the client secret for the controller.
                       Required for client credentials flow when using a service account client.
+                      Mutually exclusive with refreshTokenSecretRef.
                     properties:
                       key:
                         description: Key is the data key in the secret (defaults to
@@ -370,6 +420,24 @@ spec:
                     - name
                     - namespace
                     type: object
+                  fallbackPolicy:
+                    allOf:
+                    - enum:
+                      - None
+                      - Auto
+                      - Warn
+                    - enum:
+                      - None
+                      - Auto
+                      - Warn
+                    default: None
+                    description: |-
+                      fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
+                      Only valid when refreshTokenSecretRef is set.
+                      - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
+                      - Auto: silently fall back to IDP's Keycloak service account client_credentials flow.
+                      - Warn: fall back but also set DegradedAuth condition and emit K8s event.
+                    type: string
                   insecureSkipTLSVerify:
                     description: insecureSkipTLSVerify skips TLS verification for
                       the target cluster (NOT recommended for production).
@@ -380,6 +448,37 @@ spec:
                       The IdentityProvider must exist and be enabled.
                     minLength: 1
                     type: string
+                  refreshTokenSecretRef:
+                    description: |-
+                      refreshTokenSecretRef references a secret containing an offline refresh token.
+                      When set, the controller uses the refresh token to obtain access tokens
+                      using the IDP's existing client — no new OIDC client registration is needed.
+                      Mutually exclusive with clientSecretRef.
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  scopes:
+                    description: |-
+                      scopes specifies additional OIDC scopes to request.
+                      Default scopes (openid, email, groups) are always included.
+                    items:
+                      type: string
+                    type: array
                   server:
                     description: |-
                       server is the URL of the target cluster's Kubernetes API server.
@@ -387,6 +486,83 @@ spec:
                     minLength: 1
                     pattern: ^https://.+
                     type: string
+                  tokenExchange:
+                    description: |-
+                      tokenExchange enables RFC 8693 token exchange flow via the referenced IdentityProvider.
+                      When enabled, the controller uses the IDP's Keycloak service account credentials
+                      (unless clientSecretRef is explicitly provided) to exchange a subject token
+                      for a cluster-scoped access token.
+                    properties:
+                      actorTokenSecretRef:
+                        description: |-
+                          actorTokenSecretRef optionally references a secret containing an actor token.
+                          This is used in delegation scenarios where the actor (controller) is acting
+                          on behalf of the subject (user/service).
+                        properties:
+                          key:
+                            description: Key is the data key in the secret (defaults
+                              to "value" if not specified)
+                            type: string
+                          name:
+                            description: Name is the name of the secret
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: Namespace is the namespace containing the
+                              secret (supports cross-namespace references)
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - namespace
+                        type: object
+                      actorTokenType:
+                        description: |-
+                          actorTokenType specifies the type of the actor token.
+                          Default: urn:ietf:params:oauth:token-type:access_token
+                        type: string
+                      enabled:
+                        description: enabled activates token exchange flow.
+                        type: boolean
+                      requestedTokenType:
+                        description: |-
+                          requestedTokenType specifies the type of token to request.
+                          Default: urn:ietf:params:oauth:token-type:access_token
+                        type: string
+                      resource:
+                        description: |-
+                          resource specifies the target resource for the exchanged token.
+                          This typically identifies the target API server or service.
+                        type: string
+                      subjectTokenSecretRef:
+                        description: |-
+                          subjectTokenSecretRef references a secret containing the subject token to exchange.
+                          This is required when enabled=true. The controller reads this token and exchanges
+                          it for a cluster-scoped token using RFC 8693 token exchange.
+                        properties:
+                          key:
+                            description: Key is the data key in the secret (defaults
+                              to "value" if not specified)
+                            type: string
+                          name:
+                            description: Name is the name of the secret
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: Namespace is the namespace containing the
+                              secret (supports cross-namespace references)
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - namespace
+                        type: object
+                      subjectTokenType:
+                        description: |-
+                          subjectTokenType specifies the type of the subject token being exchanged.
+                          Default: urn:ietf:params:oauth:token-type:access_token
+                        type: string
+                    type: object
                 required:
                 - name
                 - server

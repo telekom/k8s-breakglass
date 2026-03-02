@@ -19,6 +19,15 @@ const (
 	// ClusterConfigConditionReady indicates the ClusterConfig is ready for use.
 	// Condition fails when kubeconfig is invalid, cluster is unreachable, or other checks fail.
 	ClusterConfigConditionReady ClusterConfigConditionType = "Ready"
+
+	// ClusterConfigConditionRefreshTokenExpired indicates the offline refresh token
+	// is invalid or revoked and fallbackPolicy is None — the cluster is unreachable.
+	ClusterConfigConditionRefreshTokenExpired ClusterConfigConditionType = "RefreshTokenExpired"
+
+	// ClusterConfigConditionDegradedAuth indicates the primary auth flow (refresh token)
+	// failed but the cluster is still reachable via fallback credentials (client_credentials).
+	// Set when fallbackPolicy is Warn.
+	ClusterConfigConditionDegradedAuth ClusterConfigConditionType = "DegradedAuth"
 )
 
 // ClusterConfigConditionReason provides machine-readable reasons for ClusterConfig conditions.
@@ -38,6 +47,12 @@ const (
 	ClusterConfigReasonOIDCTokenFailed     ClusterConfigConditionReason = "OIDCTokenFetchFailed"
 	ClusterConfigReasonOIDCRefreshFailed   ClusterConfigConditionReason = "OIDCRefreshFailed"
 	ClusterConfigReasonOIDCCAMissing       ClusterConfigConditionReason = "OIDCCASecretMissing"
+
+	// Refresh token / fallback reasons
+	ClusterConfigReasonRefreshTokenExpired ClusterConfigConditionReason = "RefreshTokenExpired"
+	ClusterConfigReasonRefreshTokenSecret  ClusterConfigConditionReason = "RefreshTokenSecretMissing"
+	ClusterConfigReasonDegradedAuth        ClusterConfigConditionReason = "DegradedAuth"
+	ClusterConfigReasonFallbackSucceeded   ClusterConfigConditionReason = "FallbackSucceeded"
 
 	// Common reasons
 	ClusterConfigReasonClusterUnreachable ClusterConfigConditionReason = "ClusterUnreachable"
@@ -71,6 +86,28 @@ const (
 	ClusterAuthTypeKubeconfig ClusterAuthType = "Kubeconfig"
 	// ClusterAuthTypeOIDC uses OIDC tokens for authentication (e.g., Keycloak, AWS IAM).
 	ClusterAuthTypeOIDC ClusterAuthType = "OIDC"
+)
+
+// FallbackPolicy controls the behavior when the primary auth flow (e.g., refresh token)
+// fails for an OIDC-authenticated cluster.
+// +kubebuilder:validation:Enum=None;Auto;Warn
+type FallbackPolicy string
+
+const (
+	// FallbackPolicyNone disables fallback — if the primary auth flow (refresh token) fails,
+	// the cluster becomes unreachable and a RefreshTokenExpired condition is set.
+	// This is the default, requiring explicit opt-in to fallback.
+	FallbackPolicyNone FallbackPolicy = "None"
+
+	// FallbackPolicyAuto silently falls back to the IDP's Keycloak service account
+	// client_credentials flow when the refresh token expires or is revoked.
+	// No degraded condition is set.
+	FallbackPolicyAuto FallbackPolicy = "Auto"
+
+	// FallbackPolicyWarn falls back to client_credentials but also sets a DegradedAuth
+	// condition and emits a Kubernetes event to alert operators that the primary auth
+	// flow is not working.
+	FallbackPolicyWarn FallbackPolicy = "Warn"
 )
 
 // OIDCAuthConfig configures OIDC-based authentication for the target cluster.
@@ -141,6 +178,29 @@ type OIDCAuthConfig struct {
 	// When enabled, the controller exchanges the user's token for a cluster-scoped token.
 	// +optional
 	TokenExchange *TokenExchangeConfig `json:"tokenExchange,omitempty"`
+
+	// ========================================
+	// Refresh Token Configuration (Optional)
+	// ========================================
+
+	// refreshTokenSecretRef references a secret containing an offline refresh token.
+	// When set, the controller uses the refresh token to obtain access tokens
+	// instead of client_credentials flow. This allows reusing an existing OIDC client
+	// without registering a new one for each cluster.
+	// Mutually exclusive with clientSecretRef on OIDCFromIdentityProviderConfig,
+	// but can coexist with clientSecretRef on OIDCAuthConfig (enables explicit fallback).
+	// +optional
+	RefreshTokenSecretRef *SecretKeyReference `json:"refreshTokenSecretRef,omitempty"`
+
+	// fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
+	// Only valid when refreshTokenSecretRef is set.
+	// - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
+	// - Auto: silently fall back to client_credentials flow (requires clientSecretRef or IDP Keycloak SA).
+	// - Warn: fall back but also set DegradedAuth condition and emit K8s event.
+	// +optional
+	// +kubebuilder:default=None
+	// +kubebuilder:validation:Enum=None;Auto;Warn
+	FallbackPolicy FallbackPolicy `json:"fallbackPolicy,omitempty"`
 }
 
 // TokenExchangeConfig configures OAuth 2.0 token exchange (RFC 8693).
@@ -208,6 +268,7 @@ type OIDCFromIdentityProviderConfig struct {
 
 	// clientSecretRef references a secret containing the client secret for the controller.
 	// Required for client credentials flow when using a service account client.
+	// Mutually exclusive with refreshTokenSecretRef.
 	// +optional
 	ClientSecretRef *SecretKeyReference `json:"clientSecretRef,omitempty"`
 
@@ -233,6 +294,44 @@ type OIDCFromIdentityProviderConfig struct {
 	// When false (default), the controller relies on system trust or explicit CA configuration.
 	// +optional
 	AllowTOFU bool `json:"allowTOFU,omitempty"`
+
+	// ========================================
+	// Token Acquisition Configuration (Optional)
+	// ========================================
+
+	// refreshTokenSecretRef references a secret containing an offline refresh token.
+	// When set, the controller uses the refresh token to obtain access tokens
+	// using the IDP's existing client — no new OIDC client registration is needed.
+	// Mutually exclusive with clientSecretRef.
+	// +optional
+	RefreshTokenSecretRef *SecretKeyReference `json:"refreshTokenSecretRef,omitempty"`
+
+	// tokenExchange enables RFC 8693 token exchange flow via the referenced IdentityProvider.
+	// When enabled, the controller uses the IDP's Keycloak service account credentials
+	// (unless clientSecretRef is explicitly provided) to exchange a subject token
+	// for a cluster-scoped access token.
+	// +optional
+	TokenExchange *TokenExchangeConfig `json:"tokenExchange,omitempty"`
+
+	// audience specifies the intended audience for the token (typically the cluster's API server).
+	// If empty, defaults to the target server URL.
+	// +optional
+	Audience string `json:"audience,omitempty"`
+
+	// scopes specifies additional OIDC scopes to request.
+	// Default scopes (openid, email, groups) are always included.
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
+
+	// fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
+	// Only valid when refreshTokenSecretRef is set.
+	// - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
+	// - Auto: silently fall back to IDP's Keycloak service account client_credentials flow.
+	// - Warn: fall back but also set DegradedAuth condition and emit K8s event.
+	// +optional
+	// +kubebuilder:default=None
+	// +kubebuilder:validation:Enum=None;Auto;Warn
+	FallbackPolicy FallbackPolicy `json:"fallbackPolicy,omitempty"`
 }
 
 // ClusterConfigSpec defines metadata and secret reference for a managed tenant cluster.
@@ -411,6 +510,20 @@ func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj *ClusterConfig)
 		warnings = append(warnings, "OIDCFromIdentityProvider insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
 
+	// Warnings for refresh token auth mode
+	if obj.Spec.OIDCAuth != nil && obj.Spec.OIDCAuth.RefreshTokenSecretRef != nil {
+		warnings = append(warnings, "OIDCAuth refreshTokenSecretRef: offline refresh tokens don't expire unless explicitly revoked; ensure your IDP is configured for offline access")
+		if obj.Spec.OIDCAuth.FallbackPolicy == FallbackPolicyNone {
+			warnings = append(warnings, "OIDCAuth fallbackPolicy=None: no fallback configured — cluster will become unreachable if the refresh token expires or is revoked")
+		}
+	}
+	if obj.Spec.OIDCFromIdentityProvider != nil && obj.Spec.OIDCFromIdentityProvider.RefreshTokenSecretRef != nil {
+		warnings = append(warnings, "OIDCFromIdentityProvider refreshTokenSecretRef: offline refresh tokens don't expire unless explicitly revoked; ensure your IDP is configured for offline access")
+		if obj.Spec.OIDCFromIdentityProvider.FallbackPolicy == FallbackPolicyNone {
+			warnings = append(warnings, "OIDCFromIdentityProvider fallbackPolicy=None: no fallback configured — cluster will become unreachable if the refresh token expires or is revoked")
+		}
+	}
+
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
@@ -447,6 +560,20 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj *Clu
 	}
 	if newObj.Spec.OIDCFromIdentityProvider != nil && newObj.Spec.OIDCFromIdentityProvider.InsecureSkipTLSVerify {
 		warnings = append(warnings, "OIDCFromIdentityProvider insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
+	}
+
+	// Warnings for refresh token auth mode
+	if newObj.Spec.OIDCAuth != nil && newObj.Spec.OIDCAuth.RefreshTokenSecretRef != nil {
+		warnings = append(warnings, "OIDCAuth refreshTokenSecretRef: offline refresh tokens don't expire unless explicitly revoked; ensure your IDP is configured for offline access")
+		if newObj.Spec.OIDCAuth.FallbackPolicy == FallbackPolicyNone {
+			warnings = append(warnings, "OIDCAuth fallbackPolicy=None: no fallback configured — cluster will become unreachable if the refresh token expires or is revoked")
+		}
+	}
+	if newObj.Spec.OIDCFromIdentityProvider != nil && newObj.Spec.OIDCFromIdentityProvider.RefreshTokenSecretRef != nil {
+		warnings = append(warnings, "OIDCFromIdentityProvider refreshTokenSecretRef: offline refresh tokens don't expire unless explicitly revoked; ensure your IDP is configured for offline access")
+		if newObj.Spec.OIDCFromIdentityProvider.FallbackPolicy == FallbackPolicyNone {
+			warnings = append(warnings, "OIDCFromIdentityProvider fallbackPolicy=None: no fallback configured — cluster will become unreachable if the refresh token expires or is revoked")
+		}
 	}
 
 	if len(allErrs) == 0 {
