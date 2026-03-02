@@ -2002,17 +2002,23 @@ func TestValidateOIDCAuthConfig_TokenExchangeMissingClientSecretRef(t *testing.T
 }
 
 // TestValidateOIDCAuthConfig_TokenExchangeDisabled tests that disabled token exchange passes
+// when clientSecretRef is still provided (disabled TE alone doesn't waive clientSecretRef requirement)
 func TestValidateOIDCAuthConfig_TokenExchangeDisabled(t *testing.T) {
 	oidc := &OIDCAuthConfig{
 		IssuerURL: "https://keycloak.example.com/realms/test",
 		ClientID:  "breakglass",
 		Server:    "https://api.cluster.example.com:6443",
+		ClientSecretRef: &SecretKeyReference{
+			Name:      "my-secret",
+			Namespace: "default",
+			Key:       "client-secret",
+		},
 		TokenExchange: &TokenExchangeConfig{
-			Enabled: false, // Disabled, so validation should pass
+			Enabled: false, // Disabled, so it doesn't affect validation
 		},
 	}
 	errs := validateOIDCAuthConfig(oidc, field.NewPath("spec", "oidcAuth"))
-	assert.Empty(t, errs, "disabled token exchange should pass validation")
+	assert.Empty(t, errs, "disabled token exchange with clientSecretRef should pass validation")
 }
 
 // TestValidateOIDCAuthConfig_NilConfig tests nil config handling
