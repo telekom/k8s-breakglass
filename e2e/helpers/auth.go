@@ -279,6 +279,69 @@ func (p *OIDCTokenProvider) GetSeniorApproverToken(t *testing.T, ctx context.Con
 	return p.GetTokenForUser(t, ctx, TestUsers.SeniorApprover)
 }
 
+// ObtainOfflineRefreshToken performs a password grant with scope "offline_access"
+// to retrieve an offline refresh token from Keycloak. This token can be stored
+// in a K8s Secret and used by the controller to exchange for access tokens.
+func (p *OIDCTokenProvider) ObtainOfflineRefreshToken(t *testing.T, ctx context.Context, username, password string) string {
+	keycloakHost := p.KeycloakHost
+	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
+		keycloakHost = "https://" + keycloakHost
+	}
+
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", keycloakHost, p.Realm)
+
+	form := url.Values{
+		"grant_type": {"password"},
+		"client_id":  {p.ClientID},
+		"username":   {username},
+		"password":   {password},
+		"scope":      {"openid offline_access"},
+	}
+	if p.ClientSecret != "" {
+		form.Set("client_secret", p.ClientSecret)
+	}
+
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
+			},
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	require.NoError(t, err, "Failed to create offline token request")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if p.IssuerHost != "" {
+		req.Host = p.IssuerHost
+	}
+
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err, "Failed to send offline token request")
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode, "Offline token request failed")
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&tokenResp)
+	require.NoError(t, err, "Failed to decode offline token response")
+	require.NotEmpty(t, tokenResp.RefreshToken, "No refresh_token in response (ensure offline_access scope is allowed)")
+
+	return tokenResp.RefreshToken
+}
+
+// ObtainOfflineRefreshTokenForUser gets an offline refresh token for a specific TestUser
+func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenForUser(t *testing.T, ctx context.Context, user TestUser) string {
+	return p.ObtainOfflineRefreshToken(t, ctx, user.Username, user.Password)
+}
+
 // TokenCache provides a simple in-memory token cache to avoid repeated token requests
 type TokenCache struct {
 	provider *OIDCTokenProvider
