@@ -25,50 +25,24 @@ import (
 // FieldOwnerController is the field owner name used for server-side apply operations.
 const FieldOwnerController = "breakglass-controller"
 
-// ApplyObject performs a server-side apply using the client.Apply() API.
-// This is the preferred method for SSA as it uses typed ApplyConfiguration objects.
+// ApplyObject performs a cache-aware server-side apply using the client.Apply() API.
+// It reads the current state from the informer cache and skips the API call if the
+// desired state already matches. This follows the cluster-api patchHelper pattern.
+//
+// Callers that need the result (skipped/created/patched) should use [PatchApplyObject].
 func ApplyObject(ctx context.Context, c client.Client, obj client.Object) error {
-	applyConfig, err := ToApplyConfiguration(obj)
-	if err != nil {
-		return fmt.Errorf("failed to convert object to apply configuration: %w", err)
-	}
-
-	if err := c.Apply(ctx, applyConfig, client.FieldOwner(FieldOwnerController), client.ForceOwnership); err != nil {
-		if apierrors.IsConflict(err) {
-			zap.S().Warnw("SSA apply conflict",
-				"kind", obj.GetObjectKind().GroupVersionKind().String(),
-				"name", obj.GetName(),
-				"namespace", obj.GetNamespace(),
-				"error", err)
-		}
-		return err
-	}
-	return nil
+	_, err := PatchApplyObject(ctx, c, obj)
+	return err
 }
 
-// ApplyUnstructured performs a server-side apply on an unstructured object.
-// This is useful for applying arbitrary Kubernetes resources (e.g., from templates).
-// Defensively clears managedFields from the input object before applying, since
-// managedFields are server-managed and not user-settable via SSA.
+// ApplyUnstructured performs a cache-aware server-side apply on an unstructured object.
+// It reads the current state from the informer cache and skips the API call if the
+// desired state already matches. This follows the cluster-api patchHelper pattern.
+//
+// Callers that need the result (skipped/created/patched) should use [PatchApplyUnstructured].
 func ApplyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
-	// Defensively clear managedFields — they are not user-settable and can cause
-	// apply failures if the rendered/parsed object happens to contain them.
-	obj.SetManagedFields(nil)
-
-	// Convert unstructured to apply configuration wrapper
-	applyConfig := &unstructuredApplyConfiguration{obj: obj}
-
-	if err := c.Apply(ctx, applyConfig, client.FieldOwner(FieldOwnerController), client.ForceOwnership); err != nil {
-		if apierrors.IsConflict(err) {
-			zap.S().Warnw("SSA apply conflict",
-				"kind", obj.GetObjectKind().GroupVersionKind().String(),
-				"name", obj.GetName(),
-				"namespace", obj.GetNamespace(),
-				"error", err)
-		}
-		return err
-	}
-	return nil
+	_, err := PatchApplyUnstructured(ctx, c, obj)
+	return err
 }
 
 // ApplyTypedObject performs a server-side apply on any typed Kubernetes object by
