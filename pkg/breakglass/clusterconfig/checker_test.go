@@ -536,6 +536,10 @@ func TestDescribeFailure(t *testing.T) {
 		{"secret_key_missing", "secret_key_missing", "", "secret_key_missing"},
 		{"not_configured", "not_configured", "", "not_configured"},
 		{"unknown", "unknown", "something else", "validation_failed"},
+		// Refresh token / fallback cases
+		{"refresh_token_expired", "refresh_token_expired", "token revoked", "refresh_token_expired"},
+		{"degraded_auth", "degraded_auth", "using fallback", "degraded_auth"},
+		{"refresh_token_secret_missing", "refresh_token_secret_missing", "", "refresh_token_secret_missing"},
 		// OIDC Cases
 		{"oidc_discovery", "oidc_discovery", "connection refused", "oidc_discovery_failed"},
 		{"oidc_token", "oidc_token", "invalid client", "oidc_token_failed"},
@@ -562,9 +566,12 @@ func TestDetermineClusterConfigFailureType(t *testing.T) {
 		expected string
 	}{
 		// OIDC cases
+		{"refresh_token_expired", "refresh token expired or revoked", "refresh_token_expired"},
+		{"degraded_auth", "degraded auth: using fallback credentials", "degraded_auth"},
+		{"refresh_token_secret_missing", "refresh token secret missing key: refresh-token", "refresh_token_secret_missing"},
 		{"oidc_discovery", "OIDC discovery failed: connection refused", "oidc_discovery"},
 		{"oidc_token", "failed to get OIDC token: invalid client", "oidc_token"},
-		{"oidc_refresh", "refresh token expired", "oidc_refresh"},
+		{"oidc_refresh", "failed to refresh cached token", "oidc_refresh"},
 		{"oidc_config", "OIDC config missing", "oidc_config"},
 		{"tofu_failed", "TOFU failed to fetch certificate", "tofu"},
 		{"ca_secret_missing", "cluster CA secret missing", "oidc_ca_missing"},
