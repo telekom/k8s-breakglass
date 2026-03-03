@@ -53,6 +53,17 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	}
 
 	t.Run("CC-OIDC-001_BasicOIDCConfig", func(t *testing.T) {
+		// Create client secret required by webhook validation
+		secretName := helpers.GenerateUniqueName("oidc-basic-secret")
+		s.MustCreateResource(&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: s.Namespace,
+				Labels:    helpers.E2ETestLabels(),
+			},
+			StringData: map[string]string{"client-secret": "test-secret-value"},
+		})
+
 		// Create ClusterConfig with basic OIDC authentication
 		name := helpers.GenerateUniqueName("cc-oidc-basic")
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
@@ -70,6 +81,11 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 					IssuerURL: keycloakIssuer,
 					ClientID:  "breakglass-controller",
 					Server:    "https://kubernetes.default.svc:443",
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+						Name:      secretName,
+						Namespace: s.Namespace,
+						Key:       "client-secret",
+					},
 				},
 			},
 		}
@@ -358,6 +374,17 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	})
 
 	t.Run("CC-OIDC-006_OIDCWithCACertificate", func(t *testing.T) {
+		// Create client secret required by webhook validation
+		clientSecretName := helpers.GenerateUniqueName("oidc-ca-client-secret")
+		s.MustCreateResource(&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clientSecretName,
+				Namespace: s.Namespace,
+				Labels:    helpers.E2ETestLabels(),
+			},
+			StringData: map[string]string{"client-secret": "test-secret-value"},
+		})
+
 		// Create CA secret for target cluster
 		caSecretName := helpers.GenerateUniqueName("target-ca")
 		caSecret := &corev1.Secret{
@@ -389,6 +416,11 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 					IssuerURL: keycloakIssuer,
 					ClientID:  "breakglass-controller",
 					Server:    "https://external-cluster.example.com:6443",
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+						Name:      clientSecretName,
+						Namespace: s.Namespace,
+						Key:       "client-secret",
+					},
 					CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 						Name:      caSecretName,
 						Namespace: s.Namespace,
@@ -412,6 +444,17 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	})
 
 	t.Run("CC-OIDC-007_OIDCWithScopes", func(t *testing.T) {
+		// Create client secret required by webhook validation
+		scopesSecretName := helpers.GenerateUniqueName("oidc-scopes-secret")
+		s.MustCreateResource(&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      scopesSecretName,
+				Namespace: s.Namespace,
+				Labels:    helpers.E2ETestLabels(),
+			},
+			StringData: map[string]string{"client-secret": "test-secret-value"},
+		})
+
 		name := helpers.GenerateUniqueName("cc-oidc-scopes")
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
@@ -430,6 +473,11 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 					Server:    "https://kubernetes.default.svc:443",
 					Scopes:    []string{"groups", "profile", "offline_access"},
 					Audience:  "kubernetes",
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+						Name:      scopesSecretName,
+						Namespace: s.Namespace,
+						Key:       "client-secret",
+					},
 				},
 			},
 		}
@@ -604,6 +652,17 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 	})
 
 	t.Run("CC-OIDC-STATUS-002_InvalidIssuerSetsFailedCondition", func(t *testing.T) {
+		// Create client secret required by webhook validation
+		secretName := helpers.GenerateUniqueName("oidc-invalid-secret")
+		s.MustCreateResource(&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: s.Namespace,
+				Labels:    helpers.E2ETestLabels(),
+			},
+			StringData: map[string]string{"client-secret": "test-secret-value"},
+		})
+
 		name := helpers.GenerateUniqueName("cc-oidc-invalid-issuer")
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
@@ -621,6 +680,11 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 					ClientID:              "breakglass-controller",
 					Server:                "https://kubernetes.default.svc:443",
 					InsecureSkipTLSVerify: true,
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+						Name:      secretName,
+						Namespace: s.Namespace,
+						Key:       "client-secret",
+					},
 				},
 			},
 		}
@@ -674,6 +738,17 @@ func TestClusterConfigOIDCWithEscalation(t *testing.T) {
 	}
 
 	t.Run("CC-OIDC-ESC-001_EscalationWithOIDCClusterConfigRef", func(t *testing.T) {
+		// Create client secret required by webhook validation
+		secretName := helpers.GenerateUniqueName("oidc-esc-secret")
+		s.MustCreateResource(&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: s.Namespace,
+				Labels:    helpers.E2ETestLabels(),
+			},
+			StringData: map[string]string{"client-secret": "test-secret-value"},
+		})
+
 		// Create OIDC-based ClusterConfig
 		ccName := helpers.GenerateUniqueName("cc-oidc-for-esc")
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
@@ -692,6 +767,11 @@ func TestClusterConfigOIDCWithEscalation(t *testing.T) {
 					ClientID:              "breakglass-controller",
 					Server:                "https://kubernetes.default.svc:443",
 					InsecureSkipTLSVerify: true,
+					ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+						Name:      secretName,
+						Namespace: s.Namespace,
+						Key:       "client-secret",
+					},
 				},
 			},
 		}
