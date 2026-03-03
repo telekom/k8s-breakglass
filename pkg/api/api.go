@@ -195,8 +195,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Correlation ID middleware
 	engine.Use(func(c *gin.Context) {
 		cid := c.Request.Header.Get("X-Request-ID")
-		// Sanitize: max 128 chars, only printable ASCII, no control/special chars.
-		if cid == "" || len(cid) > 128 || !isValidRequestID(cid) {
+		// Sanitize: only safe characters (checked inside isValidRequestID).
+		if !isValidRequestID(cid) {
 			cid = uuid.NewString()
 		}
 		c.Set("cid", cid)
@@ -1104,7 +1104,7 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		if ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
 			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpCfg.Name)
 		}
-		tlsConfig = &tls.Config{RootCAs: roots}
+		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 		mode = tlsModeCustomCA
 	case idpCfg.InsecureSkipVerify, idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify:
 		// WARNING: InsecureSkipVerify disables TLS certificate verification.
@@ -1113,7 +1113,7 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 			"idpName", idpCfg.Name,
 			"authority", idpCfg.Authority,
 			"warning", "This setting should NOT be used in production environments")
-		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+		tlsConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12} //nolint:gosec // intentional for dev/e2e
 		mode = tlsModeInsecure
 	default:
 		roots, err := x509.SystemCertPool()
@@ -1123,7 +1123,7 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		if roots == nil {
 			roots = x509.NewCertPool()
 		}
-		tlsConfig = &tls.Config{RootCAs: roots}
+		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	}
 
 	transport.TLSClientConfig = tlsConfig

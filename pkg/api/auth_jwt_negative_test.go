@@ -534,9 +534,11 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 	}
 }
 
-// TestAuthMiddleware_AudienceValidation verifies SEC-005: JWT audience (aud) claim
-// is validated against the IDP's ClientID when configured in multi-IDP mode.
-func TestAuthMiddleware_AudienceValidation(t *testing.T) {
+// TestAuthMiddleware_AudienceNotValidated verifies that JWT audience (aud) claim
+// is NOT validated — Keycloak does not include the requesting client_id in the
+// aud claim by default, so audience validation would break environments without
+// audience protocol mappers. A dedicated CRD field is needed before this can be enabled.
+func TestAuthMiddleware_AudienceNotValidated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	srv, priv, kid := setupTestJWKSServer(t)
@@ -547,74 +549,34 @@ func TestAuthMiddleware_AudienceValidation(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 	issuer := "https://idp.example.com"
-	expectedClientID := "breakglass-app"
 
 	tests := []struct {
-		name           string
-		clientID       string      // ClientID configured in IDP (empty = no audience check)
-		tokenAudience  interface{} // aud claim in token (nil = omitted)
-		expectedStatus int
+		name          string
+		tokenAudience interface{} // aud claim in token (nil = omitted)
 	}{
-		{
-			name:           "matching audience accepted",
-			clientID:       expectedClientID,
-			tokenAudience:  expectedClientID,
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "audience in array accepted",
-			clientID:       expectedClientID,
-			tokenAudience:  []string{expectedClientID, "other-app"},
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "wrong audience rejected",
-			clientID:       expectedClientID,
-			tokenAudience:  "wrong-client-id",
-			expectedStatus: http.StatusUnauthorized,
-		},
-		{
-			name:           "missing audience rejected when clientID configured",
-			clientID:       expectedClientID,
-			tokenAudience:  nil,
-			expectedStatus: http.StatusUnauthorized,
-		},
-		{
-			name:           "no clientID configured skips audience check",
-			clientID:       "",
-			tokenAudience:  nil,
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "no clientID configured allows any audience",
-			clientID:       "",
-			tokenAudience:  "any-client",
-			expectedStatus: http.StatusOK,
-		},
+		{name: "no audience claim", tokenAudience: nil},
+		{name: "audience present", tokenAudience: "some-audience"},
+		{name: "array audience", tokenAudience: []string{"aud1", "aud2"}},
+		{name: "mismatched audience", tokenAudience: "wrong-client"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a fake kube client with the breakglass scheme so
-			// GetIDPNameByIssuer won't panic (it returns empty list → error is handled gracefully)
 			scheme := runtime.NewScheme()
 			utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 			utilruntime.Must(breakglassv1alpha1.AddToScheme(scheme))
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-			// Create AuthHandler with pre-populated JWKS cache (multi-IDP mode)
 			auth := &AuthHandler{
 				jwksCache:   make(map[string]*list.Element),
 				jwksLRUList: list.New(),
 				log:         logger,
-				// idpLoader must be non-nil to trigger multi-IDP path
-				idpLoader: config.NewIdentityProviderLoader(fakeClient),
+				idpLoader:   config.NewIdentityProviderLoader(fakeClient),
 			}
 
-			// Pre-populate JWKS cache with the test clientID
 			entry := &jwksCacheEntry{
 				issuer:   issuer,
-				clientID: tt.clientID,
+				clientID: "breakglass-ui",
 				jwks:     jwks,
 			}
 			elem := auth.jwksLRUList.PushFront(entry)
@@ -624,7 +586,6 @@ func TestAuthMiddleware_AudienceValidation(t *testing.T) {
 			router.Use(auth.Middleware())
 			router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-			// Build JWT claims
 			claims := jwt.MapClaims{
 				"iss": issuer,
 				"sub": "test-user",
@@ -644,8 +605,9 @@ func TestAuthMiddleware_AudienceValidation(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
-			require.Equal(t, tt.expectedStatus, w.Code,
-				"audience=%v clientID=%q", tt.tokenAudience, tt.clientID)
+			// All cases should succeed since audience is not validated
+			require.Equal(t, http.StatusOK, w.Code,
+				"audience validation is disabled; all audience values should be accepted")
 		})
 	}
 }

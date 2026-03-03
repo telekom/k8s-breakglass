@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
+
+### Added
+
+- **CAPI-style patchHelper for cache-aware SSA**: Added `PatchApply*` functions in `pkg/utils/patchhelper.go` (spec) and `api/v1alpha1/applyconfiguration/ssa/patchhelper.go` (status) that read the current state from the informer cache before issuing an SSA Patch. If the owned fields already match, the API call is skipped entirely, saving thousands of no-op PATCH requests per reconciliation cycle. All 48 SSA call sites (7 spec, 2 unstructured, 39 status) are transparently upgraded via delegation from existing `Apply*` functions. Inspired by `cluster-api`'s patchHelper pattern.
+
 ### Changed
 
+- **Breaking — Metrics: removed `session` label from high-cardinality counters** ([#463](https://github.com/telekom/k8s-breakglass/issues/463)): Removed auto-generated session name label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` to prevent unbounded Prometheus cardinality. **Update any alert rules or Grafana dashboards that reference the `session` label on these counters.**
 - **JWT audience validation (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459), [#472](https://github.com/telekom/k8s-breakglass/issues/472)): JWT parser now validates the `aud` claim against the IDP's `ClientID` when configured in multi-IDP mode, preventing tokens issued for other applications from being accepted
 - **JWT expiration required (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): JWT parser now rejects tokens without an `exp` claim via `jwt.WithExpirationRequired()`
 
@@ -16,12 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **TLS minimum version (SEC-003)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Set `tls.VersionTLS12` as minimum on the API server and all OIDC proxy / JWKS HTTP clients
 - **X-Request-ID sanitization (SEC-004)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Validate `X-Request-ID` header (alphanumeric + `-_.:`; max 128 chars) and replace invalid values with a generated UUID to prevent log injection
+- **Standardized import alias** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Renamed `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files for consistency with the module path
+- **Added `importas` linter rule** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Configured `importas` in `.golangci.yml` with `no-unaliased: true` to enforce the canonical `breakglassv1alpha1` alias
+- **Removed duplicate scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Deleted dead-code `pkg/config/scheme.go`
 
 ### Fixed
 
-- **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
-- **Dockerfile: fragile single-file COPY** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Changed `COPY cmd/main.go cmd/main.go` to `COPY cmd/ cmd/` so new files added to `cmd/` are automatically included in builds
-- **Makefile: test flag deduplication** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Factored duplicated `-race -count=…` flags into `GO_TEST_FLAGS` variable used by `test`, `test-controller`, and `test-cli` targets; fixed e2e exclusion grep `grep -v /e2e` → `grep -vE '/e2e($|/)'` to prevent false exclusion; `GO_TEST_COUNT` defaults to `1` and supports empty override to re-enable caching
 - **Metrics: `MetricsHandler()` now uses correct registry** ([#465](https://github.com/telekom/k8s-breakglass/issues/465)): Fixed to serve from `ctrlmetrics.Registry` which contains all breakglass metrics, instead of the default registry which was empty
 
 ### Removed
@@ -32,7 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **CAPI-style patchHelper for cache-aware SSA**: Added `PatchApply*` functions in `pkg/utils/patchhelper.go` (spec) and `api/v1alpha1/applyconfiguration/ssa/patchhelper.go` (status) that read the current state from the informer cache before issuing an SSA Patch. If the owned fields already match, the API call is skipped entirely, saving thousands of no-op PATCH requests per reconciliation cycle. All 48 SSA call sites (7 spec, 2 unstructured, 39 status) are transparently upgraded via delegation from existing `Apply*` functions. Inspired by `cluster-api`'s patchHelper pattern.
 - **Package-level godoc** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Added missing godoc comments to all exported types and functions in `api/v1alpha1/`
 - **ValidatingAdmissionPolicy Phase 1 — Warn mode** ([#315](https://github.com/telekom/k8s-breakglass/issues/315)): Added a kustomize Component at `config/components/vap/` deploying ValidatingAdmissionPolicy resources (K8s 1.30+) alongside existing webhooks. Covers BreakglassSession (required fields, spec immutability, state transitions), BreakglassEscalation (approvers, identifier format, duplicate detection, IDP exclusivity), ClusterConfig (auth config exclusivity, duplicates), and IdentityProvider (OIDC/HTTPS requirements, Keycloak conditional). All bindings use Warn+Audit mode — no requests are blocked. Documentation at `docs/validating-admission-policy.md`.
 - **Tests for security-critical session expiry and activation** ([#420](https://github.com/telekom/k8s-breakglass/issues/420)): Added `expire_approved_sessions_test.go` (10 test cases covering TTL expiry, near-future boundary condition, zero ExpiresAt, multiple sessions, large TTL, idempotency) and `scheduled_activation_test.go` (11 test cases: 9 activation + 2 constructor, covering time-based activation, nil/zero ScheduledStartTime, boundary activation, cross-state isolation). Replaced placeholder `BreakglassSessionCard.spec.ts` with 25 real component tests covering rendering, timeline, all session states, event emissions, and edge cases.
@@ -63,12 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Webhook: deduplicated logger pattern** ([#467](https://github.com/telekom/k8s-breakglass/issues/467)): Resolved logger once at `authorizeViaSessions` entry, eliminating 7 duplicate `if logger != nil / else if wc.log != nil` branches
-- **Webhook: `dedupeStrings` uses `map[string]struct{}`** ([#467](https://github.com/telekom/k8s-breakglass/issues/467)): Zero-allocation seen set instead of `map[string]bool`
-- **Breaking — Metrics: removed `session` label from high-cardinality counters** ([#463](https://github.com/telekom/k8s-breakglass/issues/463)): Removed auto-generated session name label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` to prevent unbounded Prometheus cardinality. **Update any alert rules or Grafana dashboards that reference the `session` label on these counters.**
-- **Standardized import alias** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Renamed `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files for consistency with the module path
-- **Added `importas` linter rule** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Configured `importas` in `.golangci.yml` with `no-unaliased: true` to enforce the canonical `breakglassv1alpha1` alias
-- **Removed duplicate scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Deleted dead-code `pkg/config/scheme.go`
 - **Split `pkg/breakglass/` god package into 4 sub-packages** ([#416](https://github.com/telekom/k8s-breakglass/issues/416)): Extracted `clusterconfig/` (cluster config checker, binding API), `debug/` (debug session API, reconciler, kubectl), `escalation/` (escalation controller, manager, status updater), and `eventrecorder/` (Kubernetes event recorder) from the root `breakglass` package. Introduced `EscalationLookup` interface to break the import cycle between root and escalation sub-packages. All import paths updated; no public API changes.
 - **Decomposed god functions into focused helpers** ([#417](https://github.com/telekom/k8s-breakglass/issues/417)): Extracted `handleAuthorize` (706 → 46 lines) into `authorize_helpers.go` with `authorizeState` struct and 11 single-responsibility methods. Extracted `handleRequestBreakglassSession` (~760 → ~140 lines) into `session_request_helpers.go` with 3 types and 10 helpers. Extracted `main()` into `run()` with 7 helpers and 2 structs in `cmd/main.go`. No behavioural changes; all existing tests pass.
 - **Consolidated frontend logger services** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Merged `logger-console.ts` into `logger.ts` with `request()`, `response()`, `action()`, `stateChange()` helpers. Migrated all ~144 raw `console.*` calls across 12 source files to use the structured logger. Added ESLint `no-console` rule to prevent regressions.

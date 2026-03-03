@@ -124,17 +124,17 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		if err != nil {
 			return nil, "", fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
+		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
 		pool, err := buildCertPoolFromPEM(idpCfg.Keycloak.CertificateAuthority)
 		if err != nil {
 			return nil, "", fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
+		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}} //nolint:gosec // intentional for dev/e2e
 		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
 	}
@@ -284,7 +284,6 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// Get appropriate JWKS (based on issuer or default)
 	var jwks keyfunc.Keyfunc
 	var selectedIDP string
-	var clientID string // OIDC client_id for audience validation (SEC-005)
 
 	if a.idpLoader != nil && issuer != "" {
 		// Multi-IDP mode: load JWKS for specific issuer
@@ -299,7 +298,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			metrics.JWKSCacheMisses.WithLabelValues(issuer).Inc()
 		}
 
-		loadedJwks, loadedClientID, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+		loadedJwks, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
 			metrics.JWTValidationFailure.WithLabelValues(issuer, "jwks_load_failed").Inc()
@@ -316,7 +315,6 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			return false
 		}
 		jwks = loadedJwks
-		clientID = loadedClientID
 		idpName, err := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get IDP name by issuer", "issuer", issuer, "error", err)
@@ -342,11 +340,12 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		jwt.WithIssuedAt(),
 		jwt.WithExpirationRequired(), // SEC-005: reject tokens without exp claim
 	}
-	// SEC-005: Validate audience (aud) claim against IDP's ClientID when configured.
-	// This prevents tokens issued for other applications from being accepted.
-	if clientID != "" {
-		parserOpts = append(parserOpts, jwt.WithAudience(clientID))
-	}
+	// Note: Audience validation (jwt.WithAudience) is intentionally omitted.
+	// Keycloak does not include the requesting client_id in the "aud" claim
+	// by default — the aud claim depends on audience protocol mappers.
+	// Adding audience validation here would break environments where mappers
+	// are not configured. A dedicated CRD field (e.g. expectedAudience)
+	// should be added before enabling this check.
 	verifiedParser := jwt.NewParser(parserOpts...)
 	token, err := verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 	if err != nil {
@@ -358,8 +357,6 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			failureReason = "invalid_signature"
 		} else if strings.Contains(err.Error(), "expired") {
 			failureReason = "token_expired"
-		} else if strings.Contains(err.Error(), "audience") {
-			failureReason = "audience_mismatch"
 		}
 		metrics.JWTValidationFailure.WithLabelValues(issuer, failureReason).Inc()
 
