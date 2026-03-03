@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container/list"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -16,7 +17,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // setupTestJWKSServer creates a test JWKS server and returns the server, key, and kid
@@ -476,9 +485,9 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 				"exp": 0,
 				"nbf": 0,
 			},
-			// jwt-go v4 treats exp=0 as valid (zero value doesn't trigger expiry check)
-			// This is library behavior - applications should validate exp > 0 if needed
-			expectedStatus: http.StatusOK,
+			// SEC-005: jwt.WithExpirationRequired() rejects exp=0 (epoch) as expired.
+			// This is the desired security behavior — tokens without meaningful expiry are rejected.
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "token with negative expiry",
@@ -523,4 +532,156 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 			require.Equal(t, tt.expectedStatus, w.Code)
 		})
 	}
+}
+
+// TestAuthMiddleware_AudienceValidation verifies SEC-005: JWT audience (aud) claim
+// is validated against the IDP's ClientID when configured in multi-IDP mode.
+func TestAuthMiddleware_AudienceValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	issuer := "https://idp.example.com"
+	expectedClientID := "breakglass-app"
+
+	tests := []struct {
+		name           string
+		clientID       string      // ClientID configured in IDP (empty = no audience check)
+		tokenAudience  interface{} // aud claim in token (nil = omitted)
+		expectedStatus int
+	}{
+		{
+			name:           "matching audience accepted",
+			clientID:       expectedClientID,
+			tokenAudience:  expectedClientID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "audience in array accepted",
+			clientID:       expectedClientID,
+			tokenAudience:  []string{expectedClientID, "other-app"},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "wrong audience rejected",
+			clientID:       expectedClientID,
+			tokenAudience:  "wrong-client-id",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "missing audience rejected when clientID configured",
+			clientID:       expectedClientID,
+			tokenAudience:  nil,
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "no clientID configured skips audience check",
+			clientID:       "",
+			tokenAudience:  nil,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "no clientID configured allows any audience",
+			clientID:       "",
+			tokenAudience:  "any-client",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a fake kube client with the breakglass scheme so
+			// GetIDPNameByIssuer won't panic (it returns empty list → error is handled gracefully)
+			scheme := runtime.NewScheme()
+			utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+			utilruntime.Must(breakglassv1alpha1.AddToScheme(scheme))
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+			// Create AuthHandler with pre-populated JWKS cache (multi-IDP mode)
+			auth := &AuthHandler{
+				jwksCache:   make(map[string]*list.Element),
+				jwksLRUList: list.New(),
+				log:         logger,
+				// idpLoader must be non-nil to trigger multi-IDP path
+				idpLoader: config.NewIdentityProviderLoader(fakeClient),
+			}
+
+			// Pre-populate JWKS cache with the test clientID
+			entry := &jwksCacheEntry{
+				issuer:   issuer,
+				clientID: tt.clientID,
+				jwks:     jwks,
+			}
+			elem := auth.jwksLRUList.PushFront(entry)
+			auth.jwksCache[issuer] = elem
+
+			router := gin.New()
+			router.Use(auth.Middleware())
+			router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+			// Build JWT claims
+			claims := jwt.MapClaims{
+				"iss": issuer,
+				"sub": "test-user",
+				"exp": time.Now().Add(time.Hour).Unix(),
+			}
+			if tt.tokenAudience != nil {
+				claims["aud"] = tt.tokenAudience
+			}
+
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+			tok.Header["kid"] = kid
+			tokStr, err := tok.SignedString(priv)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set("Authorization", "Bearer "+tokStr)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.expectedStatus, w.Code,
+				"audience=%v clientID=%q", tt.tokenAudience, tt.clientID)
+		})
+	}
+}
+
+// TestAuthMiddleware_ExpirationRequired verifies SEC-005: tokens without exp claim are rejected.
+func TestAuthMiddleware_ExpirationRequired(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	auth := &AuthHandler{jwks: jwks, log: logger}
+
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// Token without exp claim must be rejected
+	claims := jwt.MapClaims{
+		"sub": "test-user",
+		// No "exp" claim
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	tokStr, err := tok.SignedString(priv)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokStr)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code,
+		"tokens without exp claim must be rejected")
 }

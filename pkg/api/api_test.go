@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -1018,6 +1019,41 @@ func TestRespondHelpers_JSONErrorShape(t *testing.T) {
 				"error field must match")
 			assert.Equal(t, tt.expectedJSON["code"], body["code"],
 				"code field must be present and match")
+		})
+	}
+}
+
+// TestIsValidRequestID verifies X-Request-ID sanitization (SEC-004).
+func TestIsValidRequestID(t *testing.T) {
+	tests := []struct {
+		name  string
+		id    string
+		valid bool
+	}{
+		{"empty", "", false},
+		{"simple UUID", "550e8400-e29b-41d4-a716-446655440000", true},
+		{"alphanumeric", "abc123", true},
+		{"with hyphens", "req-123-abc", true},
+		{"with underscores", "req_123_abc", true},
+		{"with dots", "req.123.abc", true},
+		{"with colons", "req:123:abc", true},
+		{"max length (128)", strings.Repeat("a", 128), true},
+		{"too long (129)", strings.Repeat("a", 129), false},
+		{"contains newline", "abc\ndef", false},
+		{"contains space", "abc def", false},
+		{"contains tab", "abc\tdef", false},
+		{"contains HTML", "<script>alert(1)</script>", false},
+		{"contains null byte", "abc\x00def", false},
+		{"contains slash", "abc/def", false},
+		{"contains backslash", "abc\\def", false},
+		{"contains semicolon", "abc;def", false},
+		{"single char", "x", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidRequestID(tt.id)
+			assert.Equal(t, tt.valid, got, "isValidRequestID(%q)", tt.id)
 		})
 	}
 }
