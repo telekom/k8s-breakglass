@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **SessionManager pointer receivers** ([#471](https://github.com/telekom/k8s-breakglass/issues/471), [#474](https://github.com/telekom/k8s-breakglass/issues/474) GO-011): Changed all 14 `SessionManager` methods from value to pointer receivers for correctness with pointer fields
+- **Deprecated `NewSessionManager`** ([#471](https://github.com/telekom/k8s-breakglass/issues/471)): Marked `NewSessionManager(contextName)` deprecated in favor of `NewSessionManagerWithClient` for explicit caching behavior
+- **Logger fallback warning** ([#466](https://github.com/telekom/k8s-breakglass/issues/466)): `SessionManager.getLogger()` now logs a warning when falling back to the global logger
+- **Documented `isFieldIndexError` fragility** ([#458](https://github.com/telekom/k8s-breakglass/issues/458)): Added explanatory comments and regression tests for string-matching error detection
+
 ### Fixed
 
 - **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
