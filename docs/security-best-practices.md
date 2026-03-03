@@ -160,7 +160,7 @@ The current Bearer token approach provides adequate security because:
 | Control | How it protects tokens |
 |---------|----------------------|
 | **Content Security Policy (CSP)** | Restricts script sources to `'self'`, blocking inline scripts and XSS payloads from accessing storage |
-| **Input sanitization** | All user-provided text fields are sanitized to strip HTML/JS injection attempts |
+| **Input sanitization** | Free-form reason fields are sanitized to strip HTML/JS injection attempts |
 | **Same-origin policy** | `sessionStorage` is origin-scoped — a cross-origin page cannot read it |
 | **Short token lifetime** | OIDC tokens should be configured with 5–15 minute expiry at the IDP |
 | **No CSRF risk** | Bearer tokens must be explicitly attached to requests — the browser never sends them automatically |
@@ -312,7 +312,7 @@ The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes 
 
 1. **Kubernetes webhook protocol**: The API server calls authorization webhooks as part of its own request pipeline. Adding token-based authentication would require the API server itself to obtain and present tokens — increasing complexity and creating a circular dependency (the API server would need breakglass credentials to authorize breakglass requests).
 
-2. **Mutual TLS instead of token auth**: The webhook is served over TLS (port 9443) with certificates generated at startup. The `ValidatingWebhookConfiguration` / `AuthorizationConfiguration` objects reference a CA bundle, so the API server verifies the webhook's identity. This provides transport-level authentication.
+2. **TLS with server identity verification instead of token auth**: The webhook is served over TLS (port 9443) with certificates generated at startup. The `ValidatingWebhookConfiguration` / `AuthorizationConfiguration` objects reference a CA bundle, so the API server verifies the webhook's identity before sending requests. This is one-way TLS (the API server authenticates the webhook), not mutual TLS.
 
 3. **Rate limiting**: The endpoint includes built-in per-IP rate limiting to prevent abuse even if an attacker gains network access.
 

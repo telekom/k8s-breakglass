@@ -1,6 +1,7 @@
 package version
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -85,5 +86,35 @@ func TestGetPublicBuildInfo_OmitsSensitiveFields(t *testing.T) {
 	}
 	if info.BuildDate != fullInfo.BuildDate {
 		t.Errorf("PublicBuildInfo.BuildDate = %q, want %q", info.BuildDate, fullInfo.BuildDate)
+	}
+}
+
+func TestGetPublicBuildInfo_JSONKeysLimited(t *testing.T) {
+	// SEC-008: Verify the JSON representation of PublicBuildInfo contains
+	// only the expected keys (version, buildDate) and none of the sensitive
+	// infrastructure fields (goVersion, compiler, platform, gitCommit).
+	info := GetPublicBuildInfo()
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("failed to marshal PublicBuildInfo: %v", err)
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("failed to unmarshal PublicBuildInfo JSON: %v", err)
+	}
+
+	allowedKeys := map[string]bool{"version": true, "buildDate": true}
+	for key := range m {
+		if !allowedKeys[key] {
+			t.Errorf("unexpected key %q in PublicBuildInfo JSON — may leak infrastructure details", key)
+		}
+	}
+
+	if _, ok := m["version"]; !ok {
+		t.Error("PublicBuildInfo JSON must contain 'version' key")
+	}
+	if _, ok := m["buildDate"]; !ok {
+		t.Error("PublicBuildInfo JSON must contain 'buildDate' key")
 	}
 }
