@@ -123,7 +123,7 @@ func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts 
 // client-side filter.  All other errors (RBAC, network, etcd) are real failures.
 //
 // NOTE: controller-runtime does not expose typed errors for index-not-found
-// conditions (as of v0.20.x). This function relies on substring matching
+// conditions (as of v0.23.x). This function relies on substring matching
 // against known error messages. If controller-runtime changes wording in a
 // future release, the regression tests in session_manager_test.go
 // (TestIsFieldIndexError*) will catch the change.

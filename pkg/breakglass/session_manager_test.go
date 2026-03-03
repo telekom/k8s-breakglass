@@ -118,7 +118,7 @@ func TestNewSessionManagerWithClientAndReader(t *testing.T) {
 }
 
 // TestIsFieldIndexError_KnownMessages is a regression test that pins the
-// expected error strings from controller-runtime v0.20.x. If a future upgrade
+// expected error strings from controller-runtime v0.23.x. If a future upgrade
 // changes the wording, this test will fail, alerting maintainers to update
 // isFieldIndexError accordingly.
 func TestIsFieldIndexError_KnownMessages(t *testing.T) {
