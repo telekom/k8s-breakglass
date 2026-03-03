@@ -981,13 +981,9 @@ func (wc *WebhookController) fetchPodFromCluster(ctx context.Context, clusterNam
 	if wc.ccProvider == nil {
 		return nil, fmt.Errorf("cluster client provider not configured")
 	}
-	rc, err := wc.ccProvider.GetRESTConfig(ctx, clusterName)
+	clientset, err := wc.ccProvider.GetClientset(ctx, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
-	}
-	clientset, err := kubernetes.NewForConfig(rc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset for cluster %s: %w", clusterName, err)
+		return nil, fmt.Errorf("failed to get clientset for cluster %s: %w", clusterName, err)
 	}
 	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -1007,13 +1003,9 @@ func (wc *WebhookController) fetchNamespaceLabels(ctx context.Context, clusterNa
 	if wc.ccProvider == nil {
 		return nil, fmt.Errorf("cluster client provider not configured")
 	}
-	rc, err := wc.ccProvider.GetRESTConfig(ctx, clusterName)
+	clientset, err := wc.ccProvider.GetClientset(ctx, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
-	}
-	clientset, err := kubernetes.NewForConfig(rc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset for cluster %s: %w", clusterName, err)
+		return nil, fmt.Errorf("failed to get clientset for cluster %s: %w", clusterName, err)
 	}
 	ns, err := clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err != nil {
