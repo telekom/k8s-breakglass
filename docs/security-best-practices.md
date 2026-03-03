@@ -147,6 +147,26 @@ The API validates JWTs using an **explicit allowlist of signing algorithms** (RS
 
 To reduce accidental credential exposure, the API middleware **strips the Authorization header** after extracting token data, so downstream logs or error handlers do not emit bearer tokens.
 
+### Token Storage in the Browser
+
+The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). An opt-in "Remember me" mode uses `localStorage` instead.
+
+**Why not `httpOnly` cookies?**
+
+Using `httpOnly` cookies for token storage would require a Backend-For-Frontend (BFF) proxy pattern — the server would need to issue and manage session cookies, translate them into Bearer tokens, and handle CSRF protection. This adds significant architectural complexity for a privilege escalation tool that is used infrequently and for short durations.
+
+The current Bearer token approach provides adequate security because:
+
+| Control | How it protects tokens |
+|---------|----------------------|
+| **Content Security Policy (CSP)** | Restricts script sources to `'self'`, blocking inline scripts and XSS payloads from accessing storage |
+| **Input sanitization** | All user-provided text fields are sanitized to strip HTML/JS injection attempts |
+| **Same-origin policy** | `sessionStorage` is origin-scoped — a cross-origin page cannot read it |
+| **Short token lifetime** | OIDC tokens should be configured with 5–15 minute expiry at the IDP |
+| **No CSRF risk** | Bearer tokens must be explicitly attached to requests — the browser never sends them automatically |
+
+> **Recommendation:** Configure your OIDC provider to issue short-lived access tokens (5–15 minutes). If your threat model requires `httpOnly` cookies, you would need to implement a BFF proxy layer in front of the breakglass API.
+
 If using an API gateway (Kong, Ambassador, etc.), configure rate limiting there.
 
 ### Recommended Rate Limits
@@ -188,6 +208,7 @@ The following patterns are stripped from text fields:
 2. **Enable token refresh** - Allow token refresh for long-running sessions
 3. **Validate audiences** - Ensure tokens are issued for the breakglass client
 4. **Use HTTPS** - Always use TLS for OIDC communication
+5. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
 
 ### Multi-Cluster OIDC Service Account
 
@@ -248,7 +269,7 @@ For webhook endpoints, the controller automatically generates TLS certificates. 
 
 ### Network Policies
 
-Consider restricting network access:
+Restrict network access to the breakglass pods. The SAR authorization webhook (`/breakglass/webhook/authorize/:cluster_name`) is intentionally unauthenticated — see [SAR Authorization Webhook](#sar-authorization-webhook-design-decision) below for details. Use a NetworkPolicy to ensure only the Kubernetes API server can reach the webhook port.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -269,6 +290,12 @@ spec:
               name: ingress-nginx
       ports:
         - port: 8080
+    # Allow Kubernetes API server to reach the SAR webhook
+    - from:
+        - ipBlock:
+            cidr: <API_SERVER_CIDR>  # Replace with your API server IP range
+      ports:
+        - port: 9443  # Webhook TLS port
   egress:
     - to:
         - namespaceSelector: {}
@@ -276,6 +303,30 @@ spec:
         - port: 443 # HTTPS to API servers
         - port: 6443 # Kubernetes API
 ```
+
+### SAR Authorization Webhook (Design Decision)
+
+The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes [SubjectAccessReview](https://kubernetes.io/docs/reference/access-authn-authz/authorization/#checking-api-access) (SAR) requests **without caller authentication**. This is a deliberate design decision:
+
+**Why no authentication on the SAR endpoint:**
+
+1. **Kubernetes webhook protocol**: The API server calls authorization webhooks as part of its own request pipeline. Adding token-based authentication would require the API server itself to obtain and present tokens — increasing complexity and creating a circular dependency (the API server would need breakglass credentials to authorize breakglass requests).
+
+2. **Mutual TLS instead of token auth**: The webhook is served over TLS (port 9443) with certificates generated at startup. The `ValidatingWebhookConfiguration` / `AuthorizationConfiguration` objects reference a CA bundle, so the API server verifies the webhook's identity. This provides transport-level authentication.
+
+3. **Rate limiting**: The endpoint includes built-in per-IP rate limiting to prevent abuse even if an attacker gains network access.
+
+**Recommended mitigations:**
+
+- Deploy a **NetworkPolicy** (see above) restricting ingress on the webhook port to only the Kubernetes API server's IP range
+- Enable **Kubernetes audit logging** to detect unexpected SAR requests
+- In multi-tenant clusters, ensure the webhook port is not exposed via Ingress or LoadBalancer services
+
+### Build Info Endpoint
+
+The `/api/debug/buildinfo` endpoint exposes only the application version and build date. Infrastructure details (Go version, OS/architecture, commit hash) are omitted from the public response to prevent reconnaissance.
+
+If full build metadata is needed for debugging, use the internal `version.GetBuildInfo()` function from within the cluster (e.g., via `kubectl exec` or controller logs).
 
 ## Audit Logging
 

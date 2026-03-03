@@ -375,9 +375,11 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	engine.GET("/api/identity-provider", optionalAuthRateLimit, s.getIdentityProvider)
 	engine.GET("/api/config/idps", optionalAuthRateLimit, s.getMultiIDPConfig)
 
-	// Debug endpoint: build information
+	// Debug endpoint: build information (public subset only — SEC-008)
+	// Exposes only version and build date. Infrastructure details (Go version,
+	// platform, commit hash) are omitted to prevent reconnaissance.
 	engine.GET("/api/debug/buildinfo", func(c *gin.Context) {
-		c.JSON(http.StatusOK, version.GetBuildInfo())
+		c.JSON(http.StatusOK, version.GetPublicBuildInfo())
 	})
 
 	return s
