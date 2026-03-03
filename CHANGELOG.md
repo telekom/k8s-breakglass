@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Webhook: deduplicated logger pattern** ([#467](https://github.com/telekom/k8s-breakglass/issues/467)): Resolved logger once at `authorizeViaSessions` entry, eliminating 8 duplicate `if logger != nil / else if wc.log != nil` branches
-- **Webhook: `dedupeStrings` uses `map[string]struct{}`** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) GO-005): Zero-allocation seen set instead of `map[string]bool`
+- **Webhook: deduplicated logger pattern** ([#467](https://github.com/telekom/k8s-breakglass/issues/467)): Resolved logger once at `authorizeViaSessions` entry, eliminating 7 duplicate `if logger != nil / else if wc.log != nil` branches
+- **Webhook: `dedupeStrings` uses `map[string]struct{}`** ([#467](https://github.com/telekom/k8s-breakglass/issues/467)): Zero-allocation seen set instead of `map[string]bool`
 
 ### Fixed
 
