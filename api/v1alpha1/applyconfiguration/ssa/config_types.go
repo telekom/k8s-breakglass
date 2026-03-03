@@ -25,35 +25,31 @@ import (
 )
 
 // ApplyIdentityProviderStatus applies a status update to an IdentityProvider using native SSA.
+// Delegates to [PatchApplyIdentityProviderStatus] which skips no-op updates.
 func ApplyIdentityProviderStatus(ctx context.Context, c client.Client, idp *breakglassv1alpha1.IdentityProvider) error {
-	applyConfig := ac.IdentityProvider(idp.Name, idp.Namespace).
-		WithStatus(IdentityProviderStatusFrom(&idp.Status))
-
-	return applyStatusViaUnstructured(ctx, c, applyConfig)
+	_, err := PatchApplyIdentityProviderStatus(ctx, c, idp)
+	return err
 }
 
 // ApplyClusterConfigStatus applies a status update to a ClusterConfig using native SSA.
+// Delegates to [PatchApplyClusterConfigStatus] which skips no-op updates.
 func ApplyClusterConfigStatus(ctx context.Context, c client.Client, cc *breakglassv1alpha1.ClusterConfig) error {
-	applyConfig := ac.ClusterConfig(cc.Name, cc.Namespace).
-		WithStatus(ClusterConfigStatusFrom(&cc.Status))
-
-	return applyStatusViaUnstructured(ctx, c, applyConfig)
+	_, err := PatchApplyClusterConfigStatus(ctx, c, cc)
+	return err
 }
 
 // ApplyMailProviderStatus applies a status update to a MailProvider using native SSA.
+// Delegates to [PatchApplyMailProviderStatus] which skips no-op updates.
 func ApplyMailProviderStatus(ctx context.Context, c client.Client, mp *breakglassv1alpha1.MailProvider) error {
-	applyConfig := ac.MailProvider(mp.Name, mp.Namespace).
-		WithStatus(MailProviderStatusFrom(&mp.Status))
-
-	return applyStatusViaUnstructured(ctx, c, applyConfig)
+	_, err := PatchApplyMailProviderStatus(ctx, c, mp)
+	return err
 }
 
 // ApplyAuditConfigStatus applies a status update to an AuditConfig using native SSA.
+// Delegates to [PatchApplyAuditConfigStatus] which skips no-op updates.
 func ApplyAuditConfigStatus(ctx context.Context, c client.Client, auditCfg *breakglassv1alpha1.AuditConfig) error {
-	applyConfig := ac.AuditConfig(auditCfg.Name, auditCfg.Namespace).
-		WithStatus(AuditConfigStatusFrom(&auditCfg.Status))
-
-	return applyStatusViaUnstructured(ctx, c, applyConfig)
+	_, err := PatchApplyAuditConfigStatus(ctx, c, auditCfg)
+	return err
 }
 
 // IdentityProviderStatusFrom converts an IdentityProviderStatus to its ApplyConfiguration.

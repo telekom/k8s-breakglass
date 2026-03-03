@@ -21,14 +21,10 @@ package ssa
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,63 +34,19 @@ import (
 const FieldOwnerController = "breakglass-controller"
 
 // applyStatusViaUnstructured applies a typed ApplyConfiguration using the default FieldOwnerController.
+// Delegates to the cache-aware patchHelper to skip no-op status updates.
 func applyStatusViaUnstructured(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration) error {
-	return applyStatusViaUnstructuredWithOwner(ctx, c, applyConfig, FieldOwnerController)
+	_, err := patchApplyStatusViaUnstructured(ctx, c, applyConfig)
+	return err
 }
 
 // applyStatusViaUnstructuredWithOwner applies a typed ApplyConfiguration by first converting it to
 // unstructured and then using the SubResource status patch with the specified field manager.
-// This works with both real API servers and fake clients in tests.
+// Delegates to the cache-aware patchHelper to skip no-op status updates.
 //
 // Following cluster-api patterns: https://github.com/kubernetes-sigs/cluster-api/blob/main/util/patch/patch.go
 func applyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration, fieldOwner string) error {
-	// Marshal to JSON and unmarshal to unstructured - this is the same approach
-	// used by the fake client internally
-	data, err := json.Marshal(applyConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal apply configuration: %w", err)
-	}
-
-	u := &unstructured.Unstructured{}
-	if err := json.Unmarshal(data, u); err != nil {
-		return fmt.Errorf("failed to unmarshal apply configuration: %w", err)
-	}
-
-	// Clear managed fields - the fake client requires this to be nil for SSA patches
-	u.SetManagedFields(nil)
-	// Also clear from the raw object map in case it's set there
-	if metaMap, ok := u.Object["metadata"].(map[string]interface{}); ok {
-		delete(metaMap, "managedFields")
-	}
-
-	// Fetch the current resource version from the server - the fake client requires this
-	// for status patch operations to work correctly.
-	// Following cluster-api pattern: status updates should fail if the object doesn't exist.
-	current := &unstructured.Unstructured{}
-	current.SetGroupVersionKind(u.GetObjectKind().GroupVersionKind())
-	if getErr := c.Get(ctx, client.ObjectKey{Name: u.GetName(), Namespace: u.GetNamespace()}, current); getErr != nil {
-		// Return error if object doesn't exist - status updates require existing objects
-		return fmt.Errorf("failed to get object for status update: %w", getErr)
-	}
-	if u.GetResourceVersion() == "" {
-		u.SetResourceVersion(current.GetResourceVersion())
-	}
-
-	// Use SubResource("status").Patch with client.Apply which works with the fake client
-	//nolint:staticcheck // SA1019: client.Apply patch type works reliably with fake client
-	err = c.SubResource("status").Patch(ctx, u, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership)
-
-	// Fallback: if the fake client still rejects managed fields, use MergeFrom patch
-	// Following cluster-api pattern from util/patch/patch.go:patchStatus
-	if err != nil && strings.Contains(err.Error(), "metadata.managedFields must be nil") {
-		original := current.DeepCopy()
-		current.Object["status"] = u.Object["status"]
-		if metaMap, ok := current.Object["metadata"].(map[string]interface{}); ok {
-			delete(metaMap, "managedFields")
-		}
-		return c.SubResource("status").Patch(ctx, current, client.MergeFrom(original))
-	}
-
+	_, err := patchApplyStatusViaUnstructuredWithOwner(ctx, c, applyConfig, fieldOwner)
 	return err
 }
 
@@ -385,10 +337,9 @@ func DebugSessionTemplateStatusFrom(status *breakglassv1alpha1.DebugSessionTempl
 		result.WithConditions(ConditionFrom(&status.Conditions[i]))
 	}
 
-	// Set active session count
-	if status.ActiveSessionCount > 0 {
-		result.WithActiveSessionCount(status.ActiveSessionCount)
-	}
+	// Always set active session count — zero is a meaningful value that SSA
+	// must declare so the patchHelper can detect decrements back to 0.
+	result.WithActiveSessionCount(status.ActiveSessionCount)
 
 	// Set last used at
 	if status.LastUsedAt != nil && !status.LastUsedAt.IsZero() {
@@ -459,10 +410,9 @@ func DebugSessionClusterBindingStatusFrom(status *breakglassv1alpha1.DebugSessio
 		)
 	}
 
-	// Set active session count
-	if status.ActiveSessionCount > 0 {
-		result.WithActiveSessionCount(status.ActiveSessionCount)
-	}
+	// Always set active session count — zero is a meaningful value that SSA
+	// must declare so the patchHelper can detect decrements back to 0.
+	result.WithActiveSessionCount(status.ActiveSessionCount)
 
 	// Set last used
 	if status.LastUsed != nil && !status.LastUsed.IsZero() {
