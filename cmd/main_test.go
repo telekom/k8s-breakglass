@@ -4,7 +4,14 @@
 
 package main
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+)
 
 func TestResolveStringConfig(t *testing.T) {
 	tests := []struct {
@@ -57,5 +64,69 @@ func TestResolveOTelSamplingRate(t *testing.T) {
 					tt.cliValue, tt.configValue, tt.defaultValue, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAwaitShutdownSignal_Signal(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	sigChan := make(chan os.Signal, 1)
+	errCh := make(chan error, 1)
+
+	// Send signal immediately
+	sigChan <- os.Interrupt
+
+	err := awaitShutdownSignal(sigChan, errCh, log)
+	if err != nil {
+		t.Errorf("expected nil error on signal, got %v", err)
+	}
+}
+
+func TestAwaitShutdownSignal_Error(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	sigChan := make(chan os.Signal, 1)
+	errCh := make(chan error, 1)
+
+	expectedErr := errors.New("background component crashed")
+	errCh <- expectedErr
+
+	err := awaitShutdownSignal(sigChan, errCh, log)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err.Error() != expectedErr.Error() {
+		t.Errorf("expected error %q, got %q", expectedErr.Error(), err.Error())
+	}
+}
+
+func TestAwaitShutdownSignal_SignalWinsRace(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	sigChan := make(chan os.Signal, 1)
+	errCh := make(chan error)
+
+	// Signal channel is buffered, send signal first
+	sigChan <- os.Interrupt
+
+	// Try multiple times to ensure consistent behavior
+	for i := 0; i < 10; i++ {
+		// Drain and refill the channel for each iteration
+		select {
+		case <-sigChan:
+		default:
+		}
+		sigChan <- os.Interrupt
+
+		done := make(chan error, 1)
+		go func() {
+			done <- awaitShutdownSignal(sigChan, errCh, log)
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("iteration %d: expected nil, got %v", i, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d: timed out waiting for shutdown signal", i)
+		}
 	}
 }

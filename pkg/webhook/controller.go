@@ -634,14 +634,42 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 
 // getUserGroupsForCluster removed (unused)
 
+// Option is a functional option for configuring WebhookController.
+// Use option constructors (WithPodFetchFunc, WithNamespaceLabelsFetchFunc, etc.)
+// to customise behaviour, especially for testing.
+type Option func(*WebhookController)
+
+// WithPodFetchFunc overrides the default pod-fetching behaviour.
+// Useful in tests to avoid hitting a real cluster API server.
+func WithPodFetchFunc(fn func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error)) Option {
+	return func(wc *WebhookController) {
+		wc.podFetchFn = fn
+	}
+}
+
+// WithNamespaceLabelsFetchFunc overrides the default namespace-label lookup.
+func WithNamespaceLabelsFetchFunc(fn func(ctx context.Context, clusterName, namespace string) (map[string]string, error)) Option {
+	return func(wc *WebhookController) {
+		wc.namespaceLabelsFetchFn = fn
+	}
+}
+
+// WithCanDoFunc overrides the authorisation check for group permissions.
+func WithCanDoFunc(fn breakglass.CanGroupsDoFunction) Option {
+	return func(wc *WebhookController) {
+		wc.canDoFn = fn
+	}
+}
+
 func NewWebhookController(log *zap.SugaredLogger,
 	cfg config.Config,
 	sesManager *breakglass.SessionManager,
 	escalManager *escalation.EscalationManager,
 	ccProvider *cluster.ClientProvider,
 	denyEval *policy.Evaluator,
+	opts ...Option,
 ) *WebhookController {
-	return &WebhookController{
+	wc := &WebhookController{
 		log:          log,
 		config:       cfg,
 		sesManager:   sesManager,
@@ -653,6 +681,10 @@ func NewWebhookController(log *zap.SugaredLogger,
 		// SARs are called very frequently by the Kubernetes API server
 		rateLimiter: ratelimit.New(ratelimit.DefaultSARConfig()),
 	}
+	for _, opt := range opts {
+		opt(wc)
+	}
+	return wc
 }
 
 // WithAuditService sets the audit service for access decision audit events.

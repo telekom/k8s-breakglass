@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Test coverage for `awaitShutdownSignal`** ([#469](https://github.com/telekom/k8s-breakglass/issues/469)): Added 3 unit tests in `cmd/main_test.go` covering signal-handling, error-propagation, and signal-only-channel scenarios; added 2 tests in `pkg/webhook/webhook_controller_test.go` verifying functional option injection and default initialization
+
 ### Fixed
 
 - **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
