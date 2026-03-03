@@ -394,17 +394,9 @@ func (ccc ClusterConfigChecker) validateSecretExists(ctx context.Context, cc *br
 
 	keyName := secretRef.Key
 	if keyName == "" {
-		// Use sensible defaults based on description
-		switch {
-		case strings.Contains(description, "client"):
-			keyName = "client-secret"
-		case strings.Contains(description, "refresh"):
-			keyName = "refresh-token"
-		case strings.Contains(description, "subject"):
-			keyName = "token"
-		default:
-			keyName = "value"
-		}
+		// Default to "value" to match SecretKeyReference.key default in CRD/OpenAPI.
+		// This avoids inconsistencies between checker, token provider, and docs.
+		keyName = "value"
 	}
 	if _, ok := sec.Data[keyName]; !ok {
 		msg := fmt.Sprintf("Referenced %s secret missing key: %s", description, keyName)
@@ -429,8 +421,12 @@ func (ccc ClusterConfigChecker) handleOIDCAuthError(ctx context.Context, cc *bre
 	if errors.Is(err, cluster.ErrDegradedAuth) {
 		// Degraded auth: primary refresh token failed but fallback succeeded.
 		// Set DegradedAuth condition but don't fail — the cluster is still reachable.
-		msg := "Primary auth degraded, using fallback credentials: " + err.Error()
-		lg.Warnw(msg, "cluster", cc.Name)
+		baseMsg := "Primary auth degraded, using fallback credentials"
+		msg := baseMsg
+		if cause := errors.Unwrap(err); cause != nil {
+			msg = fmt.Sprintf("%s: %v", baseMsg, cause)
+		}
+		lg.Warnw(baseMsg, "cluster", cc.Name, "error", err)
 		if err2 := ccc.setCondition(ctx, cc,
 			breakglassv1alpha1.ClusterConfigConditionDegradedAuth,
 			metav1.ConditionTrue,

@@ -1007,7 +1007,7 @@ func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T)
 }
 
 // TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey tests that
-// when no key is specified, "client-secret" is used as the default
+// when no key is specified, "value" is used as the default (matching CRD/OpenAPI docs)
 func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-default-key"},
@@ -1019,15 +1019,15 @@ func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "keycloak-secret-default",
 					Namespace: "default",
-					// Key is empty - should default to "client-secret"
+					// Key is empty - should default to "value" per CRD/OpenAPI
 				},
 			},
 		},
 	}
-	// Secret with default key
+	// Secret with default key "value" (matching SecretKeyReference CRD default)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret-default", Namespace: "default"},
-		Data:       map[string][]byte{"client-secret": []byte("secret-value")},
+		Data:       map[string][]byte{"value": []byte("secret-value")},
 	}
 	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-default-key", Namespace: "default"},

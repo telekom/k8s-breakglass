@@ -168,6 +168,17 @@ func (p *OIDCTokenProvider) GetRESTConfig(ctx context.Context, cc *breakglassv1a
 		cfg.Burst = int(*cc.Spec.Burst)
 	}
 
+	// Preflight token acquisition: warm the cache and detect degraded auth early.
+	// This allows callers (e.g., checker's handleOIDCAuthError) to set the
+	// DegradedAuth condition before the first real request is made.
+	// Non-degraded errors are intentionally NOT propagated here — they will
+	// surface at request time via the transport wrapper (preserving the lazy
+	// token acquisition semantics of WrapTransport).
+	_, preflightErr := p.getToken(ctx, cc.Name, oidc, cc.Namespace)
+	if errors.Is(preflightErr, ErrDegradedAuth) {
+		return cfg, preflightErr
+	}
+
 	return cfg, nil
 }
 
@@ -184,7 +195,7 @@ type tokenInjectorRoundTripper struct {
 func (t *tokenInjectorRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Get fresh token (uses cache with automatic refresh)
 	token, err := t.provider.getToken(req.Context(), t.clusterName, t.oidc, t.namespace)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrDegradedAuth) {
 		return nil, fmt.Errorf("failed to get OIDC token for cluster %s: %w", t.clusterName, err)
 	}
 
@@ -359,12 +370,11 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 			p.cacheTokenWithNamespace(namespace, clusterName, token)
 			if errors.Is(fallbackErr, ErrDegradedAuth) {
 				// Degraded auth: token is valid but using fallback credentials.
-				// Log the degraded state. The DegradedAuth condition on ClusterConfig
-				// requires a design change (e.g., preflight check in GetRESTConfig or
-				// shared state between provider and checker) to be set at check time.
-				// TODO(oidc): propagate degraded state to checker for condition update.
+				// Propagate ErrDegradedAuth so callers (e.g., checker via
+				// handleOIDCAuthError) can set the DegradedAuth condition.
 				p.log.Warnw("Cluster operating in degraded auth mode",
 					"cluster", clusterName, "namespace", namespace)
+				return token.AccessToken, fallbackErr
 			}
 			return token.AccessToken, nil
 		}

@@ -1403,7 +1403,7 @@ func TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackWarn(t *testin
 	}
 
 	token, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "default")
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, ErrDegradedAuth, "getToken should return ErrDegradedAuth for FallbackPolicyWarn")
 	assert.Equal(t, "warn-fallback-token", token)
 }
 

@@ -384,9 +384,11 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		return nil, fmt.Errorf("unsupported auth type: %s", authType)
 	}
 
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrDegradedAuth) {
 		return nil, err
 	}
+	// Preserve ErrDegradedAuth to propagate to caller (checker sets DegradedAuth condition)
+	degradedErr := err
 
 	// Cache with TTL (keyed by namespace/name)
 	// Note: We already hold the write lock from above
@@ -425,7 +427,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 
 	p.log.Debugw("Cached REST config", "cluster", finalCacheKey, "authType", authType, "ttl", ttl)
-	return cfg, nil
+	return cfg, degradedErr
 }
 
 // GetClientset returns a cached kubernetes.Clientset for the named cluster.
@@ -583,16 +585,16 @@ func (p *ClientProvider) getRESTConfigFromOIDC(ctx context.Context, cc *breakgla
 		return nil, fmt.Errorf("OIDC provider not initialized")
 	}
 	cfg, err := p.oidcProvider.GetRESTConfig(ctx, cc)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrDegradedAuth) {
 		return nil, err
 	}
 
 	// Track OIDC-related secrets for cache invalidation on secret changes.
 	// This allows the Secret watcher to evict cached REST configs when
 	// refresh tokens, client secrets, subject tokens, or CAs are rotated.
-	p.trackOIDCSecrets(cacheKey(cc.Namespace, cc.Name), cc)
+	p.trackOIDCSecretsLocked(cacheKey(cc.Namespace, cc.Name), cc)
 
-	return cfg, nil
+	return cfg, err // err is nil or ErrDegradedAuth (valid config with degraded auth)
 }
 
 // Invalidate removes an entry (called by informer/controller update hooks later).
@@ -628,9 +630,14 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 	return ok
 }
 
-// trackOIDCSecrets records all OIDC-related secret references from a ClusterConfig
-// for cache invalidation. Caller MUST hold p.mu as a write lock.
-func (p *ClientProvider) trackOIDCSecrets(clusterKey string, cc *breakglassv1alpha1.ClusterConfig) {
+// trackOIDCSecretsLocked records all OIDC-related secret references from a ClusterConfig
+// for cache invalidation.
+//
+// The "Locked" suffix follows Go convention to indicate the caller MUST already
+// hold p.mu as a write lock. The function cannot self-lock because its only
+// production caller (getRESTConfigFromOIDC) already holds p.mu, and sync.Mutex
+// is not re-entrant.
+func (p *ClientProvider) trackOIDCSecretsLocked(clusterKey string, cc *breakglassv1alpha1.ClusterConfig) {
 	// Collect all secret references from OIDC configs
 	var secretRefs []breakglassv1alpha1.SecretKeyReference
 

@@ -940,12 +940,22 @@ func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig,
 				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "subjectTokenSecretRef", "name"),
 					"secret name is required"))
 			}
+			if cfg.TokenExchange.SubjectTokenSecretRef.Namespace == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "subjectTokenSecretRef", "namespace"),
+					"secret namespace is required"))
+			}
 		}
 
 		// Validate actor token secret reference if provided
-		if cfg.TokenExchange.ActorTokenSecretRef != nil && cfg.TokenExchange.ActorTokenSecretRef.Name == "" {
-			errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "actorTokenSecretRef", "name"),
-				"secret name is required"))
+		if cfg.TokenExchange.ActorTokenSecretRef != nil {
+			if cfg.TokenExchange.ActorTokenSecretRef.Name == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "actorTokenSecretRef", "name"),
+					"secret name is required"))
+			}
+			if cfg.TokenExchange.ActorTokenSecretRef.Namespace == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "actorTokenSecretRef", "namespace"),
+					"secret namespace is required"))
+			}
 		}
 	}
 
