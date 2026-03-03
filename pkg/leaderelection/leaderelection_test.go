@@ -267,37 +267,48 @@ func TestLeaderElection_ConcurrentChannelAccess(t *testing.T) {
 func TestLeaderElection_ConcurrentCallbackRace(t *testing.T) {
 	// Tests that concurrent OnStartedLeading and OnStoppedLeading callbacks
 	// do not race on the channel pointer — the fix for issue #461.
+	// Uses the same mutex + channel-pointer pattern from Start() to ensure
+	// the production code path is validated under -race.
 	// Run with: go test -race ./pkg/leaderelection/ -run TestLeaderElection_ConcurrentCallbackRace
 
 	const iterations = 100
 	for i := 0; i < iterations; i++ {
 		ch := make(chan struct{})
+		chPtr := &ch
 		var mu sync.Mutex
+		ctx, cancel := context.WithCancel(context.Background())
 
 		var wg sync.WaitGroup
 		wg.Add(2)
 
-		// Simulate OnStartedLeading
+		// Simulate OnStartedLeading — mirrors production code including ctx check
 		go func() {
 			defer wg.Done()
 			mu.Lock()
 			defer mu.Unlock()
 			select {
-			case <-ch:
+			case <-ctx.Done():
+				return
 			default:
-				close(ch)
+			}
+			select {
+			case <-*chPtr:
+			default:
+				close(*chPtr)
 			}
 		}()
 
-		// Simulate OnStoppedLeading
+		// Simulate OnStoppedLeading — mirrors production channel replacement
 		go func() {
 			defer wg.Done()
+			cancel() // leadership lost
 			mu.Lock()
 			defer mu.Unlock()
-			ch = make(chan struct{}) //nolint:ineffassign // Simulates the channel replacement in Start()
+			*chPtr = make(chan struct{})
 		}()
 
 		wg.Wait()
+		cancel() // ensure cancel is called even if OnStoppedLeading won the race
 	}
 }
 

@@ -22,21 +22,29 @@ func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct
 	leaderCallbacks := leaderelection.LeaderCallbacks{
 		OnStartedLeading: func(ctx context.Context) {
 			log.Infow("This replica acquired leadership, signaling background loops")
-			// Signal background loops that we're the leader
 			chMu.Lock()
 			defer chMu.Unlock()
+			// If leadership was already lost (context cancelled) while this
+			// callback was dispatched, avoid closing a channel that
+			// OnStoppedLeading may have already replaced.
+			select {
+			case <-ctx.Done():
+				// Leadership no longer held; do not signal.
+				return
+			default:
+			}
 			select {
 			case <-*leaderElectedCh:
-				// Already closed, we've signaled leadership
+				// Already closed — leadership was previously signaled.
 			default:
 				close(*leaderElectedCh)
 			}
 		},
 		OnStoppedLeading: func() {
 			log.Infow("Lost leadership")
-			// Recreate the channel for the next leader to use.
-			// Note: listeners that already captured the old channel value
-			// will not see this new channel — they remain unblocked.
+			// Replace the channel so a future re-acquisition can signal again.
+			// Goroutines that captured the old (closed) channel value will continue
+			// to see it as closed — they will not observe this new channel.
 			chMu.Lock()
 			defer chMu.Unlock()
 			*leaderElectedCh = make(chan struct{})
