@@ -261,7 +261,7 @@ func PatchApplyViaUnstructuredWithOwner(ctx context.Context, c client.Client, ap
 // Values are compared via JSON marshaling to normalize Go type differences
 // (int64 vs float64) that arise from different deserialization paths.
 func statusSubsetMatch(current, desired map[string]interface{}) bool {
-	if desired == nil || len(desired) == 0 {
+	if len(desired) == 0 {
 		return true
 	}
 	if current == nil {
