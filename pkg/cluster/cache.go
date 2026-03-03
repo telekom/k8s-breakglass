@@ -444,7 +444,8 @@ func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubern
 	}
 	p.mu.RUnlock()
 
-	// Slow path: get or refresh the REST config, then create a clientset
+	// Slow path: get or refresh the REST config, then create a clientset.
+	// GetRESTConfig handles its own locking; we call it outside our lock.
 	rc, err := p.GetRESTConfig(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("get REST config for clientset: %w", err)
@@ -455,8 +456,13 @@ func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubern
 		return nil, fmt.Errorf("create clientset for cluster %s: %w", name, err)
 	}
 
-	// Cache the clientset with the same TTL as the REST config
+	// Double-checked locking: re-check under write lock before caching.
+	// Another goroutine may have populated the entry while we were creating ours.
 	p.mu.Lock()
+	if entry, ok := p.clientsets[cacheLookupKey]; ok && now.Before(entry.expiresAt) {
+		p.mu.Unlock()
+		return entry.clientset, nil // use the entry written by the other goroutine
+	}
 	p.clientsets[cacheLookupKey] = &cachedClientset{
 		clientset: cs,
 		expiresAt: now.Add(RESTConfigCacheTTL),
