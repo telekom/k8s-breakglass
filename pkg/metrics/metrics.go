@@ -601,6 +601,13 @@ var (
 		Name: "breakglass_session_activity_buffer_size",
 		Help: "Number of sessions with buffered activity entries awaiting flush",
 	})
+
+	// Telemetry initialization metric — set to 1 when OTel init fails.
+	// Useful for alerting in compliance environments that require tracing.
+	TelemetryInitFailed = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "breakglass_telemetry_init_failed",
+		Help: "Set to 1 when OpenTelemetry initialization failed and tracing is disabled",
+	})
 )
 
 func init() {
@@ -768,6 +775,9 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(SessionActivityFlushErrors)
 	ctrlmetrics.Registry.MustRegister(SessionActivityDropped)
 	ctrlmetrics.Registry.MustRegister(SessionActivityBufferSize)
+
+	// Register telemetry init metric
+	ctrlmetrics.Registry.MustRegister(TelemetryInitFailed)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics from

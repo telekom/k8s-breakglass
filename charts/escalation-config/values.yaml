@@ -607,3 +607,14 @@ denyPolicies: []
   #   
   #   precedence: 100
 
+# -- PodDisruptionBudget settings for HA deployments.
+# Enable when running multiple replicas of the breakglass controller.
+pdb:
+  # -- Whether to create a PodDisruptionBudget resource.
+  enabled: false
+  # -- Minimum number of pods that must remain available during disruptions.
+  # Use an integer (e.g. 1) or a percentage string (e.g. "50%").
+  minAvailable: 1
+  # -- Maximum number of pods that can be unavailable during disruptions.
+  # Mutually exclusive with minAvailable; leave empty to use minAvailable.
+  # maxUnavailable: 1

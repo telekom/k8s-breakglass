@@ -323,3 +323,27 @@ func TestMetricsHandler(t *testing.T) {
 		t.Error("MetricsHandler response should contain breakglass_session_created_total metric")
 	}
 }
+
+// TestTelemetryInitFailed verifies the telemetry init failure gauge works
+func TestTelemetryInitFailed(t *testing.T) {
+	// Reset to 0 to avoid interference from other tests
+	TelemetryInitFailed.Set(0)
+
+	before := testutil.ToFloat64(TelemetryInitFailed)
+	if before != 0 {
+		t.Fatalf("expected TelemetryInitFailed to be 0, got %f", before)
+	}
+
+	TelemetryInitFailed.Set(1)
+	after := testutil.ToFloat64(TelemetryInitFailed)
+	if after != 1 {
+		t.Fatalf("expected TelemetryInitFailed to be 1, got %f", after)
+	}
+
+	// Reset back to 0
+	TelemetryInitFailed.Set(0)
+	reset := testutil.ToFloat64(TelemetryInitFailed)
+	if reset != 0 {
+		t.Fatalf("expected TelemetryInitFailed to be 0 after reset, got %f", reset)
+	}
+}

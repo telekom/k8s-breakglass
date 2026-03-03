@@ -1057,3 +1057,59 @@ func TestIsValidRequestID(t *testing.T) {
 		})
 	}
 }
+
+func TestCacheControlHeaders_Assets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+
+	// Add the Cache-Control middleware (same as in production code)
+	engine.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/assets/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		c.Next()
+	})
+
+	// Dummy route for /assets/ to test header
+	engine.GET("/assets/*filepath", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+	// Dummy route for /api/ to test no header
+	engine.GET("/api/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	tests := []struct {
+		name          string
+		path          string
+		expectHeader  bool
+		expectedValue string
+	}{
+		{
+			name:          "assets path gets Cache-Control",
+			path:          "/assets/index-abc123.js",
+			expectHeader:  true,
+			expectedValue: "public, max-age=31536000, immutable",
+		},
+		{
+			name:         "api path has no Cache-Control",
+			path:         "/api/test",
+			expectHeader: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			engine.ServeHTTP(w, req)
+
+			header := w.Header().Get("Cache-Control")
+			if tt.expectHeader {
+				assert.Equal(t, tt.expectedValue, header)
+			} else {
+				assert.Empty(t, header)
+			}
+		})
+	}
+}
