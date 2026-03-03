@@ -211,7 +211,7 @@ func run() error {
 	if err != nil {
 		metrics.TelemetryInitFailed.Set(1)
 		if cliConfig.OTelRequired {
-			log.Fatalw("OpenTelemetry initialization failed and --otel-required is set", "error", err)
+			return fmt.Errorf("OpenTelemetry initialization failed (--otel-required): %w", err)
 		}
 		log.Warnw("OpenTelemetry initialization failed, tracing disabled", "error", err)
 		otelShutdown = func(context.Context) error { return nil }
