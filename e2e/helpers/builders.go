@@ -838,6 +838,16 @@ func (b *ClusterConfigBuilder) WithOIDCFromIdentityProvider(idpName, server stri
 	return b
 }
 
+// WithOIDCFromIDPInsecureSkipTLSVerify sets insecure TLS verification on OIDCFromIdentityProvider (for testing only).
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPInsecureSkipTLSVerify(skip bool) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.InsecureSkipTLSVerify = skip
+	return b
+}
+
 // WithOIDCFromIDPRefreshToken sets the refresh token secret reference on OIDCFromIdentityProvider.
 // Must be called after WithOIDCFromIdentityProvider.
 func (b *ClusterConfigBuilder) WithOIDCFromIDPRefreshToken(secretName, secretNamespace, secretKey string) *ClusterConfigBuilder {

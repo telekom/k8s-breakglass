@@ -294,6 +294,18 @@ func GetKeycloakServiceAccountSecret() string {
 	return getEnvOrDefault("KEYCLOAK_SERVICE_ACCOUNT_SECRET", "breakglass-group-sync-secret")
 }
 
+// GetE2EOIDCClientID returns the client ID for the E2E OIDC test client.
+// This client has directAccessGrantsEnabled=true (supports password grants for
+// offline refresh token acquisition) and token.exchange.standard.enabled=true.
+func GetE2EOIDCClientID() string {
+	return getEnvOrDefault("E2E_OIDC_CLIENT_ID", "breakglass-e2e-oidc")
+}
+
+// GetE2EOIDCClientSecret returns the client secret for the E2E OIDC test client.
+func GetE2EOIDCClientSecret() string {
+	return getEnvOrDefault("E2E_OIDC_CLIENT_SECRET", "breakglass-e2e-oidc-secret")
+}
+
 // OIDCClientConfig holds the configuration for an OIDC client.
 // It can represent either a public client (no secret, uses PKCE/kubelogin)
 // or a confidential client (with secret, uses client credentials flow).

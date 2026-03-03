@@ -86,6 +86,19 @@ func (e *tokenRequestError) isNonRetryable() bool {
 	return e.StatusCode >= 400 && e.StatusCode < 500 && e.StatusCode != http.StatusTooManyRequests
 }
 
+// E2EOIDCProvider returns an OIDC provider configured with the E2E test client
+// (breakglass-e2e-oidc). This client has directAccessGrantsEnabled=true for
+// password grants and token.exchange.standard.enabled=true for RFC 8693 flows.
+func E2EOIDCProvider() *OIDCTokenProvider {
+	return &OIDCTokenProvider{
+		KeycloakHost: getEnvOrDefault("KEYCLOAK_HOST", "http://localhost:8180"),
+		Realm:        getEnvOrDefault("KEYCLOAK_REALM", "breakglass-e2e"),
+		ClientID:     GetE2EOIDCClientID(),
+		ClientSecret: GetE2EOIDCClientSecret(),
+		IssuerHost:   getEnvOrDefault("KEYCLOAK_ISSUER_HOST", ""),
+	}
+}
+
 // GetToken retrieves an OIDC token for the specified user.
 // Uses the e2e/get-token.sh script if available, otherwise uses direct HTTP.
 // The HTTP path retries with exponential backoff to tolerate transient Keycloak
@@ -340,6 +353,72 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshToken(t *testing.T, ctx context.
 // ObtainOfflineRefreshTokenForUser gets an offline refresh token for a specific TestUser
 func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenForUser(t *testing.T, ctx context.Context, user TestUser) string {
 	return p.ObtainOfflineRefreshToken(t, ctx, user.Username, user.Password)
+}
+
+// ObtainClientCredentialsToken performs a client_credentials grant to obtain an access
+// token. This is useful for obtaining a "subject token" that can be exchanged via RFC 8693
+// token exchange. Requires the provider to be configured with a confidential client that
+// has serviceAccountsEnabled=true (e.g., breakglass-group-sync).
+func (p *OIDCTokenProvider) ObtainClientCredentialsToken(t *testing.T, ctx context.Context) string {
+	keycloakHost := p.KeycloakHost
+	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
+		keycloakHost = "https://" + keycloakHost
+	}
+
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", keycloakHost, p.Realm)
+
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {p.ClientID},
+		"client_secret": {p.ClientSecret},
+	}
+
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
+			},
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	require.NoError(t, err, "Failed to create client_credentials token request")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if p.IssuerHost != "" {
+		req.Host = p.IssuerHost
+	}
+
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err, "Failed to send client_credentials token request")
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode, "client_credentials token request failed")
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&tokenResp)
+	require.NoError(t, err, "Failed to decode client_credentials token response")
+	require.NotEmpty(t, tokenResp.AccessToken, "No access_token in client_credentials response")
+
+	return tokenResp.AccessToken
+}
+
+// ServiceAccountProvider returns an OIDC provider configured with the service account
+// client (breakglass-group-sync). This client has serviceAccountsEnabled=true and can
+// perform client_credentials grants to obtain subject tokens for token exchange.
+func ServiceAccountProvider() *OIDCTokenProvider {
+	return &OIDCTokenProvider{
+		KeycloakHost: getEnvOrDefault("KEYCLOAK_HOST", "http://localhost:8180"),
+		Realm:        getEnvOrDefault("KEYCLOAK_REALM", "breakglass-e2e"),
+		ClientID:     GetKeycloakServiceAccountClientID(),
+		ClientSecret: GetKeycloakServiceAccountSecret(),
+		IssuerHost:   getEnvOrDefault("KEYCLOAK_ISSUER_HOST", ""),
+	}
 }
 
 // TokenCache provides a simple in-memory token cache to avoid repeated token requests
