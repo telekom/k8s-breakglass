@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net/http"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -43,6 +44,9 @@ func NewManager(
 	metricsCertKey string,
 	probeAddr string,
 	enableHTTP2 bool,
+	leaderElection bool,
+	leaderElectionID string,
+	leaderElectionNamespace string,
 	log *zap.SugaredLogger,
 ) (ctrl.Manager, error) {
 	tlsOpts := []func(*tls.Config){}
@@ -66,11 +70,13 @@ func NewManager(
 	}
 
 	return ctrl.NewManager(restCfg, ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		HealthProbeBindAddress: probeAddr,
-		WebhookServer:          nil,
-		LeaderElection:         false,
+		Scheme:                  scheme,
+		Metrics:                 metricsServerOptions,
+		HealthProbeBindAddress:  probeAddr,
+		WebhookServer:           nil,
+		LeaderElection:          leaderElection,
+		LeaderElectionID:        leaderElectionID,
+		LeaderElectionNamespace: leaderElectionNamespace,
 		Client: crclient.Options{
 			FieldOwner:      utils.FieldOwnerController,
 			FieldValidation: metav1.FieldValidationWarn,
@@ -109,7 +115,12 @@ func Setup(
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
 		return fmt.Errorf("failed to add healthz check to reconciler manager: %w", err)
 	}
-	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+	if err := mgr.AddReadyzCheck("informer-sync", func(req *http.Request) error {
+		if !mgr.GetCache().WaitForCacheSync(req.Context()) {
+			return fmt.Errorf("informer cache not synced")
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("failed to add readyz check to reconciler manager: %w", err)
 	}
 	log.Info("Health check handlers registered")

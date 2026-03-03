@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Reconciler: meaningful readiness probe** ([#460](https://github.com/telekom/k8s-breakglass/issues/460)): Replaced readyz "ping" with informer cache sync check — readiness now reflects whether the controller-runtime cache is warmed
+- **Reconciler: controller-runtime leader election** ([#464](https://github.com/telekom/k8s-breakglass/issues/464)): Reconciler manager now participates in leader election (when enabled) to prevent writes from non-leader replicas
+- **Extracted `resolveLeaseNamespace` helper** in `cmd/main.go` to DRY two inline namespace resolution blocks
 - **SessionManager pointer receivers** ([#471](https://github.com/telekom/k8s-breakglass/issues/471), [#474](https://github.com/telekom/k8s-breakglass/issues/474) GO-011): Changed all 14 `SessionManager` methods from value to pointer receivers for correctness with pointer fields
 - **Deprecated `NewSessionManager`** ([#471](https://github.com/telekom/k8s-breakglass/issues/471)): Marked `NewSessionManager(contextName)` deprecated in favor of `NewSessionManagerWithClient` for explicit caching behavior
 - **Logger fallback warning** ([#466](https://github.com/telekom/k8s-breakglass/issues/466)): `SessionManager.getLogger()` now logs a warning when falling back to the global logger

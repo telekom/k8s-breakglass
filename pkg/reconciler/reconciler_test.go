@@ -71,6 +71,7 @@ func TestNewManager(t *testing.T) {
 				"", // metricsCertKey
 				tt.probeAddr,
 				tt.enableHTTP2,
+				false, "", "",
 				log,
 			)
 
@@ -103,6 +104,7 @@ func TestNewManager_WithMetricsCertificates(t *testing.T) {
 		"tls.key",    // metricsCertKey
 		"0",          // probeAddr disabled to avoid port conflicts
 		false,
+		false, "", "",
 		log,
 	)
 
@@ -127,6 +129,7 @@ func TestNewManager_HTTP2Disabled(t *testing.T) {
 		"", "", "",
 		"0",   // probeAddr disabled to avoid port conflicts
 		false, // HTTP/2 disabled
+		false, "", "",
 		log,
 	)
 
@@ -186,6 +189,7 @@ func TestNewManager_MetricsServerOptions(t *testing.T) {
 				tt.certKey,
 				"0", // probeAddr disabled
 				true,
+				false, "", "",
 				log,
 			)
 
@@ -228,6 +232,7 @@ func TestNewManager_ProbeAddressConfigurations(t *testing.T) {
 				"", "", "",
 				tt.probeAddr,
 				false,
+				false, "", "",
 				log,
 			)
 
@@ -251,6 +256,7 @@ func TestNewManager_SchemeVariations(t *testing.T) {
 			"", "", "",
 			"0",
 			false,
+			false, "", "",
 			log,
 		)
 
@@ -272,6 +278,7 @@ func TestNewManager_SchemeVariations(t *testing.T) {
 			"", "", "",
 			"0",
 			false,
+			false, "", "",
 			log,
 		)
 
@@ -341,6 +348,7 @@ func TestNewManager_RestConfigVariations(t *testing.T) {
 				"", "", "",
 				"0",
 				false,
+				false, "", "",
 				log,
 			)
 
