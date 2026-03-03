@@ -372,6 +372,10 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 		return ccc.handleOIDCAuthError(ctx, cc, restCfg, err, lg)
 	}
 
+	// Auth succeeded without degradation — clear any stale DegradedAuth/RefreshTokenExpired
+	// conditions from previous check cycles so operators see recovery.
+	ccc.clearOIDCDegradedConditions(ctx, cc, lg)
+
 	return restCfg, nil
 }
 
@@ -462,6 +466,25 @@ func (ccc ClusterConfigChecker) handleOIDCAuthError(ctx context.Context, cc *bre
 		lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 	}
 	return nil, err
+}
+
+// clearOIDCDegradedConditions clears DegradedAuth and RefreshTokenExpired
+// conditions when OIDC auth succeeds without degradation. This prevents stale
+// conditions from persisting after recovery (e.g., refresh token rotation).
+func (ccc ClusterConfigChecker) clearOIDCDegradedConditions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, lg *zap.SugaredLogger) {
+	for _, condType := range []breakglassv1alpha1.ClusterConfigConditionType{
+		breakglassv1alpha1.ClusterConfigConditionDegradedAuth,
+		breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired,
+	} {
+		if err := ccc.setCondition(ctx, cc,
+			condType,
+			metav1.ConditionFalse,
+			breakglassv1alpha1.ClusterConfigReasonAuthRecovered,
+			"OIDC auth recovered; primary credentials are healthy",
+			corev1.EventTypeNormal, lg); err != nil {
+			lg.Warnw("failed to clear condition on recovery", "cluster", cc.Name, "condition", condType, "error", err)
+		}
+	}
 }
 
 // setCondition sets a specific (non-Ready) condition on the ClusterConfig.
@@ -599,6 +622,10 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 		// Handle typed errors for more specific conditions
 		return ccc.handleOIDCAuthError(ctx, cc, restCfg, err, lg)
 	}
+
+	// Auth succeeded without degradation — clear any stale DegradedAuth/RefreshTokenExpired
+	// conditions from previous check cycles so operators see recovery.
+	ccc.clearOIDCDegradedConditions(ctx, cc, lg)
 
 	return restCfg, nil
 }

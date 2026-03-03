@@ -58,6 +58,7 @@ const (
 	ClusterConfigReasonClusterUnreachable ClusterConfigConditionReason = "ClusterUnreachable"
 	ClusterConfigReasonTOFUFailed         ClusterConfigConditionReason = "TOFUFailed"
 	ClusterConfigReasonValidationFailed   ClusterConfigConditionReason = "ValidationFailed"
+	ClusterConfigReasonAuthRecovered      ClusterConfigConditionReason = "AuthRecovered"
 )
 
 // UserIdentifierClaimType specifies which OIDC claim to use for identifying users.

@@ -28,10 +28,16 @@ PROCESS_WAIT=${PROCESS_WAIT:-20}
 # Keycloak configuration
 _KEYCLOAK_HOST_RAW=${KEYCLOAK_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local}
 if [[ "$_KEYCLOAK_HOST_RAW" =~ ^https?:// ]]; then
+  KEYCLOAK_SCHEME=$(echo "$_KEYCLOAK_HOST_RAW" | grep -oE '^https?')
   _HOST_PORT=$(echo "$_KEYCLOAK_HOST_RAW" | sed -E 's|^https?://||')
   KEYCLOAK_HOST=$(echo "$_HOST_PORT" | cut -d: -f1)
-  KEYCLOAK_PORT=$(echo "$_HOST_PORT" | cut -d: -f2)
-  KEYCLOAK_SCHEME=$(echo "$_KEYCLOAK_HOST_RAW" | grep -oE '^https?')
+  if [[ "$_HOST_PORT" == *:* ]]; then
+    KEYCLOAK_PORT=$(echo "$_HOST_PORT" | cut -d: -f2)
+  elif [[ "$KEYCLOAK_SCHEME" == "https" ]]; then
+    KEYCLOAK_PORT=${KEYCLOAK_PORT:-8443}
+  else
+    KEYCLOAK_PORT=${KEYCLOAK_PORT:-8080}
+  fi
 else
   KEYCLOAK_HOST="$_KEYCLOAK_HOST_RAW"
   KEYCLOAK_PORT=${KEYCLOAK_PORT:-8443}
@@ -407,10 +413,9 @@ EOF
   if echo "$result" | grep -qi "mutually exclusive\|denied\|invalid\|forbidden"; then
     log_pass "OI-005: Webhook correctly rejects mutually exclusive fields"
   else
-    # Resource may have been created (webhook might allow both with fallback semantics)
-    # Check admission warnings
+    # Resource was NOT rejected — the webhook should have denied it
     log "  result: $result"
-    log_pass "OI-005: Webhook processed field combination (check warnings)"
+    log_fail "OI-005: Webhook did not reject mutually exclusive fields (refreshTokenSecretRef + clientSecretRef)"
   fi
 }
 

@@ -27,10 +27,16 @@ PROCESS_WAIT=${PROCESS_WAIT:-20}
 _KEYCLOAK_HOST_RAW=${KEYCLOAK_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local}
 if [[ "$_KEYCLOAK_HOST_RAW" =~ ^https?:// ]]; then
   # KEYCLOAK_HOST contains a full URL - extract just host:port
+  KEYCLOAK_SCHEME=$(echo "$_KEYCLOAK_HOST_RAW" | grep -oE '^https?')
   _HOST_PORT=$(echo "$_KEYCLOAK_HOST_RAW" | sed -E 's|^https?://||')
   KEYCLOAK_HOST=$(echo "$_HOST_PORT" | cut -d: -f1)
-  KEYCLOAK_PORT=$(echo "$_HOST_PORT" | cut -d: -f2)
-  KEYCLOAK_SCHEME=$(echo "$_KEYCLOAK_HOST_RAW" | grep -oE '^https?')
+  if [[ "$_HOST_PORT" == *:* ]]; then
+    KEYCLOAK_PORT=$(echo "$_HOST_PORT" | cut -d: -f2)
+  elif [[ "$KEYCLOAK_SCHEME" == "https" ]]; then
+    KEYCLOAK_PORT=${KEYCLOAK_PORT:-8443}
+  else
+    KEYCLOAK_PORT=${KEYCLOAK_PORT:-8080}
+  fi
 else
   KEYCLOAK_HOST="$_KEYCLOAK_HOST_RAW"
   KEYCLOAK_PORT=${KEYCLOAK_PORT:-8443}
