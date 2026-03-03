@@ -49,6 +49,10 @@ func NewManager(
 	leaderElectionNamespace string,
 	log *zap.SugaredLogger,
 ) (ctrl.Manager, error) {
+	if leaderElection && leaderElectionID == "" {
+		return nil, fmt.Errorf("leaderElectionID must not be empty when leader election is enabled")
+	}
+
 	tlsOpts := []func(*tls.Config){}
 	if !enableHTTP2 {
 		tlsOpts = append(tlsOpts, cli.DisableHTTP2)
