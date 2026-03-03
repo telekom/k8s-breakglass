@@ -474,7 +474,6 @@ func (ccc ClusterConfigChecker) setCondition(ctx context.Context, cc *breakglass
 	status metav1.ConditionStatus,
 	reason breakglassv1alpha1.ClusterConfigConditionReason,
 	message string, eventType string, lg *zap.SugaredLogger) error {
-
 	// Re-fetch latest
 	var latest breakglassv1alpha1.ClusterConfig
 	if err := ccc.Client.Get(ctx, client.ObjectKeyFromObject(cc), &latest); err != nil {
