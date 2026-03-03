@@ -772,6 +772,10 @@ func init() {
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics from
 // the controller-runtime registry (which contains all breakglass metrics).
+//
+// Deprecated: Prefer using the controller-runtime metrics endpoint instead,
+// by configuring the metrics bind address on the controller manager, rather
+// than wiring this handler directly into an HTTP server.
 func MetricsHandler() http.Handler {
 	return promhttp.InstrumentMetricHandler(
 		ctrlmetrics.Registry,

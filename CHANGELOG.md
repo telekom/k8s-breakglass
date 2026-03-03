@@ -7,23 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Metrics: removed `session` label from high-cardinality counters** ([#463](https://github.com/telekom/k8s-breakglass/issues/463)): Removed auto-generated session name label from `WebhookSessionSARsAllowed`, `WebhookSessionSARsDenied`, `WebhookSessionSARErrors` to prevent unbounded Prometheus cardinality
-
-### Fixed
-
-- **Metrics: `MetricsHandler()` now uses correct registry** ([#465](https://github.com/telekom/k8s-breakglass/issues/465)): Fixed to serve from `ctrlmetrics.Registry` which contains all breakglass metrics, instead of the default registry which was empty
-
 ### Added
 
 - **CAPI-style patchHelper for cache-aware SSA**: Added `PatchApply*` functions in `pkg/utils/patchhelper.go` (spec) and `api/v1alpha1/applyconfiguration/ssa/patchhelper.go` (status) that read the current state from the informer cache before issuing an SSA Patch. If the owned fields already match, the API call is skipped entirely, saving thousands of no-op PATCH requests per reconciliation cycle. All 48 SSA call sites (7 spec, 2 unstructured, 39 status) are transparently upgraded via delegation from existing `Apply*` functions. Inspired by `cluster-api`'s patchHelper pattern.
 
 ### Changed
 
+- **Metrics: removed `session` label from high-cardinality counters** ([#463](https://github.com/telekom/k8s-breakglass/issues/463)): Removed auto-generated session name label from `WebhookSessionSARsAllowed`, `WebhookSessionSARsDenied`, `WebhookSessionSARErrors` to prevent unbounded Prometheus cardinality
 - **Standardized import alias** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Renamed `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files for consistency with the module path
 - **Added `importas` linter rule** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Configured `importas` in `.golangci.yml` with `no-unaliased: true` to enforce the canonical `breakglassv1alpha1` alias
 - **Removed duplicate scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Deleted dead-code `pkg/config/scheme.go`
+
+### Fixed
+
+- **Metrics: `MetricsHandler()` now uses correct registry** ([#465](https://github.com/telekom/k8s-breakglass/issues/465)): Fixed to serve from `ctrlmetrics.Registry` which contains all breakglass metrics, instead of the default registry which was empty
 
 ### Removed
 

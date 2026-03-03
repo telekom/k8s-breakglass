@@ -1,6 +1,9 @@
 package metrics
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -295,10 +298,28 @@ func TestJWTMetrics(t *testing.T) {
 	})
 }
 
-// TestMetricsHandler verifies the metrics HTTP handler works
+// TestMetricsHandler verifies the metrics HTTP handler works and serves
+// actual breakglass metrics from the controller-runtime registry.
 func TestMetricsHandler(t *testing.T) {
 	handler := MetricsHandler()
 	if handler == nil {
 		t.Fatal("expected MetricsHandler to return non-nil handler")
+	}
+
+	// Increment a known metric so we can assert the handler serves it.
+	SessionCreated.WithLabelValues("test-cluster").Inc()
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	// Verify the response contains at least one known breakglass metric.
+	if !strings.Contains(body, "breakglass_session_created_total") {
+		t.Error("MetricsHandler response should contain breakglass_session_created_total metric")
 	}
 }
