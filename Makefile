@@ -77,17 +77,21 @@ vulncheck: ## Run govulncheck to check for known vulnerabilities.
 fmt: ## Run go fmt against code.
 	go fmt ./...
 
+# Test configuration — override GO_TEST_COUNT='' locally to re-enable caching.
+GO_TEST_COUNT ?= 1
+E2E_EXCLUDE := grep -vE '/e2e($$|/)'
+
 .PHONY: vet
 vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
 test: manifests generate fmt vet ## Run all unit tests (controller + CLI).
-	go test -race -count=1 $$(go list ./... | grep -vE '/e2e($$|/)') -coverprofile cover.out
+	go test -race -count=$(GO_TEST_COUNT) $$(go list ./... | $(E2E_EXCLUDE)) -coverprofile cover.out
 
 .PHONY: test-controller
 test-controller: manifests generate fmt vet ## Run controller unit tests (excludes bgctl and e2e).
-	go test -race -count=1 $$(go list ./... | grep -vE '/e2e($$|/)' | grep -v bgctl) -coverprofile cover-controller.out
+	go test -race -count=$(GO_TEST_COUNT) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
 
 .PHONY: validate-samples
 validate-samples: manifests ## Validate all YAML samples in config/samples against CRD schemas.
