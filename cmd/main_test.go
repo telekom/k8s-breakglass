@@ -93,7 +93,7 @@ func TestAwaitShutdownSignal_Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if err.Error() != expectedErr.Error() {
+	if !errors.Is(err, expectedErr) {
 		t.Errorf("expected error %q, got %q", expectedErr.Error(), err.Error())
 	}
 }
