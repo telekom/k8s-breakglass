@@ -42,7 +42,7 @@ func newPatchTestScheme() *runtime.Scheme {
 // PatchApplyBreakglassSessionStatus
 // ---------------------------------------------------------------------------
 
-func TestPatchApplyBreakglassSessionStatus_Created(t *testing.T) {
+func TestPatchApplyBreakglassSessionStatus_PatchedExisting(t *testing.T) {
 	scheme := newPatchTestScheme()
 	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{

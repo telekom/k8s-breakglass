@@ -26,8 +26,10 @@ import (
 const FieldOwnerController = "breakglass-controller"
 
 // ApplyObject performs a cache-aware server-side apply using the client.Apply() API.
-// It reads the current state from the informer cache and skips the API call if the
-// desired state already matches. This follows the cluster-api patchHelper pattern.
+// When used with a cache-backed controller-runtime client, it reads the current state
+// from the informer cache and skips the API call if the desired state already matches.
+// With an uncached client, the pre-check Get will hit the API server directly.
+// This follows the cluster-api patchHelper pattern.
 //
 // Callers that need the result (skipped/created/patched) should use [PatchApplyObject].
 func ApplyObject(ctx context.Context, c client.Client, obj client.Object) error {
@@ -36,8 +38,10 @@ func ApplyObject(ctx context.Context, c client.Client, obj client.Object) error 
 }
 
 // ApplyUnstructured performs a cache-aware server-side apply on an unstructured object.
-// It reads the current state from the informer cache and skips the API call if the
-// desired state already matches. This follows the cluster-api patchHelper pattern.
+// When used with a cache-backed controller-runtime client, it reads the current state
+// from the informer cache and skips the API call if the desired state already matches.
+// With an uncached client, the pre-check Get will hit the API server directly.
+// This follows the cluster-api patchHelper pattern.
 //
 // Callers that need the result (skipped/created/patched) should use [PatchApplyUnstructured].
 func ApplyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {

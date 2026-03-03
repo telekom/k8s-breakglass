@@ -54,10 +54,13 @@ func (r PatchApplyResult) String() string {
 	}
 }
 
-// PatchApplyObject reads the current object from the controller-runtime informer
-// cache, converts both current and desired to ApplyConfigurations, and only sends
-// an SSA Patch if there is a diff. Returns the result (skipped/created/patched)
-// and any error.
+// PatchApplyObject reads the current object via the provided client, converts both
+// current and desired to ApplyConfigurations, and only sends an SSA Patch if there
+// is a diff. Returns the result (skipped/created/patched) and any error.
+//
+// When used with a cache-backed controller-runtime client the Get is served from
+// the informer cache (a free local operation). With an uncached client the Get
+// will hit the API server directly.
 //
 // This is the cache-aware replacement for [ApplyObject]. Use it in all reconciler
 // paths to avoid unnecessary API server writes.
@@ -116,9 +119,12 @@ func PatchApplyObject(ctx context.Context, c client.Client, obj client.Object) (
 	return PatchApplyResultPatched, nil
 }
 
-// PatchApplyUnstructured reads the current unstructured object from the informer
-// cache, compares spec-level fields, and only sends an SSA Patch if there is a
-// diff. Returns the result (skipped/created/patched) and any error.
+// PatchApplyUnstructured reads the current unstructured object via the provided
+// client, compares all non-metadata top-level fields, and only sends an SSA Patch
+// if there is a diff. Returns the result (skipped/created/patched) and any error.
+//
+// When used with a cache-backed controller-runtime client the Get is served from
+// the informer cache. With an uncached client the Get will hit the API server.
 //
 // This is the cache-aware replacement for [ApplyUnstructured].
 func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured) (PatchApplyResult, error) {
@@ -142,7 +148,7 @@ func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructu
 			obj.GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName(), err)
 	}
 
-	// Compare spec-level fields (ignore metadata differences like resourceVersion).
+	// Compare all non-metadata top-level fields (ignore metadata differences like resourceVersion).
 	if unstructuredSpecEqual(obj, current) {
 		zap.S().Debugw("Unstructured object unchanged, skipping SSA apply",
 			"kind", obj.GroupVersionKind().Kind,
@@ -175,21 +181,24 @@ func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructu
 // [ToApplyConfiguration] function (which uses jsonDecodeInto), the resulting JSON
 // is deterministic and comparable: struct field order is fixed by the Go type
 // definitions, and map key order is sorted by encoding/json.
-func applyConfigsEqual(a, b runtime.ApplyConfiguration) bool {
-	aJSON, err1 := json.Marshal(a)
-	bJSON, err2 := json.Marshal(b)
+//
+// Note: unlike [unstructuredSpecEqual], this uses exact comparison because typed
+// ApplyConfigurations are always built from the same conversion pipeline, so
+// extra/defaulted fields are not a concern.
+func applyConfigsEqual(desired, current runtime.ApplyConfiguration) bool {
+	aJSON, err1 := json.Marshal(desired)
+	bJSON, err2 := json.Marshal(current)
 	if err1 != nil || err2 != nil {
 		return false // Can't compare, assume different.
 	}
 	return bytes.Equal(aJSON, bJSON)
 }
 
-// unstructuredSpecEqual performs a generic subset comparison of two unstructured
-// objects. For every top-level field the desired object declares (excluding
-// server-managed keys like apiVersion, kind, metadata, and status), the current
-// object must have the same value. This covers spec, data, stringData, rules,
-// subjects, roleRef, and any other kind-specific top-level fields without
-// hard-coding a fixed allowlist.
+// unstructuredSpecEqual performs a recursive subset comparison of two
+// unstructured objects. For every top-level field the desired object declares
+// (excluding server-managed keys like apiVersion, kind, metadata, and status),
+// the current object must contain a matching value. Extra fields or map entries
+// in current (e.g. from kubebuilder defaults) are tolerated.
 //
 // For metadata, labels and annotations are compared with a subset match (extra
 // entries in current from other controllers are tolerated).
@@ -202,36 +211,71 @@ func unstructuredSpecEqual(desired, current *unstructured.Unstructured) bool {
 		return false
 	}
 
-	// Compare all non-metadata top-level fields declared by the desired object.
+	// Compare all non-metadata top-level fields declared by the desired object
+	// using recursive subset semantics.
 	for key := range desired.Object {
 		switch key {
 		case "apiVersion", "kind", "metadata", "status":
 			continue // Server-managed or compared separately above.
 		}
-		if !jsonFieldEqual(desired.Object, current.Object, key) {
+		if !jsonFieldSubsetEqual(desired.Object, current.Object, key) {
 			return false
 		}
 	}
 	return true
 }
 
-// jsonFieldEqual compares a single top-level field from two maps by marshaling
-// the field values to JSON and comparing bytes.
-func jsonFieldEqual(a, b map[string]interface{}, field string) bool {
-	aVal, aOK := a[field]
-	bVal, bOK := b[field]
-	if !aOK && !bOK {
+// jsonFieldSubsetEqual checks whether the desired value for a single top-level
+// field is a subset of the current value. For maps this means every key in
+// desired must exist in current with a matching value; for slices and scalars
+// full equality is required.
+func jsonFieldSubsetEqual(desired, current map[string]interface{}, field string) bool {
+	dVal, dOK := desired[field]
+	cVal, cOK := current[field]
+	if !dOK && !cOK {
 		return true // Both missing.
 	}
-	if !aOK || !bOK {
+	if !dOK || !cOK {
 		return false // One missing.
 	}
-	aJSON, err1 := json.Marshal(aVal)
-	bJSON, err2 := json.Marshal(bVal)
-	if err1 != nil || err2 != nil {
-		return false
+	return jsonValueSubsetEqual(dVal, cVal)
+}
+
+// jsonSubsetEqual performs a recursive subset comparison: every key in desired
+// must exist in current with a matching value. Extra keys in current are
+// tolerated (they may come from server defaults or other field owners).
+func jsonSubsetEqual(desired, current map[string]interface{}) bool {
+	for k, dv := range desired {
+		cv, ok := current[k]
+		if !ok {
+			return false
+		}
+		if !jsonValueSubsetEqual(dv, cv) {
+			return false
+		}
 	}
-	return bytes.Equal(aJSON, bJSON)
+	return true
+}
+
+// jsonValueSubsetEqual compares two JSON-decoded values. For maps it recurses
+// with subset semantics; slices and scalars require full equality.
+func jsonValueSubsetEqual(desired, current interface{}) bool {
+	switch dTyped := desired.(type) {
+	case map[string]interface{}:
+		cTyped, ok := current.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		return jsonSubsetEqual(dTyped, cTyped)
+	default:
+		// For slices and scalars, use JSON serialization for deterministic comparison.
+		dJSON, err1 := json.Marshal(desired)
+		cJSON, err2 := json.Marshal(current)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		return bytes.Equal(dJSON, cJSON)
+	}
 }
 
 // mapSubsetMatch returns true if all entries in desired exist with the same value

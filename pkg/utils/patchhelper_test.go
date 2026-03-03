@@ -429,29 +429,84 @@ func TestMapSubsetMatch_DifferentValue(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// jsonFieldEqual
+// jsonFieldSubsetEqual / jsonSubsetEqual / jsonValueSubsetEqual
 // ---------------------------------------------------------------------------
 
-func TestJsonFieldEqual_BothMissing(t *testing.T) {
+func TestJsonFieldSubsetEqual_BothMissing(t *testing.T) {
 	a := map[string]interface{}{"other": "value"}
 	b := map[string]interface{}{"other": "value"}
-	assert.True(t, jsonFieldEqual(a, b, "spec"))
+	assert.True(t, jsonFieldSubsetEqual(a, b, "spec"))
 }
 
-func TestJsonFieldEqual_OneMissing(t *testing.T) {
+func TestJsonFieldSubsetEqual_OneMissing(t *testing.T) {
 	a := map[string]interface{}{"spec": map[string]interface{}{"x": 1}}
 	b := map[string]interface{}{}
-	assert.False(t, jsonFieldEqual(a, b, "spec"))
+	assert.False(t, jsonFieldSubsetEqual(a, b, "spec"))
 }
 
-func TestJsonFieldEqual_Equal(t *testing.T) {
+func TestJsonFieldSubsetEqual_Equal(t *testing.T) {
 	a := map[string]interface{}{"spec": map[string]interface{}{"x": float64(1)}}
 	b := map[string]interface{}{"spec": map[string]interface{}{"x": float64(1)}}
-	assert.True(t, jsonFieldEqual(a, b, "spec"))
+	assert.True(t, jsonFieldSubsetEqual(a, b, "spec"))
 }
 
-func TestJsonFieldEqual_Different(t *testing.T) {
+func TestJsonFieldSubsetEqual_Different(t *testing.T) {
 	a := map[string]interface{}{"spec": map[string]interface{}{"x": float64(1)}}
 	b := map[string]interface{}{"spec": map[string]interface{}{"x": float64(2)}}
-	assert.False(t, jsonFieldEqual(a, b, "spec"))
+	assert.False(t, jsonFieldSubsetEqual(a, b, "spec"))
+}
+
+func TestJsonSubsetEqual_SubsetMatch(t *testing.T) {
+	desired := map[string]interface{}{"x": float64(1)}
+	current := map[string]interface{}{"x": float64(1), "y": float64(2)}
+	assert.True(t, jsonSubsetEqual(desired, current))
+}
+
+func TestJsonSubsetEqual_NestedSubsetMatch(t *testing.T) {
+	desired := map[string]interface{}{
+		"spec": map[string]interface{}{"replicas": float64(3)},
+	}
+	current := map[string]interface{}{
+		"spec": map[string]interface{}{"replicas": float64(3), "selector": "default"},
+	}
+	assert.True(t, jsonSubsetEqual(desired, current))
+}
+
+func TestJsonSubsetEqual_NestedDifference(t *testing.T) {
+	desired := map[string]interface{}{
+		"spec": map[string]interface{}{"replicas": float64(3)},
+	}
+	current := map[string]interface{}{
+		"spec": map[string]interface{}{"replicas": float64(5), "selector": "default"},
+	}
+	assert.False(t, jsonSubsetEqual(desired, current))
+}
+
+func TestJsonSubsetEqual_MissingInCurrent(t *testing.T) {
+	desired := map[string]interface{}{"x": float64(1), "y": float64(2)}
+	current := map[string]interface{}{"x": float64(1)}
+	assert.False(t, jsonSubsetEqual(desired, current))
+}
+
+func TestJsonValueSubsetEqual_ScalarEqual(t *testing.T) {
+	assert.True(t, jsonValueSubsetEqual(float64(1), float64(1)))
+	assert.True(t, jsonValueSubsetEqual("hello", "hello"))
+	assert.True(t, jsonValueSubsetEqual(true, true))
+}
+
+func TestJsonValueSubsetEqual_ScalarDifferent(t *testing.T) {
+	assert.False(t, jsonValueSubsetEqual(float64(1), float64(2)))
+	assert.False(t, jsonValueSubsetEqual("hello", "world"))
+}
+
+func TestJsonValueSubsetEqual_SliceEqual(t *testing.T) {
+	a := []interface{}{float64(1), float64(2)}
+	b := []interface{}{float64(1), float64(2)}
+	assert.True(t, jsonValueSubsetEqual(a, b))
+}
+
+func TestJsonValueSubsetEqual_SliceDifferent(t *testing.T) {
+	a := []interface{}{float64(1), float64(2)}
+	b := []interface{}{float64(1), float64(3)}
+	assert.False(t, jsonValueSubsetEqual(a, b))
 }
