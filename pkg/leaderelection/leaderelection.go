@@ -13,11 +13,18 @@ import (
 func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct{}, resourceLock resourcelock.Interface,
 	hostname, leaseName, leaseNamespace string, log *zap.SugaredLogger) {
 	defer wg.Done()
+
+	// Protect concurrent access to *leaderElectedCh from OnStartedLeading
+	// and OnStoppedLeading callbacks, which may run on different goroutines.
+	var chMu sync.Mutex
+
 	// Create callbacks for leader election
 	leaderCallbacks := leaderelection.LeaderCallbacks{
 		OnStartedLeading: func(ctx context.Context) {
 			log.Infow("This replica acquired leadership, signaling background loops")
 			// Signal background loops that we're the leader
+			chMu.Lock()
+			defer chMu.Unlock()
 			select {
 			case <-*leaderElectedCh:
 				// Already closed, we've signaled leadership
@@ -27,7 +34,11 @@ func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct
 		},
 		OnStoppedLeading: func() {
 			log.Infow("Lost leadership")
-			// Recreate the channel for the next leader to use
+			// Recreate the channel for the next leader to use.
+			// Note: listeners that already captured the old channel value
+			// will not see this new channel — they remain unblocked.
+			chMu.Lock()
+			defer chMu.Unlock()
 			*leaderElectedCh = make(chan struct{})
 		},
 		OnNewLeader: func(identity string) {

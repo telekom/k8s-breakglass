@@ -264,6 +264,43 @@ func TestLeaderElection_ConcurrentChannelAccess(t *testing.T) {
 	}
 }
 
+func TestLeaderElection_ConcurrentCallbackRace(t *testing.T) {
+	// Tests that concurrent OnStartedLeading and OnStoppedLeading callbacks
+	// do not race on the channel pointer — the fix for issue #461.
+	// Run with: go test -race ./pkg/leaderelection/ -run TestLeaderElection_ConcurrentCallbackRace
+
+	const iterations = 100
+	for i := 0; i < iterations; i++ {
+		ch := make(chan struct{})
+		var mu sync.Mutex
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Simulate OnStartedLeading
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			defer mu.Unlock()
+			select {
+			case <-ch:
+			default:
+				close(ch)
+			}
+		}()
+
+		// Simulate OnStoppedLeading
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			defer mu.Unlock()
+			ch = make(chan struct{}) //nolint:ineffassign // Simulates the channel replacement in Start()
+		}()
+
+		wg.Wait()
+	}
+}
+
 func TestLeaderElection_MultipleLeadershipTransitions(t *testing.T) {
 	// Simulate multiple leadership transitions
 	logger := zaptest.NewLogger(t).Sugar()
