@@ -83,11 +83,11 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet ## Run all unit tests (controller + CLI).
-	go test -race $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	go test -race -count=1 $$(go list ./... | grep -vE '/e2e($$|/)') -coverprofile cover.out
 
 .PHONY: test-controller
 test-controller: manifests generate fmt vet ## Run controller unit tests (excludes bgctl and e2e).
-	go test -race $$(go list ./... | grep -v /e2e | grep -v bgctl) -coverprofile cover-controller.out
+	go test -race -count=1 $$(go list ./... | grep -vE '/e2e($$|/)' | grep -v bgctl) -coverprofile cover-controller.out
 
 .PHONY: validate-samples
 validate-samples: manifests ## Validate all YAML samples in config/samples against CRD schemas.

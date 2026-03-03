@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
+- **Dockerfile: fragile single-file COPY** ([#474](https://github.com/telekom/k8s-breakglass/issues/474)): Changed `COPY cmd/main.go cmd/main.go` to `COPY cmd/ cmd/` so new files added to `cmd/` are automatically included in builds
+- **Makefile: imprecise e2e exclusion grep** ([#474](https://github.com/telekom/k8s-breakglass/issues/474)): Changed `grep -v /e2e` to `grep -vE '/e2e($|/)'` to prevent false exclusion of packages containing "e2e" in their name; added `-count=1` to disable test caching
 
 ### Added
 
