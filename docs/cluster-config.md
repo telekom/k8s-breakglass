@@ -481,7 +481,7 @@ spec:
         name: subject-token
         namespace: breakglass-system
         key: token
-      audience: kubernetes
+    audience: kubernetes
 ```
 
 | Field | Required | Description |
