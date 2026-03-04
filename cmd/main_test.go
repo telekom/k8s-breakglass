@@ -98,12 +98,13 @@ func TestAwaitShutdownSignal_Error(t *testing.T) {
 	}
 }
 
-func TestAwaitShutdownSignal_SignalWinsRace(t *testing.T) {
+func TestAwaitShutdownSignal_SignalOnlyChannel(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	sigChan := make(chan os.Signal, 1)
 	errCh := make(chan error)
 
-	// Signal channel is buffered, send signal first
+	// Only signal channel is ready; errCh is unbuffered and empty.
+	// Verifies that the function returns nil when only a signal is received.
 	sigChan <- os.Interrupt
 
 	// Try multiple times to ensure consistent behavior
