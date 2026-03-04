@@ -15,7 +15,9 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   {{- if hasKey .Values.pdb "maxUnavailable" }}
   maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+  {{- else if hasKey .Values.pdb "minAvailable" }}
+  minAvailable: {{ .Values.pdb.minAvailable }}
   {{- else }}
-  minAvailable: {{ .Values.pdb.minAvailable | default 1 }}
+  minAvailable: 1
   {{- end }}
 {{- end }}
