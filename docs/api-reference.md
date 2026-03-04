@@ -789,22 +789,19 @@ GET /api/debug/buildinfo
 ```json
 {
   "version": "v0.1.0",
-  "gitCommit": "abc1234",
-  "buildDate": "2024-01-15T10:00:00Z",
-  "goVersion": "go1.23.0",
-  "platform": "linux/amd64",
-  "buildTime": "2024-01-15T10:00:00Z"
+  "buildDate": "2024-01-15T10:00:00Z"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `version` | string | Release version (or `"dev"` for local builds) |
-| `gitCommit` | string | Git commit SHA at build time |
-| `buildDate` | string | Build date string |
-| `goVersion` | string | Go compiler version |
-| `platform` | string | Target OS/architecture |
-| `buildTime` | string (optional) | Build timestamp (RFC3339). Present only when `buildDate` is a valid RFC3339 timestamp; omitted otherwise. |
+| `buildDate` | string | Build date string (RFC3339 when set at compile time, empty for dev builds) |
+
+> **Note:** The build info endpoint intentionally exposes only `version` and `buildDate`.
+> Fields like `gitCommit`, `goVersion`, and `platform` are omitted to reduce the
+> fingerprinting surface available to unauthenticated callers.
+> See [Security Best Practices](./security-best-practices.md#build-info-endpoint) for details.
 
 ---
 
