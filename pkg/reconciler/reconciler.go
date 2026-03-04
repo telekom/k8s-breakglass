@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -49,7 +50,7 @@ func NewManager(
 	leaderElectionNamespace string,
 	log *zap.SugaredLogger,
 ) (ctrl.Manager, error) {
-	if leaderElection && leaderElectionID == "" {
+	if leaderElection && strings.TrimSpace(leaderElectionID) == "" {
 		return nil, fmt.Errorf("leaderElectionID must not be empty when leader election is enabled")
 	}
 

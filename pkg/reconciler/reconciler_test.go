@@ -362,3 +362,66 @@ func TestNewManager_RestConfigVariations(t *testing.T) {
 		})
 	}
 }
+
+func TestNewManager_LeaderElectionIDValidation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+	log := zap.NewNop().Sugar()
+
+	tests := []struct {
+		name               string
+		leaderElection     bool
+		leaderElectionID   string
+		expectError        bool
+		expectedErrContain string
+	}{
+		{
+			name:               "leader election enabled with empty ID",
+			leaderElection:     true,
+			leaderElectionID:   "",
+			expectError:        true,
+			expectedErrContain: "leaderElectionID must not be empty",
+		},
+		{
+			name:               "leader election enabled with whitespace-only ID",
+			leaderElection:     true,
+			leaderElectionID:   "   ",
+			expectError:        true,
+			expectedErrContain: "leaderElectionID must not be empty",
+		},
+		{
+			name:             "leader election disabled with empty ID is acceptable",
+			leaderElection:   false,
+			leaderElectionID: "",
+			expectError:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, err := NewManager(
+				&rest.Config{Host: "https://localhost:6443"},
+				scheme,
+				"0",    // metricsAddr (disabled)
+				false,  // metricsSecure
+				"", "", "", // metricsCertPath, metricsCertName, metricsCertKey
+				"0",    // probeAddr (disabled)
+				false,  // enableHTTP2
+				tt.leaderElection, tt.leaderElectionID, "default",
+				log,
+			)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, mgr)
+				if tt.expectedErrContain != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrContain)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, mgr)
+			}
+		})
+	}
+}
