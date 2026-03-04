@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -349,13 +350,13 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	verifiedParser := jwt.NewParser(parserOpts...)
 	token, err := verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 	if err != nil {
-		// Record failure with reason
+		// Record failure with reason using typed errors from jwt/v5.
 		failureReason := "verification_failed"
-		if strings.Contains(err.Error(), "key ID") {
+		if errors.Is(err, jwt.ErrTokenUnverifiable) {
 			failureReason = "key_id_not_found"
-		} else if strings.Contains(err.Error(), "signature") {
+		} else if errors.Is(err, jwt.ErrTokenSignatureInvalid) {
 			failureReason = "invalid_signature"
-		} else if strings.Contains(err.Error(), "expired") {
+		} else if errors.Is(err, jwt.ErrTokenExpired) {
 			failureReason = "token_expired"
 		}
 		metrics.JWTValidationFailure.WithLabelValues(issuer, failureReason).Inc()
