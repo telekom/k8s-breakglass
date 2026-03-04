@@ -64,9 +64,9 @@ sum(rate(breakglass_webhook_sar_decisions_by_action_total{decision="denied"}[5m]
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `breakglass_webhook_session_sar_allowed_total` | Counter | `cluster`, `session`, `group` | Session grants that allowed access |
-| `breakglass_webhook_session_sar_denied_total` | Counter | `cluster`, `session`, `group` | Session grants that denied access |
-| `breakglass_webhook_session_sar_errors_total` | Counter | `cluster`, `session`, `group` | Errors checking session grants |
+| `breakglass_webhook_session_sar_allowed_total` | Counter | `cluster`, `group` | Session grants that allowed access |
+| `breakglass_webhook_session_sar_denied_total` | Counter | `cluster`, `group` | Session grants that denied access |
+| `breakglass_webhook_session_sar_errors_total` | Counter | `cluster`, `group` | Errors checking session grants |
 | `breakglass_webhook_session_sars_skipped_total` | Counter | `cluster` | Session checks skipped (e.g., due to config errors) |
 
 ### Session Activity Tracking
