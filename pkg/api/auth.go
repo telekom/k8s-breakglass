@@ -585,6 +585,7 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 	verifiedParser := jwt.NewParser(
 		jwt.WithValidMethods(allowedJWTAlgs),
 		jwt.WithIssuedAt(),
+		jwt.WithExpirationRequired(), // SEC-005: consistent with authenticate()
 	)
 	_, err = verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 	if err != nil {
