@@ -426,6 +426,10 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 // This avoids creating a new Clientset on every SubjectAccessReview, pod fetch, or
 // namespace label lookup — all of which are hot paths in the webhook controller.
 func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubernetes.Clientset, error) {
+	if name == "" {
+		return nil, fmt.Errorf("cluster name must not be empty")
+	}
+
 	now := time.Now()
 
 	// Determine cache key (same logic as GetRESTConfig)
