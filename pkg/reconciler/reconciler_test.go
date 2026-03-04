@@ -199,6 +199,81 @@ func TestNewManager_MetricsServerOptions(t *testing.T) {
 	}
 }
 
+func TestNewManager_LeaderElectionValidation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	log := zap.NewNop().Sugar()
+
+	tests := []struct {
+		name        string
+		enabled     bool
+		id          string
+		namespace   string
+		expectError bool
+		errContains string
+	}{
+		{
+			name:        "leader election disabled with empty ID is valid",
+			enabled:     false,
+			id:          "",
+			namespace:   "",
+			expectError: false,
+		},
+		{
+			name:        "leader election enabled with valid ID",
+			enabled:     true,
+			id:          "my-lease",
+			namespace:   "default",
+			expectError: false,
+		},
+		{
+			name:        "leader election enabled with empty ID returns error",
+			enabled:     true,
+			id:          "",
+			namespace:   "default",
+			expectError: true,
+			errContains: "leaderElectionID must not be empty",
+		},
+		{
+			name:        "leader election enabled with whitespace-only ID returns error",
+			enabled:     true,
+			id:          "   ",
+			namespace:   "default",
+			expectError: true,
+			errContains: "leaderElectionID must not be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, mgrErr := NewManager(
+				&rest.Config{Host: "https://localhost:6443"},
+				scheme,
+				"0",   // metricsAddr
+				false, // metricsSecure
+				"", "", "", // cert path/name/key
+				"0",   // probeAddr
+				false, // enableHTTP2
+				tt.enabled, tt.id, tt.namespace,
+				log,
+			)
+
+			if tt.expectError {
+				assert.Error(t, mgrErr)
+				assert.Nil(t, mgr)
+				if tt.errContains != "" {
+					assert.Contains(t, mgrErr.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, mgrErr)
+				assert.NotNil(t, mgr)
+			}
+		})
+	}
+}
+
 func TestNewManager_ProbeAddressConfigurations(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := breakglassv1alpha1.AddToScheme(scheme)

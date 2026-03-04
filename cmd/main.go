@@ -236,9 +236,13 @@ func run() error {
 		return fmt.Errorf("create uncached kubernetes client: %w", err)
 	}
 
+	// Reconciler manager runs WITHOUT leader election — reconcilers (e.g. IdentityProvider)
+	// run on all replicas as documented. Leader election is handled separately for background
+	// loops via leaderelection.Start(). Using a separate lease here would risk split-brain
+	// where different replicas lead reconcilers vs background loops.
 	reconcilerMgr, err := reconciler.NewManager(restConfig, scheme, cliConfig.MetricsAddr, cliConfig.MetricsSecure,
 		cliConfig.MetricsCertPath, cliConfig.MetricsCertName, cliConfig.MetricsCertKey, cliConfig.ProbeAddr, cliConfig.EnableHTTP2,
-		cliConfig.EnableLeaderElection, cliConfig.LeaderElectID+"-reconciler", resolveLeaseNamespace(cliConfig), log)
+		false, "", "", log)
 	if err != nil {
 		return fmt.Errorf("create controller-runtime manager: %w", err)
 	}
