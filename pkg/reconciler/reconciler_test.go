@@ -251,8 +251,8 @@ func TestNewManager_LeaderElectionValidation(t *testing.T) {
 			mgr, mgrErr := NewManager(
 				&rest.Config{Host: "https://localhost:6443"},
 				scheme,
-				"0",   // metricsAddr
-				false, // metricsSecure
+				"0",        // metricsAddr
+				false,      // metricsSecure
 				"", "", "", // cert path/name/key
 				"0",   // probeAddr
 				false, // enableHTTP2
@@ -478,11 +478,11 @@ func TestNewManager_LeaderElectionIDValidation(t *testing.T) {
 			mgr, err := NewManager(
 				&rest.Config{Host: "https://localhost:6443"},
 				scheme,
-				"0",    // metricsAddr (disabled)
-				false,  // metricsSecure
+				"0",        // metricsAddr (disabled)
+				false,      // metricsSecure
 				"", "", "", // metricsCertPath, metricsCertName, metricsCertKey
-				"0",    // probeAddr (disabled)
-				false,  // enableHTTP2
+				"0",   // probeAddr (disabled)
+				false, // enableHTTP2
 				tt.leaderElection, tt.leaderElectionID, "default",
 				log,
 			)
