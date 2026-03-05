@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **WebhookController functional options** ([#470](https://github.com/telekom/k8s-breakglass/issues/470)): Added `Option` type and functional option constructors (`WithPodFetchFunc`, `WithNamespaceLabelsFetchFunc`, `WithCanDoFunc`) to `NewWebhookController`, enabling dependency injection and testability without modifying the public constructor signature
+- **WebhookController functional options** ([#470](https://github.com/telekom/k8s-breakglass/issues/470)): Added `Option` type and functional option constructors (`WithPodFetchFunc`, `WithNamespaceLabelsFetchFunc`, `WithCanDoFunc`) and updated `NewWebhookController` to accept `opts ...Option`, enabling dependency injection and testability via functional options
 - **Test coverage for `awaitShutdownSignal`** ([#469](https://github.com/telekom/k8s-breakglass/issues/469)): Added 3 unit tests in `cmd/main_test.go` covering signal-handling, error-propagation, and signal-only-channel scenarios; added 2 tests in `pkg/webhook/webhook_controller_test.go` verifying functional option injection and default initialization
 - **CAPI-style patchHelper for cache-aware SSA**: Added `PatchApply*` functions in `pkg/utils/patchhelper.go` (spec) and `api/v1alpha1/applyconfiguration/ssa/patchhelper.go` (status) that read the current state from the informer cache before issuing an SSA Patch. If the owned fields already match, the API call is skipped entirely, saving thousands of no-op PATCH requests per reconciliation cycle. All 48 SSA call sites (7 spec, 2 unstructured, 39 status) are transparently upgraded via delegation from existing `Apply*` functions. Inspired by `cluster-api`'s patchHelper pattern.
 

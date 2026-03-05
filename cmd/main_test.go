@@ -94,17 +94,18 @@ func TestAwaitShutdownSignal_Error(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	if !errors.Is(err, expectedErr) {
-		t.Errorf("expected error %q, got %q", expectedErr.Error(), err.Error())
+		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 }
 
-func TestAwaitShutdownSignal_SignalOnlyChannel(t *testing.T) {
+func TestAwaitShutdownSignal_SignalWithUnbufferedErrorChannel(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	sigChan := make(chan os.Signal, 1)
 	errCh := make(chan error)
 
-	// Only signal channel is ready; errCh is unbuffered and empty.
-	// Verifies that the function returns nil when only a signal is received.
+	// errCh is unbuffered and empty, so only the signal path is selectable.
+	// Verifies that the function returns nil when only a signal is received,
+	// even when the error channel is present but not ready.
 	sigChan <- os.Interrupt
 
 	// Try multiple times to ensure consistent behavior

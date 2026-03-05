@@ -636,10 +636,10 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 
 // Option is a functional option for configuring WebhookController.
 // Use option constructors (WithPodFetchFunc, WithNamespaceLabelsFetchFunc, etc.)
-// to customise behaviour, especially for testing.
+// to customize behavior, especially for testing.
 type Option func(*WebhookController)
 
-// WithPodFetchFunc overrides the default pod-fetching behaviour.
+// WithPodFetchFunc overrides the default pod-fetching behavior.
 // Useful in tests to avoid hitting a real cluster API server.
 func WithPodFetchFunc(fn func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error)) Option {
 	return func(wc *WebhookController) {
@@ -654,7 +654,7 @@ func WithNamespaceLabelsFetchFunc(fn func(ctx context.Context, clusterName, name
 	}
 }
 
-// WithCanDoFunc overrides the authorisation check for group permissions.
+// WithCanDoFunc overrides the authorization check for group permissions.
 func WithCanDoFunc(fn breakglass.CanGroupsDoFunction) Option {
 	return func(wc *WebhookController) {
 		wc.canDoFn = fn
