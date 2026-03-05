@@ -8,7 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -156,13 +159,22 @@ func TestSessionManager_GetLogger(t *testing.T) {
 		assert.Same(t, logger, got)
 	})
 
-	t.Run("falls back to global logger when nil", func(t *testing.T) {
+	t.Run("falls back to global logger and emits warning", func(t *testing.T) {
+		// Capture global logger output to verify the fallback warning
+		core, logs := observer.New(zapcore.WarnLevel)
+		prevLogger := zap.ReplaceGlobals(zap.New(core))
+		defer prevLogger()
+
 		fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 		mgr := NewSessionManagerWithClient(fakeClient)
 
 		// Should not panic; returns global logger
 		got := mgr.getLogger()
 		assert.NotNil(t, got)
+
+		// Verify warning was emitted
+		assert.Equal(t, 1, logs.Len(), "expected exactly one warning log")
+		assert.Contains(t, logs.All()[0].Message, "SessionManager using global logger")
 	})
 }
 
