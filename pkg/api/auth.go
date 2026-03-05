@@ -135,8 +135,8 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		insecureTLS := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Operator-opted, enforced TLS 1.2 below
-		insecureTLS.MinVersion = tls.VersionTLS12
+		insecureTLS := &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // Operator-opted via InsecureSkipVerify flag
+		insecureTLS.InsecureSkipVerify = true                   //nolint:gosec // Dev/E2E only; enforced TLS 1.2 above
 		transport := &http.Transport{TLSClientConfig: insecureTLS}
 		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
