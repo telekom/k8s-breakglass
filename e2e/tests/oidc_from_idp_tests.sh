@@ -282,10 +282,6 @@ spec:
       name: ${test_name}-rt
       namespace: ${NAMESPACE}
       key: refresh-token
-    clientSecretRef:
-      name: ${test_name}-cs
-      namespace: ${NAMESPACE}
-      key: client-secret
     fallbackPolicy: None
     insecureSkipTLSVerify: true
 EOF
@@ -345,16 +341,13 @@ spec:
       name: ${test_name}-rt
       namespace: ${NAMESPACE}
       key: refresh-token
-    clientSecretRef:
-      name: ${test_name}-cs
-      namespace: ${NAMESPACE}
-      key: client-secret
     fallbackPolicy: Auto
     insecureSkipTLSVerify: true
 EOF
 
   # Wait for ClusterConfig to become Ready — Auto fallback should fall back to
-  # client_credentials and succeed when issuer and client secret are valid.
+  # client_credentials using the IDP's Keycloak SA (not a separate clientSecretRef,
+  # which is mutually exclusive with refreshTokenSecretRef on oidcFromIdentityProvider).
   if wait_for_clusterconfig_condition "$test_name" "Ready" "True" "" 90; then
     log_pass "OI-004: Fallback policy Auto succeeded — cluster is Ready after fallback to client_credentials"
   else
