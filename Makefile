@@ -79,6 +79,7 @@ fmt: ## Run go fmt against code.
 
 # Test configuration — override GO_TEST_COUNT='' locally to re-enable caching.
 GO_TEST_COUNT ?= 1
+GO_TEST_FLAGS := -race $(if $(GO_TEST_COUNT),-count=$(GO_TEST_COUNT))
 E2E_EXCLUDE := grep -vE '/e2e($$|/)'
 
 .PHONY: vet
@@ -87,11 +88,11 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet ## Run all unit tests (controller + CLI).
-	go test -race -count=$(GO_TEST_COUNT) $$(go list ./... | $(E2E_EXCLUDE)) -coverprofile cover.out
+	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE)) -coverprofile cover.out
 
 .PHONY: test-controller
 test-controller: manifests generate fmt vet ## Run controller unit tests (excludes bgctl and e2e).
-	go test -race -count=$(GO_TEST_COUNT) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
+	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
 
 .PHONY: validate-samples
 validate-samples: manifests ## Validate all YAML samples in config/samples against CRD schemas.
@@ -143,7 +144,7 @@ build-bgctl: ## Build the bgctl CLI binary
 
 .PHONY: test-cli
 test-cli: ## Run bgctl unit tests (pkg/bgctl + cmd/bgctl).
-	go test -race -v ./pkg/bgctl/... ./cmd/bgctl/... -coverprofile cover-cli.out
+	go test $(GO_TEST_FLAGS) -v ./pkg/bgctl/... ./cmd/bgctl/... -coverprofile cover-cli.out
 
 .PHONY: test-cli-e2e
 test-cli-e2e: ## Run bgctl CLI tests (basic tests only - full E2E requires E2E_TEST=true with kind cluster)

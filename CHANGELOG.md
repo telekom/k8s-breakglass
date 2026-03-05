@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
-- **Dockerfile: fragile single-file COPY** ([#474](https://github.com/telekom/k8s-breakglass/issues/474)): Changed `COPY cmd/main.go cmd/main.go` to `COPY cmd/ cmd/` so new files added to `cmd/` are automatically included in builds
-- **Makefile: imprecise e2e exclusion grep** ([#474](https://github.com/telekom/k8s-breakglass/issues/474)): Changed `grep -v /e2e` to `grep -vE '/e2e($|/)'` to prevent false exclusion of packages containing "e2e" in their name; added `-count=1` to disable test caching
+- **Dockerfile: fragile single-file COPY** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Changed `COPY cmd/main.go cmd/main.go` to `COPY cmd/ cmd/` so new files added to `cmd/` are automatically included in builds
+- **Makefile: test flag deduplication** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Factored duplicated `-race -count=…` flags into `GO_TEST_FLAGS` variable used by `test`, `test-controller`, and `test-cli` targets; fixed e2e exclusion grep `grep -v /e2e` → `grep -vE '/e2e($|/)'` to prevent false exclusion; `GO_TEST_COUNT` defaults to `1` and supports empty override to re-enable caching
 
 ### Added
 
