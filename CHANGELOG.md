@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
+
 ### Added
 
 - **CAPI-style patchHelper for cache-aware SSA**: Added `PatchApply*` functions in `pkg/utils/patchhelper.go` (spec) and `api/v1alpha1/applyconfiguration/ssa/patchhelper.go` (status) that read the current state from the informer cache before issuing an SSA Patch. If the owned fields already match, the API call is skipped entirely, saving thousands of no-op PATCH requests per reconciliation cycle. All 48 SSA call sites (7 spec, 2 unstructured, 39 status) are transparently upgraded via delegation from existing `Apply*` functions. Inspired by `cluster-api`'s patchHelper pattern.
