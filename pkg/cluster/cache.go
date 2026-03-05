@@ -464,6 +464,8 @@ func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubern
 	// Another goroutine may have populated the entry while we were creating ours.
 	// Align clientset TTL with the underlying REST config TTL so kubeconfig-backed
 	// clusters (KubeconfigCacheTTL=15m) don't get the shorter RESTConfigCacheTTL (5m).
+	// Recompute `now` after the slow path to avoid stale expiry calculations.
+	now = time.Now()
 	p.mu.Lock()
 	if entry, ok := p.clientsets[cacheLookupKey]; ok && now.Before(entry.expiresAt) {
 		p.mu.Unlock()
