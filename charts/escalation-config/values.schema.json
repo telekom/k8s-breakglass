@@ -607,11 +607,13 @@
         "minAvailable": {
           "type": ["integer", "string"],
           "description": "Minimum available pods during disruptions.",
-          "default": 1
+          "default": 1,
+          "minimum": 1
         },
         "maxUnavailable": {
           "type": ["integer", "string"],
-          "description": "Maximum unavailable pods during disruptions. Mutually exclusive with minAvailable."
+          "description": "Maximum unavailable pods during disruptions. Mutually exclusive with minAvailable.",
+          "minimum": 1
         }
       }
     }
