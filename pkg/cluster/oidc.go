@@ -35,11 +35,11 @@ const TokenRefreshBuffer = 30 * time.Second
 
 // ErrRefreshTokenExpired indicates the offline refresh token is invalid, expired, or revoked.
 // The checker uses this to set the RefreshTokenExpired condition on ClusterConfig.
-var ErrRefreshTokenExpired = fmt.Errorf("refresh token expired or revoked")
+var ErrRefreshTokenExpired = errors.New("refresh token expired or revoked")
 
 // ErrDegradedAuth indicates the primary auth flow (refresh token) failed but fallback
 // to client_credentials succeeded. The checker uses this to set DegradedAuth condition.
-var ErrDegradedAuth = fmt.Errorf("primary auth degraded, using fallback credentials")
+var ErrDegradedAuth = errors.New("primary auth degraded, using fallback credentials")
 
 // fallbackCredentials stores IDP Keycloak SA credentials for fallback auth
 // when the primary refresh token flow fails. Stored separately from the primary
@@ -168,14 +168,13 @@ func (p *OIDCTokenProvider) GetRESTConfig(ctx context.Context, cc *breakglassv1a
 		cfg.Burst = int(*cc.Spec.Burst)
 	}
 
-	// Preflight token acquisition: warm the cache and detect degraded auth early.
+	// Preflight token acquisition: warm the cache and detect degraded/expired auth early.
 	// This allows callers (e.g., checker's handleOIDCAuthError) to set the
-	// DegradedAuth condition before the first real request is made.
-	// Non-degraded errors are intentionally NOT propagated here — they will
-	// surface at request time via the transport wrapper (preserving the lazy
-	// token acquisition semantics of WrapTransport).
+	// DegradedAuth or RefreshTokenExpired condition before the first real request.
+	// Other errors are intentionally NOT propagated here — they will surface at
+	// request time via the transport wrapper (preserving lazy token semantics).
 	_, preflightErr := p.getToken(ctx, cc.Name, oidc, cc.Namespace)
-	if errors.Is(preflightErr, ErrDegradedAuth) {
+	if errors.Is(preflightErr, ErrDegradedAuth) || errors.Is(preflightErr, ErrRefreshTokenExpired) {
 		return cfg, preflightErr
 	}
 

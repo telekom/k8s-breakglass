@@ -399,29 +399,14 @@ func TestOIDCFromIDP_EndToEnd(t *testing.T) {
 		err := cli.Create(ctx, rtSecret)
 		require.NoError(t, err)
 
-		// Create a Secret with a VALID client secret for fallback
-		csSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-idp-cs"),
-				Namespace: namespace,
-				Labels:    helpers.E2ETestLabels(),
-			},
-			Type: corev1.SecretTypeOpaque,
-			StringData: map[string]string{
-				"client-secret": helpers.GetKeycloakServiceAccountSecret(),
-			},
-		}
-		cleanup.Add(csSecret)
-		err = cli.Create(ctx, csSecret)
-		require.NoError(t, err)
-
 		oidcServer := helpers.GetOIDCEnabledAPIServerURL()
 
-		// Build ClusterConfig with invalid RT + valid CS + FallbackPolicyAuto
+		// Build ClusterConfig with invalid RT + FallbackPolicyAuto.
+		// Fallback credentials come from the IDP's Keycloak SA (not explicit clientSecretRef,
+		// which is mutually exclusive with refreshTokenSecretRef).
 		cc := helpers.NewClusterConfigBuilder(helpers.GenerateUniqueName("e2e-idp-auto"), namespace).
 			WithOIDCFromIdentityProvider("breakglass-e2e-idp", oidcServer).
 			WithOIDCFromIDPRefreshToken(rtSecret.Name, namespace, "refresh-token").
-			WithOIDCFromIDPClientSecret(csSecret.Name, namespace, "client-secret").
 			WithOIDCFromIDPFallbackPolicy(breakglassv1alpha1.FallbackPolicyAuto).
 			WithOIDCFromIDPInsecureSkipTLSVerify(true).
 			Build()
@@ -429,15 +414,15 @@ func TestOIDCFromIDP_EndToEnd(t *testing.T) {
 		err = cli.Create(ctx, cc)
 		require.NoError(t, err, "Failed to create ClusterConfig with Auto fallback")
 
-		// Wait for Ready — Auto fallback: invalid RT fails → falls back to client_credentials → succeeds
+		// Wait for Ready — Auto fallback: invalid RT fails → IDP Keycloak SA client_credentials → succeeds
 		err = waitForClusterConfigConditionReady(t, ctx, cli, cc.Name, namespace, 90*time.Second)
 		if err != nil {
 			var fetched breakglassv1alpha1.ClusterConfig
 			_ = cli.Get(ctx, types.NamespacedName{Name: cc.Name, Namespace: namespace}, &fetched)
 			logClusterConfigConditions(t, &fetched)
-			t.Logf("Note: Auto fallback may require reachable IDP: %v", err)
+			t.Logf("Note: Auto fallback requires IDP with Keycloak SA: %v", err)
 		} else {
-			t.Log("CC-OIDC-E2E-IDP-002: Auto fallback succeeded — ClusterConfig is Ready via client_credentials")
+			t.Log("CC-OIDC-E2E-IDP-002: Auto fallback succeeded — ClusterConfig is Ready via IDP Keycloak SA")
 		}
 	})
 
@@ -467,29 +452,14 @@ func TestOIDCFromIDP_EndToEnd(t *testing.T) {
 		err := cli.Create(ctx, rtSecret)
 		require.NoError(t, err)
 
-		// Create Secret with VALID client secret for fallback
-		csSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-idp-cs-w"),
-				Namespace: namespace,
-				Labels:    helpers.E2ETestLabels(),
-			},
-			Type: corev1.SecretTypeOpaque,
-			StringData: map[string]string{
-				"client-secret": helpers.GetKeycloakServiceAccountSecret(),
-			},
-		}
-		cleanup.Add(csSecret)
-		err = cli.Create(ctx, csSecret)
-		require.NoError(t, err)
-
 		oidcServer := helpers.GetOIDCEnabledAPIServerURL()
 
-		// Build ClusterConfig with invalid RT + valid CS + FallbackPolicyWarn
+		// Build ClusterConfig with invalid RT + FallbackPolicyWarn.
+		// Fallback credentials come from the IDP's Keycloak SA (not explicit clientSecretRef,
+		// which is mutually exclusive with refreshTokenSecretRef).
 		cc := helpers.NewClusterConfigBuilder(helpers.GenerateUniqueName("e2e-idp-warn"), namespace).
 			WithOIDCFromIdentityProvider("breakglass-e2e-idp", oidcServer).
 			WithOIDCFromIDPRefreshToken(rtSecret.Name, namespace, "refresh-token").
-			WithOIDCFromIDPClientSecret(csSecret.Name, namespace, "client-secret").
 			WithOIDCFromIDPFallbackPolicy(breakglassv1alpha1.FallbackPolicyWarn).
 			WithOIDCFromIDPInsecureSkipTLSVerify(true).
 			Build()

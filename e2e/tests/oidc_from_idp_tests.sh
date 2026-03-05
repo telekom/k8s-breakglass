@@ -532,6 +532,8 @@ EOF
 
 # ============================================================================
 # OI-008: Fallback policy Warn logs warning but continues
+# Fallback credentials come from the IDP's Keycloak SA (refreshTokenSecretRef
+# and clientSecretRef are mutually exclusive on oidcFromIdentityProvider).
 # ============================================================================
 test_OI008_fallback_warn() {
   log "=== OI-008: Fallback policy Warn logs warning ==="
@@ -545,13 +547,6 @@ test_OI008_fallback_warn() {
     --from-literal=refresh-token="clearly-invalid-token" \
     --dry-run=client -o yaml | $KUBECTL apply -f -
   $KUBECTL label secret "${test_name}-rt" -n "$NAMESPACE" "e2e-test=$test_name"
-
-  # Valid client secret for fallback
-  $KUBECTL create secret generic "${test_name}-cs" \
-    -n "$NAMESPACE" \
-    --from-literal=client-secret="$KEYCLOAK_CLIENT_SECRET" \
-    --dry-run=client -o yaml | $KUBECTL apply -f -
-  $KUBECTL label secret "${test_name}-cs" -n "$NAMESPACE" "e2e-test=$test_name"
 
   cat <<EOF | $KUBECTL apply -f -
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -570,10 +565,6 @@ spec:
       name: ${test_name}-rt
       namespace: ${NAMESPACE}
       key: refresh-token
-    clientSecretRef:
-      name: ${test_name}-cs
-      namespace: ${NAMESPACE}
-      key: client-secret
     fallbackPolicy: Warn
     insecureSkipTLSVerify: true
 EOF
