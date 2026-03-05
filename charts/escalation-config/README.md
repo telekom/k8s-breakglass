@@ -471,6 +471,26 @@ denyPolicies:
       failMode: closed
 ```
 
+### PodDisruptionBudget
+
+The chart supports creating a PodDisruptionBudget for HA deployments:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `pdb.enabled` | bool | `false` | Create a PodDisruptionBudget |
+| `pdb.minAvailable` | int/string | `1` | Minimum available pods during disruptions |
+| `pdb.maxUnavailable` | int/string | — | Maximum unavailable pods (mutually exclusive with `minAvailable`) |
+
+```yaml
+pdb:
+  enabled: true
+  minAvailable: 1
+  # OR use maxUnavailable (not both):
+  # maxUnavailable: 1
+```
+
+> **Note:** `minAvailable` and `maxUnavailable` are mutually exclusive. If `maxUnavailable` is set, it takes precedence. When neither is specified, `minAvailable: 1` is the default.
+
 ## Examples
 
 ### Minimal Configuration
