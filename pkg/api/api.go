@@ -1113,7 +1113,8 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 			"idpName", idpCfg.Name,
 			"authority", idpCfg.Authority,
 			"warning", "This setting should NOT be used in production environments")
-		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+		tlsConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Operator-opted, enforced TLS 1.2 below
+		tlsConfig.MinVersion = tls.VersionTLS12
 		mode = tlsModeInsecure
 	default:
 		roots, err := x509.SystemCertPool()
