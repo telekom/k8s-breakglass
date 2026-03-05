@@ -17,9 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking — Metrics: removed `session` label from high-cardinality counters** ([#463](https://github.com/telekom/k8s-breakglass/issues/463)): Removed auto-generated session name label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` to prevent unbounded Prometheus cardinality. **Update any alert rules or Grafana dashboards that reference the `session` label on these counters.**
 - **Standardized import alias** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Renamed `telekomv1alpha1` to `breakglassv1alpha1` across all 112 files for consistency with the module path
 - **Added `importas` linter rule** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Configured `importas` in `.golangci.yml` with `no-unaliased: true` to enforce the canonical `breakglassv1alpha1` alias
 - **Removed duplicate scheme registration** ([#418](https://github.com/telekom/k8s-breakglass/issues/418)): Deleted dead-code `pkg/config/scheme.go`
+
+### Fixed
+
+- **Metrics: `MetricsHandler()` now uses correct registry** ([#465](https://github.com/telekom/k8s-breakglass/issues/465)): Fixed to serve from `ctrlmetrics.Registry` which contains all breakglass metrics, instead of the default registry which was empty
 
 ### Removed
 

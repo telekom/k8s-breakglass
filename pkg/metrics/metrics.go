@@ -123,15 +123,15 @@ var (
 	WebhookSessionSARsAllowed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_allowed_total",
 		Help: "Total number of session SAR checks that returned allowed",
-	}, []string{"cluster", "session", "group"})
+	}, []string{"cluster", "group"})
 	WebhookSessionSARsDenied = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_denied_total",
 		Help: "Total number of session SAR checks that returned denied",
-	}, []string{"cluster", "session", "group"})
+	}, []string{"cluster", "group"})
 	WebhookSessionSARErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_errors_total",
 		Help: "Total number of errors during session SAR checks",
-	}, []string{"cluster", "session", "group"})
+	}, []string{"cluster", "group"})
 	WebhookSessionSARSSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sars_skipped_total",
 		Help: "Total number of times session SAR checks were skipped due to cluster config errors",
@@ -770,10 +770,15 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(SessionActivityBufferSize)
 }
 
-// MetricsHandler returns an http.Handler exposing Prometheus metrics.
-// Deprecated: Use the controller-runtime metrics endpoint on port 8081 instead.
-// This handler uses the default Prometheus registry which no longer contains
-// breakglass metrics (they are now registered with controller-runtime's registry).
+// MetricsHandler returns an http.Handler exposing Prometheus metrics from
+// the controller-runtime registry (which contains all breakglass metrics).
+//
+// Deprecated: Prefer using the controller-runtime metrics endpoint instead,
+// by configuring the metrics bind address on the controller manager, rather
+// than wiring this handler directly into an HTTP server.
 func MetricsHandler() http.Handler {
-	return promhttp.Handler()
+	return promhttp.InstrumentMetricHandler(
+		ctrlmetrics.Registry,
+		promhttp.HandlerFor(ctrlmetrics.Registry, promhttp.HandlerOpts{}),
+	)
 }
