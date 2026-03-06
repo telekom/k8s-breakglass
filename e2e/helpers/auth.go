@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -41,6 +42,10 @@ type OIDCTokenProvider struct {
 	// When set, it's passed as the Host header to Keycloak so the token issuer
 	// matches what the IdentityProvider expects (for port-forwarded connections).
 	IssuerHost string
+	// InitialBackoff overrides the default backoff duration for retry logic.
+	// Only used in tests to avoid slow test execution; production callers
+	// should leave this at zero to use defaultInitialBackoff.
+	InitialBackoff time.Duration
 }
 
 // DefaultOIDCProvider returns the default OIDC provider configured for E2E tests
@@ -56,8 +61,34 @@ func DefaultOIDCProvider() *OIDCTokenProvider {
 	}
 }
 
-// GetToken retrieves an OIDC token for the specified user
-// Uses the e2e/get-token.sh script if available, otherwise uses direct HTTP
+// tokenRequestError is returned when Keycloak rejects the token request
+// with a non-200 HTTP status. The StatusCode field allows callers to
+// distinguish retryable (5xx / connection errors) from non-retryable (4xx)
+// failures.
+type tokenRequestError struct {
+	StatusCode int
+	Message    string
+}
+
+// defaultInitialBackoff is the base backoff duration for token request retries.
+// Exported via a field on OIDCTokenProvider so tests can override it.
+const defaultInitialBackoff = 2 * time.Second
+
+func (e *tokenRequestError) Error() string {
+	return e.Message
+}
+
+// isNonRetryable returns true for 4xx errors (invalid credentials, bad request)
+// where retrying would not help.
+func (e *tokenRequestError) isNonRetryable() bool {
+	return e.StatusCode >= 400 && e.StatusCode < 500
+}
+
+// GetToken retrieves an OIDC token for the specified user.
+// Uses the e2e/get-token.sh script if available, otherwise uses direct HTTP.
+// The HTTP path retries with exponential backoff to tolerate transient Keycloak
+// unavailability (e.g. pod restarts during E2E cluster setup).
+// Non-retryable errors (4xx) fail immediately without retrying.
 func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username, password string) string {
 	// Try using the get-token.sh script first
 	token, err := p.getTokenViaScript(ctx, username, password)
@@ -65,12 +96,56 @@ func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username
 		return token
 	}
 
-	// Fall back to direct HTTP request
-	token, err = p.getTokenViaHTTP(ctx, username, password)
-	require.NoError(t, err, "Failed to get OIDC token")
+	// Fall back to direct HTTP request with retry + exponential backoff.
+	// Keycloak may still be starting or recovering from a restart.
+	const maxRetries = 5
+	backoff := p.initialBackoff()
+
+	var lastErr error
+retryLoop:
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		token, lastErr = p.getTokenViaHTTP(ctx, username, password)
+		if lastErr == nil && token != "" {
+			if attempt > 1 {
+				t.Logf("OIDC token acquired on attempt %d/%d for user %s", attempt, maxRetries, username)
+			}
+			return token
+		}
+
+		// Don't retry non-retryable errors (4xx: bad credentials, invalid request)
+		var tErr *tokenRequestError
+		if errors.As(lastErr, &tErr) && tErr.isNonRetryable() {
+			t.Logf("OIDC token request failed with non-retryable status %d for user %s", tErr.StatusCode, username)
+			break
+		}
+
+		if attempt < maxRetries {
+			t.Logf("OIDC token request attempt %d/%d failed (user=%s): %v — retrying in %v",
+				attempt, maxRetries, username, lastErr, backoff)
+			select {
+			case <-ctx.Done():
+				lastErr = ctx.Err()
+				t.Logf("Context cancelled while waiting to retry OIDC token request: %v", lastErr)
+				break retryLoop
+			case <-time.After(backoff):
+			}
+			backoff *= 2 // exponential backoff: 2s, 4s, 8s, 16s
+		}
+	}
+
+	require.NoError(t, lastErr, "Failed to get OIDC token after %d attempts", maxRetries)
 	require.NotEmpty(t, token, "Token is empty")
 
 	return token
+}
+
+// initialBackoff returns the initial backoff duration for retry logic.
+// Tests can override InitialBackoff to use shorter durations.
+func (p *OIDCTokenProvider) initialBackoff() time.Duration {
+	if p.InitialBackoff > 0 {
+		return p.InitialBackoff
+	}
+	return defaultInitialBackoff
 }
 
 // getTokenViaScript uses the e2e/get-token.sh script
@@ -135,7 +210,10 @@ func (p *OIDCTokenProvider) getTokenViaHTTP(ctx context.Context, username, passw
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token request failed with status %d", resp.StatusCode)
+		return "", &tokenRequestError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("token request failed with status %d", resp.StatusCode),
+		}
 	}
 
 	var tokenResp struct {
