@@ -45,6 +45,15 @@ type OIDCFromIdentityProviderConfigApplyConfiguration struct {
 	// using the IDP's existing client — no new OIDC client registration is needed.
 	// Mutually exclusive with clientSecretRef.
 	RefreshTokenSecretRef *SecretKeyReferenceApplyConfiguration `json:"refreshTokenSecretRef,omitempty"`
+	// rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+	// refreshTokenSecretRef where the controller writes rotated refresh tokens received
+	// from the OIDC provider. The original key is never modified, making this safe for
+	// GitOps tools (e.g. Flux) that manage the seed token.
+	// When reading, the controller checks the rotated key first and falls back to the
+	// original key — ensuring the freshest token is always used.
+	// Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+	// Must differ from the key in refreshTokenSecretRef.
+	RotatedRefreshTokenKey *string `json:"rotatedRefreshTokenKey,omitempty"`
 	// tokenExchange enables RFC 8693 token exchange flow via the referenced IdentityProvider.
 	// When enabled, the controller uses the IDP's Keycloak service account credentials
 	// (unless clientSecretRef is explicitly provided) to exchange a subject token
@@ -131,6 +140,14 @@ func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithAllowTOFU(value b
 // If called multiple times, the RefreshTokenSecretRef field is set to the value of the last call.
 func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithRefreshTokenSecretRef(value *SecretKeyReferenceApplyConfiguration) *OIDCFromIdentityProviderConfigApplyConfiguration {
 	b.RefreshTokenSecretRef = value
+	return b
+}
+
+// WithRotatedRefreshTokenKey sets the RotatedRefreshTokenKey field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RotatedRefreshTokenKey field is set to the value of the last call.
+func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithRotatedRefreshTokenKey(value string) *OIDCFromIdentityProviderConfigApplyConfiguration {
+	b.RotatedRefreshTokenKey = &value
 	return b
 }
 

@@ -55,6 +55,15 @@ type OIDCAuthConfigApplyConfiguration struct {
 	// Mutually exclusive with clientSecretRef on OIDCFromIdentityProviderConfig,
 	// but can coexist with clientSecretRef on OIDCAuthConfig (enables explicit fallback).
 	RefreshTokenSecretRef *SecretKeyReferenceApplyConfiguration `json:"refreshTokenSecretRef,omitempty"`
+	// rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+	// refreshTokenSecretRef where the controller writes rotated refresh tokens received
+	// from the OIDC provider. The original key is never modified, making this safe for
+	// GitOps tools (e.g. Flux) that manage the seed token.
+	// When reading, the controller checks the rotated key first and falls back to the
+	// original key — ensuring the freshest token is always used.
+	// Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+	// Must differ from the key in refreshTokenSecretRef.
+	RotatedRefreshTokenKey *string `json:"rotatedRefreshTokenKey,omitempty"`
 	// fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
 	// Only valid when refreshTokenSecretRef is set.
 	// - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
@@ -164,6 +173,14 @@ func (b *OIDCAuthConfigApplyConfiguration) WithTokenExchange(value *TokenExchang
 // If called multiple times, the RefreshTokenSecretRef field is set to the value of the last call.
 func (b *OIDCAuthConfigApplyConfiguration) WithRefreshTokenSecretRef(value *SecretKeyReferenceApplyConfiguration) *OIDCAuthConfigApplyConfiguration {
 	b.RefreshTokenSecretRef = value
+	return b
+}
+
+// WithRotatedRefreshTokenKey sets the RotatedRefreshTokenKey field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RotatedRefreshTokenKey field is set to the value of the last call.
+func (b *OIDCAuthConfigApplyConfiguration) WithRotatedRefreshTokenKey(value string) *OIDCAuthConfigApplyConfiguration {
+	b.RotatedRefreshTokenKey = &value
 	return b
 }
 

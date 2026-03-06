@@ -58,6 +58,22 @@ spec:
     {{- if .Values.cluster.oidcFromIdentityProvider.allowTOFU }}
     allowTOFU: {{ .Values.cluster.oidcFromIdentityProvider.allowTOFU }}
     {{- end }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.refreshTokenSecretRef }}
+    refreshTokenSecretRef:
+      name: {{ .Values.cluster.oidcFromIdentityProvider.refreshTokenSecretRef.name }}
+      {{- if .Values.cluster.oidcFromIdentityProvider.refreshTokenSecretRef.namespace }}
+      namespace: {{ .Values.cluster.oidcFromIdentityProvider.refreshTokenSecretRef.namespace }}
+      {{- end }}
+      {{- if .Values.cluster.oidcFromIdentityProvider.refreshTokenSecretRef.key }}
+      key: {{ .Values.cluster.oidcFromIdentityProvider.refreshTokenSecretRef.key }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.rotatedRefreshTokenKey }}
+    rotatedRefreshTokenKey: {{ .Values.cluster.oidcFromIdentityProvider.rotatedRefreshTokenKey }}
+    {{- end }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.fallbackPolicy }}
+    fallbackPolicy: {{ .Values.cluster.oidcFromIdentityProvider.fallbackPolicy }}
+    {{- end }}
   
   {{- /* Direct OIDC Configuration */}}
   {{- else if .Values.cluster.oidcAuth }}
@@ -65,8 +81,8 @@ spec:
     issuerURL: {{ required "cluster.oidcAuth.issuerURL is required" .Values.cluster.oidcAuth.issuerURL }}
     clientID: {{ required "cluster.oidcAuth.clientID is required" .Values.cluster.oidcAuth.clientID }}
     server: {{ required "cluster.oidcAuth.server is required" .Values.cluster.oidcAuth.server }}
-    {{- if not .Values.cluster.oidcAuth.clientSecretRef }}
-    {{- fail "cluster.oidcAuth.clientSecretRef is required when authType=OIDC" }}
+    {{- if and (not .Values.cluster.oidcAuth.clientSecretRef) (not .Values.cluster.oidcAuth.refreshTokenSecretRef) }}
+    {{- fail "cluster.oidcAuth requires either clientSecretRef or refreshTokenSecretRef when authType=OIDC" }}
     {{- end }}
     {{- if .Values.cluster.oidcAuth.clientSecretRef }}
     clientSecretRef:
@@ -103,6 +119,22 @@ spec:
     {{- end }}
     {{- if .Values.cluster.oidcAuth.allowTOFU }}
     allowTOFU: {{ .Values.cluster.oidcAuth.allowTOFU }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.refreshTokenSecretRef }}
+    refreshTokenSecretRef:
+      name: {{ .Values.cluster.oidcAuth.refreshTokenSecretRef.name }}
+      {{- if .Values.cluster.oidcAuth.refreshTokenSecretRef.namespace }}
+      namespace: {{ .Values.cluster.oidcAuth.refreshTokenSecretRef.namespace }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.refreshTokenSecretRef.key }}
+      key: {{ .Values.cluster.oidcAuth.refreshTokenSecretRef.key }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.rotatedRefreshTokenKey }}
+    rotatedRefreshTokenKey: {{ .Values.cluster.oidcAuth.rotatedRefreshTokenKey }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.fallbackPolicy }}
+    fallbackPolicy: {{ .Values.cluster.oidcAuth.fallbackPolicy }}
     {{- end }}
     {{- if .Values.cluster.oidcAuth.tokenExchange }}
     tokenExchange:

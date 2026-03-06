@@ -947,6 +947,16 @@ func (b *ClusterConfigBuilder) WithOIDCFallbackPolicy(policy breakglassv1alpha1.
 	return b
 }
 
+// WithOIDCRotatedRefreshTokenKey sets the rotated refresh token key for automatic
+// refresh token rotation persistence. Must be called after WithOIDCAuth and WithOIDCRefreshToken.
+func (b *ClusterConfigBuilder) WithOIDCRotatedRefreshTokenKey(key string) *ClusterConfigBuilder {
+	if b.oidcAuth == nil {
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
+	}
+	b.oidcAuth.RotatedRefreshTokenKey = key
+	return b
+}
+
 // Build constructs the ClusterConfig resource.
 func (b *ClusterConfigBuilder) Build() *breakglassv1alpha1.ClusterConfig {
 	config := &breakglassv1alpha1.ClusterConfig{

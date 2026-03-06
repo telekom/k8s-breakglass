@@ -226,8 +226,11 @@ OIDC authentication allows the breakglass controller to obtain tokens from an OI
 |-------|----------|-------------|
 | `issuerURL` | Yes | OIDC issuer URL (must match cluster API server config) |
 | `clientID` | Yes | OIDC client ID for the breakglass controller |
-| `clientSecretRef` | Yes | Reference to secret containing client secret |
+| `clientSecretRef` | No* | Reference to secret containing client secret. *Required unless `refreshTokenSecretRef` is set. |
 | `server` | Yes | URL of the target cluster's API server |
+| `refreshTokenSecretRef` | No | Secret containing an offline refresh token (alternative to `clientSecretRef`) |
+| `fallbackPolicy` | No | Behavior when refresh token expires: `None` (default), `Auto`, or `Warn` |
+| `rotatedRefreshTokenKey` | No | Key in the same secret where rotated refresh tokens are persisted (see [Automatic Refresh Token Rotation](#automatic-refresh-token-rotation)) |
 | `caSecretRef` | No | CA certificate for the cluster API server |
 | `insecureSkipTLSVerify` | No | Skip TLS verification (NOT for production) |
 | `audience` | No | Token audience (defaults to server) |
@@ -328,6 +331,7 @@ If you have an `IdentityProvider` already configured for user authentication, yo
 | `audience` | No | Target audience for OIDC token requests |
 | `scopes` | No | Additional OAuth scopes to request |
 | `fallbackPolicy` | No | Behavior when refresh token expires: `None` (default), `Auto`, or `Warn` |
+| `rotatedRefreshTokenKey` | No | Key in the same secret where rotated refresh tokens are persisted (see [Automatic Refresh Token Rotation](#automatic-refresh-token-rotation)) |
 | `caSecretRef` | No | CA certificate for the cluster API server |
 | `insecureSkipTLSVerify` | No | Skip TLS verification (NOT for production) |
 
@@ -453,6 +457,66 @@ kubectl create secret generic offline-refresh-token \
   -n breakglass-system \
   --from-literal=refresh-token="<refresh_token_value>"
 ```
+
+#### Automatic Refresh Token Rotation
+
+When an OIDC provider returns a new refresh token during token exchange (common with Keycloak offline tokens), the controller can **persist the rotated token** back to the Kubernetes Secret. This ensures the freshest token survives controller restarts.
+
+**Configuration:**
+
+Add `rotatedRefreshTokenKey` to your ClusterConfig:
+
+```yaml
+spec:
+  oidcFromIdentityProvider:
+    name: corp-keycloak
+    server: https://my-cluster-api.example.com:6443
+    refreshTokenSecretRef:
+      name: offline-refresh-token
+      namespace: breakglass-system
+      key: refresh-token
+    rotatedRefreshTokenKey: refresh-token-rotated  # opt-in
+```
+
+Or with `oidcAuth`:
+
+```yaml
+spec:
+  oidcAuth:
+    issuerURL: https://keycloak.example.com/realms/myrealm
+    clientID: breakglass-cluster
+    server: https://my-cluster-api.example.com:6443
+    refreshTokenSecretRef:
+      name: offline-refresh-token
+      namespace: breakglass-system
+      key: refresh-token
+    rotatedRefreshTokenKey: refresh-token-rotated  # opt-in
+    fallbackPolicy: None
+```
+
+**How it works:**
+
+1. **Read order:** The controller checks the rotated key first, then falls back to the original key — ensuring the freshest token is always used
+2. **Write on rotation:** After a successful token exchange, if the OIDC provider returns a new refresh token, it's persisted to the rotated key via Server-Side Apply (SSA)
+3. **Original key preserved:** The original key (e.g., `refresh-token`) is **never modified** — safe for GitOps tools (Flux, ArgoCD) that manage the seed token
+4. **Best-effort:** Rotation write failures are logged but don't break authentication
+
+**Requirements:**
+
+- `rotatedRefreshTokenKey` must differ from the key in `refreshTokenSecretRef`
+- The controller needs `update` permission on Secrets in the token's namespace (already granted by default RBAC)
+
+**Annotations added on rotation:**
+
+| Annotation | Description |
+|------------|-------------|
+| `breakglass.t-caas.telekom.com/rotated-at` | RFC 3339 timestamp of the last successful rotation |
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `rotatedRefreshTokenKey` | No | Key in the same secret where rotated refresh tokens are persisted. Must differ from `refreshTokenSecretRef.key`. |
+
+> **Note:** If omitted, refresh token rotation is not persisted — rotated tokens are cached in-memory only and lost on controller restart.
 
 #### Token Exchange Mode
 

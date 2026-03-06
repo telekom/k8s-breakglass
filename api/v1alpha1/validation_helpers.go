@@ -919,6 +919,23 @@ func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig,
 		}
 	}
 
+	// Validate rotatedRefreshTokenKey
+	if cfg.RotatedRefreshTokenKey != "" {
+		if cfg.RefreshTokenSecretRef == nil {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef"),
+				"refreshTokenSecretRef is required when rotatedRefreshTokenKey is set"))
+		} else {
+			originalKey := cfg.RefreshTokenSecretRef.Key
+			if originalKey == "" {
+				originalKey = "token"
+			}
+			if cfg.RotatedRefreshTokenKey == originalKey {
+				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), cfg.RotatedRefreshTokenKey,
+					"must differ from the key in refreshTokenSecretRef to avoid overwriting the original token"))
+			}
+		}
+	}
+
 	// Validate caSecretRef if provided
 	if cfg.CASecretRef != nil {
 		if cfg.CASecretRef.Name == "" {
@@ -1022,6 +1039,23 @@ func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.E
 		}
 		if oidc.RefreshTokenSecretRef.Namespace == "" {
 			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate rotatedRefreshTokenKey
+	if oidc.RotatedRefreshTokenKey != "" {
+		if oidc.RefreshTokenSecretRef == nil {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef"),
+				"refreshTokenSecretRef is required when rotatedRefreshTokenKey is set"))
+		} else {
+			originalKey := oidc.RefreshTokenSecretRef.Key
+			if originalKey == "" {
+				originalKey = "token"
+			}
+			if oidc.RotatedRefreshTokenKey == originalKey {
+				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), oidc.RotatedRefreshTokenKey,
+					"must differ from the key in refreshTokenSecretRef to avoid overwriting the original token"))
+			}
 		}
 	}
 

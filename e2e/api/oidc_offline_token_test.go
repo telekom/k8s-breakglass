@@ -484,3 +484,515 @@ func TestOIDC_OfflineToken_Recovery_InvalidToValid(t *testing.T) {
 
 	t.Log("=== CC-OIDC-OT-006: Pass — CC recovered from invalid to valid token ===")
 }
+
+// ---------------------------------------------------------------------------
+// CC-OIDC-OT-007: Rotation — New refresh token is persisted to rotated key
+//   → After initial token exchange, the rotated key in the secret contains
+//     the fresh refresh token from the OIDC provider
+// ---------------------------------------------------------------------------
+
+func TestOIDC_OfflineToken_Rotation_PersistsNewToken(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	oc := setupOIDCContext(t, ctx, cli, namespace)
+
+	e2eClientSecret := helpers.GetE2EOIDCClientSecret()
+	if e2eClientSecret == "" {
+		t.Skip("Skipping: no E2E OIDC client secret configured")
+	}
+
+	t.Log("=== CC-OIDC-OT-007: Rotation — Persists New Token ===")
+
+	provider := helpers.E2EOIDCProvider()
+	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+	require.NotEmpty(t, offlineToken)
+
+	e2eClientID := helpers.GetE2EOIDCClientID()
+	clientSecretName := helpers.GenerateUniqueName("ot007-secret")
+	createClientSecret(t, ctx, cli, cleanup, clientSecretName, namespace, e2eClientSecret)
+
+	rtSecretName := helpers.GenerateUniqueName("ot007-rt")
+	createRefreshTokenSecret(t, ctx, cli, cleanup, rtSecretName, namespace, offlineToken)
+
+	ccName := helpers.GenerateUniqueName("ot007-rotate")
+	ccBuilder := helpers.NewClusterConfigBuilder(ccName, namespace).
+		WithOIDCAuth(oc.issuerURL, e2eClientID, oc.server).
+		WithOIDCClientSecret(clientSecretName, namespace, "client-secret").
+		WithOIDCFallbackPolicy(breakglassv1alpha1.FallbackPolicyNone).
+		WithOIDCRefreshToken(rtSecretName, namespace, "refresh-token").
+		WithOIDCRotatedRefreshTokenKey("refresh-token-rotated").
+		WithOIDCAllowTOFU(true)
+	if oc.ca != "" {
+		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(oc.ca)
+	}
+	cc := ccBuilder.Build()
+	cleanup.Add(cc)
+	err := cli.Create(ctx, cc)
+	require.NoError(t, err)
+
+	// Wait for Ready — this triggers token exchange and rotation persist.
+	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
+	require.NoError(t, err, "CC with rotation enabled should become Ready")
+
+	// Poll for the rotated key to appear in the secret (best-effort write may be async).
+	var rotatedValue string
+	require.Eventually(t, func() bool {
+		var rtSecret corev1.Secret
+		if err := cli.Get(ctx, types.NamespacedName{Name: rtSecretName, Namespace: namespace}, &rtSecret); err != nil {
+			return false
+		}
+		val, exists := rtSecret.Data["refresh-token-rotated"]
+		if !exists || len(val) == 0 {
+			return false
+		}
+		rotatedValue = string(val)
+		return true
+	}, 60*time.Second, 3*time.Second, "rotated refresh token key should appear in secret")
+
+	assert.NotEmpty(t, rotatedValue, "rotated refresh token should not be empty")
+	t.Logf("Rotated token persisted (length: %d chars)", len(rotatedValue))
+
+	t.Log("=== CC-OIDC-OT-007: Pass — rotated refresh token persisted ===")
+}
+
+// ---------------------------------------------------------------------------
+// CC-OIDC-OT-008: Rotation — Rotated key takes read precedence
+//   → When both original (bogus) and rotated (valid) keys exist,
+//     the controller reads the rotated key first and becomes Ready
+// ---------------------------------------------------------------------------
+
+func TestOIDC_OfflineToken_Rotation_PreferRotatedKey(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	oc := setupOIDCContext(t, ctx, cli, namespace)
+
+	e2eClientSecret := helpers.GetE2EOIDCClientSecret()
+	if e2eClientSecret == "" {
+		t.Skip("Skipping: no E2E OIDC client secret configured")
+	}
+
+	t.Log("=== CC-OIDC-OT-008: Rotation — Prefer Rotated Key ===")
+
+	// Obtain a VALID offline token.
+	provider := helpers.E2EOIDCProvider()
+	validToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+	require.NotEmpty(t, validToken)
+
+	e2eClientID := helpers.GetE2EOIDCClientID()
+	clientSecretName := helpers.GenerateUniqueName("ot008-secret")
+	createClientSecret(t, ctx, cli, cleanup, clientSecretName, namespace, e2eClientSecret)
+
+	// Create a secret with BOGUS original key and VALID rotated key.
+	rtSecretName := helpers.GenerateUniqueName("ot008-rt")
+	rtSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rtSecretName,
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			"refresh-token":         []byte("bogus-original-token-that-will-fail"),
+			"refresh-token-rotated": []byte(validToken),
+		},
+	}
+	cleanup.Add(rtSecret)
+	err := cli.Create(ctx, rtSecret)
+	require.NoError(t, err)
+
+	ccName := helpers.GenerateUniqueName("ot008-readord")
+	ccBuilder := helpers.NewClusterConfigBuilder(ccName, namespace).
+		WithOIDCAuth(oc.issuerURL, e2eClientID, oc.server).
+		WithOIDCClientSecret(clientSecretName, namespace, "client-secret").
+		WithOIDCFallbackPolicy(breakglassv1alpha1.FallbackPolicyNone).
+		WithOIDCRefreshToken(rtSecretName, namespace, "refresh-token").
+		WithOIDCRotatedRefreshTokenKey("refresh-token-rotated").
+		WithOIDCAllowTOFU(true)
+	if oc.ca != "" {
+		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(oc.ca)
+	}
+	cc := ccBuilder.Build()
+	cleanup.Add(cc)
+	err = cli.Create(ctx, cc)
+	require.NoError(t, err)
+
+	// CC MUST become Ready because the controller should prefer the rotated (valid) key
+	// over the original (bogus) key.
+	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
+	require.NoError(t, err, "CC should become Ready using rotated key (bogus original should be ignored)")
+
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
+	assertClusterConfigReady(t, &result)
+	assert.False(t,
+		hasCondition(&result, string(breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired), metav1.ConditionTrue),
+		"should not have RefreshTokenExpired when rotated key is valid")
+
+	t.Log("=== CC-OIDC-OT-008: Pass — controller preferred valid rotated key ===")
+}
+
+// ---------------------------------------------------------------------------
+// CC-OIDC-OT-009: Rotation — Original key is preserved after rotation
+//   → The original refresh-token key in the secret is never overwritten
+// ---------------------------------------------------------------------------
+
+func TestOIDC_OfflineToken_Rotation_OriginalKeyPreserved(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	oc := setupOIDCContext(t, ctx, cli, namespace)
+
+	e2eClientSecret := helpers.GetE2EOIDCClientSecret()
+	if e2eClientSecret == "" {
+		t.Skip("Skipping: no E2E OIDC client secret configured")
+	}
+
+	t.Log("=== CC-OIDC-OT-009: Rotation — Original Key Preserved ===")
+
+	provider := helpers.E2EOIDCProvider()
+	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+	require.NotEmpty(t, offlineToken)
+
+	e2eClientID := helpers.GetE2EOIDCClientID()
+	clientSecretName := helpers.GenerateUniqueName("ot009-secret")
+	createClientSecret(t, ctx, cli, cleanup, clientSecretName, namespace, e2eClientSecret)
+
+	rtSecretName := helpers.GenerateUniqueName("ot009-rt")
+	createRefreshTokenSecret(t, ctx, cli, cleanup, rtSecretName, namespace, offlineToken)
+
+	ccName := helpers.GenerateUniqueName("ot009-preserve")
+	ccBuilder := helpers.NewClusterConfigBuilder(ccName, namespace).
+		WithOIDCAuth(oc.issuerURL, e2eClientID, oc.server).
+		WithOIDCClientSecret(clientSecretName, namespace, "client-secret").
+		WithOIDCFallbackPolicy(breakglassv1alpha1.FallbackPolicyNone).
+		WithOIDCRefreshToken(rtSecretName, namespace, "refresh-token").
+		WithOIDCRotatedRefreshTokenKey("refresh-token-rotated").
+		WithOIDCAllowTOFU(true)
+	if oc.ca != "" {
+		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(oc.ca)
+	}
+	cc := ccBuilder.Build()
+	cleanup.Add(cc)
+	err := cli.Create(ctx, cc)
+	require.NoError(t, err)
+
+	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
+	require.NoError(t, err, "CC with rotation should become Ready")
+
+	// Wait for rotation to occur.
+	require.Eventually(t, func() bool {
+		var rtSecret corev1.Secret
+		if err := cli.Get(ctx, types.NamespacedName{Name: rtSecretName, Namespace: namespace}, &rtSecret); err != nil {
+			return false
+		}
+		_, exists := rtSecret.Data["refresh-token-rotated"]
+		return exists
+	}, 60*time.Second, 3*time.Second, "rotated key should appear in secret")
+
+	// Now verify: original key should be UNCHANGED.
+	var rtSecret corev1.Secret
+	err = cli.Get(ctx, types.NamespacedName{Name: rtSecretName, Namespace: namespace}, &rtSecret)
+	require.NoError(t, err)
+
+	assert.Equal(t, offlineToken, string(rtSecret.Data["refresh-token"]),
+		"original refresh-token key must be preserved after rotation")
+
+	t.Log("=== CC-OIDC-OT-009: Pass — original key preserved ===")
+}
+
+// ---------------------------------------------------------------------------
+// CC-OIDC-OT-010: Rotation disabled — no extra keys written to secret
+//   → When rotatedRefreshTokenKey is NOT set, the secret should only
+//     contain the original key after the CC becomes Ready
+// ---------------------------------------------------------------------------
+
+func TestOIDC_OfflineToken_Rotation_Disabled_NoWrite(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	oc := setupOIDCContext(t, ctx, cli, namespace)
+
+	e2eClientSecret := helpers.GetE2EOIDCClientSecret()
+	if e2eClientSecret == "" {
+		t.Skip("Skipping: no E2E OIDC client secret configured")
+	}
+
+	t.Log("=== CC-OIDC-OT-010: Rotation Disabled — No Write ===")
+
+	provider := helpers.E2EOIDCProvider()
+	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+	require.NotEmpty(t, offlineToken)
+
+	e2eClientID := helpers.GetE2EOIDCClientID()
+	clientSecretName := helpers.GenerateUniqueName("ot010-secret")
+	createClientSecret(t, ctx, cli, cleanup, clientSecretName, namespace, e2eClientSecret)
+
+	rtSecretName := helpers.GenerateUniqueName("ot010-rt")
+	createRefreshTokenSecret(t, ctx, cli, cleanup, rtSecretName, namespace, offlineToken)
+
+	ccName := helpers.GenerateUniqueName("ot010-norot")
+	ccBuilder := helpers.NewClusterConfigBuilder(ccName, namespace).
+		WithOIDCAuth(oc.issuerURL, e2eClientID, oc.server).
+		WithOIDCClientSecret(clientSecretName, namespace, "client-secret").
+		WithOIDCFallbackPolicy(breakglassv1alpha1.FallbackPolicyNone).
+		WithOIDCRefreshToken(rtSecretName, namespace, "refresh-token").
+		// Note: NO WithOIDCRotatedRefreshTokenKey — rotation is disabled
+		WithOIDCAllowTOFU(true)
+	if oc.ca != "" {
+		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(oc.ca)
+	}
+	cc := ccBuilder.Build()
+	cleanup.Add(cc)
+	err := cli.Create(ctx, cc)
+	require.NoError(t, err)
+
+	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
+	require.NoError(t, err, "CC without rotation should become Ready")
+
+	// Wait a bit to ensure no async write occurs, then verify secret has only original key.
+	// Use polling to check stability (3 checks over 15s).
+	for i := 0; i < 3; i++ {
+		time.Sleep(5 * time.Second)
+		var rtSecret corev1.Secret
+		err = cli.Get(ctx, types.NamespacedName{Name: rtSecretName, Namespace: namespace}, &rtSecret)
+		require.NoError(t, err)
+		assert.Len(t, rtSecret.Data, 1, "secret should only have the original key (check %d/3)", i+1)
+		_, hasRotated := rtSecret.Data["refresh-token-rotated"]
+		assert.False(t, hasRotated, "rotated key must NOT exist when rotation is disabled (check %d/3)", i+1)
+	}
+
+	t.Log("=== CC-OIDC-OT-010: Pass — no extra keys written with rotation disabled ===")
+}
+
+// ---------------------------------------------------------------------------
+// CC-OIDC-OT-011: Access token expiry — controller renews from offline token
+//   → Create CC with valid offline token, wait >5 min (access_token lifespan
+//     = 300s in Keycloak E2E config), verify CC stays Ready throughout
+// ---------------------------------------------------------------------------
+
+func TestOIDC_OfflineToken_AccessTokenExpiry_RenewsFromOfflineToken(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	// This test waits >5 min for access token to expire, plus setup/verification time.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	oc := setupOIDCContext(t, ctx, cli, namespace)
+
+	e2eClientSecret := helpers.GetE2EOIDCClientSecret()
+	if e2eClientSecret == "" {
+		t.Skip("Skipping: no E2E OIDC client secret configured")
+	}
+
+	t.Log("=== CC-OIDC-OT-011: Access Token Expiry — Renews From Offline Token ===")
+	t.Log("This test waits >5 minutes for the access token (300s lifespan) to expire.")
+	t.Log("It verifies the controller transparently renews using the offline token.")
+
+	provider := helpers.E2EOIDCProvider()
+	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+	require.NotEmpty(t, offlineToken)
+
+	e2eClientID := helpers.GetE2EOIDCClientID()
+	clientSecretName := helpers.GenerateUniqueName("ot011-secret")
+	createClientSecret(t, ctx, cli, cleanup, clientSecretName, namespace, e2eClientSecret)
+
+	rtSecretName := helpers.GenerateUniqueName("ot011-rt")
+	createRefreshTokenSecret(t, ctx, cli, cleanup, rtSecretName, namespace, offlineToken)
+
+	ccName := helpers.GenerateUniqueName("ot011-expiry")
+	ccBuilder := helpers.NewClusterConfigBuilder(ccName, namespace).
+		WithOIDCAuth(oc.issuerURL, e2eClientID, oc.server).
+		WithOIDCClientSecret(clientSecretName, namespace, "client-secret").
+		WithOIDCFallbackPolicy(breakglassv1alpha1.FallbackPolicyNone).
+		WithOIDCRefreshToken(rtSecretName, namespace, "refresh-token").
+		WithOIDCAllowTOFU(true)
+	if oc.ca != "" {
+		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(oc.ca)
+	}
+	cc := ccBuilder.Build()
+	cleanup.Add(cc)
+	err := cli.Create(ctx, cc)
+	require.NoError(t, err)
+
+	// Wait for initial Ready state.
+	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
+	require.NoError(t, err, "CC should become Ready initially")
+	t.Log("CC is Ready — now waiting for access token to expire (>5 min)...")
+
+	// Poll every 30s for 6.5 minutes (390s) — this guarantees at least one
+	// full access token expiry cycle (300s lifespan).
+	startTime := time.Now()
+	checkInterval := 30 * time.Second
+	totalWait := 6*time.Minute + 30*time.Second
+	checkCount := 0
+
+	for time.Since(startTime) < totalWait {
+		time.Sleep(checkInterval)
+		checkCount++
+
+		result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
+		elapsed := time.Since(startTime).Round(time.Second)
+
+		if !isClusterConfigReady(&result) {
+			logClusterConfigConditions(t, &result)
+			t.Fatalf("CC became NOT Ready after %s (check %d) — renewal may have failed", elapsed, checkCount)
+		}
+
+		hasExpired := hasCondition(&result, string(breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired), metav1.ConditionTrue)
+		hasDegraded := hasCondition(&result, string(breakglassv1alpha1.ClusterConfigConditionDegradedAuth), metav1.ConditionTrue)
+
+		assert.False(t, hasExpired, "RefreshTokenExpired should not appear (check %d, elapsed %s)", checkCount, elapsed)
+		assert.False(t, hasDegraded, "DegradedAuth should not appear (check %d, elapsed %s)", checkCount, elapsed)
+
+		t.Logf("  Check %d (%s elapsed): Ready=true, no degraded conditions", checkCount, elapsed)
+	}
+
+	// Final verification.
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
+	assertClusterConfigReady(t, &result)
+	t.Logf("CC remained Ready for %s across %d checks (access token lifespan = 300s)",
+		time.Since(startTime).Round(time.Second), checkCount)
+
+	t.Log("=== CC-OIDC-OT-011: Pass — access token renewed from offline token ===")
+}
+
+// ---------------------------------------------------------------------------
+// CC-OIDC-OT-012: Access token expiry with rotation — renewal + persist
+//   → Same as OT-011 but with rotatedRefreshTokenKey enabled.
+//     Verifies: (a) CC stays Ready, (b) rotated key is populated,
+//     (c) original key is unchanged after 5+ min
+// ---------------------------------------------------------------------------
+
+func TestOIDC_OfflineToken_AccessTokenExpiry_WithRotation(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	oc := setupOIDCContext(t, ctx, cli, namespace)
+
+	e2eClientSecret := helpers.GetE2EOIDCClientSecret()
+	if e2eClientSecret == "" {
+		t.Skip("Skipping: no E2E OIDC client secret configured")
+	}
+
+	t.Log("=== CC-OIDC-OT-012: Access Token Expiry with Rotation ===")
+	t.Log("This test waits >5 minutes and verifies both renewal and rotation persistence.")
+
+	provider := helpers.E2EOIDCProvider()
+	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+	require.NotEmpty(t, offlineToken)
+
+	e2eClientID := helpers.GetE2EOIDCClientID()
+	clientSecretName := helpers.GenerateUniqueName("ot012-secret")
+	createClientSecret(t, ctx, cli, cleanup, clientSecretName, namespace, e2eClientSecret)
+
+	rtSecretName := helpers.GenerateUniqueName("ot012-rt")
+	createRefreshTokenSecret(t, ctx, cli, cleanup, rtSecretName, namespace, offlineToken)
+
+	ccName := helpers.GenerateUniqueName("ot012-exprot")
+	ccBuilder := helpers.NewClusterConfigBuilder(ccName, namespace).
+		WithOIDCAuth(oc.issuerURL, e2eClientID, oc.server).
+		WithOIDCClientSecret(clientSecretName, namespace, "client-secret").
+		WithOIDCFallbackPolicy(breakglassv1alpha1.FallbackPolicyNone).
+		WithOIDCRefreshToken(rtSecretName, namespace, "refresh-token").
+		WithOIDCRotatedRefreshTokenKey("refresh-token-rotated").
+		WithOIDCAllowTOFU(true)
+	if oc.ca != "" {
+		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(oc.ca)
+	}
+	cc := ccBuilder.Build()
+	cleanup.Add(cc)
+	err := cli.Create(ctx, cc)
+	require.NoError(t, err)
+
+	// Wait for initial Ready state.
+	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
+	require.NoError(t, err, "CC should become Ready initially")
+
+	// Wait for rotation to take effect.
+	require.Eventually(t, func() bool {
+		var rtSecret corev1.Secret
+		if err := cli.Get(ctx, types.NamespacedName{Name: rtSecretName, Namespace: namespace}, &rtSecret); err != nil {
+			return false
+		}
+		_, exists := rtSecret.Data["refresh-token-rotated"]
+		return exists
+	}, 60*time.Second, 3*time.Second, "rotated key should appear before starting long wait")
+	t.Log("Rotated key populated — now waiting for access token to expire (>5 min)...")
+
+	// Poll every 30s for 6.5 minutes.
+	startTime := time.Now()
+	checkInterval := 30 * time.Second
+	totalWait := 6*time.Minute + 30*time.Second
+	checkCount := 0
+
+	for time.Since(startTime) < totalWait {
+		time.Sleep(checkInterval)
+		checkCount++
+
+		result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
+		elapsed := time.Since(startTime).Round(time.Second)
+
+		if !isClusterConfigReady(&result) {
+			logClusterConfigConditions(t, &result)
+			t.Fatalf("CC became NOT Ready after %s (check %d)", elapsed, checkCount)
+		}
+
+		assert.False(t,
+			hasCondition(&result, string(breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired), metav1.ConditionTrue),
+			"RefreshTokenExpired should not appear (check %d, elapsed %s)", checkCount, elapsed)
+
+		t.Logf("  Check %d (%s elapsed): Ready=true", checkCount, elapsed)
+	}
+
+	// Final verification: CC still Ready, original key preserved, rotated key exists.
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
+	assertClusterConfigReady(t, &result)
+
+	var rtSecret corev1.Secret
+	err = cli.Get(ctx, types.NamespacedName{Name: rtSecretName, Namespace: namespace}, &rtSecret)
+	require.NoError(t, err)
+
+	assert.Equal(t, offlineToken, string(rtSecret.Data["refresh-token"]),
+		"original refresh-token key must be preserved after full expiry cycle")
+
+	rotatedValue := string(rtSecret.Data["refresh-token-rotated"])
+	assert.NotEmpty(t, rotatedValue, "rotated key should contain a token after expiry cycle")
+
+	t.Logf("CC remained Ready for %s across %d checks with rotation enabled",
+		time.Since(startTime).Round(time.Second), checkCount)
+
+	t.Log("=== CC-OIDC-OT-012: Pass — access token renewed with rotation persisted ===")
+}

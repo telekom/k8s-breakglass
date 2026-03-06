@@ -193,6 +193,18 @@ type OIDCAuthConfig struct {
 	// +optional
 	RefreshTokenSecretRef *SecretKeyReference `json:"refreshTokenSecretRef,omitempty"`
 
+	// rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+	// refreshTokenSecretRef where the controller writes rotated refresh tokens received
+	// from the OIDC provider. The original key is never modified, making this safe for
+	// GitOps tools (e.g. Flux) that manage the seed token.
+	// When reading, the controller checks the rotated key first and falls back to the
+	// original key — ensuring the freshest token is always used.
+	// Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+	// Must differ from the key in refreshTokenSecretRef.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	RotatedRefreshTokenKey string `json:"rotatedRefreshTokenKey,omitempty"`
+
 	// fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
 	// Only valid when refreshTokenSecretRef is set.
 	// - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
@@ -306,6 +318,18 @@ type OIDCFromIdentityProviderConfig struct {
 	// Mutually exclusive with clientSecretRef.
 	// +optional
 	RefreshTokenSecretRef *SecretKeyReference `json:"refreshTokenSecretRef,omitempty"`
+
+	// rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+	// refreshTokenSecretRef where the controller writes rotated refresh tokens received
+	// from the OIDC provider. The original key is never modified, making this safe for
+	// GitOps tools (e.g. Flux) that manage the seed token.
+	// When reading, the controller checks the rotated key first and falls back to the
+	// original key — ensuring the freshest token is always used.
+	// Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+	// Must differ from the key in refreshTokenSecretRef.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	RotatedRefreshTokenKey string `json:"rotatedRefreshTokenKey,omitempty"`
 
 	// tokenExchange enables RFC 8693 token exchange flow via the referenced IdentityProvider.
 	// When enabled, the controller uses the IDP's Keycloak service account credentials

@@ -258,6 +258,18 @@ spec:
                     - name
                     - namespace
                     type: object
+                  rotatedRefreshTokenKey:
+                    description: |-
+                      rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+                      refreshTokenSecretRef where the controller writes rotated refresh tokens received
+                      from the OIDC provider. The original key is never modified, making this safe for
+                      GitOps tools (e.g. Flux) that manage the seed token.
+                      When reading, the controller checks the rotated key first and falls back to the
+                      original key — ensuring the freshest token is always used.
+                      Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+                      Must differ from the key in refreshTokenSecretRef.
+                    maxLength: 253
+                    type: string
                   scopes:
                     description: |-
                       scopes specifies additional OIDC scopes to request.
@@ -472,6 +484,18 @@ spec:
                     - name
                     - namespace
                     type: object
+                  rotatedRefreshTokenKey:
+                    description: |-
+                      rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+                      refreshTokenSecretRef where the controller writes rotated refresh tokens received
+                      from the OIDC provider. The original key is never modified, making this safe for
+                      GitOps tools (e.g. Flux) that manage the seed token.
+                      When reading, the controller checks the rotated key first and falls back to the
+                      original key — ensuring the freshest token is always used.
+                      Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+                      Must differ from the key in refreshTokenSecretRef.
+                    maxLength: 253
+                    type: string
                   scopes:
                     description: |-
                       scopes specifies additional OIDC scopes to request.

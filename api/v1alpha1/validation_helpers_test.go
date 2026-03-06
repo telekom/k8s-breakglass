@@ -3143,3 +3143,160 @@ func TestValidateOIDCAuth_FallbackPolicy(t *testing.T) {
 		assert.Empty(t, errs, "clientSecretRef and refreshTokenSecretRef can coexist on OIDCAuthConfig for explicit fallback")
 	})
 }
+
+// =============================================================================
+// RotatedRefreshTokenKey Validation Tests
+// =============================================================================
+
+// TestValidateOIDCFromIDP_RotatedRefreshTokenKey validates rotatedRefreshTokenKey rules on OIDCFromIdentityProviderConfig.
+func TestValidateOIDCFromIDP_RotatedRefreshTokenKey(t *testing.T) {
+	t.Run("valid: rotatedRefreshTokenKey with refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "rotatedRefreshTokenKey with refreshTokenSecretRef and different key should pass")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey without refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:                   "my-idp",
+			Server:                 "https://api.cluster.example.com:6443",
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey without refreshTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "refreshTokenSecretRef")
+		assert.Contains(t, errStr, "rotatedRefreshTokenKey")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey same as refreshTokenSecretRef.Key", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey same as refreshTokenSecretRef key should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey equals default key 'token'", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				// Key empty => defaults to "token"
+			},
+			RotatedRefreshTokenKey: "token",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'token' should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
+	})
+
+	t.Run("empty rotatedRefreshTokenKey is valid (disabled)", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			// RotatedRefreshTokenKey intentionally empty
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "empty rotatedRefreshTokenKey should pass (rotation disabled)")
+	})
+}
+
+// TestValidateOIDCAuth_RotatedRefreshTokenKey validates rotatedRefreshTokenKey rules on OIDCAuthConfig.
+func TestValidateOIDCAuth_RotatedRefreshTokenKey(t *testing.T) {
+	t.Run("valid: rotatedRefreshTokenKey with refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.Empty(t, errs, "rotatedRefreshTokenKey with refreshTokenSecretRef and different key should pass")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey without refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			ClientSecretRef: &SecretKeyReference{
+				Name:      "my-secret",
+				Namespace: "breakglass-system",
+			},
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey without refreshTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "refreshTokenSecretRef")
+		assert.Contains(t, errStr, "rotatedRefreshTokenKey")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey same as refreshTokenSecretRef.Key", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey same as refreshTokenSecretRef key should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey equals default key 'token'", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				// Key empty => defaults to "token"
+			},
+			RotatedRefreshTokenKey: "token",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'token' should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
+	})
+}

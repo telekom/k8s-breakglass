@@ -256,6 +256,7 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 
 	// Propagate new fields from OIDCFromIdentityProviderConfig
 	oidc.RefreshTokenSecretRef = ref.RefreshTokenSecretRef
+	oidc.RotatedRefreshTokenKey = ref.RotatedRefreshTokenKey
 	oidc.FallbackPolicy = ref.FallbackPolicy
 
 	// Propagate audience — default to server URL if not specified
@@ -343,9 +344,11 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 	// Step 1: Try to refresh using cached refresh token if available
 	if ok && cached.refreshToken != "" {
 		p.log.Debugw("Attempting token refresh from cache", "cluster", clusterName, "namespace", namespace)
-		token, err := p.refreshToken(ctx, oidc, cached.refreshToken)
+		oldRT := cached.refreshToken
+		token, err := p.refreshToken(ctx, oidc, oldRT)
 		if err == nil {
 			p.cacheTokenWithNamespace(namespace, clusterName, token)
+			p.persistRotatedRefreshToken(ctx, oidc, namespace, token.RefreshToken, oldRT)
 			p.log.Debugw("Token refreshed successfully from cache", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn)
 			return token.AccessToken, nil
 		}
@@ -357,6 +360,12 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 		token, err := p.refreshTokenFromSecret(ctx, oidc, namespace)
 		if err == nil {
 			p.cacheTokenWithNamespace(namespace, clusterName, token)
+			// Best-effort persist: read the seed token we used so we can detect rotation.
+			// If readBestRefreshToken picked the rotated key, token.RefreshToken should
+			// equal it and persistRotatedRefreshToken will no-op.
+			if seedRT, seedErr := p.readBestRefreshToken(ctx, oidc, namespace); seedErr == nil {
+				p.persistRotatedRefreshToken(ctx, oidc, namespace, token.RefreshToken, seedRT)
+			}
 			p.log.Debugw("Token refreshed from secret", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn)
 			return token.AccessToken, nil
 		}
@@ -410,13 +419,17 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 // refreshTokenFromSecret reads an offline refresh token from a K8s Secret and attempts
 // to exchange it for a fresh access token. This is the primary flow for the refresh token
 // auth mode — no client secret is required because the IDP's existing client is reused.
+//
+// Read order when rotatedRefreshTokenKey is configured:
+//  1. Try the rotated key first (freshest token from a previous rotation)
+//  2. Fall back to the original key (seed token, e.g. managed by Flux)
 func (p *OIDCTokenProvider) refreshTokenFromSecret(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) (*tokenResponse, error) {
 	if oidc.RefreshTokenSecretRef == nil {
 		return nil, fmt.Errorf("refreshTokenSecretRef is nil")
 	}
 
-	// Read the offline refresh token from the K8s Secret
-	refreshTok, err := p.getTokenFromSecret(ctx, oidc.RefreshTokenSecretRef, namespace)
+	// Read the offline refresh token — prefer rotated key if configured and present
+	refreshTok, err := p.readBestRefreshToken(ctx, oidc, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read refresh token from secret: %w", err)
 	}
@@ -432,6 +445,78 @@ func (p *OIDCTokenProvider) refreshTokenFromSecret(ctx context.Context, oidc *br
 	}
 
 	return token, nil
+}
+
+// readBestRefreshToken reads the freshest refresh token from the secret.
+// If rotatedRefreshTokenKey is configured, it tries that key first and falls
+// back to the original key.
+func (p *OIDCTokenProvider) readBestRefreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) (string, error) {
+	if oidc.RotatedRefreshTokenKey != "" {
+		// Try the rotated key first — it holds the freshest token after rotation
+		rotatedRef := &breakglassv1alpha1.SecretKeyReference{
+			Name:      oidc.RefreshTokenSecretRef.Name,
+			Namespace: oidc.RefreshTokenSecretRef.Namespace,
+			Key:       oidc.RotatedRefreshTokenKey,
+		}
+		rotatedTok, err := p.getTokenFromSecret(ctx, rotatedRef, namespace)
+		if err == nil && rotatedTok != "" {
+			p.log.Debugw("Using rotated refresh token", "key", oidc.RotatedRefreshTokenKey)
+			return rotatedTok, nil
+		}
+		// Rotated key not found or empty — fall through to original key
+		p.log.Debugw("Rotated refresh token key not found, falling back to original key",
+			"rotatedKey", oidc.RotatedRefreshTokenKey, "error", err)
+	}
+
+	return p.getTokenFromSecret(ctx, oidc.RefreshTokenSecretRef, namespace)
+}
+
+// persistRotatedRefreshToken writes a rotated refresh token back to the K8s Secret
+// under the configured rotatedRefreshTokenKey using SSA. This is a best-effort
+// operation — failures are logged but do not break the auth flow.
+// No-op when rotation is not configured or the token hasn't changed.
+func (p *OIDCTokenProvider) persistRotatedRefreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace, newRefreshToken, oldRefreshToken string) {
+	if oidc.RotatedRefreshTokenKey == "" {
+		return
+	}
+	if newRefreshToken == oldRefreshToken {
+		return
+	}
+
+	ns := namespace
+	if oidc.RefreshTokenSecretRef.Namespace != "" {
+		ns = oidc.RefreshTokenSecretRef.Namespace
+	}
+
+	secret := corev1.Secret{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "Secret",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      oidc.RefreshTokenSecretRef.Name,
+			Namespace: ns,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "breakglass",
+			},
+			Annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/rotated-at": time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			oidc.RotatedRefreshTokenKey: []byte(newRefreshToken),
+		},
+	}
+	if err := utils.ApplyObject(ctx, p.k8s, &secret); err != nil {
+		p.log.Warnw("Failed to persist rotated refresh token (best-effort)",
+			"secret", oidc.RefreshTokenSecretRef.Name, "namespace", ns,
+			"key", oidc.RotatedRefreshTokenKey, "error", err)
+		return
+	}
+	p.log.Infow("Persisted rotated refresh token",
+		"secret", oidc.RefreshTokenSecretRef.Name, "namespace", ns,
+		"key", oidc.RotatedRefreshTokenKey)
 }
 
 // evaluateFallback handles the fallback logic when the primary refresh token flow fails.
