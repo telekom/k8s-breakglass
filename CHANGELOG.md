@@ -7,13 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **SessionManager pointer receivers** ([#471](https://github.com/telekom/k8s-breakglass/issues/471), [#474](https://github.com/telekom/k8s-breakglass/issues/474) GO-011): Changed all 14 `SessionManager` methods from value to pointer receivers for correctness with pointer fields
-- **Deprecated `NewSessionManager`** ([#471](https://github.com/telekom/k8s-breakglass/issues/471)): Marked `NewSessionManager(contextName)` deprecated in favor of `NewSessionManagerWithClient` for explicit caching behavior
-- **Logger fallback warning** ([#466](https://github.com/telekom/k8s-breakglass/issues/466)): `SessionManager.getLogger()` now logs a warning when falling back to the global logger
-- **Documented `isFieldIndexError` fragility** ([#458](https://github.com/telekom/k8s-breakglass/issues/458)): Added explanatory comments and regression tests for string-matching error detection
-
 ### Fixed
 
 - **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
@@ -60,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **SessionManager pointer receivers** ([#471](https://github.com/telekom/k8s-breakglass/issues/471), [#474](https://github.com/telekom/k8s-breakglass/issues/474) GO-011): Changed all 14 `SessionManager` methods from value to pointer receivers for correctness with pointer fields
+- **Deprecated `NewSessionManager`** ([#471](https://github.com/telekom/k8s-breakglass/issues/471)): Marked `NewSessionManager(contextName)` deprecated in favor of `NewSessionManagerWithClient` for explicit caching behavior
+- **Logger fallback warning** ([#466](https://github.com/telekom/k8s-breakglass/issues/466)): `SessionManager.getLogger()` now logs a warning when falling back to the global logger
+- **Documented `isFieldIndexError` fragility** ([#458](https://github.com/telekom/k8s-breakglass/issues/458)): Added explanatory comments and regression tests for string-matching error detection
 - **Webhook: deduplicated logger pattern** ([#467](https://github.com/telekom/k8s-breakglass/issues/467)): Resolved logger once at `authorizeViaSessions` entry, eliminating 7 duplicate `if logger != nil / else if wc.log != nil` branches
 - **Webhook: `dedupeStrings` uses `map[string]struct{}`** ([#467](https://github.com/telekom/k8s-breakglass/issues/467)): Zero-allocation seen set instead of `map[string]bool`
 - **Breaking — Metrics: removed `session` label from high-cardinality counters** ([#463](https://github.com/telekom/k8s-breakglass/issues/463)): Removed auto-generated session name label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` to prevent unbounded Prometheus cardinality. **Update any alert rules or Grafana dashboards that reference the `session` label on these counters.**

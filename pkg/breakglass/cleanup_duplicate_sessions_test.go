@@ -47,7 +47,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions()
 		mgr := NewSessionManagerWithClient(fc)
 		// Should not panic or error
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 	})
 
 	t.Run("nil manager — no-op", func(t *testing.T) {
@@ -67,7 +67,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(s)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var got breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s), &got))
@@ -96,7 +96,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(s1, s2)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var got1, got2 breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s1), &got1))
@@ -128,7 +128,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(oldest, newest)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var gotOld, gotNew breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(oldest), &gotOld))
@@ -168,7 +168,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(oldest, newest)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var gotOld, gotNew breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(oldest), &gotOld))
@@ -218,7 +218,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(s1, s2, s3)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var got1, got2, got3 breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s1), &got1))
@@ -253,7 +253,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(active, expired)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var gotActive, gotExpired breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(active), &gotActive))
@@ -286,7 +286,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(s1, s2)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var got1, got2 breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s1), &got1))
@@ -319,7 +319,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(olderPending, newerApproved)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var gotPending, gotApproved breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(olderPending), &gotPending))
@@ -353,7 +353,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		mgr := NewSessionManagerWithClient(fc)
 
 		// Should not panic with nil logger
-		CleanupDuplicateSessions(ctx, nil, &mgr)
+		CleanupDuplicateSessions(ctx, nil, mgr)
 
 		var got1, got2 breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s1), &got1))
@@ -388,7 +388,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		fc := newFakeClientWithSessions(sA, sZ)
 		mgr := NewSessionManagerWithClient(fc)
 
-		CleanupDuplicateSessions(ctx, logger, &mgr)
+		CleanupDuplicateSessions(ctx, logger, mgr)
 
 		var gotA, gotZ breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(sA), &gotA))
@@ -425,7 +425,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		mgr := NewSessionManagerWithClient(fc)
 
 		// With cancelled context, the duplicate loop should exit early
-		CleanupDuplicateSessions(cancelCtx, logger, &mgr)
+		CleanupDuplicateSessions(cancelCtx, logger, mgr)
 
 		var got2 breakglassv1alpha1.BreakglassSession
 		require.NoError(t, fc.Get(ctx, client.ObjectKeyFromObject(s2), &got2))

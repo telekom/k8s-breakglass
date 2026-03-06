@@ -58,7 +58,7 @@ func TestExpirePendingSessions(t *testing.T) {
 		// Create minimal controller
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 		}
 
 		// Run the expire function
@@ -103,7 +103,7 @@ func TestExpirePendingSessions(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 		}
 
 		controller.ExpirePendingSessions()
@@ -147,7 +147,7 @@ func TestExpirePendingSessions(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 		}
 
 		controller.ExpirePendingSessions()

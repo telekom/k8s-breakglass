@@ -56,11 +56,11 @@ func WithSessionLogger(log *zap.SugaredLogger) SessionManagerOption {
 // Deprecated: NewSessionManager creates an uncached client that reads directly from the
 // API server. Prefer NewSessionManagerWithClient or NewSessionManagerWithClientAndReader
 // with a cached manager client for consistent caching behavior.
-func NewSessionManager(contextName string) (SessionManager, error) {
+func NewSessionManager(contextName string) (*SessionManager, error) {
 	cfg, err := config.GetConfigWithContext(contextName)
 	if err != nil {
 		zap.S().Errorw("Failed to get config with context", "context", contextName, "error", err)
-		return SessionManager{}, fmt.Errorf("failed to get config with context %q: %w", contextName, err)
+		return nil, fmt.Errorf("failed to get config with context %q: %w", contextName, err)
 	}
 
 	c, err := client.New(cfg, client.Options{
@@ -68,33 +68,33 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 	})
 	if err != nil {
 		zap.S().Errorw("Failed to create new client", "error", err)
-		return SessionManager{}, fmt.Errorf("failed to create new client: %w", err)
+		return nil, fmt.Errorf("failed to create new client: %w", err)
 	}
 
 	log := zap.S().Named("session-manager")
 	log.Infow("SessionManager initialized", "context", contextName)
-	return SessionManager{Client: c, reader: c, log: log}, nil
+	return &SessionManager{Client: c, reader: c, log: log}, nil
 }
 
 // NewSessionManagerWithClient allows embedding an existing controller-runtime client (e.g., from a shared manager)
 // to avoid creating redundant rest.Config instances or duplicate caches. The provided client must already be
 // configured with the Breakglass scheme.
 // Configuration is applied via functional options (WithSessionLogger).
-func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) SessionManager {
+func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) *SessionManager {
 	return NewSessionManagerWithClientAndReader(c, c, opts...)
 }
 
 // NewSessionManagerWithClientAndReader allows using a cached client for writes and an optional reader
 // (e.g., APIReader) for consistent reads when required.
 // Configuration is applied via functional options (WithSessionLogger).
-func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) SessionManager {
+func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) *SessionManager {
 	if reader == nil {
 		reader = c
 	}
-	sm := SessionManager{Client: c, reader: reader}
+	sm := &SessionManager{Client: c, reader: reader}
 	for _, opt := range opts {
 		if opt != nil {
-			opt(&sm)
+			opt(sm)
 		}
 	}
 	return sm
