@@ -252,6 +252,8 @@
       "fullScopeAllowed": true,
       "redirectUris": ["*"],
       "webOrigins": ["*"],
+      "defaultClientScopes": ["openid-connect"],
+      "optionalClientScopes": ["offline_access"],
       "protocolMappers": [
         {
           "name": "groups",

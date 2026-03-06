@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -353,6 +354,92 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshToken(t *testing.T, ctx context.
 // ObtainOfflineRefreshTokenForUser gets an offline refresh token for a specific TestUser
 func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenForUser(t *testing.T, ctx context.Context, user TestUser) string {
 	return p.ObtainOfflineRefreshToken(t, ctx, user.Username, user.Password)
+}
+
+// TryObtainOfflineRefreshToken is like ObtainOfflineRefreshToken but returns
+// an error instead of failing the test — useful for retry loops around
+// transient Keycloak/infrastructure errors.
+func (p *OIDCTokenProvider) TryObtainOfflineRefreshToken(ctx context.Context, username, password string) (string, error) {
+	keycloakHost := p.KeycloakHost
+	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
+		keycloakHost = "https://" + keycloakHost
+	}
+
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", keycloakHost, p.Realm)
+
+	form := url.Values{
+		"grant_type": {"password"},
+		"client_id":  {p.ClientID},
+		"username":   {username},
+		"password":   {password},
+		"scope":      {"openid offline_access"},
+	}
+	if p.ClientSecret != "" {
+		form.Set("client_secret", p.ClientSecret)
+	}
+
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
+			},
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("create offline token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if p.IssuerHost != "" {
+		req.Host = p.IssuerHost
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("send offline token request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("offline token request returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("decode offline token response: %w", err)
+	}
+	if tokenResp.RefreshToken == "" {
+		return "", fmt.Errorf("no refresh_token in response (ensure offline_access scope is allowed)")
+	}
+
+	return tokenResp.RefreshToken, nil
+}
+
+// ObtainOfflineRefreshTokenWithRetry is like ObtainOfflineRefreshToken but
+// retries up to maxAttempts times on transient Keycloak/infrastructure errors,
+// with a delay between attempts.
+func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx context.Context, username, password string, maxAttempts int) string {
+	t.Helper()
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		token, err := p.TryObtainOfflineRefreshToken(ctx, username, password)
+		if err == nil {
+			return token
+		}
+		lastErr = err
+		if attempt < maxAttempts {
+			t.Logf("offline token request failed (attempt %d/%d): %v — retrying in 5s", attempt, maxAttempts, err)
+			time.Sleep(5 * time.Second)
+		}
+	}
+	require.NoError(t, lastErr, "failed to obtain offline refresh token after %d attempts", maxAttempts)
+	return "" // unreachable
 }
 
 // ObtainClientCredentialsToken performs a client_credentials grant to obtain an access

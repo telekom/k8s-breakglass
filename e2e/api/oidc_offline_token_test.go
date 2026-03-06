@@ -75,7 +75,8 @@ func TestOIDC_OfflineToken_ValidToken_BecomesReady(t *testing.T) {
 	// The token is bound to breakglass-e2e-oidc (serviceAccountsEnabled=false),
 	// so the controller cannot fall back to client_credentials.
 	provider := helpers.E2EOIDCProvider()
-	offlineToken := provider.ObtainOfflineRefreshToken(t, ctx, "e2e-requester", "e2e-requester")
+	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
 	require.NotEmpty(t, offlineToken, "offline refresh token should not be empty")
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -106,9 +107,7 @@ func TestOIDC_OfflineToken_ValidToken_BecomesReady(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err, "CC with valid offline token and FallbackPolicyNone must become Ready")
 
-	var result breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-	require.NoError(t, err)
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &result)
 
 	// With a valid offline token, there MUST be no degraded conditions.
@@ -147,7 +146,8 @@ func TestOIDC_OfflineToken_RenewalStability(t *testing.T) {
 	t.Log("=== CC-OIDC-OT-002: Offline Token Renewal Stability ===")
 
 	provider := helpers.E2EOIDCProvider()
-	offlineToken := provider.ObtainOfflineRefreshToken(t, ctx, "e2e-requester", "e2e-requester")
+	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
 	require.NotEmpty(t, offlineToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -180,12 +180,9 @@ func TestOIDC_OfflineToken_RenewalStability(t *testing.T) {
 	// Since FallbackPolicyNone is set and the client cannot do client_credentials,
 	// if the token renewal mechanism breaks, the CC will flip to not-Ready.
 	t.Log("Verifying Ready condition remains stable over 30s with FallbackPolicyNone ...")
-	nn := types.NamespacedName{Name: ccName, Namespace: namespace}
 	for i := 0; i < 3; i++ {
 		time.Sleep(10 * time.Second)
-		var result breakglassv1alpha1.ClusterConfig
-		err = cli.Get(ctx, nn, &result)
-		require.NoError(t, err)
+		result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 		assert.True(t, isClusterConfigReady(&result),
 			"CC should remain Ready with offline token (poll %d/3)", i+1)
 		assert.False(t,
@@ -249,21 +246,28 @@ func TestOIDC_OfflineToken_InvalidToken_NotReady(t *testing.T) {
 	// With FallbackPolicyNone and an invalid token, the CC MUST NOT become Ready.
 	// The E2E OIDC client has serviceAccountsEnabled=false, so there is no
 	// possible client_credentials fallback path.
-	result := waitForClusterConfigNotReady(t, ctx, cli, ccName, namespace, 60*time.Second)
-	require.False(t, isClusterConfigReady(result),
+	//
+	// Wait for the reconciler to process the CC (at least one condition set),
+	// then assert the expected failure state.
+	reconciled := waitForClusterConfigReconciled(t, ctx, cli, ccName, namespace, 60*time.Second)
+	logClusterConfigConditions(t, reconciled)
+
+	// Re-fetch to get latest state.
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
+	require.False(t, isClusterConfigReady(&result),
 		"CC with invalid offline token and FallbackPolicyNone must NOT become Ready")
 
 	// The controller should set RefreshTokenExpired=True for the invalid token.
 	assert.True(t,
-		hasCondition(result, string(breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired), metav1.ConditionTrue),
+		hasCondition(&result, string(breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired), metav1.ConditionTrue),
 		"CC should have RefreshTokenExpired=True for invalid refresh token")
 
 	// With FallbackPolicyNone, there must be NO DegradedAuth (no fallback occurred).
 	assert.False(t,
-		hasCondition(result, string(breakglassv1alpha1.ClusterConfigConditionDegradedAuth), metav1.ConditionTrue),
+		hasCondition(&result, string(breakglassv1alpha1.ClusterConfigConditionDegradedAuth), metav1.ConditionTrue),
 		"FallbackPolicyNone must NOT produce DegradedAuth condition")
 
-	logClusterConfigConditions(t, result)
+	logClusterConfigConditions(t, &result)
 
 	t.Log("=== CC-OIDC-OT-003: Pass — invalid token rejected with no fallback ===")
 }
@@ -448,9 +452,10 @@ func TestOIDC_OfflineToken_Recovery_InvalidToValid(t *testing.T) {
 	t.Log("Step 1: CC is not Ready (expected — bogus token)")
 	logClusterConfigConditions(t, result)
 
-	// Step 2: Obtain a valid offline token and update the secret.
+	// Step 2: Obtain a valid offline token and update the secret (with retry for infra flakiness).
 	provider := helpers.E2EOIDCProvider()
-	validToken := provider.ObtainOfflineRefreshToken(t, ctx, "e2e-requester", "e2e-requester")
+	validToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
 	require.NotEmpty(t, validToken, "valid offline token should not be empty")
 
 	var rtSecret corev1.Secret
@@ -465,9 +470,7 @@ func TestOIDC_OfflineToken_Recovery_InvalidToValid(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err, "Step 3: CC should recover after replacing token with valid one")
 
-	var recovered breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &recovered)
-	require.NoError(t, err)
+	recovered := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &recovered)
 
 	// After recovery, degraded conditions should be cleared.

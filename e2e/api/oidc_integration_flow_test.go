@@ -259,7 +259,8 @@ func TestOIDCClusterConfigClientCredentials(t *testing.T) {
 	err = cli.Create(ctx, clusterConfig)
 	require.NoError(t, err)
 
-	time.Sleep(5 * time.Second)
+	// Wait for the reconciler to process the CC.
+	_ = waitForClusterConfigConditionReady(t, ctx, cli, clusterConfig.Name, namespace, 60*time.Second)
 
 	var cc breakglassv1alpha1.ClusterConfig
 	err = cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &cc)

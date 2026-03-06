@@ -57,6 +57,46 @@ func hasCondition(cc *breakglassv1alpha1.ClusterConfig, condType string, status 
 	return false
 }
 
+// waitForClusterConfigReconciled polls until the ClusterConfig has at least
+// one status condition set, indicating the reconciler has processed it.
+// This avoids false negatives from asserting state before the reconciler runs.
+func waitForClusterConfigReconciled(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) *breakglassv1alpha1.ClusterConfig {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var cc breakglassv1alpha1.ClusterConfig
+	for time.Now().Before(deadline) {
+		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cc); err == nil && len(cc.Status.Conditions) > 0 {
+			return &cc
+		}
+		time.Sleep(2 * time.Second)
+	}
+	// Final attempt — log and fail
+	if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cc); err != nil {
+		t.Fatalf("timed out waiting for ClusterConfig %s/%s to be reconciled: %v", namespace, name, err)
+	}
+	logClusterConfigConditions(t, &cc)
+	t.Fatalf("timed out waiting for ClusterConfig %s/%s to have conditions set (reconciler did not process it)", namespace, name)
+	return nil //nolint:govet // unreachable
+}
+
+// getClusterConfigWithRetry fetches a ClusterConfig, retrying on transient
+// infrastructure errors (e.g. flaky API server connections during E2E).
+func getClusterConfigWithRetry(t *testing.T, ctx context.Context, cli client.Client, name, namespace string) breakglassv1alpha1.ClusterConfig {
+	t.Helper()
+	var cc breakglassv1alpha1.ClusterConfig
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		lastErr = cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cc)
+		if lastErr == nil {
+			return cc
+		}
+		t.Logf("transient error fetching ClusterConfig %s/%s (attempt %d/3): %v", namespace, name, attempt, lastErr)
+		time.Sleep(2 * time.Second)
+	}
+	require.NoError(t, lastErr, "failed to fetch ClusterConfig %s/%s after retries", namespace, name)
+	return cc
+}
+
 // waitForClusterConfigNotReady waits until the ClusterConfig is either not
 // found, or has Ready=False. Returns the latest ClusterConfig.
 func waitForClusterConfigNotReady(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) *breakglassv1alpha1.ClusterConfig {
@@ -254,9 +294,7 @@ func TestOIDC_ValidClientCredentials_BecomesReady(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err)
 
-	var result breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-	require.NoError(t, err)
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &result)
 
 	t.Log("=== CC-OIDC-COMP-003: Pass — valid CC is Ready ===")
@@ -303,9 +341,7 @@ func TestOIDC_TokenRenewal_StaysReady(t *testing.T) {
 	t.Log("Verifying Ready condition remains stable over 30s ...")
 	for i := 0; i < 3; i++ {
 		time.Sleep(10 * time.Second)
-		var result breakglassv1alpha1.ClusterConfig
-		err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-		require.NoError(t, err)
+		result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 		assert.True(t, isClusterConfigReady(&result), "ClusterConfig should remain Ready (poll %d/3)", i+1)
 		logClusterConfigConditions(t, &result)
 	}
@@ -357,9 +393,7 @@ func TestOIDC_FallbackPolicyAuto_InvalidRefreshToken(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err, "FallbackPolicyAuto should make CC Ready via client_credentials fallback")
 
-	var result breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-	require.NoError(t, err)
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &result)
 	logClusterConfigConditions(t, &result)
 
@@ -410,9 +444,7 @@ func TestOIDC_FallbackPolicyWarn_InvalidRefreshToken(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err, "FallbackPolicyWarn should make CC Ready")
 
-	var result breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-	require.NoError(t, err)
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &result)
 
 	// Verify DegradedAuth condition is present
@@ -465,12 +497,12 @@ func TestOIDC_FallbackPolicyNone_InvalidRefreshToken(t *testing.T) {
 
 	// With None the CC should NOT fallback and should remain not-Ready.
 	// The controller will try the refresh token, fail, and not recover.
-	time.Sleep(15 * time.Second)
+	// Wait for the reconciler to process the CC (at least one condition set).
+	reconciled := waitForClusterConfigReconciled(t, ctx, cli, ccName, namespace, 60*time.Second)
+	logClusterConfigConditions(t, reconciled)
 
-	var result breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-	require.NoError(t, err)
-	logClusterConfigConditions(t, &result)
+	// Re-fetch to get latest state.
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 
 	// The CC may or may not become Ready depending on whether the controller
 	// tries client_credentials first before attempting refresh. We mainly
@@ -644,9 +676,7 @@ func TestOIDC_RecoveryAfterFixingConfig(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err, "CC should recover after fixing client secret")
 
-	var recovered breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &recovered)
-	require.NoError(t, err)
+	recovered := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &recovered)
 
 	t.Log("=== CC-OIDC-COMP-010: Pass — CC recovered after fix ===")
@@ -687,9 +717,7 @@ func TestOIDC_InsecureSkipTLSVerify(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err, "insecureSkipTLSVerify CC should become Ready")
 
-	var result breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-	require.NoError(t, err)
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &result)
 
 	t.Log("=== CC-OIDC-COMP-011: Pass — insecureSkipTLSVerify works ===")
@@ -718,9 +746,10 @@ func TestOIDC_ValidRefreshToken_NoDegradedAuth(t *testing.T) {
 
 	t.Log("=== CC-OIDC-COMP-012: Valid Refresh Token + FallbackPolicyAuto ===")
 
-	// Obtain a real offline refresh token from Keycloak
+	// Obtain a real offline refresh token from Keycloak (with retry for infra flakiness)
 	provider := helpers.E2EOIDCProvider()
-	rt := provider.ObtainOfflineRefreshToken(t, ctx, "e2e-requester", "e2e-requester")
+	rt := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
 	require.NotEmpty(t, rt, "offline refresh token should not be empty")
 
 	secretName := helpers.GenerateUniqueName("comp012-secret")
@@ -747,9 +776,7 @@ func TestOIDC_ValidRefreshToken_NoDegradedAuth(t *testing.T) {
 	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
 	require.NoError(t, err, "CC with valid refresh token should become Ready")
 
-	var result breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-	require.NoError(t, err)
+	result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 	assertClusterConfigReady(t, &result)
 
 	// With a valid refresh token, there should be NO DegradedAuth condition.
@@ -865,12 +892,12 @@ func TestOIDC_TokenExchange_InvalidSubjectToken(t *testing.T) {
 	if err != nil {
 		t.Logf("Webhook rejected token exchange config: %v", err)
 	} else {
-		// Wait and check — the token exchange should fail but not necessarily
-		// prevent the CC from becoming Ready depending on the exchange config.
-		time.Sleep(15 * time.Second)
-		var result breakglassv1alpha1.ClusterConfig
-		err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &result)
-		require.NoError(t, err)
+		// Wait for the reconciler to process the CC before checking state.
+		reconciled := waitForClusterConfigReconciled(t, ctx, cli, ccName, namespace, 60*time.Second)
+		logClusterConfigConditions(t, reconciled)
+
+		// Re-fetch to get the latest state.
+		result := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
 		logClusterConfigConditions(t, &result)
 		t.Logf("Token exchange CC status: Ready=%v", isClusterConfigReady(&result))
 	}
