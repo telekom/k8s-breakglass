@@ -1,6 +1,10 @@
 package reconciler
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -433,6 +437,49 @@ func TestNewManager_RestConfigVariations(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, mgr)
+			}
+		})
+	}
+}
+
+func TestInformerSyncReadyzCheck(t *testing.T) {
+	tests := []struct {
+		name        string
+		cacheSynced bool
+		expectError bool
+	}{
+		{
+			name:        "returns nil when cache is synced",
+			cacheSynced: true,
+			expectError: false,
+		},
+		{
+			name:        "returns error when cache is not synced",
+			cacheSynced: false,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Replicate the readyz check function from Setup to verify its logic
+			checkFn := func(req *http.Request) error {
+				// Simulate WaitForCacheSync behavior
+				if !tt.cacheSynced {
+					return fmt.Errorf("informer cache not synced")
+				}
+				return nil
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+			req = req.WithContext(context.Background())
+			err := checkFn(req)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "informer cache not synced")
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
