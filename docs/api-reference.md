@@ -796,7 +796,7 @@ GET /api/debug/buildinfo
 | Field | Type | Description |
 |-------|------|-------------|
 | `version` | string | Release version (or `"dev"` for local builds) |
-| `buildDate` | string | Build date string (RFC3339 when set at compile time, empty for dev builds) |
+| `buildDate` | string | Build date string (RFC3339 when set at compile time, `"unknown"` for dev builds) |
 
 > **Note:** The build info endpoint intentionally exposes only `version` and `buildDate`.
 > Fields like `gitCommit`, `goVersion`, and `platform` are omitted to reduce the

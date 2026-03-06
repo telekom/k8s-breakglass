@@ -159,7 +159,7 @@ The current Bearer token approach provides adequate security because:
 
 | Control | How it protects tokens |
 |---------|----------------------|
-| **Content Security Policy (CSP)** | Restricts script sources to `'self'`, blocking inline scripts and XSS payloads from accessing storage |
+| **Content Security Policy (CSP)** | Restricts script sources to `'self'` plus specific hash-allowed inline scripts, preventing arbitrary XSS payloads from accessing storage |
 | **Input sanitization** | Free-form reason fields are sanitized to strip HTML/JS injection attempts |
 | **Same-origin policy** | `sessionStorage` is origin-scoped — a cross-origin page cannot read it |
 | **Short token lifetime** | OIDC tokens should be configured with 5–15 minute expiry at the IDP |
@@ -326,7 +326,7 @@ The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes 
 
 The `/api/debug/buildinfo` endpoint exposes only the application version and build date. Infrastructure details (Go version, OS/architecture, commit hash) are omitted from the public response to prevent reconnaissance.
 
-If full build metadata is needed for debugging, use the internal `version.GetBuildInfo()` function from within the cluster (e.g., via `kubectl exec` or controller logs).
+If full build metadata is needed for debugging, check the controller logs at startup (which include version, commit, and build date) or inspect the compiled binary's `-ldflags` values.
 
 ## Audit Logging
 
