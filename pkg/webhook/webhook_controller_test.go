@@ -1196,3 +1196,12 @@ func TestNewWebhookController_DefaultOptions(t *testing.T) {
 		t.Error("expected namespaceLabelsFetchFn to be nil by default")
 	}
 }
+
+func TestWithCanDoFunc_NilPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil fn, got none")
+		}
+	}()
+	WithCanDoFunc(nil)
+}
