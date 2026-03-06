@@ -753,11 +753,11 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 // dedupeStrings removes duplicates from a slice of strings while preserving order.
 func dedupeStrings(in []string) []string {
 	out := make([]string, 0, len(in))
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{}, len(in))
 	for _, v := range in {
-		if !seen[v] {
+		if _, exists := seen[v]; !exists {
 			out = append(out, v)
-			seen[v] = true
+			seen[v] = struct{}{}
 		}
 	}
 	return out
@@ -765,19 +765,18 @@ func dedupeStrings(in []string) []string {
 
 // authorizeViaSessions performs per-session SubjectAccessReviews using the session's granted group.
 func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []breakglassv1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string) {
-	var logger *zap.SugaredLogger
-	if len(reqLog) > 0 {
-		logger = reqLog[0]
+	// Resolve logger once to avoid repeated if/else chains.
+	log := wc.log
+	if len(reqLog) > 0 && reqLog[0] != nil {
+		log = reqLog[0]
 	}
 	if len(sessions) == 0 || (incoming.Spec.ResourceAttributes == nil && incoming.Spec.NonResourceAttributes == nil) {
 		return false, "", "", ""
 	}
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
-		if logger != nil {
-			logger.With("error", err).Error("failed creating clientset for session SAR")
-		} else if wc.log != nil {
-			wc.log.With("error", err).Error("failed creating clientset for session SAR")
+		if log != nil {
+			log.With("error", err).Error("failed creating clientset for session SAR")
 		}
 		return false, "", "", ""
 	}
@@ -789,10 +788,8 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			for _, or := range s.OwnerReferences {
 				esc, eerr := wc.escalManager.GetBreakglassEscalation(ctx, s.Namespace, or.Name)
 				if eerr != nil {
-					if logger != nil {
-						logger.With("error", eerr, "ownerRef", or, "session", s.Name).Debug("failed to lookup escalation for session ownerRef")
-					} else if wc.log != nil {
-						wc.log.With("error", eerr, "ownerRef", or, "session", s.Name).Debug("failed to lookup escalation for session ownerRef")
+					if log != nil {
+						log.With("error", eerr, "ownerRef", or, "session", s.Name).Debug("failed to lookup escalation for session ownerRef")
 					}
 					continue
 				}
@@ -806,10 +803,8 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			// the plain granted group so sessions without explicit escalation
 			// ownerRefs still enable standard session-based SAR checks.
 			allowedGroupsToCheck = []string{s.Spec.GrantedGroup}
-			if logger != nil {
-				logger.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
-			} else if wc.log != nil {
-				wc.log.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
+			if log != nil {
+				log.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
 			}
 		}
 
@@ -855,10 +850,8 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			}
 		}
 
-		if logger != nil {
-			logger.Debugw("Impersonation groups to try", "groupsToTry", groupsToTry, "session", s.Name)
-		} else if wc.log != nil {
-			wc.log.Debugw("Impersonation groups to try", "groupsToTry", groupsToTry, "session", s.Name)
+		if log != nil {
+			log.Debugw("Impersonation groups to try", "groupsToTry", groupsToTry, "session", s.Name)
 		}
 
 		for _, g := range groupsToTry {
@@ -883,28 +876,21 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 					Verb: incoming.Spec.NonResourceAttributes.Verb,
 				}
 			}
-			if logger != nil {
-				logger.Debugw("Creating SubjectAccessReview for session impersonation", "group", g, "session", s.Name)
-			} else if wc.log != nil {
-				wc.log.Debugw("Creating SubjectAccessReview for session impersonation", "group", g, "session", s.Name)
+			if log != nil {
+				log.Debugw("Creating SubjectAccessReview for session impersonation", "group", g, "session", s.Name)
 			}
 			resp, err := sarClient.Create(ctx, sar, metav1.CreateOptions{})
 			if err != nil {
-				if logger != nil {
-					logger.With("error", err, "group", g).Warn("session SAR error")
-					logger.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
-				} else if wc.log != nil {
-					wc.log.With("error", err, "group", g).Warn("session SAR error")
-					wc.log.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
+				if log != nil {
+					log.With("error", err, "group", g).Warn("session SAR error")
+					log.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
 				}
 				metrics.WebhookSessionSARErrors.WithLabelValues(clusterName, g).Inc()
 				continue
 			}
 			if resp != nil {
-				if logger != nil {
-					logger.Debugw("Session SAR response", "group", g, "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
-				} else if wc.log != nil {
-					wc.log.Debugw("Session SAR response", "group", g, "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
+				if log != nil {
+					log.Debugw("Session SAR response", "group", g, "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
 				}
 			}
 			if resp != nil && resp.Status.Allowed {
