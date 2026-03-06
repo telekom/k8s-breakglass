@@ -196,11 +196,11 @@
       "default": [],
       "items": {
         "type": "object",
-        "required": ["name", "escalatedGroup"],
+        "required": ["escalatedGroup"],
         "properties": {
           "name": {
             "type": "string",
-            "description": "Escalation resource name."
+            "description": "Escalation resource name. Defaults to escalation-<index> if omitted."
           },
           "allowed": {
             "type": "object",
@@ -559,7 +559,21 @@
               },
               "riskFactors": {
                 "type": "object",
-                "additionalProperties": { "type": "integer" }
+                "properties": {
+                  "hostNetwork": { "type": "integer" },
+                  "hostPID": { "type": "integer" },
+                  "hostIPC": { "type": "integer" },
+                  "privilegedContainer": { "type": "integer" },
+                  "hostPathWritable": { "type": "integer" },
+                  "hostPathReadOnly": { "type": "integer" },
+                  "runAsRoot": { "type": "integer" },
+                  "capabilities": {
+                    "type": "object",
+                    "additionalProperties": { "type": "integer" },
+                    "description": "Maps Linux capability names to risk scores."
+                  }
+                },
+                "additionalProperties": false
               },
               "thresholds": {
                 "type": "array",
@@ -605,15 +619,19 @@
           "default": false
         },
         "minAvailable": {
-          "type": ["integer", "string"],
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string", "pattern": "^[1-9][0-9]*%?$" }
+          ],
           "description": "Minimum available pods during disruptions.",
-          "default": 1,
-          "minimum": 1
+          "default": 1
         },
         "maxUnavailable": {
-          "type": ["integer", "string"],
-          "description": "Maximum unavailable pods during disruptions. Mutually exclusive with minAvailable.",
-          "minimum": 1
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string", "pattern": "^[1-9][0-9]*%?$" }
+          ],
+          "description": "Maximum unavailable pods during disruptions. Mutually exclusive with minAvailable."
         }
       },
       "oneOf": [

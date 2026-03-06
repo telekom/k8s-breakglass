@@ -316,12 +316,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Serve static assets with immutable cache headers for hashed filenames.
 	// Vite produces content-hashed filenames (e.g. index-abc123.js), so
 	// long-lived caches are safe and reduce CDN / browser round-trips.
-	engine.Use(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/assets/") {
-			c.Header("Cache-Control", "public, max-age=31536000, immutable")
-		}
-		c.Next()
-	})
+	engine.Use(assetCacheControlMiddleware())
 	engine.Use(static.Serve("/assets/", static.LocalFile("/frontend/dist/assets", false)))
 
 	// Serve root-level files like favicon - use route handler to normalize trailing slashes
@@ -1251,4 +1246,15 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	}
 	apiControllers = append(apiControllers, webhookCtrl)
 	return apiControllers, webhookCtrl
+}
+
+// assetCacheControlMiddleware returns a Gin middleware that sets immutable cache
+// headers for Vite's content-hashed asset paths (/assets/*).
+func assetCacheControlMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/assets/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		c.Next()
+	}
 }

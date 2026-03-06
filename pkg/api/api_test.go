@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -1062,13 +1061,8 @@ func TestCacheControlHeaders_Assets(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 
-	// Add the Cache-Control middleware (same as in production code)
-	engine.Use(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/assets/") {
-			c.Header("Cache-Control", "public, max-age=31536000, immutable")
-		}
-		c.Next()
-	})
+	// Use the same middleware as production code
+	engine.Use(assetCacheControlMiddleware())
 
 	// Dummy route for /assets/ to test header
 	engine.GET("/assets/*filepath", func(c *gin.Context) {
