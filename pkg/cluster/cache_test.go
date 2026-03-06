@@ -370,6 +370,53 @@ func TestGetClientset_CacheHitAndMiss(t *testing.T) {
 	assert.Same(t, cs1, cs2, "second call should return cached clientset")
 }
 
+func TestGetClientset_BareVsNamespacedKey(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	kubeYAML := mustBuildKubeconfigYAML("https://10.0.0.3:6443")
+
+	cc := breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "canon-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "canon-secret", Namespace: "default"},
+		},
+	}
+	secret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "canon-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": kubeYAML},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	ctx := context.Background()
+
+	// First call with bare name
+	cs1, err := provider.GetClientset(ctx, "canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs1)
+
+	// Second call with namespaced name — should return the same cached clientset
+	cs2, err := provider.GetClientset(ctx, "default/canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs2)
+	assert.Same(t, cs1, cs2, "bare name and namespaced name should resolve to the same cached clientset")
+
+	// Reverse order: namespaced first, then bare
+	provider2 := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	cs3, err := provider2.GetClientset(ctx, "default/canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs3)
+
+	cs4, err := provider2.GetClientset(ctx, "canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs4)
+	assert.Same(t, cs3, cs4, "namespaced name then bare name should resolve to the same cached clientset")
+}
+
 func TestGetClientset_EvictionClearsClientset(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)

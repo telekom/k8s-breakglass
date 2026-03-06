@@ -440,6 +440,16 @@ func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubern
 		cacheLookupKey = name
 	}
 
+	// Canonicalize: resolve bare name to canonical namespace/name key if already known
+	// from a prior GetRESTConfig call. This prevents duplicate clientset entries when
+	// the same cluster is accessed via bare name (e.g., "my-cluster") and namespaced
+	// name (e.g., "default/my-cluster").
+	p.mu.RLock()
+	if canonical, ok := p.bareToCanonical[cacheLookupKey]; ok {
+		cacheLookupKey = canonical
+	}
+	p.mu.RUnlock()
+
 	// Fast path: check clientset cache under read lock
 	p.mu.RLock()
 	if entry, ok := p.clientsets[cacheLookupKey]; ok && now.Before(entry.expiresAt) {
@@ -454,6 +464,14 @@ func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubern
 	if err != nil {
 		return nil, fmt.Errorf("get REST config for clientset: %w", err)
 	}
+
+	// Re-canonicalize after GetRESTConfig which may have populated bareToCanonical
+	// for the first time during this call.
+	p.mu.RLock()
+	if canonical, ok := p.bareToCanonical[cacheLookupKey]; ok {
+		cacheLookupKey = canonical
+	}
+	p.mu.RUnlock()
 
 	cs, err := kubernetes.NewForConfig(rc)
 	if err != nil {
