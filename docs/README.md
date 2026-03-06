@@ -31,6 +31,7 @@ Complete documentation for the breakglass privilege escalation system.
 ## Identity & Authentication
 
 - **[Identity Provider](./identity-provider.md)** - OIDC configuration and multi-IDP setup
+- **[Keycloak Configuration](./keycloak-configuration.md)** - Comprehensive Keycloak configuration for all five OIDC operating modes, including realm setup, client configuration, protocol mappers, GoCloak API interactions, and troubleshooting
 - **[Advanced Features - Multi-IDP Guide](./advanced-features.md#multi-idp-configuration-guide)** - Multiple identity provider configuration and best practices
 
 ## Email Notifications
