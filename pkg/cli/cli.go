@@ -233,6 +233,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"disable_email", c.DisableEmail,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
+		"otel_required", c.OTelRequired,
 		"otel_exporter", c.OTelExporter,
 		"otel_endpoint", c.OTelEndpoint,
 		"otel_insecure", c.OTelInsecure,

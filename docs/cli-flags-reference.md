@@ -741,7 +741,7 @@ When **enabled** (default):
 
 #### `--otel-required`
 
-Treat OpenTelemetry initialization failure as fatal. When enabled, the controller exits with an error if the OTel exporter cannot be initialized. When disabled (default), tracing is silently disabled on failure.
+Treat OpenTelemetry initialization failure as fatal. When enabled, the controller exits with an error if the OTel exporter cannot be initialized. When disabled (default), tracing is disabled with a warning on failure.
 
 | Property | Value |
 |----------|-------|
@@ -764,7 +764,7 @@ When **enabled**:
 - `breakglass_telemetry_init_failed` gauge will be set before exit
 
 When **disabled** (default):
-- Tracing silently disabled on OTel init failure
+- Tracing disabled on OTel init failure (warning logged)
 - `breakglass_telemetry_init_failed` gauge set to `1` for observability
 - Warning logged: `"OpenTelemetry initialization failed, tracing disabled"`
 

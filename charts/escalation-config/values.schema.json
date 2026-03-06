@@ -615,7 +615,12 @@
           "description": "Maximum unavailable pods during disruptions. Mutually exclusive with minAvailable.",
           "minimum": 1
         }
-      }
+      },
+      "oneOf": [
+        { "required": ["minAvailable"], "not": { "required": ["maxUnavailable"] } },
+        { "required": ["maxUnavailable"], "not": { "required": ["minAvailable"] } },
+        { "not": { "anyOf": [{ "required": ["minAvailable"] }, { "required": ["maxUnavailable"] }] } }
+      ]
     }
   }
 }
