@@ -1067,6 +1067,204 @@ jobs:
         run: |
           kind delete cluster --name e2e-cluster || true
 
+  oidc-comprehensive-e2e:
+    name: OIDC Comprehensive E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: breakglass-e2e-image
+          path: /tmp/image-artifacts
+
+      - name: Load Docker image
+        run: |
+          docker load -i /tmp/image-artifacts/breakglass-e2e.tar
+          docker load -i /tmp/image-artifacts/breakglass-tmux-debug.tar
+          docker images | grep -E 'breakglass|tmux'
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Setup E2E environment
+        id: setup
+        continue-on-error: true
+        run: |
+          chmod +x e2e/kind-setup-single.sh
+          CLUSTER_NAME=oidc-e2e-cluster KIND_RETAIN_ON_FAILURE=true SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
+        env:
+          SKIP_BUILD: "true"
+          SKIP_PROXY: "true"
+          IMAGE: breakglass:e2e
+          CLUSTER_NAME: oidc-e2e-cluster
+          PRESERVE_ON_FAILURE: "true"
+          KIND_RETAIN_ON_FAILURE: "true"
+
+      - name: Collect setup failure diagnostics
+        if: steps.setup.outcome == 'failure'
+        run: |
+          DIAG_DIR="oidc-setup-failure-diagnostics"
+          mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs}
+          echo "=== OIDC E2E Setup failed, collecting diagnostics ==="
+          docker ps -a > "$DIAG_DIR/docker/containers.txt" 2>&1 || true
+          docker images > "$DIAG_DIR/docker/images.txt" 2>&1 || true
+          kind get clusters > "$DIAG_DIR/docker/kind-clusters.txt" 2>&1 || true
+          if kind get clusters 2>&1 | grep -q oidc-e2e-cluster; then
+            kubectl get pods -A > "$DIAG_DIR/kubernetes/all-pods.txt" 2>&1 || true
+            kubectl get events -A --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/events.txt" 2>&1 || true
+            kubectl describe pods -A > "$DIAG_DIR/kubernetes/pods-describe.txt" 2>&1 || true
+            for ns in breakglass-system kube-system cert-manager; do
+              for pod in $(kubectl get pods -n "$ns" -o name 2>/dev/null); do
+                podname=$(echo "$pod" | sed 's#pod/##')
+                kubectl logs -n "$ns" "$podname" --all-containers > "$DIAG_DIR/logs/${ns}-${podname}.log" 2>&1 || true
+              done
+            done
+          fi
+          cp e2e/kind-setup-single-tls/*.log "$DIAG_DIR/logs/" 2>/dev/null || true
+          cp e2e/kind-setup-single-tdir/*.log "$DIAG_DIR/logs/" 2>/dev/null || true
+
+      - name: Upload setup failure diagnostics
+        if: steps.setup.outcome == 'failure'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: oidc-e2e-setup-failure-logs
+          path: oidc-setup-failure-diagnostics/
+          retention-days: 14
+
+      - name: Fail if setup failed
+        if: steps.setup.outcome == 'failure'
+        run: |
+          echo "OIDC E2E setup failed. Check the oidc-e2e-setup-failure-logs artifact."
+          exit 1
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for pods to be ready..."
+          kubectl wait --for=condition=Ready pods --all -n breakglass-system --timeout=300s || {
+            echo "Pods not ready, collecting diagnostics..."
+            kubectl get pods -A
+            kubectl describe pods -n breakglass-system
+            exit 1
+          }
+
+      - name: Source E2E environment
+        run: |
+          if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
+            echo "Sourcing E2E environment from setup script..."
+            source e2e/kind-setup-single-tdir/e2e-env.sh
+            echo "E2E_TEST=true" >> $GITHUB_ENV
+            echo "E2E_NAMESPACE=${E2E_NAMESPACE}" >> $GITHUB_ENV
+            echo "E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME}" >> $GITHUB_ENV
+            echo "BREAKGLASS_API_URL=${BREAKGLASS_API_URL}" >> $GITHUB_ENV
+            echo "BREAKGLASS_WEBHOOK_URL=${BREAKGLASS_WEBHOOK_URL}" >> $GITHUB_ENV
+            echo "BREAKGLASS_METRICS_URL=${BREAKGLASS_METRICS_URL}" >> $GITHUB_ENV
+            echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> $GITHUB_ENV
+            echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> $GITHUB_ENV
+            echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> $GITHUB_ENV
+            echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> $GITHUB_ENV
+            echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> $GITHUB_ENV
+            echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> $GITHUB_ENV
+            echo "KEYCLOAK_INTERNAL_URL=${KEYCLOAK_INTERNAL_URL:-}" >> $GITHUB_ENV
+            echo "KEYCLOAK_CA_FILE=${KEYCLOAK_CA_FILE:-}" >> $GITHUB_ENV
+            echo "TLS_DIR=${TLS_DIR:-}" >> $GITHUB_ENV
+            echo "KUBERNETES_API_SERVER=${KUBERNETES_API_SERVER:-}" >> $GITHUB_ENV
+            echo "KUBECONFIG=${KUBECONFIG}" >> $GITHUB_ENV
+            echo "Environment variables set:"
+            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" || true
+          else
+            echo "ERROR: E2E environment file not found!"
+            exit 1
+          fi
+
+      - name: Run OIDC Comprehensive E2E tests
+        run: |
+          set -o pipefail
+          echo "Running OIDC comprehensive tests (token renewal, offline tokens, audience, scopes, fallback policies, multi-cluster, recovery) ..."
+          go test -v -run TestOIDCComp ./e2e/api/... -timeout 30m 2>&1 | tee oidc-comprehensive-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
+
+      - name: Collect OIDC E2E diagnostics
+        if: always()
+        run: |
+          DIAG_DIR="oidc-e2e-diagnostics"
+          mkdir -p "$DIAG_DIR"/{kubernetes,logs,resources}
+          echo "Collecting OIDC E2E diagnostics..."
+
+          # Cluster state
+          timeout 30 kubectl get all -A -o wide > "$DIAG_DIR/kubernetes/all-resources.txt" 2>&1 || true
+          timeout 20 kubectl get events -A --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/all-events.txt" 2>&1 || true
+
+          # CRD resources
+          NS="breakglass-system"
+          timeout 10 kubectl get clusterconfig -A -o yaml > "$DIAG_DIR/resources/clusterconfigs.yaml" 2>&1 || true
+          timeout 10 kubectl get identityprovider -A -o yaml > "$DIAG_DIR/resources/identityproviders.yaml" 2>&1 || true
+
+          # Controller logs
+          for pod in $(timeout 10 kubectl get pods -n "$NS" -l app=breakglass -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            timeout 15 kubectl logs -n "$NS" "$pod" --all-containers > "$DIAG_DIR/logs/pod-${pod}.log" 2>&1 || true
+            timeout 15 kubectl logs -n "$NS" "$pod" --all-containers --previous > "$DIAG_DIR/logs/pod-${pod}-previous.log" 2>&1 || true
+          done
+
+          # Keycloak logs
+          for pod in $(timeout 10 kubectl get pods -n "$NS" -l app=keycloak -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            timeout 15 kubectl logs -n "$NS" "$pod" --all-containers > "$DIAG_DIR/logs/keycloak-${pod}.log" 2>&1 || true
+          done
+
+          # OIDC-specific summary
+          {
+            echo "=== OIDC COMPREHENSIVE E2E DIAGNOSTICS ==="
+            echo "Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo ""
+            echo "=== CLUSTER CONFIGS ==="
+            timeout 10 kubectl get clusterconfig -A 2>&1 || true
+            echo ""
+            echo "=== IDENTITY PROVIDERS ==="
+            timeout 10 kubectl get identityprovider -A 2>&1 || true
+            echo ""
+            echo "=== OIDC/AUTH TRACES IN CONTROLLER LOGS ==="
+            timeout 30 kubectl logs -n breakglass-system -l app=breakglass 2>/dev/null | grep -iE "oidc|token|refresh|fallback|audience|scope|degraded|renewal" | tail -80 || echo "No OIDC traces"
+            echo ""
+            echo "=== KEYCLOAK ERRORS ==="
+            timeout 15 kubectl logs -n breakglass-system -l app=keycloak --tail=100 2>/dev/null | grep -iE "error|warn|fail" | tail -30 || echo "No Keycloak errors"
+          } > "$DIAG_DIR/OIDC_DEBUG_SUMMARY.txt" 2>&1
+
+          # Test results
+          cp oidc-comprehensive-results.txt "$DIAG_DIR/" 2>/dev/null || true
+
+          echo "Diagnostics collected:"
+          find "$DIAG_DIR" -type f | head -30
+          du -sh "$DIAG_DIR"
+
+      - name: Upload OIDC E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: oidc-comprehensive-e2e-diagnostics
+          path: oidc-e2e-diagnostics/
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kind delete cluster --name oidc-e2e-cluster || true
+
   ui-e2e:
     name: UI E2E Tests
     runs-on: ubuntu-latest
