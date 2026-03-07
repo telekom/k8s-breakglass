@@ -474,12 +474,18 @@ func (p *OIDCTokenProvider) readBestRefreshToken(ctx context.Context, oidc *brea
 // persistRotatedRefreshToken writes a rotated refresh token back to the K8s Secret
 // under the configured rotatedRefreshTokenKey using SSA. This is a best-effort
 // operation — failures are logged but do not break the auth flow.
-// No-op when rotation is not configured or the token hasn't changed.
-func (p *OIDCTokenProvider) persistRotatedRefreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace, newRefreshToken, oldRefreshToken string) {
+// No-op when rotation is not configured.
+//
+// The token is always persisted when rotatedRefreshTokenKey is set, even when
+// the IDP returns the same refresh token (e.g. Keycloak offline tokens without
+// revokeRefreshToken). This ensures the rotated key exists as a "last known
+// good" marker. The SSA cache-aware pre-check in PatchApplyObject prevents
+// redundant API calls when the value is unchanged.
+func (p *OIDCTokenProvider) persistRotatedRefreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace, newRefreshToken, _ string) {
 	if oidc.RotatedRefreshTokenKey == "" {
 		return
 	}
-	if newRefreshToken == oldRefreshToken {
+	if newRefreshToken == "" {
 		return
 	}
 

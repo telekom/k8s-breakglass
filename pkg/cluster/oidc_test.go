@@ -1780,8 +1780,11 @@ func TestOIDCTokenProvider_RefreshTokenRotation_Persisted(t *testing.T) {
 		"original key should not be modified")
 }
 
-func TestOIDCTokenProvider_RefreshTokenRotation_SameToken_NoPersist(t *testing.T) {
-	// When IDP returns the same refresh token, no write should occur.
+func TestOIDCTokenProvider_RefreshTokenRotation_SameToken_StillPersisted(t *testing.T) {
+	// When IDP returns the same refresh token, the rotated key should still be
+	// populated as a "last known good" marker. This is critical for IDPs like
+	// Keycloak that return the same offline token unless revokeRefreshToken is
+	// enabled.
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = breakglassv1alpha1.AddToScheme(scheme)
@@ -1838,12 +1841,18 @@ func TestOIDCTokenProvider_RefreshTokenRotation_SameToken_NoPersist(t *testing.T
 	_, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "ns")
 	require.NoError(t, err)
 
-	// Verify: rotated key should NOT exist (same token = no-op)
+	// Verify: rotated key should exist even when IDP returns the same token.
+	// This ensures the key is populated as a "last known good" marker.
 	var secret corev1.Secret
 	err = k8sClient.Get(context.Background(), client.ObjectKey{Name: "rt-secret", Namespace: "ns"}, &secret)
 	require.NoError(t, err)
-	_, exists := secret.Data["refresh-token-rotated"]
-	assert.False(t, exists, "rotated key should not be written when token hasn't changed")
+	rotatedValue, exists := secret.Data["refresh-token-rotated"]
+	assert.True(t, exists, "rotated key should be written even when token is the same")
+	assert.Equal(t, seedToken, string(rotatedValue), "rotated key should contain the token value")
+
+	// Original key should be unchanged
+	assert.Equal(t, seedToken, string(secret.Data["refresh-token"]),
+		"original key should not be modified")
 }
 
 func TestOIDCTokenProvider_RefreshTokenRotation_Disabled(t *testing.T) {

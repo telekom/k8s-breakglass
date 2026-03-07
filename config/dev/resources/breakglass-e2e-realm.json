@@ -2,7 +2,6 @@
   "realm": "breakglass-e2e",
   "enabled": true,
   "verifyEmail": false,
-  "revokeRefreshToken": true,
   "clients": [
     {
       "clientId": "breakglass-ui",
