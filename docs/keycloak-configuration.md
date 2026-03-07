@@ -105,6 +105,9 @@ Create a Keycloak realm with the following settings:
 | **SSO Session Max Lifespan** | `36000` seconds (10 hr) | Default |
 | **Offline Session Idle Timeout** | `2592000` seconds (30 days) | For offline refresh tokens |
 | **Offline Session Max Lifespan** | Disabled | Keep offline tokens valid indefinitely unless revoked |
+| **Revoke Refresh Token** (`revokeRefreshToken`) | `false` (default) | When `false`, Keycloak returns the **same** offline refresh token on every exchange. When `true`, Keycloak issues a **new** token and revokes the previous one. The breakglass controller handles both: the [Automatic Refresh Token Rotation](cluster-config.md#automatic-refresh-token-rotation) feature always persists the returned token via SSA, and the cache-aware pre-check avoids redundant writes. **Do not enable** unless you specifically need single-use tokens — it adds complexity and requires `rotatedRefreshTokenKey` to avoid losing tokens on restart. |
+
+The E2E realm JSON is at [`config/dev/resources/breakglass-e2e-realm.json`](../config/dev/resources/breakglass-e2e-realm.json) and uses the default `revokeRefreshToken: false`.
 
 > **Upstream reference**: [Keycloak Realm Settings — Sessions](https://www.keycloak.org/docs/latest/server_admin/#_timeouts)
 
@@ -710,7 +713,7 @@ grant_type=refresh_token
 > **Note — Secret key defaults**: The `SecretKeyReference.key` field defaults to `"value"` per the CRD schema, but the `refreshTokenSecretRef` and `subjectTokenSecretRef` code paths default to `"token"` at runtime if no key is specified. This is a runtime override — always set the `key` field explicitly to avoid confusion.
 
 **Side effects**:
-- **Refresh token rotation**: Some Keycloak configurations rotate the refresh token on each use. The controller handles both — if a new refresh token is returned, it's cached; if not, the original is reused.
+- **Refresh token rotation**: Keycloak's `revokeRefreshToken` realm setting controls whether offline tokens rotate on each use (default: `false` — same token returned). When rotation is enabled, the response contains a new `refresh_token` and the previous one is revoked. The controller handles both scenarios: if `rotatedRefreshTokenKey` is configured, the returned token is always persisted to the Secret via SSA (see [Automatic Refresh Token Rotation](cluster-config.md#automatic-refresh-token-rotation)). Without `rotatedRefreshTokenKey`, the token is cached in-memory only and lost on controller restart.
 - **Token expiry detection**: If the refresh token is expired/revoked, Keycloak returns `{"error": "invalid_grant"}`. The controller detects this via `isInvalidGrantError()` which checks for: `invalid_grant`, `Token is not active`, `Session not active`, `Refresh token expired`.
 - **Fallback behavior**: Controlled by `fallbackPolicy` — see [Fallback Policy](#fallback-policy).
 
@@ -1074,7 +1077,7 @@ Set `allowTOFU: true` to auto-discover CAs on first connection:
 
 **RBAC requirements**: TOFU requires the controller to have `create` and `patch` permissions on Secrets in the target namespace. The persisted Secret is managed via Server-Side Apply (SSA) with the label `app.kubernetes.io/managed-by: breakglass` and annotation `breakglass.t-caas.telekom.com/tofu-ca: true`.
 
-**Cache behavior on restart**: All in-memory caches are lost on controller restart — including TOFU CAs, cached tokens, refresh tokens, fallback credentials, and HTTP clients. If `caSecretRef` is configured, the TOFU CA is persisted and survives restarts. Without `caSecretRef`, a restart triggers re-TOFU on the next connection.
+**Cache behavior on restart**: All in-memory caches are lost on controller restart — including TOFU CAs, cached tokens, refresh tokens, fallback credentials, and HTTP clients. If `caSecretRef` is configured, the TOFU CA is persisted and survives restarts. Without `caSecretRef`, a restart triggers re-TOFU on the next connection. If [`rotatedRefreshTokenKey`](cluster-config.md#automatic-refresh-token-rotation) is configured, the refresh token is persisted to the Secret and survives restarts.
 
 ### 3. InsecureSkipTLSVerify
 
@@ -1172,7 +1175,8 @@ func ObtainOfflineRefreshToken(keycloakURL, realm, clientID, clientSecret, usern
 
 - **Offline tokens do not expire by time** (unless `offlineSessionMaxLifespanEnabled` is enabled on the realm)
 - **Revocation**: Admin Console → Users → Sessions → Revoke, or via Admin REST API
-- **Rotation**: Some Keycloak configs return a new refresh token on each use. The controller handles this automatically.
+- **Rotation**: Controlled by the realm-level `revokeRefreshToken` setting (default: `false`). When `false`, Keycloak returns the same offline token on every exchange. When `true`, a new token is issued and the previous one is revoked. The controller handles both — configure [`rotatedRefreshTokenKey`](cluster-config.md#automatic-refresh-token-rotation) to persist the returned token to the Kubernetes Secret.
+- **E2E configuration**: The reference realm JSON ([`config/dev/resources/breakglass-e2e-realm.json`](../config/dev/resources/breakglass-e2e-realm.json)) uses `revokeRefreshToken: false` (Keycloak default).
 
 > **Upstream reference**: [Keycloak Offline Access](https://www.keycloak.org/docs/latest/server_admin/#_offline-access)
 

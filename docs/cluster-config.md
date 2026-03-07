@@ -460,7 +460,9 @@ kubectl create secret generic offline-refresh-token \
 
 #### Automatic Refresh Token Rotation
 
-When an OIDC provider returns a new refresh token during token exchange (common with Keycloak offline tokens), the controller can **persist the rotated token** back to the Kubernetes Secret. This ensures the freshest token survives controller restarts.
+When using offline refresh tokens, the controller can **persist the refresh token** returned by the OIDC provider to a dedicated key in the Kubernetes Secret. This ensures the token survives controller restarts and provides a "last known good" marker.
+
+> **Keycloak behaviour:** By default, Keycloak returns the **same** offline refresh token on every exchange (the realm-level `revokeRefreshToken` setting defaults to `false`). With `revokeRefreshToken` enabled, Keycloak issues a **new** token on each use and revokes the previous one. The controller handles both scenarios — the token is always written to the rotated key via SSA, and the cache-aware pre-check prevents redundant API calls when the value is unchanged. See [Keycloak Configuration — Realm Settings](keycloak-configuration.md#realm-configuration) for details.
 
 **Configuration:**
 
@@ -497,7 +499,7 @@ spec:
 **How it works:**
 
 1. **Read order:** The controller checks the rotated key first, then falls back to the original key — ensuring the freshest token is always used
-2. **Write on rotation:** After a successful token exchange, if the OIDC provider returns a new refresh token, it's persisted to the rotated key via Server-Side Apply (SSA)
+2. **Write on every refresh:** After a successful token exchange, the returned refresh token is always persisted to the rotated key via Server-Side Apply (SSA). This applies even when the OIDC provider returns the same token (e.g. Keycloak with `revokeRefreshToken` disabled). The SSA cache-aware pre-check (`PatchApplyObject`) avoids redundant API calls when the value is unchanged.
 3. **Original key preserved:** The original key (e.g., `refresh-token`) is **never modified** — safe for GitOps tools (Flux, ArgoCD) that manage the seed token
 4. **Best-effort:** Rotation write failures are logged but don't break authentication
 
