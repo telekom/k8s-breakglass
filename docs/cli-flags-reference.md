@@ -761,7 +761,7 @@ breakglass-controller
 When **enabled**:
 - Controller exits if OTel exporter fails to connect
 - Use in production when tracing pipeline is critical
-- `breakglass_telemetry_init_failed` gauge will be set before exit
+- Note: the controller exits before the metrics endpoint starts, so the `breakglass_telemetry_init_failed` gauge may not be scrapeable in this mode
 
 When **disabled** (default):
 - Tracing disabled on OTel init failure (warning logged)
