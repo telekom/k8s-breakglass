@@ -79,9 +79,10 @@ func (e *tokenRequestError) Error() string {
 }
 
 // isNonRetryable returns true for 4xx errors (invalid credentials, bad request)
-// where retrying would not help.
+// where retrying would not help. 429 (Too Many Requests) is excluded because
+// the server is explicitly asking the client to retry later.
 func (e *tokenRequestError) isNonRetryable() bool {
-	return e.StatusCode >= 400 && e.StatusCode < 500
+	return e.StatusCode >= 400 && e.StatusCode < 500 && e.StatusCode != http.StatusTooManyRequests
 }
 
 // GetToken retrieves an OIDC token for the specified user.
@@ -98,16 +99,16 @@ func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username
 
 	// Fall back to direct HTTP request with retry + exponential backoff.
 	// Keycloak may still be starting or recovering from a restart.
-	const maxRetries = 5
+	const maxAttempts = 5
 	backoff := p.initialBackoff()
 
 	var lastErr error
 retryLoop:
-	for attempt := 1; attempt <= maxRetries; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		token, lastErr = p.getTokenViaHTTP(ctx, username, password)
 		if lastErr == nil && token != "" {
 			if attempt > 1 {
-				t.Logf("OIDC token acquired on attempt %d/%d for user %s", attempt, maxRetries, username)
+				t.Logf("OIDC token acquired on attempt %d/%d for user %s", attempt, maxAttempts, username)
 			}
 			return token
 		}
@@ -119,21 +120,23 @@ retryLoop:
 			break
 		}
 
-		if attempt < maxRetries {
+		if attempt < maxAttempts {
 			t.Logf("OIDC token request attempt %d/%d failed (user=%s): %v — retrying in %v",
-				attempt, maxRetries, username, lastErr, backoff)
+				attempt, maxAttempts, username, lastErr, backoff)
+			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				lastErr = ctx.Err()
 				t.Logf("Context cancelled while waiting to retry OIDC token request: %v", lastErr)
 				break retryLoop
-			case <-time.After(backoff):
+			case <-timer.C:
 			}
 			backoff *= 2 // exponential backoff: 2s, 4s, 8s, 16s
 		}
 	}
 
-	require.NoError(t, lastErr, "Failed to get OIDC token after %d attempts", maxRetries)
+	require.NoError(t, lastErr, "Failed to get OIDC token after %d attempts", maxAttempts)
 	require.NotEmpty(t, token, "Token is empty")
 
 	return token
@@ -158,6 +161,17 @@ func (p *OIDCTokenProvider) getTokenViaScript(ctx context.Context, username, pas
 	return strings.TrimSpace(string(output)), nil
 }
 
+// httpClient is a shared HTTP client for Keycloak token requests.
+// Uses TLS skip verification for local dev with self-signed certs.
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
+		},
+	},
+}
+
 // getTokenViaHTTP retrieves token via direct HTTP call to Keycloak
 func (p *OIDCTokenProvider) getTokenViaHTTP(ctx context.Context, username, password string) (string, error) {
 	// Normalize KeycloakHost to ensure it has a protocol scheme
@@ -179,16 +193,6 @@ func (p *OIDCTokenProvider) getTokenViaHTTP(ctx context.Context, username, passw
 	}
 	if p.ClientSecret != "" {
 		form.Set("client_secret", p.ClientSecret)
-	}
-
-	// Create HTTP client with TLS skip verification for local dev
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-			},
-		},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))

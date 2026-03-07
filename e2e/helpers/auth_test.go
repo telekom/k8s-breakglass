@@ -1,5 +1,3 @@
-//go:build e2e
-
 package helpers
 
 import (
@@ -118,6 +116,7 @@ func TestGetToken_retryableVsNonRetryable(t *testing.T) {
 		{"401 Unauthorized", 401, false},
 		{"403 Forbidden", 403, false},
 		{"404 Not Found", 404, false},
+		{"429 Too Many Requests", 429, true},
 		{"499 Client Error", 499, false},
 		{"500 Internal Server Error", 500, true},
 		{"502 Bad Gateway", 502, true},
@@ -173,11 +172,13 @@ func TestGetToken_ContextCancellation(t *testing.T) {
 		if lastErr == nil {
 			break
 		}
+		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			lastErr = ctx.Err()
 			goto done
-		case <-time.After(backoff):
+		case <-timer.C:
 		}
 		backoff *= 2
 	}
