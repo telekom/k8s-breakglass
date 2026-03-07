@@ -378,7 +378,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Debug endpoint: build information (public subset only — SEC-008)
 	// Exposes only version and build date. Infrastructure details (Go version,
 	// platform, commit hash) are omitted to prevent reconnaissance.
-	engine.GET("/api/debug/buildinfo", func(c *gin.Context) {
+	engine.GET("/api/debug/buildinfo", optionalAuthRateLimit, func(c *gin.Context) {
 		c.JSON(http.StatusOK, version.GetPublicBuildInfo())
 	})
 

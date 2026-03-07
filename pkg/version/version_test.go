@@ -63,7 +63,7 @@ func TestGetPublicBuildInfo(t *testing.T) {
 	}
 }
 
-func TestGetPublicBuildInfo_OmitsSensitiveFields(t *testing.T) {
+func TestGetPublicBuildInfo_ExcludesInfrastructureDetails(t *testing.T) {
 	// Ensure the public struct does not contain infrastructure details
 	info := GetPublicBuildInfo()
 
