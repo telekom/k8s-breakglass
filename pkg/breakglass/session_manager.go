@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -22,8 +23,9 @@ import (
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
 	client.Client
-	reader client.Reader
-	log    *zap.SugaredLogger
+	reader          client.Reader
+	log             *zap.SugaredLogger
+	logFallbackOnce sync.Once
 }
 
 // getLogger returns the injected logger or falls back to the global logger.
@@ -33,7 +35,9 @@ func (c *SessionManager) getLogger() *zap.SugaredLogger {
 	if c.log != nil {
 		return c.log
 	}
-	zap.S().Warn("SessionManager using global logger — use WithSessionLogger() in production")
+	c.logFallbackOnce.Do(func() {
+		zap.S().Warn("SessionManager using global logger — use WithSessionLogger() in production")
+	})
 	return zap.S()
 }
 
