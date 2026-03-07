@@ -7,13 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **JWT audience validation (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459), [#472](https://github.com/telekom/k8s-breakglass/issues/472)): JWT parser now validates the `aud` claim against the IDP's `ClientID` when configured in multi-IDP mode, preventing tokens issued for other applications from being accepted
-- **JWT expiration required (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): JWT parser now rejects tokens without an `exp` claim via `jwt.WithExpirationRequired()`
-
 ### Security
 
+- **JWT audience validation preparation (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459), [#472](https://github.com/telekom/k8s-breakglass/issues/472)): Added `clientID` plumbing from IDP config to JWT authenticator for future audience validation; audience validation is intentionally disabled by default as it depends on audience protocol mappers that are not configured in all environments — a dedicated CRD field is needed before enabling
+- **JWT expiration required (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): JWT parser now rejects tokens without an `exp` claim via `jwt.WithExpirationRequired()`
 - **TLS minimum version (SEC-003)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Set `tls.VersionTLS12` as minimum on the API server and all OIDC proxy / JWKS HTTP clients
 - **X-Request-ID sanitization (SEC-004)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Validate `X-Request-ID` header (alphanumeric + `-_.:`; max 128 chars) and replace invalid values with a generated UUID to prevent log injection
 
