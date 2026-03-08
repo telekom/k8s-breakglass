@@ -96,7 +96,7 @@ spec:
 
 ```bash
 # Request access
-curl -X POST https://breakglass.example.com/api/breakglass/request \
+curl -X POST https://breakglass.example.com/api/breakglassSessions \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"cluster": "prod-cluster-1", "group": "pod-exec-access", "reason": "INC-1234: Investigating connection timeout"}'
 
@@ -692,16 +692,18 @@ metadata:
   name: limit-automation-scope
 spec:
   appliesTo:
-    escalationRefs: ["automation-access"]
+    sessions: ["automation-access"]
   podSecurityRules:
-    exemptions:
-      # Only allow automation to exec into pods with this label
-      labels:
-        automation-enabled: "true"
+    riskFactors:
+      privilegedContainer: 100
     thresholds:
       - maxScore: 0
         action: deny
-        reason: "Automation can only exec into pods with automation-enabled=true label"
+        reason: "Automation can only exec into non-privileged pods"
+    exemptions:
+      # Allow automation to exec into pods with this label
+      podLabels:
+        automation-enabled: "true"
 ```
 
 ### Automation Script Example
@@ -709,13 +711,13 @@ spec:
 ```bash
 #!/bin/bash
 # Request or refresh automation session
-RESPONSE=$(curl -s -X POST https://breakglass.example.com/api/breakglass/request \
+RESPONSE=$(curl -s -X POST https://breakglass.example.com/api/breakglassSessions \
   -H "Authorization: Bearer $M2M_TOKEN" \
   -d '{"cluster": "prod-cluster-1", "group": "automation-exec"}')
 
 # Auto-approve (if configured for self-approval)
-SESSION_NAME=$(echo $RESPONSE | jq -r '.name')
-curl -X POST "https://breakglass.example.com/api/breakglass/approve/$SESSION_NAME" \
+SESSION_NAME=$(echo $RESPONSE | jq -r '.metadata.name')
+curl -X POST "https://breakglass.example.com/api/breakglassSessions/$SESSION_NAME/approve" \
   -H "Authorization: Bearer $M2M_TOKEN"
 
 # Now run automated checks
@@ -847,7 +849,7 @@ subjects:
 
 ```bash
 # Request access
-curl -X POST https://breakglass.example.com/api/breakglass/request \
+curl -X POST https://breakglass.example.com/api/breakglassSessions \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"cluster": "prod-cluster-1", "group": "ingress-admin", "reason": "INC-5678: Certificate stuck after renewal"}'
 

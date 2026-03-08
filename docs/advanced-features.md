@@ -349,16 +349,16 @@ API errors are returned in consistent JSON format:
 
 Available at `/metrics` (controller-runtime metrics port):
 
-- `breakglass_sessions_total` - Total sessions created
-- `breakglass_sessions_approved_total` - Sessions approved
-- `breakglass_sessions_rejected_total` - Sessions rejected
-- `breakglass_sessions_expired_total` - Sessions expired automatically
-- `breakglass_webhook_requests_total` - Webhook authorization requests
-- `breakglass_webhook_allowed_total` - Webhook requests allowed
-- `breakglass_webhook_denied_total` - Webhook requests denied
-- `breakglass_webhook_duration_seconds` - Webhook response time
-- `breakglass_api_requests_total` - API endpoint requests
-- `breakglass_api_duration_seconds` - API endpoint response time
+- `breakglass_session_created_total` - Total sessions created
+- `breakglass_session_approved_total` - Sessions approved
+- `breakglass_session_rejected_total` - Sessions rejected
+- `breakglass_session_expired_total` - Sessions expired automatically
+- `breakglass_webhook_sar_requests_total` - Webhook authorization requests
+- `breakglass_webhook_sar_allowed_total` - Webhook requests allowed
+- `breakglass_webhook_sar_denied_total` - Webhook requests denied
+- `breakglass_webhook_sar_duration_seconds` - Webhook response time
+- `breakglass_api_endpoint_requests_total` - API endpoint requests
+- `breakglass_api_endpoint_duration_seconds` - API endpoint response time
 
 Use these metrics for:
 
@@ -411,7 +411,7 @@ Find sessions approved by specific approver:
 
 ```bash
 kubectl get breakglasssession -A -o json | \
-  jq '.items[] | select(.status.approvedBy=="approver@example.com")'
+  jq '.items[] | select(.status.approver=="approver@example.com")'
 ```
 
 Export for compliance reporting:
@@ -461,7 +461,7 @@ Timestamps are never cleared during state transitions—only added or updated. T
 
 | Timestamp | Purpose | When Set | Never Cleared |
 |-----------|---------|----------|---------------|
-| `createdAt` | Session creation | Initial state | ✓ Always preserved |
+| `metadata.creationTimestamp` | Session creation (standard K8s field) | Initial state | ✓ Always preserved |
 | `approvedAt` | Session approved | Pending → Approved | ✓ Always preserved |
 | `rejectedAt` | Session rejected | Pending → Rejected | ✓ Always preserved |
 | `withdrawnAt` | Session withdrawn | Pending/Approved → Withdrawn | ✓ Always preserved |
@@ -474,17 +474,17 @@ Timestamps are never cleared during state transitions—only added or updated. T
 ```
 t=10:30 - Session created
   state: Pending
-  timestamps: createdAt=10:30
+  timestamps: metadata.creationTimestamp=10:30
 
 t=10:31 - User approves (approvedAt set)
   state: Approved
-  timestamps: createdAt=10:30, approvedAt=10:31, expiresAt=10:32
-  (NOTE: createdAt preserved)
+  timestamps: metadata.creationTimestamp=10:30, approvedAt=10:31, expiresAt=10:32
+  (NOTE: metadata.creationTimestamp preserved)
 
 t=10:32 - Admin drops early (expiresAt updated, other timestamps preserved)
   state: Expired
-  timestamps: createdAt=10:30, approvedAt=10:31, expiresAt=10:32, retainedUntil=11:02
-  (NOTE: createdAt and approvedAt still intact)
+  timestamps: metadata.creationTimestamp=10:30, approvedAt=10:31, expiresAt=10:32, retainedUntil=11:02
+  (NOTE: metadata.creationTimestamp and approvedAt still intact)
 ```
 
 ### Terminal States

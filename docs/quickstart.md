@@ -241,6 +241,7 @@ spec:
   kubeconfigSecretRef:
     name: prod-cluster-admin
     namespace: default
+    key: kubeconfig
   qps: 100
   burst: 200
 ```
@@ -341,6 +342,7 @@ spec:
     username: breakglass@example.com
     passwordRef:
       name: smtp-credentials
+      namespace: breakglass-system
       key: password
   sender:
     address: breakglass@example.com

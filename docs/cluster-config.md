@@ -38,8 +38,8 @@ This ensures that:
 
 The following Prometheus metrics are updated during cluster deletion:
 
-- `breakglass_cluster_configs_deleted_total{cluster}` - Counter for deleted ClusterConfigs
-- `breakglass_sessions_expired_total{cluster}` - Incremented for each session expired due to cluster deletion
+- `breakglass_clusterconfigs_deleted_total{cluster}` - Counter for deleted ClusterConfigs
+- `breakglass_session_expired_total{cluster}` - Incremented for each session expired due to cluster deletion
 - `breakglass_debug_sessions_failed_total{cluster,reason="cluster_deleted"}` - Incremented for each debug session failed due to cluster deletion
 
 ## Authentication Methods
