@@ -1191,6 +1191,41 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure port-forwards for OIDC tests
+        run: |
+          echo "=== Ensuring port-forwards are alive for OIDC tests ==="
+
+          # Kill any stale Keycloak port-forward processes
+          pkill -f "port-forward.*keycloak.*8443" 2>/dev/null || true
+          sleep 1
+
+          # Start a resilient Keycloak port-forward that auto-restarts on failure.
+          # kubectl port-forward can die due to idle timeouts, pod restarts, or
+          # network issues. The while loop ensures it restarts automatically.
+          (
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null
+              echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Keycloak port-forward keepalive started (PID: $!)"
+
+          # Wait for Keycloak to be reachable
+          for i in {1..30}; do
+            if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+              echo "✓ Keycloak reachable at localhost:8443"
+              break
+            fi
+            sleep 1
+          done
+
+          if ! curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+            echo "ERROR: Keycloak not reachable at localhost:8443"
+            kubectl get pods -n breakglass-system -l app=keycloak 2>&1 || true
+            exit 1
+          fi
+
       - name: Run OIDC Comprehensive E2E tests
         run: |
           set -o pipefail

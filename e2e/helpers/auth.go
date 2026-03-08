@@ -426,6 +426,11 @@ func (p *OIDCTokenProvider) TryObtainOfflineRefreshToken(ctx context.Context, us
 // with a delay between attempts.
 func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx context.Context, username, password string, maxAttempts int) string {
 	t.Helper()
+
+	// Pre-check: verify Keycloak is reachable before starting retry loop.
+	// This fails fast with a clear diagnostic instead of retrying against a dead port-forward.
+	p.RequireKeycloakReachable(t, ctx)
+
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		token, err := p.TryObtainOfflineRefreshToken(ctx, username, password)
@@ -440,6 +445,45 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx
 	}
 	require.NoError(t, lastErr, "failed to obtain offline refresh token after %d attempts", maxAttempts)
 	return "" // unreachable
+}
+
+// RequireKeycloakReachable verifies that Keycloak is reachable from the test runner
+// via the OIDC discovery endpoint. Tests that need to obtain tokens directly from
+// Keycloak (not via the controller) should call this before attempting token operations.
+// This provides a clear diagnostic when port-forwards to Keycloak have died.
+func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	keycloakHost := p.KeycloakHost
+	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
+		keycloakHost = "https://" + keycloakHost
+	}
+
+	discoveryURL := fmt.Sprintf("%s/realms/%s/.well-known/openid-configuration", keycloakHost, p.Realm)
+
+	httpClient := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
+			},
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	require.NoError(t, err, "failed to create Keycloak reachability request")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Keycloak not reachable at %s: %v\n"+
+			"This usually means the kubectl port-forward to Keycloak has died.\n"+
+			"Ensure Keycloak is accessible via: curl -sk %s", keycloakHost, err, discoveryURL)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Keycloak returned status %d at %s (expected 200)", resp.StatusCode, discoveryURL)
+	}
 }
 
 // ObtainClientCredentialsToken performs a client_credentials grant to obtain an access

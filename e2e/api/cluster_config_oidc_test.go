@@ -591,53 +591,26 @@ func TestClusterConfigOIDCStatusConditions(t *testing.T) {
 		t.Logf("Creating ClusterConfig %s with OIDC issuer: %s, server: %s", name, issuerURL, apiServerURL)
 		s.MustCreateResource(clusterConfig)
 
-		// Wait for the Ready condition to be set with successful OIDC validation
+		// Wait for the Ready condition specifically — not just any condition.
+		// The checker sets DegradedAuth=False first (via clearOIDCDegradedConditions),
+		// then sets Ready=True in a separate SSA apply. Waiting for len(conditions)>0
+		// would race: DegradedAuth appears before Ready, causing a false negative.
+		err := waitForClusterConfigConditionReady(t, s.Ctx, s.Client, name, s.Namespace, 90*time.Second)
+		require.NoError(t, err, "ClusterConfig Ready condition not set within timeout")
+
+		// Re-fetch to get full condition details for assertions
 		var fetched breakglassv1alpha1.ClusterConfig
+		require.NoError(t, s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched))
+
+		// Log all conditions for debugging
 		var finalReason, finalMessage string
-		var finalStatus metav1.ConditionStatus
-
-		// First wait for any status condition to be set
-		require.Eventually(t, func() bool {
-			err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
-			if err != nil {
-				return false
-			}
-			return len(fetched.Status.Conditions) > 0
-		}, 30*time.Second, time.Second, "ClusterConfig status conditions not set")
-
-		// Log the conditions for debugging
 		for _, cond := range fetched.Status.Conditions {
 			t.Logf("Condition: Type=%s, Status=%s, Reason=%s, Message=%s",
 				cond.Type, cond.Status, cond.Reason, cond.Message)
 			if cond.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) {
-				finalStatus = cond.Status
 				finalReason = cond.Reason
 				finalMessage = cond.Message
 			}
-		}
-
-		// STRICT ASSERTION: This test claims "ValidOIDCBecomesReady" so we MUST verify
-		// that OIDC actually worked, not just that some status was set.
-		//
-		// SUCCESS criteria:
-		// - Status must be True (Ready)
-		// - Reason must indicate successful OIDC validation (OIDCValidated)
-		//
-		// FAILURE reasons that should NOT pass this test:
-		// - OIDCDiscoveryFailed: Cannot reach OIDC issuer (DNS, network, etc.)
-		// - OIDCTokenFetchFailed: Token acquisition failed
-		// - OIDCCASecretMissing: CA certificate not configured
-		// - ClusterUnreachable: OIDC token acquired but cluster unreachable
-		// - SecretMissing: Client secret not found
-		if finalStatus != metav1.ConditionTrue {
-			t.Fatalf("CC-OIDC-STATUS-001: OIDC validation FAILED - ClusterConfig %s is not Ready.\n"+
-				"Status: %s, Reason: %s\nMessage: %s\n\n"+
-				"This test requires successful OIDC authentication. Common failures:\n"+
-				"- OIDCDiscoveryFailed: Keycloak not reachable (check DNS, network, service)\n"+
-				"- OIDCTokenFetchFailed: Invalid client credentials\n"+
-				"- ClusterUnreachable: Token acquired but target cluster unreachable\n"+
-				"- OIDCCASecretMissing: CA certificate required but not provided",
-				name, finalStatus, finalReason, finalMessage)
 		}
 
 		// Verify the reason indicates OIDC success, not just any Ready state
