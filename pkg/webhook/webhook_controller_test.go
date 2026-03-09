@@ -1114,3 +1114,94 @@ func TestAuthorizeViaSessions_NilAttributes(t *testing.T) {
 		t.Fatalf("expected SAR with nil attributes to be rejected, but it was allowed")
 	}
 }
+
+func TestNewWebhookController_FunctionalOptions(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	podFetchCalled := false
+	customPodFetch := func(_ context.Context, _, _, _ string) (*corev1.Pod, error) {
+		podFetchCalled = true
+		return &corev1.Pod{}, nil
+	}
+
+	nsLabelsCalled := false
+	customNsLabels := func(_ context.Context, _, _ string) (map[string]string, error) {
+		nsLabelsCalled = true
+		return map[string]string{"env": "test"}, nil
+	}
+
+	canDoCalled := false
+	customCanDo := func(_ context.Context, _ *rest.Config, _ []string, _ authorization.SubjectAccessReview, _ string) (bool, error) {
+		canDoCalled = true
+		return true, nil
+	}
+
+	wc := NewWebhookController(
+		logger.Sugar(),
+		config.Config{},
+		nil, nil, nil, nil,
+		WithPodFetchFunc(customPodFetch),
+		WithNamespaceLabelsFetchFunc(customNsLabels),
+		WithCanDoFunc(customCanDo),
+	)
+
+	// Verify options were applied
+	if wc.podFetchFn == nil {
+		t.Fatal("expected podFetchFn to be set by option")
+	}
+	if wc.namespaceLabelsFetchFn == nil {
+		t.Fatal("expected namespaceLabelsFetchFn to be set by option")
+	}
+	if wc.canDoFn == nil {
+		t.Fatal("expected canDoFn to be set by option")
+	}
+
+	// Call the overridden functions to verify they work
+	_, _ = wc.podFetchFn(context.Background(), "", "", "")
+	if !podFetchCalled {
+		t.Error("expected custom podFetchFn to be called")
+	}
+
+	_, _ = wc.namespaceLabelsFetchFn(context.Background(), "", "")
+	if !nsLabelsCalled {
+		t.Error("expected custom namespaceLabelsFetchFn to be called")
+	}
+
+	_, _ = wc.canDoFn(context.Background(), nil, nil, authorization.SubjectAccessReview{}, "")
+	if !canDoCalled {
+		t.Error("expected custom canDoFn to be called")
+	}
+}
+
+func TestNewWebhookController_DefaultOptions(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	// Constructor without options should use defaults
+	wc := NewWebhookController(
+		logger.Sugar(),
+		config.Config{},
+		nil, nil, nil, nil,
+	)
+
+	if wc.canDoFn == nil {
+		t.Fatal("expected canDoFn to have a default (CanGroupsDo)")
+	}
+	if wc.rateLimiter == nil {
+		t.Fatal("expected rateLimiter to be initialized")
+	}
+	if wc.podFetchFn != nil {
+		t.Error("expected podFetchFn to be nil by default")
+	}
+	if wc.namespaceLabelsFetchFn != nil {
+		t.Error("expected namespaceLabelsFetchFn to be nil by default")
+	}
+}
+
+func TestWithCanDoFunc_NilPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil fn, got none")
+		}
+	}()
+	WithCanDoFunc(nil)
+}

@@ -4,7 +4,14 @@
 
 package main
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+)
 
 func TestResolveStringConfig(t *testing.T) {
 	tests := []struct {
@@ -57,5 +64,89 @@ func TestResolveOTelSamplingRate(t *testing.T) {
 					tt.cliValue, tt.configValue, tt.defaultValue, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAwaitShutdownSignal_Signal(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	sigChan := make(chan os.Signal, 1)
+	errCh := make(chan error, 1)
+
+	// Send signal immediately
+	sigChan <- os.Interrupt
+
+	err := awaitShutdownSignal(sigChan, errCh, log)
+	if err != nil {
+		t.Errorf("expected nil error on signal, got %v", err)
+	}
+}
+
+func TestAwaitShutdownSignal_Error(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	sigChan := make(chan os.Signal, 1)
+	errCh := make(chan error, 1)
+
+	expectedErr := errors.New("background component crashed")
+	errCh <- expectedErr
+
+	err := awaitShutdownSignal(sigChan, errCh, log)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, expectedErr) {
+		t.Errorf("expected error %v, got %v", expectedErr, err)
+	}
+}
+
+func TestAwaitShutdownSignal_SignalWithUnbufferedErrorChannel(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	sigChan := make(chan os.Signal, 1)
+	errCh := make(chan error)
+
+	// errCh is unbuffered and empty, so only the signal path is selectable.
+	// Verifies that the function returns nil when only a signal is received,
+	// even when the error channel is present but not ready.
+	sigChan <- os.Interrupt
+
+	// Try multiple times to ensure consistent behavior
+	for i := 0; i < 10; i++ {
+		// Drain and refill the channel for each iteration
+		select {
+		case <-sigChan:
+		default:
+		}
+		sigChan <- os.Interrupt
+
+		done := make(chan error, 1)
+		go func() {
+			done <- awaitShutdownSignal(sigChan, errCh, log)
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("iteration %d: expected nil, got %v", i, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d: timed out waiting for shutdown signal", i)
+		}
+	}
+}
+
+func TestAwaitShutdownSignal_BothChannelsReady(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	sigChan := make(chan os.Signal, 1)
+	errCh := make(chan error, 1)
+
+	// Both channels are ready simultaneously — returns promptly without panic.
+	expectedErr := errors.New("component failed")
+	sigChan <- os.Interrupt
+	errCh <- expectedErr
+
+	err := awaitShutdownSignal(sigChan, errCh, log)
+	// When both are selectable, Go's select is non-deterministic.
+	// We accept either outcome: nil (signal won) or the error (error won).
+	if err != nil && !errors.Is(err, expectedErr) {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
