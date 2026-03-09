@@ -387,8 +387,14 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	if err != nil && !errors.Is(err, ErrDegradedAuth) {
 		return nil, err
 	}
-	// Preserve ErrDegradedAuth to propagate to caller (checker sets DegradedAuth condition)
-	degradedErr := err
+	// ErrDegradedAuth means fallback auth succeeded — the config is valid.
+	// Log the degraded state but don't propagate the error to callers, as
+	// non-checker callers (webhook, session controller) treat any error as fatal.
+	// The checker sets the DegradedAuth condition via OIDCTokenProvider directly.
+	if errors.Is(err, ErrDegradedAuth) {
+		p.log.Warnw("Cluster operating in degraded auth mode (using fallback credentials)",
+			"cluster", finalCacheKey, "error", err)
+	}
 
 	// Cache with TTL (keyed by namespace/name)
 	// Note: We already hold the write lock from above
@@ -427,7 +433,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 
 	p.log.Debugw("Cached REST config", "cluster", finalCacheKey, "authType", authType, "ttl", ttl)
-	return cfg, degradedErr
+	return cfg, nil
 }
 
 // GetClientset returns a cached kubernetes.Clientset for the named cluster.
@@ -729,11 +735,19 @@ func (p *ClientProvider) InvalidateOIDCSecrets(namespace, name string) {
 		return
 	}
 	metrics.ClusterCacheInvalidations.WithLabelValues("oidc_secret_update").Inc()
+	// Copy cluster keys to a slice before iterating to avoid panic from
+	// evictClusterLocked mutating oidcSecretToClusters during iteration.
+	clusterKeys := make([]string, 0, len(clusters))
 	for cluster := range clusters {
-		p.log.Infow("Invalidating cluster cache due to OIDC secret change",
+		clusterKeys = append(clusterKeys, cluster)
+	}
+	for _, cluster := range clusterKeys {
+		p.log.Debugw("Invalidating cluster cache due to OIDC secret change",
 			"cluster", cluster, "secret", key)
 		p.evictClusterLocked(cluster)
 	}
+	p.log.Infow("Invalidated cluster caches due to OIDC secret change",
+		"secret", key, "clusterCount", len(clusterKeys))
 	delete(p.oidcSecretToClusters, key)
 }
 

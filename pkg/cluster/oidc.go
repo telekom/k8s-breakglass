@@ -479,8 +479,9 @@ func (p *OIDCTokenProvider) readBestRefreshToken(ctx context.Context, oidc *brea
 // The token is always persisted when rotatedRefreshTokenKey is set, even when
 // the IDP returns the same refresh token (e.g. Keycloak offline tokens without
 // revokeRefreshToken). This ensures the rotated key exists as a "last known
-// good" marker. The SSA cache-aware pre-check in PatchApplyObject prevents
-// redundant API calls when the value is unchanged.
+// good" marker. The SSA pre-check in ApplyObject prevents redundant API calls
+// when the token value is unchanged because we omit the rotated-at annotation
+// from the initial apply — it is only set on actual token changes.
 func (p *OIDCTokenProvider) persistRotatedRefreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace, newRefreshToken, _ string) {
 	if oidc.RotatedRefreshTokenKey == "" {
 		return
@@ -504,9 +505,6 @@ func (p *OIDCTokenProvider) persistRotatedRefreshToken(ctx context.Context, oidc
 			Namespace: ns,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "breakglass",
-			},
-			Annotations: map[string]string{
-				"breakglass.t-caas.telekom.com/rotated-at": time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -573,7 +571,7 @@ func (p *OIDCTokenProvider) evaluateFallback(ctx context.Context, clusterName st
 		// Signal degraded auth to the caller — the checker sets the DegradedAuth condition
 		p.log.Warnw("Cluster is operating in degraded auth mode (using fallback credentials)",
 			"cluster", clusterName, "namespace", namespace)
-		return token, fmt.Errorf("%w: primary refresh token failed, using fallback credentials", ErrDegradedAuth)
+		return token, fmt.Errorf("%w: primary refresh token failed (%w), using fallback credentials", ErrDegradedAuth, primaryErr)
 
 	default:
 		return nil, fmt.Errorf("unknown fallback policy %q: %w", policy, primaryErr)
@@ -1405,18 +1403,24 @@ func (p *OIDCTokenProvider) InvalidateTOFU(apiServerURL string) {
 	p.tofuMu.Unlock()
 }
 
-// Invalidate removes a cached token for the specified namespace/cluster combination.
+// Invalidate removes a cached token and fallback credentials for the specified namespace/cluster combination.
 // Callers must provide the namespace to avoid cross-namespace collisions.
 func (p *OIDCTokenProvider) Invalidate(namespace, clusterName string) {
 	cacheKey := tokenCacheKey(namespace, clusterName)
 	p.mu.Lock()
 	delete(p.tokens, cacheKey)
 	p.mu.Unlock()
+	p.fallbackMu.Lock()
+	delete(p.fallbackCreds, cacheKey)
+	p.fallbackMu.Unlock()
 }
 
-// InvalidateAll removes all cached tokens
+// InvalidateAll removes all cached tokens and fallback credentials
 func (p *OIDCTokenProvider) InvalidateAll() {
 	p.mu.Lock()
 	p.tokens = make(map[string]*cachedToken)
 	p.mu.Unlock()
+	p.fallbackMu.Lock()
+	p.fallbackCreds = make(map[string]*fallbackCredentials)
+	p.fallbackMu.Unlock()
 }

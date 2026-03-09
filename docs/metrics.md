@@ -542,15 +542,15 @@ Track JWT token validation and JWKS key fetching performance.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `breakglass_jwt_validation_requests_total` | Counter | `issuer` | Total JWT validation attempts |
+| `breakglass_jwt_validation_requests_total` | Counter | `issuer`, `mode` | Total JWT validation attempts |
 | `breakglass_jwt_validation_success_total` | Counter | `issuer` | Successful JWT validations |
 | `breakglass_jwt_validation_failure_total` | Counter | `issuer`, `reason` | Failed JWT validations |
 | `breakglass_jwt_validation_duration_seconds` | Histogram | `issuer` | JWT validation latency |
 | `breakglass_jwks_cache_hits_total` | Counter | `issuer` | JWKS key cache hits |
 | `breakglass_jwks_cache_misses_total` | Counter | `issuer` | JWKS key cache misses |
-| `breakglass_jwks_fetch_requests_total` | Counter | `issuer` | JWKS endpoint fetch attempts |
+| `breakglass_jwks_fetch_requests_total` | Counter | `issuer`, `status` | JWKS endpoint fetch attempts |
 | `breakglass_jwks_fetch_duration_seconds` | Histogram | `issuer` | JWKS endpoint fetch latency |
-| `breakglass_jwks_cache_size` | Gauge | | Number of cached JWKS key sets |
+| `breakglass_jwks_cache_size` | Gauge | `issuer` | Number of cached JWKS key sets |
 
 ## Multi-IDP & OIDC Proxy Metrics
 
@@ -560,14 +560,14 @@ Track multi-identity-provider configuration and OIDC proxy operations.
 |--------|------|--------|-------------|
 | `breakglass_multi_idp_config_requests_total` | Counter | | Multi-IDP config requests |
 | `breakglass_multi_idp_config_success_total` | Counter | | Successful multi-IDP config responses |
-| `breakglass_multi_idp_config_failure_total` | Counter | | Failed multi-IDP config responses |
-| `breakglass_idp_selector_used_total` | Counter | `idp` | IDP selector usage by provider |
+| `breakglass_multi_idp_config_failure_total` | Counter | `reason` | Failed multi-IDP config responses |
+| `breakglass_idp_selector_used_total` | Counter | | IDP selector usage in session creation |
 | `breakglass_idp_selection_validations_total` | Counter | `result` | IDP selection validation results |
-| `breakglass_oidc_proxy_requests_total` | Counter | `idp` | OIDC proxy requests |
-| `breakglass_oidc_proxy_success_total` | Counter | `idp` | Successful OIDC proxy responses |
-| `breakglass_oidc_proxy_failure_total` | Counter | `idp`, `reason` | Failed OIDC proxy requests |
-| `breakglass_oidc_proxy_duration_seconds` | Histogram | `idp` | OIDC proxy request latency |
-| `breakglass_oidc_proxy_path_validation_failure_total` | Counter | | Rejected proxy paths |
+| `breakglass_oidc_proxy_requests_total` | Counter | `endpoint` | OIDC proxy requests |
+| `breakglass_oidc_proxy_success_total` | Counter | `endpoint` | Successful OIDC proxy responses |
+| `breakglass_oidc_proxy_failure_total` | Counter | `endpoint`, `reason` | Failed OIDC proxy requests |
+| `breakglass_oidc_proxy_duration_seconds` | Histogram | `endpoint` | OIDC proxy request latency |
+| `breakglass_oidc_proxy_path_validation_failure_total` | Counter | `reason` | Rejected proxy paths |
 | `breakglass_oidc_proxy_tls_mode` | Gauge | `mode` | TLS mode for OIDC proxy connections |
 
 ## Session-IDP Association Metrics

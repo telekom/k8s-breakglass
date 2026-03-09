@@ -3195,19 +3195,19 @@ func TestValidateOIDCFromIDP_RotatedRefreshTokenKey(t *testing.T) {
 		assert.Contains(t, errStr, "must differ")
 	})
 
-	t.Run("invalid: rotatedRefreshTokenKey equals default key 'token'", func(t *testing.T) {
+	t.Run("invalid: rotatedRefreshTokenKey equals default key 'value'", func(t *testing.T) {
 		cfg := &OIDCFromIdentityProviderConfig{
 			Name:   "my-idp",
 			Server: "https://api.cluster.example.com:6443",
 			RefreshTokenSecretRef: &SecretKeyReference{
 				Name:      "my-rt",
 				Namespace: "breakglass-system",
-				// Key empty => defaults to "token"
+				// Key empty => defaults to "value"
 			},
-			RotatedRefreshTokenKey: "token",
+			RotatedRefreshTokenKey: "value",
 		}
 		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
-		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'token' should fail")
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'value' should fail")
 		errStr := errs.ToAggregate().Error()
 		assert.Contains(t, errStr, "must differ")
 	})
@@ -3282,7 +3282,7 @@ func TestValidateOIDCAuth_RotatedRefreshTokenKey(t *testing.T) {
 		assert.Contains(t, errStr, "must differ")
 	})
 
-	t.Run("invalid: rotatedRefreshTokenKey equals default key 'token'", func(t *testing.T) {
+	t.Run("invalid: rotatedRefreshTokenKey equals default key 'value'", func(t *testing.T) {
 		cfg := &OIDCAuthConfig{
 			IssuerURL: "https://keycloak.example.com/realms/myrealm",
 			ClientID:  "breakglass-cluster",
@@ -3290,12 +3290,12 @@ func TestValidateOIDCAuth_RotatedRefreshTokenKey(t *testing.T) {
 			RefreshTokenSecretRef: &SecretKeyReference{
 				Name:      "my-rt",
 				Namespace: "breakglass-system",
-				// Key empty => defaults to "token"
+				// Key empty => defaults to "value"
 			},
-			RotatedRefreshTokenKey: "token",
+			RotatedRefreshTokenKey: "value",
 		}
 		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
-		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'token' should fail")
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'value' should fail")
 		errStr := errs.ToAggregate().Error()
 		assert.Contains(t, errStr, "must differ")
 	})

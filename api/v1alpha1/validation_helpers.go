@@ -927,7 +927,7 @@ func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig,
 		} else {
 			originalKey := cfg.RefreshTokenSecretRef.Key
 			if originalKey == "" {
-				originalKey = "token"
+				originalKey = "value"
 			}
 			if cfg.RotatedRefreshTokenKey == originalKey {
 				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), cfg.RotatedRefreshTokenKey,
@@ -1050,7 +1050,7 @@ func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.E
 		} else {
 			originalKey := oidc.RefreshTokenSecretRef.Key
 			if originalKey == "" {
-				originalKey = "token"
+				originalKey = "value"
 			}
 			if oidc.RotatedRefreshTokenKey == originalKey {
 				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), oidc.RotatedRefreshTokenKey,

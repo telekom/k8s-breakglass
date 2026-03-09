@@ -472,10 +472,22 @@ func (ccc ClusterConfigChecker) handleOIDCAuthError(ctx context.Context, cc *bre
 // conditions when OIDC auth succeeds without degradation. This prevents stale
 // conditions from persisting after recovery (e.g., refresh token rotation).
 func (ccc ClusterConfigChecker) clearOIDCDegradedConditions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, lg *zap.SugaredLogger) {
+	// Re-fetch latest to check current condition state
+	var latest breakglassv1alpha1.ClusterConfig
+	if err := ccc.Client.Get(ctx, client.ObjectKeyFromObject(cc), &latest); err != nil {
+		lg.Warnw("failed to fetch ClusterConfig for condition clearing", "cluster", cc.Name, "error", err)
+		return
+	}
+
 	for _, condType := range []breakglassv1alpha1.ClusterConfigConditionType{
 		breakglassv1alpha1.ClusterConfigConditionDegradedAuth,
 		breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired,
 	} {
+		// Only clear if the condition is currently True (actual transition)
+		existing := apimeta.FindStatusCondition(latest.Status.Conditions, string(condType))
+		if existing == nil || existing.Status == metav1.ConditionFalse {
+			continue
+		}
 		if err := ccc.setCondition(ctx, cc,
 			condType,
 			metav1.ConditionFalse,
