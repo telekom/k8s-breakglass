@@ -521,7 +521,7 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 
 	// Create the activator
-	activator := NewScheduledSessionActivator(log, &sesManager).
+	activator := NewScheduledSessionActivator(log, sesManager).
 		WithMailService(mockMail, "TestBrand", false)
 
 	// Run activation
@@ -621,7 +621,7 @@ func TestScheduledSessionActivator_NoSessionsToActivate(t *testing.T) {
 	sesManager := NewSessionManagerWithClient(fakeClient)
 	mockMail := NewMockMailEnqueuer(true)
 
-	activator := NewScheduledSessionActivator(log, &sesManager).
+	activator := NewScheduledSessionActivator(log, sesManager).
 		WithMailService(mockMail, "TestBrand", false)
 
 	// Should not panic with empty session list
@@ -670,7 +670,7 @@ func TestScheduledSessionActivator_EmailDisabled(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 
 	// Email disabled
-	activator := NewScheduledSessionActivator(log, &sesManager).
+	activator := NewScheduledSessionActivator(log, sesManager).
 		WithMailService(mockMail, "TestBrand", true) // disableEmail = true
 
 	activator.ActivateScheduledSessions()

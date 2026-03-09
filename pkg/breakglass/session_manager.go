@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -22,15 +23,21 @@ import (
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
 	client.Client
-	reader client.Reader
-	log    *zap.SugaredLogger
+	reader          client.Reader
+	log             *zap.SugaredLogger
+	logFallbackOnce sync.Once
 }
 
 // getLogger returns the injected logger or falls back to the global logger.
-func (c SessionManager) getLogger() *zap.SugaredLogger {
+// Callers should prefer passing a logger via WithSessionLogger to avoid
+// hidden global state dependencies.
+func (c *SessionManager) getLogger() *zap.SugaredLogger {
 	if c.log != nil {
 		return c.log
 	}
+	c.logFallbackOnce.Do(func() {
+		zap.S().Warn("SessionManager using global logger — use WithSessionLogger() in production")
+	})
 	return zap.S()
 }
 
@@ -50,11 +57,14 @@ func WithSessionLogger(log *zap.SugaredLogger) SessionManagerOption {
 	}
 }
 
-func NewSessionManager(contextName string) (SessionManager, error) {
+// Deprecated: NewSessionManager creates an uncached client that reads directly from the
+// API server. Prefer NewSessionManagerWithClient or NewSessionManagerWithClientAndReader
+// with a cached manager client for consistent caching behavior.
+func NewSessionManager(contextName string) (*SessionManager, error) {
 	cfg, err := config.GetConfigWithContext(contextName)
 	if err != nil {
 		zap.S().Errorw("Failed to get config with context", "context", contextName, "error", err)
-		return SessionManager{}, fmt.Errorf("failed to get config with context %q: %w", contextName, err)
+		return nil, fmt.Errorf("failed to get config with context %q: %w", contextName, err)
 	}
 
 	c, err := client.New(cfg, client.Options{
@@ -62,33 +72,33 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 	})
 	if err != nil {
 		zap.S().Errorw("Failed to create new client", "error", err)
-		return SessionManager{}, fmt.Errorf("failed to create new client: %w", err)
+		return nil, fmt.Errorf("failed to create new client: %w", err)
 	}
 
 	log := zap.S().Named("session-manager")
 	log.Infow("SessionManager initialized", "context", contextName)
-	return SessionManager{Client: c, reader: c, log: log}, nil
+	return &SessionManager{Client: c, reader: c, log: log}, nil
 }
 
 // NewSessionManagerWithClient allows embedding an existing controller-runtime client (e.g., from a shared manager)
 // to avoid creating redundant rest.Config instances or duplicate caches. The provided client must already be
 // configured with the Breakglass scheme.
 // Configuration is applied via functional options (WithSessionLogger).
-func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) SessionManager {
+func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) *SessionManager {
 	return NewSessionManagerWithClientAndReader(c, c, opts...)
 }
 
 // NewSessionManagerWithClientAndReader allows using a cached client for writes and an optional reader
 // (e.g., APIReader) for consistent reads when required.
 // Configuration is applied via functional options (WithSessionLogger).
-func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) SessionManager {
+func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) *SessionManager {
 	if reader == nil {
 		reader = c
 	}
-	sm := SessionManager{Client: c, reader: reader}
+	sm := &SessionManager{Client: c, reader: reader}
 	for _, opt := range opts {
 		if opt != nil {
-			opt(&sm)
+			opt(sm)
 		}
 	}
 	return sm
@@ -98,14 +108,14 @@ func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader,
 // This is typically the uncached APIReader when the SessionManager was constructed
 // via NewSessionManagerWithClientAndReader. Other components (e.g., ActivityTracker)
 // can use this to bypass the informer cache for up-to-date reads.
-func (c SessionManager) Reader() client.Reader {
+func (c *SessionManager) Reader() client.Reader {
 	if c.reader != nil {
 		return c.reader
 	}
 	return c.Client
 }
 
-func (c SessionManager) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	if c.reader != nil {
 		return c.reader.List(ctx, list, opts...)
 	}
@@ -115,6 +125,12 @@ func (c SessionManager) list(ctx context.Context, list client.ObjectList, opts .
 // isFieldIndexError returns true if the error indicates a missing field index
 // or unsupported field selector—i.e. it is safe to fall back to a full list +
 // client-side filter.  All other errors (RBAC, network, etcd) are real failures.
+//
+// NOTE: controller-runtime does not expose typed errors for index-not-found
+// conditions (as of v0.23.x). This function relies on substring matching
+// against known error messages. If controller-runtime changes wording in a
+// future release, the regression tests in session_manager_test.go
+// (TestIsFieldIndexError*) will catch the change.
 func isFieldIndexError(err error) bool {
 	if err == nil {
 		return false
@@ -152,7 +168,7 @@ func SessionSelector(name, username, cluster, group string) string {
 }
 
 // Get all stored GetClusterGroupAccess
-func (c SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]breakglassv1alpha1.BreakglassSession, error) {
+func (c *SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
 	log.Debug("Fetching all BreakglassSessions")
 	cgal := breakglassv1alpha1.BreakglassSessionList{}
@@ -167,7 +183,7 @@ func (c SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]breakgl
 // GetSessionsByState returns all sessions in the specified state.
 // Uses the status.state field index for efficient lookup when available.
 // Falls back to listing all and filtering if index is not registered.
-func (c SessionManager) GetSessionsByState(ctx context.Context,
+func (c *SessionManager) GetSessionsByState(ctx context.Context,
 	state breakglassv1alpha1.BreakglassSessionState,
 ) ([]breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
@@ -200,7 +216,7 @@ func (c SessionManager) GetSessionsByState(ctx context.Context,
 }
 
 // Get all stored GetClusterGroupAccess
-func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name string) (breakglassv1alpha1.BreakglassSession, error) {
+func (c *SessionManager) GetBreakglassSessionByName(ctx context.Context, name string) (breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
 	// Try direct GET first (works when object namespace is part of the object stored locally)
 	log.Debugw("Fetching BreakglassSession by name (direct GET)", system.NamespacedFields(name, "")...)
@@ -278,7 +294,7 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 // GetUserBreakglassSessions returns all sessions for a user across all clusters.
 // Uses the spec.user field index for efficient lookup when available.
 // Falls back to listing all and filtering if index is not registered.
-func (c SessionManager) GetUserBreakglassSessions(ctx context.Context,
+func (c *SessionManager) GetUserBreakglassSessions(ctx context.Context,
 	user string,
 ) ([]breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
@@ -312,7 +328,7 @@ func (c SessionManager) GetUserBreakglassSessions(ctx context.Context,
 // Get GetClusterGroupAccess by cluster name.
 // Uses the spec.cluster and spec.user field indexes for efficient lookup when available.
 // Falls back to listing all and filtering if indexes are not registered.
-func (c SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
+func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	cluster string,
 	user string,
 ) ([]breakglassv1alpha1.BreakglassSession, error) {
@@ -345,7 +361,7 @@ func (c SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 }
 
 // GetBreakglassSessions with custom field selector string.
-func (c SessionManager) GetBreakglassSessionsWithSelectorString(ctx context.Context,
+func (c *SessionManager) GetBreakglassSessionsWithSelectorString(ctx context.Context,
 	selectorString string,
 ) ([]breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
@@ -367,7 +383,7 @@ func (c SessionManager) GetBreakglassSessionsWithSelectorString(ctx context.Cont
 }
 
 // GetBreakglassSessions with custom field selector.
-func (c SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
+func (c *SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
 	fs fields.Selector,
 ) ([]breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
@@ -385,7 +401,7 @@ func (c SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
 // Add new breakglass session.
 // Note: Uses Create instead of SSA because GenerateName requires Create semantics.
 // For updates, use UpdateBreakglassSession which uses SSA.
-func (c SessionManager) AddBreakglassSession(ctx context.Context, bs *breakglassv1alpha1.BreakglassSession) error {
+func (c *SessionManager) AddBreakglassSession(ctx context.Context, bs *breakglassv1alpha1.BreakglassSession) error {
 	log := c.getLogger()
 	log.Infow("Adding new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "user", bs.Spec.User, "cluster", bs.Spec.Cluster)...)
 	if err := c.Create(ctx, bs); err != nil {
@@ -405,7 +421,7 @@ func (c SessionManager) AddBreakglassSession(ctx context.Context, bs *breakglass
 }
 
 // Update breakglass session.
-func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs breakglassv1alpha1.BreakglassSession) error {
+func (c *SessionManager) UpdateBreakglassSession(ctx context.Context, bs breakglassv1alpha1.BreakglassSession) error {
 	log := c.getLogger()
 	log.Infow("Updating BreakglassSession", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	if bs.TypeMeta.APIVersion == "" || bs.TypeMeta.Kind == "" {
@@ -423,7 +439,7 @@ func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs breakgla
 	return nil
 }
 
-func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs breakglassv1alpha1.BreakglassSession) error {
+func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs breakglassv1alpha1.BreakglassSession) error {
 	log := c.getLogger()
 	log.Infow("Updating BreakglassSession status", system.NamespacedFields(bs.Name, bs.Namespace)...)
 
@@ -453,7 +469,7 @@ func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs br
 }
 
 // DeleteBreakglassSession deletes the given BreakglassSession and emits a metric when successful.
-func (c SessionManager) DeleteBreakglassSession(ctx context.Context, bs *breakglassv1alpha1.BreakglassSession) error {
+func (c *SessionManager) DeleteBreakglassSession(ctx context.Context, bs *breakglassv1alpha1.BreakglassSession) error {
 	log := c.getLogger()
 	if err := c.Delete(ctx, bs); err != nil {
 		log.Errorw("Failed to delete BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err)...)

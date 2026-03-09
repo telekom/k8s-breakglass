@@ -2,11 +2,16 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -112,6 +117,64 @@ func TestNewSessionManagerWithClientAndReader(t *testing.T) {
 
 		assert.Same(t, fakeClient, mgr.Client)
 		assert.Same(t, fakeClient, mgr.reader)
+	})
+}
+
+// TestIsFieldIndexError_KnownMessages is a regression test that pins the
+// expected error strings from controller-runtime v0.23.x. If a future upgrade
+// changes the wording, this test will fail, alerting maintainers to update
+// isFieldIndexError accordingly.
+func TestIsFieldIndexError_KnownMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{name: "nil error", err: nil, expected: false},
+		{name: "unrelated error", err: errors.New("connection refused"), expected: false},
+		{name: "RBAC error", err: errors.New("forbidden: User cannot list"), expected: false},
+		{name: "cache: no index with name", err: errors.New(`no index with name "spec.user" has been registered`), expected: true},
+		{name: "cache: Index with name does not exist", err: errors.New(`Index with name field:spec.cluster does not exist`), expected: true},
+		{name: "generic: field index", err: errors.New("field index not available"), expected: true},
+		{name: "generic: no indexer", err: errors.New("no indexer for field"), expected: true},
+		{name: "apiserver: field label not supported", err: errors.New("field label not supported: spec.user"), expected: true},
+		{name: "wrapped error with index message", err: errors.New("list failed: no index with name foo"), expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isFieldIndexError(tt.err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestSessionManager_GetLogger(t *testing.T) {
+	t.Run("returns injected logger", func(t *testing.T) {
+		logger := zaptest.NewLogger(t).Sugar()
+		fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+		mgr := NewSessionManagerWithClient(fakeClient, WithSessionLogger(logger))
+
+		got := mgr.getLogger()
+		assert.Same(t, logger, got)
+	})
+
+	t.Run("falls back to global logger and emits warning", func(t *testing.T) {
+		// Capture global logger output to verify the fallback warning
+		core, logs := observer.New(zapcore.WarnLevel)
+		prevLogger := zap.ReplaceGlobals(zap.New(core))
+		defer prevLogger()
+
+		fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		// Should not panic; returns global logger
+		got := mgr.getLogger()
+		assert.NotNil(t, got)
+
+		// Verify warning was emitted
+		assert.Equal(t, 1, logs.Len(), "expected exactly one warning log")
+		assert.Contains(t, logs.All()[0].Message, "SessionManager using global logger")
 	})
 }
 

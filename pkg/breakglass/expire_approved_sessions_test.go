@@ -70,7 +70,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -120,7 +120,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -158,7 +158,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -198,7 +198,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -236,7 +236,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -272,7 +272,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -329,7 +329,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -376,7 +376,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -416,7 +416,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 
@@ -436,7 +436,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 
 		controller := &BreakglassSessionController{
 			log:            logger,
-			sessionManager: &mgr,
+			sessionManager: mgr,
 			disableEmail:   true,
 		}
 

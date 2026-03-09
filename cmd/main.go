@@ -445,7 +445,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 
 	// Setup session controller with all dependencies
 	// Uses combined auth + rate limiting middleware
-	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, escalationManager,
+	sessionController := breakglass.NewBreakglassSessionController(log, cfg, sessionManager, escalationManager,
 		authMiddleware, cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).
 		WithMailService(mailService).WithAuditService(auditService)
 
@@ -463,7 +463,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	// (GET /api/debugSessions/templates/:name/clusters) for a unified user experience.
 
 	// Register API controllers based on component flags
-	apiControllers, webhookCtrl := api.Setup(sessionController, escalationManager, &sessionManager,
+	apiControllers, webhookCtrl := api.Setup(sessionController, escalationManager, sessionManager,
 		cliConfig.EnableFrontend, cliConfig.EnableAPI, cliConfig.ConfigPath, auth,
 		ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService)
 
@@ -471,7 +471,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		idpLoader:         idpLoader,
 		idpConfig:         idpConfig,
 		escalationManager: escalationManager,
-		sessionManager:    &sessionManager,
+		sessionManager:    sessionManager,
 		ccProvider:        ccProvider,
 		mailService:       mailService,
 		auditService:      auditService,

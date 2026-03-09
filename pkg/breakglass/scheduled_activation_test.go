@@ -69,7 +69,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(session)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true) // email disabled
 
 		activator.ActivateScheduledSessions()
@@ -117,7 +117,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(session)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		activator.ActivateScheduledSessions()
@@ -152,7 +152,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(session)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		// Should not panic
@@ -188,7 +188,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(session)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		activator.ActivateScheduledSessions()
@@ -244,7 +244,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(readySession, waitingSession)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		activator.ActivateScheduledSessions()
@@ -289,7 +289,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(session)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		activator.ActivateScheduledSessions()
@@ -306,7 +306,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient() // no sessions
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		// Should not panic
@@ -339,7 +339,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(approvedSession)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		activator.ActivateScheduledSessions()
@@ -376,7 +376,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		fakeClient := newFakeActivationClient(session)
 		mgr := NewSessionManagerWithClient(fakeClient)
 
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBranding", true)
 
 		activator.ActivateScheduledSessions()
@@ -397,7 +397,7 @@ func TestNewScheduledSessionActivator(t *testing.T) {
 	mgr := NewSessionManagerWithClient(fakeClient)
 
 	t.Run("creates activator with defaults", func(t *testing.T) {
-		activator := NewScheduledSessionActivator(logger, &mgr)
+		activator := NewScheduledSessionActivator(logger, mgr)
 		assert.NotNil(t, activator)
 		assert.False(t, activator.disableEmail)
 		// Regression guards: verify zero-value defaults are not accidentally changed by constructor
@@ -406,7 +406,7 @@ func TestNewScheduledSessionActivator(t *testing.T) {
 	})
 
 	t.Run("WithMailService sets mail properties", func(t *testing.T) {
-		activator := NewScheduledSessionActivator(logger, &mgr).
+		activator := NewScheduledSessionActivator(logger, mgr).
 			WithMailService(nil, "TestBrand", true)
 		assert.True(t, activator.disableEmail)
 		assert.Equal(t, "TestBrand", activator.brandingName)
