@@ -147,6 +147,28 @@ The API validates JWTs using an **explicit allowlist of signing algorithms** (RS
 
 To reduce accidental credential exposure, the API middleware **strips the Authorization header** after extracting token data, so downstream logs or error handlers do not emit bearer tokens.
 
+### Issuer Validation (SEC-003)
+
+Before routing a JWT to a JWKS endpoint, the middleware validates the `iss` claim extracted from the unverified token:
+
+- Must be a well-formed HTTPS URL (non-HTTPS schemes like `http://`, `file://`, or `javascript:` are rejected)
+- Must not exceed 512 characters
+- Must have a non-empty host component
+
+This prevents an attacker from using a crafted issuer to trigger SSRF-like JWKS fetches to arbitrary endpoints.
+
+### JWKS Fetch Rate Limiting (SEC-004)
+
+The system enforces a per-issuer cooldown on JWKS fetches (`10s` minimum interval). This prevents an attacker from flooding the system with tokens bearing valid issuer URLs but unknown `kid` values, which would otherwise cause rapid JWKS re-fetches against the OIDC provider.
+
+The rate limiter is in addition to the existing LRU cache for JWKS key sets.
+
+### Audience Validation (SEC-005)
+
+When an `IdentityProvider` CRD has a `clientID` configured, the middleware validates the JWT `aud` claim against that client ID. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
+
+If `clientID` is empty (legacy configuration), audience validation is skipped to maintain backwards compatibility.
+
 ### Token Storage in the Browser
 
 The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`.

@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **JWT issuer format validation (SEC-003)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Validate JWT `iss` claim format before JWKS routing — must be an HTTPS URL with a non-empty host and ≤512 characters; rejects `http://`, `file://`, `javascript:`, and other non-HTTPS schemes to prevent SSRF-like JWKS fetches
+- **Per-issuer JWKS fetch rate limiting (SEC-004)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Enforce 10-second minimum cooldown between JWKS fetches for the same issuer, preventing DoS amplification through tokens with valid issuers but unknown `kid` values
+- **JWT audience claim validation (SEC-005)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): When `IdentityProvider.spec.oidcConfig.clientID` is set, the JWT `aud` claim is now validated against it, preventing cross-service token confusion from other OIDC clients at the same provider
 - **JWT audience validation preparation (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459), [#472](https://github.com/telekom/k8s-breakglass/issues/472)): Added `clientID` plumbing from IDP config to JWT authenticator for future audience validation; audience validation is intentionally disabled by default as it depends on audience protocol mappers that are not configured in all environments — a dedicated CRD field is needed before enabling
 - **JWT expiration required (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): JWT parser now rejects tokens without an `exp` claim via `jwt.WithExpirationRequired()`
 - **TLS minimum version (SEC-003)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Set `tls.VersionTLS12` as minimum on the API server and all OIDC proxy / JWKS HTTP clients
