@@ -63,8 +63,8 @@ func TestGetPublicBuildInfo(t *testing.T) {
 	}
 }
 
-func TestGetPublicBuildInfo_ExcludesInfrastructureDetails(t *testing.T) {
-	// Ensure the public struct does not contain infrastructure details
+func TestGetPublicBuildInfo_MatchesCoreFields(t *testing.T) {
+	// Verify PublicBuildInfo contains the same Version/BuildDate as full BuildInfo
 	info := GetPublicBuildInfo()
 
 	// PublicBuildInfo should only have Version and BuildDate fields.

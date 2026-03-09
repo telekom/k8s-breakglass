@@ -290,12 +290,12 @@ spec:
               name: ingress-nginx
       ports:
         - port: 8080
-    # Allow Kubernetes API server to reach the SAR webhook
+    # Allow Kubernetes API server to reach the SAR webhook (served by Gin API)
     - from:
         - ipBlock:
             cidr: <API_SERVER_CIDR>  # Replace with your API server IP range
       ports:
-        - port: 9443  # Webhook TLS port
+        - port: 8080  # SAR webhook via Gin API port
   egress:
     - to:
         - namespaceSelector: {}
@@ -312,15 +312,18 @@ The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes 
 
 1. **Kubernetes webhook protocol**: The API server calls authorization webhooks as part of its own request pipeline. Adding token-based authentication would require the API server itself to obtain and present tokens — increasing complexity and creating a circular dependency (the API server would need breakglass credentials to authorize breakglass requests).
 
-2. **TLS with server identity verification instead of token auth**: The webhook is served over TLS (port 9443) with certificates generated at startup. The `ValidatingWebhookConfiguration` / `AuthorizationConfiguration` objects reference a CA bundle, so the API server verifies the webhook's identity before sending requests. This is one-way TLS (the API server authenticates the webhook), not mutual TLS.
+2. **Served by the Gin API server**: The SAR webhook is registered on the shared Gin HTTP server (default port 8080), **not** on the controller-runtime webhook server (port 9443). Port 9443 is used exclusively for validating/mutating admission webhooks, which have their own TLS certificates generated at startup.
 
 3. **Rate limiting**: The endpoint includes built-in per-IP rate limiting to prevent abuse even if an attacker gains network access.
 
+> **⚠️ Security Warning:** Because the SAR endpoint shares the Gin API port (8080) and has no HTTP-layer authentication, **any in-cluster workload with network access to port 8080 can send crafted SubjectAccessReview requests**. Without a NetworkPolicy, this means any pod in the cluster could potentially impersonate users by crafting SAR requests with arbitrary `spec.user`/`spec.groups` values.
+
 **Recommended mitigations:**
 
-- Deploy a **NetworkPolicy** (see above) restricting ingress on the webhook port to only the Kubernetes API server's IP range
-- Enable **Kubernetes audit logging** to detect unexpected SAR requests
-- In multi-tenant clusters, ensure the webhook port is not exposed via Ingress or LoadBalancer services
+- **NetworkPolicy (required)**: Deploy a NetworkPolicy (see above) restricting ingress on port 8080 to the Kubernetes API server's IP range and the ingress controller namespace. This is the primary defense.
+- **Kubernetes audit logging**: Enable audit logging to detect unexpected or malicious SAR requests
+- **Network segmentation**: In multi-tenant clusters, ensure the breakglass service is not exposed to untrusted namespaces
+- In production, consider a dedicated listener for the SAR webhook endpoint to separate it from the general API traffic
 
 ### Build Info Endpoint
 

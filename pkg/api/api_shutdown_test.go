@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -189,4 +190,39 @@ func TestServer_GracefulShutdownPattern(t *testing.T) {
 
 	// Clean shutdown
 	server.Close()
+}
+
+// TestBuildInfoEndpoint_OnlyPublicFields verifies SEC-008: the /api/debug/buildinfo
+// endpoint returns only Version and BuildDate, omitting infrastructure details.
+func TestBuildInfoEndpoint_OnlyPublicFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	log := zaptest.NewLogger(t)
+
+	cfg := config.Config{
+		Server: config.Server{
+			ListenAddress: ":0",
+		},
+		Frontend: config.Frontend{
+			BaseURL: "http://localhost:5173",
+		},
+	}
+
+	server := NewServer(log, cfg, true, nil)
+	defer server.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/debug/buildinfo", nil)
+	w := httptest.NewRecorder()
+	server.Handler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &m))
+
+	allowedKeys := map[string]bool{"version": true, "buildDate": true}
+	for key := range m {
+		assert.True(t, allowedKeys[key], "unexpected key %q in buildinfo response", key)
+	}
+	assert.Contains(t, m, "version")
+	assert.Contains(t, m, "buildDate")
 }
