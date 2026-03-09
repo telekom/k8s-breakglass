@@ -737,6 +737,39 @@ When **enabled** (default):
 
 ---
 
+### OpenTelemetry Configuration
+
+#### `--otel-required`
+
+Treat OpenTelemetry initialization failure as fatal. When enabled, the controller exits with an error if the OTel exporter cannot be initialized. When disabled (default), tracing is disabled with a warning on failure.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `OTEL_REQUIRED` |
+| **Example** | `--otel-required` |
+
+```bash
+# OTel failure is fatal (production with mandatory tracing)
+breakglass-controller --otel-required
+
+# OTel failure is non-fatal (default, graceful degradation)
+breakglass-controller
+```
+
+When **enabled**:
+- Controller exits if OTel exporter fails to connect
+- Use in production when tracing pipeline is critical
+- Note: the controller exits before the metrics endpoint starts, so the `breakglass_telemetry_init_failed` gauge may not be scrapeable in this mode
+
+When **disabled** (default):
+- Tracing disabled on OTel init failure (warning logged)
+- `breakglass_telemetry_init_failed` gauge set to `1` for observability
+- Warning logged: `"OpenTelemetry initialization failed, tracing disabled"`
+
+---
+
 ## Environment Variables
 
 All flags can be set via environment variables. The naming convention is:

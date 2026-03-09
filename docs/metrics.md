@@ -476,6 +476,7 @@ time() - breakglass_identity_provider_last_reload_timestamp_seconds
 |--------|------|--------|-------------|
 | `breakglass_identity_provider_config_version` | Gauge | `provider_type` | Hash of current loaded configuration (changes when config updates) |
 | `breakglass_identity_provider_status` | Gauge | `provider_name`, `provider_type` | Provider status: `1` = Active, `0` = Error, `-1` = Disabled |
+| `breakglass_telemetry_init_failed` | Gauge | — | Set to `1` if OpenTelemetry exporter initialization failed at startup. Only observable when `--otel-required` is disabled (default) since the controller continues running; when `--otel-required` is enabled the controller exits before the metrics endpoint becomes available. |
 
 **Example Queries:**
 

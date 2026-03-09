@@ -57,6 +57,7 @@ type Config struct {
 	OTelEndpoint     string
 	OTelInsecure     bool
 	OTelSamplingRate float64
+	OTelRequired     bool
 
 	// Webhook-related config
 	Webhook WebhookConfig
@@ -173,6 +174,8 @@ func Parse() *Config {
 		"Disable TLS for the OTLP gRPC connection")
 	flag.Float64Var(&config.OTelSamplingRate, "otel-sampling-rate", getEnvFloat64("OTEL_SAMPLING_RATE", -1),
 		"Trace sampling rate (0.0-1.0; -1 means use config-file value or default 1.0)")
+	flag.BoolVar(&config.OTelRequired, "otel-required", getEnvBool("OTEL_REQUIRED", false),
+		"Treat OpenTelemetry initialization failure as fatal instead of degrading gracefully")
 
 	// Configuration flags
 	flag.StringVar(&config.ConfigPath, "config-path", getEnvString("BREAKGLASS_CONFIG_PATH", "./config.yaml"),
@@ -230,6 +233,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"disable_email", c.DisableEmail,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
+		"otel_required", c.OTelRequired,
 		"otel_exporter", c.OTelExporter,
 		"otel_endpoint", c.OTelEndpoint,
 		"otel_insecure", c.OTelInsecure,
