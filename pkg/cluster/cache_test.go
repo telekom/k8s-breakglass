@@ -326,3 +326,157 @@ func TestGetAcrossAllNamespaces_DoesNotMatchSimilarNames(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "test-prod", resultTestProd.Name, "should return exact match for 'test-prod'")
 }
+
+func TestGetClientset_EmptyName(t *testing.T) {
+	provider := NewClientProvider(fake.NewClientBuilder().Build(), zaptest.NewLogger(t).Sugar())
+	cs, err := provider.GetClientset(context.Background(), "")
+	assert.Error(t, err)
+	assert.Nil(t, cs)
+	assert.Contains(t, err.Error(), "cluster name must not be empty")
+}
+
+func TestGetClientset_CacheHitAndMiss(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	kubeYAML := mustBuildKubeconfigYAML("https://10.0.0.1:6443")
+
+	cc := breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cs-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "cs-secret", Namespace: "default"},
+		},
+	}
+	secret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cs-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": kubeYAML},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	ctx := context.Background()
+
+	// First call: cache miss, creates clientset
+	cs1, err := provider.GetClientset(ctx, "default/cs-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs1)
+
+	// Second call: cache hit, returns same clientset
+	cs2, err := provider.GetClientset(ctx, "default/cs-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs2)
+	assert.Same(t, cs1, cs2, "second call should return cached clientset")
+}
+
+func TestGetClientset_BareVsNamespacedKey(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	kubeYAML := mustBuildKubeconfigYAML("https://10.0.0.3:6443")
+
+	cc := breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "canon-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "canon-secret", Namespace: "default"},
+		},
+	}
+	secret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "canon-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": kubeYAML},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	ctx := context.Background()
+
+	// First call with bare name
+	cs1, err := provider.GetClientset(ctx, "canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs1)
+
+	// Second call with namespaced name — should return the same cached clientset
+	cs2, err := provider.GetClientset(ctx, "default/canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs2)
+	assert.Same(t, cs1, cs2, "bare name and namespaced name should resolve to the same cached clientset")
+
+	// Reverse order: namespaced first, then bare
+	provider2 := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	cs3, err := provider2.GetClientset(ctx, "default/canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs3)
+
+	cs4, err := provider2.GetClientset(ctx, "canon-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs4)
+	assert.Same(t, cs3, cs4, "namespaced name then bare name should resolve to the same cached clientset")
+}
+
+func TestGetClientset_EvictionClearsClientset(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	kubeYAML := mustBuildKubeconfigYAML("https://10.0.0.2:6443")
+
+	cc := breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "evict-cluster", Namespace: "ns1"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "evict-secret", Namespace: "ns1"},
+		},
+	}
+	secret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "evict-secret", Namespace: "ns1"},
+		Data:       map[string][]byte{"value": kubeYAML},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	ctx := context.Background()
+
+	// Populate clientset cache
+	cs1, err := provider.GetClientset(ctx, "ns1/evict-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs1)
+
+	// Verify it's cached
+	provider.mu.RLock()
+	_, cached := provider.clientsets[cacheKey("ns1", "evict-cluster")]
+	provider.mu.RUnlock()
+	assert.True(t, cached, "clientset should be in cache")
+
+	// Invalidate the cluster → should clear clientset too
+	provider.Invalidate("ns1", "evict-cluster")
+
+	// Verify clientset was evicted
+	provider.mu.RLock()
+	_, stillCached := provider.clientsets[cacheKey("ns1", "evict-cluster")]
+	provider.mu.RUnlock()
+	assert.False(t, stillCached, "clientset should be evicted after Invalidate")
+
+	// Next call should re-create the clientset
+	cs3, err := provider.GetClientset(ctx, "ns1/evict-cluster")
+	assert.NoError(t, err)
+	assert.NotNil(t, cs3)
+	assert.NotSame(t, cs1, cs3, "new clientset should be different after eviction")
+}
+
+func TestGetClientset_MissingClusterConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	cs, err := provider.GetClientset(context.Background(), "default/nonexistent")
+	assert.Error(t, err)
+	assert.Nil(t, cs)
+	assert.Contains(t, err.Error(), "get REST config for clientset")
+}

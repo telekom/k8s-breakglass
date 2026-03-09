@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -60,6 +61,13 @@ type cachedRESTConfig struct {
 	authType  breakglassv1alpha1.ClusterAuthType
 }
 
+// cachedClientset wraps a kubernetes.Clientset with expiry time for TTL-based eviction.
+// Clientsets are tied to their underlying rest.Config and are evicted together.
+type cachedClientset struct {
+	clientset *kubernetes.Clientset
+	expiresAt time.Time
+}
+
 type ClientProvider struct {
 	k8s  ctrlclient.Client
 	log  *zap.SugaredLogger
@@ -79,6 +87,9 @@ type ClientProvider struct {
 	// When a spoke becomes unreachable, the circuit opens and requests are rejected immediately
 	// instead of blocking on TCP timeout.
 	circuitBreakers *CircuitBreakerRegistry
+	// clientsets caches kubernetes.Clientset instances per cluster to avoid repeated
+	// creation during SubjectAccessReview, pod fetch, and namespace label lookups.
+	clientsets map[string]*cachedClientset
 }
 
 func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvider {
@@ -97,6 +108,7 @@ func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLo
 		secretToClusters: map[string]map[string]struct{}{},
 		oidcProvider:     NewOIDCTokenProvider(c, log),
 		circuitBreakers:  NewCircuitBreakerRegistry(cbCfg, log),
+		clientsets:       map[string]*cachedClientset{},
 	}
 }
 
@@ -409,6 +421,95 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	return cfg, nil
 }
 
+// GetClientset returns a cached kubernetes.Clientset for the named cluster.
+// Clientsets are created from the cached REST config and share its TTL-based eviction.
+// This avoids creating a new Clientset on every SubjectAccessReview, pod fetch, or
+// namespace label lookup — all of which are hot paths in the webhook controller.
+func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubernetes.Clientset, error) {
+	if name == "" {
+		return nil, fmt.Errorf("cluster name must not be empty")
+	}
+
+	now := time.Now()
+
+	// Determine cache key (same logic as GetRESTConfig)
+	var cacheLookupKey string
+	if ns, n, ok := splitNamespacedName(name); ok {
+		cacheLookupKey = cacheKey(ns, n)
+	} else {
+		cacheLookupKey = name
+	}
+
+	// Canonicalize: resolve bare name to canonical namespace/name key if already known
+	// from a prior GetRESTConfig call. This prevents duplicate clientset entries when
+	// the same cluster is accessed via bare name (e.g., "my-cluster") and namespaced
+	// name (e.g., "default/my-cluster").
+	p.mu.RLock()
+	if canonical, ok := p.bareToCanonical[cacheLookupKey]; ok {
+		cacheLookupKey = canonical
+	}
+	p.mu.RUnlock()
+
+	// Fast path: check clientset cache under read lock
+	p.mu.RLock()
+	if entry, ok := p.clientsets[cacheLookupKey]; ok && now.Before(entry.expiresAt) {
+		p.mu.RUnlock()
+		return entry.clientset, nil
+	}
+	p.mu.RUnlock()
+
+	// Slow path: get or refresh the REST config, then create a clientset.
+	// GetRESTConfig handles its own locking; we call it outside our lock.
+	rc, err := p.GetRESTConfig(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("get REST config for clientset: %w", err)
+	}
+
+	// Re-canonicalize after GetRESTConfig which may have populated bareToCanonical
+	// for the first time during this call.
+	p.mu.RLock()
+	if canonical, ok := p.bareToCanonical[cacheLookupKey]; ok {
+		cacheLookupKey = canonical
+	}
+	// Fast-path: check cache with canonicalized key before creating a new clientset.
+	if entry, ok := p.clientsets[cacheLookupKey]; ok && time.Now().Before(entry.expiresAt) {
+		p.mu.RUnlock()
+		return entry.clientset, nil
+	}
+	p.mu.RUnlock()
+
+	cs, err := kubernetes.NewForConfig(rc)
+	if err != nil {
+		return nil, fmt.Errorf("create clientset for cluster %s: %w", name, err)
+	}
+
+	// Double-checked locking: re-check under write lock before caching.
+	// Another goroutine may have populated the entry while we were creating ours.
+	// Align clientset TTL with the underlying REST config TTL so kubeconfig-backed
+	// clusters (KubeconfigCacheTTL=15m) don't get the shorter RESTConfigCacheTTL (5m).
+	// Recompute `now` after the slow path to avoid stale expiry calculations.
+	now = time.Now()
+	p.mu.Lock()
+	if entry, ok := p.clientsets[cacheLookupKey]; ok && now.Before(entry.expiresAt) {
+		p.mu.Unlock()
+		return entry.clientset, nil // use the entry written by the other goroutine
+	}
+	clientsetTTL := RESTConfigCacheTTL
+	if rcEntry, ok := p.rest[cacheLookupKey]; ok {
+		// Derive clientset TTL from the REST config entry's remaining lifetime.
+		if remaining := time.Until(rcEntry.expiresAt); remaining > 0 {
+			clientsetTTL = remaining
+		}
+	}
+	p.clientsets[cacheLookupKey] = &cachedClientset{
+		clientset: cs,
+		expiresAt: now.Add(clientsetTTL),
+	}
+	p.mu.Unlock()
+
+	return cs, nil
+}
+
 // getRESTConfigFromKubeconfig builds a rest.Config from a kubeconfig stored in a secret.
 // Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
 // as this function may modify p.clusterToSecret and p.secretToClusters when tracking secret references.
@@ -513,10 +614,12 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 	delete(p.data, clusterKey)
 	delete(p.rest, clusterKey)
+	delete(p.clientsets, clusterKey)
 	// Also evict any bare-name alias that maps to this canonical key.
 	for bare, canonical := range p.bareToCanonical {
 		if canonical == clusterKey {
 			delete(p.rest, bare)
+			delete(p.clientsets, bare)
 			delete(p.bareToCanonical, bare)
 			break
 		}
