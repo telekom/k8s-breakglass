@@ -149,7 +149,7 @@ To reduce accidental credential exposure, the API middleware **strips the Author
 
 ### Token Storage in the Browser
 
-The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). An opt-in "Remember me" mode uses `localStorage` instead.
+The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`.
 
 **Why not `httpOnly` cookies?**
 
@@ -287,7 +287,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              name: ingress-nginx
+              kubernetes.io/metadata.name: ingress-nginx
       ports:
         - port: 8080
     # Allow Kubernetes API server to reach the SAR webhook (served by Gin API)
@@ -316,7 +316,7 @@ The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes 
 
 3. **Rate limiting**: The endpoint includes built-in per-IP rate limiting to prevent abuse even if an attacker gains network access.
 
-> **⚠️ Security Warning:** Because the SAR endpoint shares the Gin API port (8080) and has no HTTP-layer authentication, **any in-cluster workload with network access to port 8080 can send crafted SubjectAccessReview requests**. Without a NetworkPolicy, this means any pod in the cluster could potentially impersonate users by crafting SAR requests with arbitrary `spec.user`/`spec.groups` values.
+> **⚠️ Security Warning:** Because the SAR endpoint shares the Gin API port (8080) and has no HTTP-layer authentication, **any in-cluster workload with network access to port 8080 can send crafted SubjectAccessReview requests**. Without a NetworkPolicy, this means any pod in the cluster could probe authorization decisions and trigger side effects (rate-limiter counters, metrics, potential session-activity lookups) by sending SAR requests with arbitrary `spec.user`/`spec.groups` values. Note that calling the webhook directly does **not** grant Kubernetes permissions — it only returns an `allowed`/`denied` decision.
 
 **Recommended mitigations:**
 
