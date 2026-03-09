@@ -195,7 +195,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Correlation ID middleware
 	engine.Use(func(c *gin.Context) {
 		cid := c.Request.Header.Get("X-Request-ID")
-		if cid == "" {
+		// Sanitize: only safe characters (checked inside isValidRequestID).
+		if !isValidRequestID(cid) {
 			cid = uuid.NewString()
 		}
 		c.Set("cid", cid)
@@ -635,7 +636,19 @@ func (s *Server) Listen() {
 
 	var err error
 	if s.config.Server.TLSCertFile != "" && s.config.Server.TLSKeyFile != "" {
-		s.log.Sugar().Infow("Starting HTTPS server", "address", s.config.Server.ListenAddress)
+		s.httpServer.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			CipherSuites: []uint16{
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			},
+		}
+		s.log.Sugar().Infow("Starting HTTPS server", "address", s.config.Server.ListenAddress,
+			"tlsMinVersion", "TLS 1.2")
 		err = s.httpServer.ListenAndServeTLS(s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
 	} else {
 		s.log.Sugar().Infow("Starting HTTP server", "address", s.config.Server.ListenAddress)
@@ -678,6 +691,21 @@ func (s *Server) Close() {
 	if s.publicRateLimiter != nil {
 		s.publicRateLimiter.Stop()
 	}
+}
+
+// isValidRequestID validates that a request ID contains only safe characters
+// (alphanumeric, hyphens, underscores, dots, colons) to prevent header injection.
+func isValidRequestID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == ':') {
+			return false
+		}
+	}
+	return true
 }
 
 type FrontendConfig struct {
@@ -1076,7 +1104,7 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		if ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
 			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpCfg.Name)
 		}
-		tlsConfig = &tls.Config{RootCAs: roots}
+		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 		mode = tlsModeCustomCA
 	case idpCfg.InsecureSkipVerify, idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify:
 		// WARNING: InsecureSkipVerify disables TLS certificate verification.
@@ -1085,7 +1113,8 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 			"idpName", idpCfg.Name,
 			"authority", idpCfg.Authority,
 			"warning", "This setting should NOT be used in production environments")
-		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // Operator-opted via InsecureSkipVerify flag
+		tlsConfig.InsecureSkipVerify = true                   //nolint:gosec // Dev/E2E only; enforced TLS 1.2 above
 		mode = tlsModeInsecure
 	default:
 		roots, err := x509.SystemCertPool()
@@ -1095,7 +1124,7 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		if roots == nil {
 			roots = x509.NewCertPool()
 		}
-		tlsConfig = &tls.Config{RootCAs: roots}
+		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	}
 
 	transport.TLSClientConfig = tlsConfig

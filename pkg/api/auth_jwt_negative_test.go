@@ -476,9 +476,9 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 				"exp": 0,
 				"nbf": 0,
 			},
-			// jwt-go v4 treats exp=0 as valid (zero value doesn't trigger expiry check)
-			// This is library behavior - applications should validate exp > 0 if needed
-			expectedStatus: http.StatusOK,
+			// SEC-005: jwt.WithExpirationRequired() rejects exp=0 (epoch) as expired.
+			// This is the desired security behavior — tokens without meaningful expiry are rejected.
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "token with negative expiry",
@@ -523,4 +523,100 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 			require.Equal(t, tt.expectedStatus, w.Code)
 		})
 	}
+}
+
+// TestAuthMiddleware_AudienceNotValidated verifies that JWT audience (aud) claim
+// is NOT validated — Keycloak does not include the requesting client_id in the
+// aud claim by default, so audience validation would break environments without
+// audience protocol mappers. A dedicated CRD field is needed before this can be enabled.
+func TestAuthMiddleware_AudienceNotValidated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+
+	tests := []struct {
+		name          string
+		tokenAudience interface{} // aud claim in token (nil = omitted)
+	}{
+		{name: "no audience claim", tokenAudience: nil},
+		{name: "audience present", tokenAudience: "some-audience"},
+		{name: "array audience", tokenAudience: []string{"aud1", "aud2"}},
+		{name: "mismatched audience", tokenAudience: "wrong-client"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Use the simple single-IDP path — no need for cache internals
+			// since audience validation is disabled regardless.
+			auth := &AuthHandler{jwks: jwks, log: logger}
+
+			router := gin.New()
+			router.Use(auth.Middleware())
+			router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+			claims := jwt.MapClaims{
+				"sub": "test-user",
+				"exp": time.Now().Add(time.Hour).Unix(),
+			}
+			if tt.tokenAudience != nil {
+				claims["aud"] = tt.tokenAudience
+			}
+
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+			tok.Header["kid"] = kid
+			tokStr, err := tok.SignedString(priv)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set("Authorization", "Bearer "+tokStr)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			// All cases should succeed since audience is not validated
+			require.Equal(t, http.StatusOK, w.Code,
+				"audience validation is disabled; all audience values should be accepted")
+		})
+	}
+}
+
+// TestAuthMiddleware_ExpirationRequired verifies SEC-005: tokens without exp claim are rejected.
+func TestAuthMiddleware_ExpirationRequired(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	auth := &AuthHandler{jwks: jwks, log: logger}
+
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// Token without exp claim must be rejected
+	claims := jwt.MapClaims{
+		"sub": "test-user",
+		// No "exp" claim
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	tokStr, err := tok.SignedString(priv)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokStr)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code,
+		"tokens without exp claim must be rejected")
 }
