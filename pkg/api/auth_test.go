@@ -21,9 +21,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zaptest"
-
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"go.uber.org/zap/zaptest"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestAuthHandler_Middleware(t *testing.T) {
@@ -574,25 +576,39 @@ func TestAuthMiddleware_RejectsInvalidIssuerFormat(t *testing.T) {
 func TestJWKSFetchRateLimiting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	// Use a real IdentityProviderLoader with a fake k8s client so
+	// that getJWKSForIssuer enters the multi-IDP code path.
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	loader := config.NewIdentityProviderLoader(fakeClient)
+
 	auth := &AuthHandler{
 		jwksCache:   make(map[string]*list.Element),
 		jwksLRUList: list.New(),
 		log:         zaptest.NewLogger(t).Sugar(),
+		idpLoader:   loader,
 	}
 
 	issuer := "https://auth.example.com"
 
-	// Simulate a recent fetch
+	// Pre-populate the limiter with a very recent fetch
 	auth.jwksFetchLimiter.Store(issuer, time.Now())
 
-	// Attempt to get JWKS — should be rate limited (idpLoader is nil, so this
-	// exercises single-IDP path which doesn't hit the limiter, but we can verify
-	// the limiter state directly)
-	lastFetch, ok := auth.jwksFetchLimiter.Load(issuer)
-	assert.True(t, ok)
-	ts, ok := lastFetch.(time.Time)
-	assert.True(t, ok)
-	assert.True(t, time.Since(ts) < jwksFetchMinInterval, "rate limiter should track recent fetches")
+	// Call getJWKSForIssuer — should return rate-limit error because
+	// the cooldown has not elapsed
+	_, _, err := auth.getJWKSForIssuer(t.Context(), issuer)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rate limited")
+
+	// Verify that an unknown issuer (not in the rate limiter) passes the
+	// rate-limit check and proceeds to IDP resolution (which fails with a
+	// different error because we have no real k8s client).
+	unknownIssuer := "https://unknown.example.com"
+	_, _, err = auth.getJWKSForIssuer(t.Context(), unknownIssuer)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "rate limited",
+		"unknown issuer should not be rate-limited on first attempt")
 }
 
 // --- SEC-005: Audience claim validation ---

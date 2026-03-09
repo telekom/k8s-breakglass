@@ -165,9 +165,20 @@ The rate limiter is in addition to the existing LRU cache for JWKS key sets.
 
 ### Audience Validation (SEC-005)
 
-When an `IdentityProvider` CRD has a `clientID` configured, the middleware validates the JWT `aud` claim against that client ID. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
+When an `IdentityProvider` CRD has the `expectedAudience` field configured, the middleware validates the JWT `aud` claim against that value. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
 
-If `clientID` is empty (legacy configuration), audience validation is skipped to maintain backwards compatibility.
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+spec:
+  oidc:
+    clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"  # optional: enables JWT aud validation
+```
+
+This requires a matching audience protocol mapper in your identity provider (e.g., Keycloak) that adds the expected value to the `aud` claim in issued tokens.
+
+If `expectedAudience` is empty (default), audience validation is skipped for backwards compatibility.
 
 ### Token Storage in the Browser
 

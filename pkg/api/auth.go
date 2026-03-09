@@ -57,10 +57,10 @@ var allowedJWTAlgs = []string{
 
 // jwksCacheEntry holds the JWKS and its position in the LRU list
 type jwksCacheEntry struct {
-	issuer   string
-	clientID string // OIDC client_id from IDP config; used for audience validation
-	jwks     keyfunc.Keyfunc
-	cancel   context.CancelFunc // stops the background refresh goroutine
+	issuer           string
+	expectedAudience string // from IDP config; when non-empty, JWT aud claim is validated
+	jwks             keyfunc.Keyfunc
+	cancel           context.CancelFunc // stops the background refresh goroutine
 }
 
 type AuthHandler struct {
@@ -139,9 +139,9 @@ func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProvider
 	return a
 }
 
-// getJWKSForIssuer returns the JWKS and OIDC client ID for a given issuer URL,
+// getJWKSForIssuer returns the JWKS and expected audience for a given issuer URL,
 // loading and caching them if necessary.
-// For single-IDP mode (no idpLoader), returns the default JWKS with empty clientID.
+// For single-IDP mode (no idpLoader), returns the default JWKS with empty audience.
 // Uses LRU eviction to prevent memory exhaustion when cache is full.
 func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyfunc.Keyfunc, string, error) {
 	// Single-IDP mode: use default JWKS
@@ -156,7 +156,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
 		a.jwksMutex.Unlock()
-		return entry.jwks, entry.clientID, nil
+		return entry.jwks, entry.expectedAudience, nil
 	}
 	a.jwksMutex.Unlock()
 
@@ -168,7 +168,6 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 			return nil, "", fmt.Errorf("JWKS fetch rate limited for issuer")
 		}
 	}
-	a.jwksFetchLimiter.Store(issuer, time.Now())
 
 	// Load IDP config by issuer
 	idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
@@ -177,6 +176,11 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		// Don't expose the issuer in error message to prevent reconnaissance attacks
 		return nil, "", fmt.Errorf("invalid or unknown identity provider")
 	}
+
+	// SEC-004: store rate-limit timestamp only after successful IDP resolution.
+	// This prevents unbounded memory growth from attacker-supplied issuers that
+	// don't map to any configured IDP.
+	a.jwksFetchLimiter.Store(issuer, time.Now())
 
 	// Create JWKS override options for keyfunc/v3
 	override := keyfunc.Override{
@@ -287,7 +291,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		entryCancel()
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
-		return entry.jwks, entry.clientID, nil
+		return entry.jwks, entry.expectedAudience, nil
 	}
 
 	// LRU eviction: remove least recently used entries if cache is full
@@ -311,12 +315,12 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 	}
 
 	// Add new entry at front (most recently used)
-	entry := &jwksCacheEntry{issuer: issuer, clientID: idpCfg.ClientID, jwks: k, cancel: entryCancel}
+	entry := &jwksCacheEntry{issuer: issuer, expectedAudience: idpCfg.ExpectedAudience, jwks: k, cancel: entryCancel}
 	elem := a.jwksLRUList.PushFront(entry)
 	a.jwksCache[issuer] = elem
 
 	a.log.Debugw("loaded JWKS for issuer", "issuer", issuer, "idp_name", idpCfg.Name)
-	return k, idpCfg.ClientID, nil
+	return k, idpCfg.ExpectedAudience, nil
 }
 
 func (a *AuthHandler) authenticate(c *gin.Context) bool {
@@ -374,6 +378,8 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	var jwks keyfunc.Keyfunc
 	var selectedIDP string
 
+	var expectedAudience string
+
 	if a.idpLoader != nil && issuer != "" {
 		// Multi-IDP mode: load JWKS for specific issuer
 		// Record cache check (using RLock for read-only check)
@@ -387,7 +393,8 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			metrics.JWKSCacheMisses.WithLabelValues(issuer).Inc()
 		}
 
-		loadedJwks, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+		var loadedAudience string
+		loadedJwks, loadedAudience, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
 			metrics.JWTValidationFailure.WithLabelValues(issuer, "jwks_load_failed").Inc()
@@ -404,6 +411,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			return false
 		}
 		jwks = loadedJwks
+		expectedAudience = loadedAudience
 		idpName, err := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get IDP name by issuer", "issuer", issuer, "error", err)
@@ -430,15 +438,12 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		jwt.WithExpirationRequired(), // SEC-005: reject tokens without exp claim
 	}
 
-	// SEC-005: Audience validation when the IDP has a clientID configured.
-	// A valid JWT for a different service at the same IDP could otherwise be
-	// reused to access breakglass. We check aud only when a clientID is known,
-	// since not all Keycloak setups include aud by default.
-	if a.idpLoader != nil && issuer != "" {
-		_, clientID, _ := a.getJWKSForIssuer(c.Request.Context(), issuer)
-		if clientID != "" {
-			parserOpts = append(parserOpts, jwt.WithAudience(clientID))
-		}
+	// SEC-005: Audience validation when expectedAudience is configured.
+	// Prevents cross-service token confusion from other OIDC clients at the
+	// same IDP. Only applied when the admin explicitly sets expectedAudience
+	// and configures a matching audience protocol mapper in their IDP.
+	if expectedAudience != "" {
+		parserOpts = append(parserOpts, jwt.WithAudience(expectedAudience))
 	}
 
 	verifiedParser := jwt.NewParser(parserOpts...)
