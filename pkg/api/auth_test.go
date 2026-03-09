@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container/list"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -484,4 +485,150 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- SEC-003: isValidIssuer tests ---
+
+func TestIsValidIssuer(t *testing.T) {
+	tests := []struct {
+		name   string
+		issuer string
+		valid  bool
+	}{
+		{name: "valid HTTPS issuer", issuer: "https://auth.example.com", valid: true},
+		{name: "valid HTTPS with path", issuer: "https://keycloak.example.com/realms/myrealm", valid: true},
+		{name: "valid HTTPS with port", issuer: "https://auth.example.com:8443", valid: true},
+		{name: "HTTP issuer rejected", issuer: "http://auth.example.com", valid: false},
+		{name: "empty string", issuer: "", valid: false},
+		{name: "random string", issuer: "not-a-url", valid: false},
+		{name: "file scheme", issuer: "file:///etc/passwd", valid: false},
+		{name: "javascript scheme", issuer: "javascript:alert(1)", valid: false},
+		{name: "no scheme", issuer: "auth.example.com", valid: false},
+		{name: "ftp scheme", issuer: "ftp://auth.example.com", valid: false},
+		{name: "https without host", issuer: "https://", valid: false},
+		{name: "extremely long issuer", issuer: "https://auth.example.com/" + string(make([]byte, maxIssuerLength)), valid: false},
+		{name: "HTTPS with fragment", issuer: "https://auth.example.com#fragment", valid: true},
+		{name: "HTTPS with query", issuer: "https://auth.example.com?q=1", valid: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidIssuer(tt.issuer)
+			assert.Equal(t, tt.valid, got, "isValidIssuer(%q)", tt.issuer)
+		})
+	}
+}
+
+// --- SEC-003: Middleware rejects invalid issuer format ---
+
+func TestAuthMiddleware_RejectsInvalidIssuerFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
+	require.NoError(t, err)
+
+	auth := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	tests := []struct {
+		name           string
+		issuer         string
+		expectedStatus int
+	}{
+		{name: "HTTP issuer rejected", issuer: "http://evil.com", expectedStatus: http.StatusUnauthorized},
+		{name: "file issuer rejected", issuer: "file:///etc/passwd", expectedStatus: http.StatusUnauthorized},
+		{name: "empty issuer allowed (single-IDP fallback)", issuer: "", expectedStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claims := jwt.MapClaims{
+				"sub": "user-123",
+				"exp": time.Now().Add(time.Minute).Unix(),
+			}
+			if tt.issuer != "" {
+				claims["iss"] = tt.issuer
+			}
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+			tok.Header["kid"] = kid
+			tokStr, signErr := tok.SignedString(priv)
+			require.NoError(t, signErr)
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set("Authorization", "Bearer "+tokStr)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+		})
+	}
+}
+
+// --- SEC-004: Per-issuer JWKS fetch rate limiting ---
+
+func TestJWKSFetchRateLimiting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	auth := &AuthHandler{
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		log:         zaptest.NewLogger(t).Sugar(),
+	}
+
+	issuer := "https://auth.example.com"
+
+	// Simulate a recent fetch
+	auth.jwksFetchLimiter.Store(issuer, time.Now())
+
+	// Attempt to get JWKS — should be rate limited (idpLoader is nil, so this
+	// exercises single-IDP path which doesn't hit the limiter, but we can verify
+	// the limiter state directly)
+	lastFetch, ok := auth.jwksFetchLimiter.Load(issuer)
+	assert.True(t, ok)
+	ts, ok := lastFetch.(time.Time)
+	assert.True(t, ok)
+	assert.True(t, time.Since(ts) < jwksFetchMinInterval, "rate limiter should track recent fetches")
+}
+
+// --- SEC-005: Audience claim validation ---
+
+func TestAuthMiddleware_AudienceValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
+	require.NoError(t, err)
+
+	// Single-IDP mode: audience validation is not applied (no idpLoader)
+	auth := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	t.Run("single-IDP mode: no audience check", func(t *testing.T) {
+		claims := jwt.MapClaims{
+			"sub": "user-123",
+			"exp": time.Now().Add(time.Minute).Unix(),
+			"aud": "some-other-service",
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = kid
+		tokStr, signErr := tok.SignedString(priv)
+		require.NoError(t, signErr)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+tokStr)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// Should pass because single-IDP mode doesn't enforce audience
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }

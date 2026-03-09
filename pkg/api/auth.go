@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,15 @@ const (
 	// defaultOIDCTimeout is the HTTP client timeout for OIDC discovery
 	// and JWKS requests.
 	defaultOIDCTimeout = 10 * time.Second
+
+	// jwksFetchMinInterval is the minimum interval between JWKS fetch attempts
+	// for the same issuer. Prevents DoS against the OIDC provider when an attacker
+	// floods requests with unknown kid values that trigger JWKS re-fetches. (SEC-004)
+	jwksFetchMinInterval = 10 * time.Second
+
+	// maxIssuerLength is the maximum allowed length for a JWT issuer claim.
+	// Prevents log pollution and memory abuse from maliciously long issuer strings. (SEC-003)
+	maxIssuerLength = 512
 )
 
 var allowedJWTAlgs = []string{
@@ -58,6 +68,10 @@ type AuthHandler struct {
 	jwksCache   map[string]*list.Element // issuer -> list element
 	jwksLRUList *list.List               // list of *jwksCacheEntry (front = most recent)
 	jwksMutex   sync.RWMutex
+
+	// Per-issuer JWKS fetch rate limiting (SEC-004)
+	// Maps issuer URL -> last fetch time to prevent flooding the OIDC provider
+	jwksFetchLimiter sync.Map // map[string]time.Time
 
 	// Single-IDP fallback (for backward compatibility)
 	jwks keyfunc.Keyfunc
@@ -145,6 +159,16 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		return entry.jwks, entry.clientID, nil
 	}
 	a.jwksMutex.Unlock()
+
+	// SEC-004: per-issuer rate limiting on JWKS fetches.
+	// Prevents an attacker from flooding requests with different kid values
+	// to trigger excessive JWKS fetches against the upstream OIDC provider.
+	if lastFetch, ok := a.jwksFetchLimiter.Load(issuer); ok {
+		if t, ok := lastFetch.(time.Time); ok && time.Since(t) < jwksFetchMinInterval {
+			return nil, "", fmt.Errorf("JWKS fetch rate limited for issuer")
+		}
+	}
+	a.jwksFetchLimiter.Store(issuer, time.Now())
 
 	// Load IDP config by issuer
 	idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
@@ -332,6 +356,16 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		issuer, _ = iss.(string)
 	}
 
+	// SEC-003: Validate issuer format before using it for JWKS routing.
+	// The issuer is extracted from the unverified token, so we must ensure it
+	// is a well-formed HTTPS URL to prevent SSRF and log injection attacks.
+	if issuer != "" && !isValidIssuer(issuer) {
+		metrics.JWTValidationFailure.WithLabelValues("", "invalid_issuer_format").Inc()
+		RespondUnauthorizedWithMessage(c, "Invalid token issuer format")
+		c.Abort()
+		return false
+	}
+
 	// Record validation attempt
 	metrics.JWTValidationRequests.WithLabelValues(issuer, mode).Inc()
 	startTime := time.Now()
@@ -395,12 +429,18 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		jwt.WithIssuedAt(),
 		jwt.WithExpirationRequired(), // SEC-005: reject tokens without exp claim
 	}
-	// Note: Audience validation (jwt.WithAudience) is intentionally omitted.
-	// Keycloak does not include the requesting client_id in the "aud" claim
-	// by default — the aud claim depends on audience protocol mappers.
-	// Adding audience validation here would break environments where mappers
-	// are not configured. A dedicated CRD field (e.g. expectedAudience)
-	// should be added before enabling this check.
+
+	// SEC-005: Audience validation when the IDP has a clientID configured.
+	// A valid JWT for a different service at the same IDP could otherwise be
+	// reused to access breakglass. We check aud only when a clientID is known,
+	// since not all Keycloak setups include aud by default.
+	if a.idpLoader != nil && issuer != "" {
+		_, clientID, _ := a.getJWKSForIssuer(c.Request.Context(), issuer)
+		if clientID != "" {
+			parserOpts = append(parserOpts, jwt.WithAudience(clientID))
+		}
+	}
+
 	verifiedParser := jwt.NewParser(parserOpts...)
 	token, err := verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 	if err != nil {
@@ -412,6 +452,8 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			failureReason = "invalid_signature"
 		} else if errors.Is(err, jwt.ErrTokenExpired) {
 			failureReason = "token_expired"
+		} else if errors.Is(err, jwt.ErrTokenInvalidAudience) {
+			failureReason = "audience_mismatch"
 		}
 		metrics.JWTValidationFailure.WithLabelValues(issuer, failureReason).Inc()
 
@@ -629,6 +671,11 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 		issuer, _ = iss.(string)
 	}
 
+	// SEC-003: reject malformed issuers in optional auth path too
+	if issuer != "" && !isValidIssuer(issuer) {
+		return ""
+	}
+
 	// Get JWKS for verification
 	jwks, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 	if err != nil || jwks == nil {
@@ -663,6 +710,20 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 // RateLimiter interface for rate limiters that support authentication differentiation
 type RateLimiter interface {
 	Allow(c *gin.Context) (allowed bool, isAuthenticated bool)
+}
+
+// isValidIssuer validates that a JWT issuer claim is a well-formed HTTPS URL
+// with reasonable length limits. This prevents SSRF (the issuer is used to fetch
+// JWKS) and log injection from malicious tokens. (SEC-003)
+func isValidIssuer(issuer string) bool {
+	if len(issuer) == 0 || len(issuer) > maxIssuerLength {
+		return false
+	}
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" && u.Host != ""
 }
 
 func buildCertPoolFromPEM(pemData string) (*x509.CertPool, error) {
