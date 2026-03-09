@@ -133,19 +133,20 @@ func TestAwaitShutdownSignal_SignalWithUnbufferedErrorChannel(t *testing.T) {
 	}
 }
 
-func TestAwaitShutdownSignal_SignalWinsRace(t *testing.T) {
+func TestAwaitShutdownSignal_BothChannelsReady(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	sigChan := make(chan os.Signal, 1)
 	errCh := make(chan error, 1)
 
-	// Both channels are ready simultaneously — signal must win (return nil).
+	// Both channels are ready simultaneously — returns promptly without panic.
+	expectedErr := errors.New("component failed")
 	sigChan <- os.Interrupt
-	errCh <- errors.New("component failed")
+	errCh <- expectedErr
 
 	err := awaitShutdownSignal(sigChan, errCh, log)
 	// When both are selectable, Go's select is non-deterministic.
 	// We accept either outcome: nil (signal won) or the error (error won).
-	if err != nil && err.Error() != "component failed" {
+	if err != nil && !errors.Is(err, expectedErr) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
