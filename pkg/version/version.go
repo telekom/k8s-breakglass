@@ -28,7 +28,9 @@ type BuildInfo struct {
 	BuildTime time.Time `json:"buildTime,omitempty"`
 }
 
-// GetBuildInfo returns build metadata
+// GetBuildInfo returns full build metadata including infrastructure details.
+// Use GetPublicBuildInfo for unauthenticated endpoints to avoid exposing
+// Go version, platform, and commit hash that could aid reconnaissance (SEC-008).
 func GetBuildInfo() BuildInfo {
 	info := BuildInfo{
 		Version:   Version,
@@ -44,4 +46,22 @@ func GetBuildInfo() BuildInfo {
 	}
 
 	return info
+}
+
+// PublicBuildInfo contains only non-sensitive build metadata safe for
+// unauthenticated exposure. Go version, platform, and commit hash are
+// omitted to prevent infrastructure reconnaissance.
+type PublicBuildInfo struct {
+	Version   string `json:"version"`
+	BuildDate string `json:"buildDate"`
+}
+
+// GetPublicBuildInfo returns build metadata safe for unauthenticated endpoints.
+// Infrastructure details (Go version, platform, commit hash) are omitted to
+// prevent reconnaissance (SEC-008).
+func GetPublicBuildInfo() PublicBuildInfo {
+	return PublicBuildInfo{
+		Version:   Version,
+		BuildDate: BuildDate,
+	}
 }

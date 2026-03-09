@@ -147,6 +147,26 @@ The API validates JWTs using an **explicit allowlist of signing algorithms** (RS
 
 To reduce accidental credential exposure, the API middleware **strips the Authorization header** after extracting token data, so downstream logs or error handlers do not emit bearer tokens.
 
+### Token Storage in the Browser
+
+The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`.
+
+**Why not `httpOnly` cookies?**
+
+Using `httpOnly` cookies for token storage would require a Backend-For-Frontend (BFF) proxy pattern — the server would need to issue and manage session cookies, translate them into Bearer tokens, and handle CSRF protection. This adds significant architectural complexity for a privilege escalation tool that is used infrequently and for short durations.
+
+The current Bearer token approach provides adequate security because:
+
+| Control | How it protects tokens |
+|---------|----------------------|
+| **Content Security Policy (CSP)** | Restricts script sources to `'self'` plus specific hash-allowed inline scripts, preventing arbitrary XSS payloads from accessing storage |
+| **Input sanitization** | Free-form reason fields are sanitized to strip HTML/JS injection attempts |
+| **Same-origin policy** | `sessionStorage` is origin-scoped — a cross-origin page cannot read it |
+| **Short token lifetime** | OIDC tokens should be configured with 5–15 minute expiry at the IDP |
+| **No CSRF risk** | Bearer tokens must be explicitly attached to requests — the browser never sends them automatically |
+
+> **Recommendation:** Configure your OIDC provider to issue short-lived access tokens (5–15 minutes). If your threat model requires `httpOnly` cookies, you would need to implement a BFF proxy layer in front of the breakglass API.
+
 If using an API gateway (Kong, Ambassador, etc.), configure rate limiting there.
 
 ### Recommended Rate Limits
@@ -188,6 +208,7 @@ The following patterns are stripped from text fields:
 2. **Enable token refresh** - Allow token refresh for long-running sessions
 3. **Validate audiences** - Ensure tokens are issued for the breakglass client
 4. **Use HTTPS** - Always use TLS for OIDC communication
+5. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
 
 ### Multi-Cluster OIDC Service Account
 
@@ -248,7 +269,7 @@ For webhook endpoints, the controller automatically generates TLS certificates. 
 
 ### Network Policies
 
-Consider restricting network access:
+Restrict network access to the breakglass pods. The SAR authorization webhook (`/breakglass/webhook/authorize/:cluster_name`) is intentionally unauthenticated — see [SAR Authorization Webhook](#sar-authorization-webhook-design-decision) below for details. Use a NetworkPolicy to ensure only the Kubernetes API server can reach the webhook port.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -266,9 +287,15 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              name: ingress-nginx
+              kubernetes.io/metadata.name: ingress-nginx
       ports:
         - port: 8080
+    # Allow Kubernetes API server to reach the SAR webhook (served by Gin API)
+    - from:
+        - ipBlock:
+            cidr: <API_SERVER_CIDR>  # Replace with your API server IP range
+      ports:
+        - port: 8080  # SAR webhook via Gin API port
   egress:
     - to:
         - namespaceSelector: {}
@@ -276,6 +303,33 @@ spec:
         - port: 443 # HTTPS to API servers
         - port: 6443 # Kubernetes API
 ```
+
+### SAR Authorization Webhook (Design Decision)
+
+The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes [SubjectAccessReview](https://kubernetes.io/docs/reference/access-authn-authz/authorization/#checking-api-access) (SAR) requests **without caller authentication**. This is a deliberate design decision:
+
+**Why no authentication on the SAR endpoint:**
+
+1. **Kubernetes webhook protocol**: The API server calls authorization webhooks as part of its own request pipeline. Adding token-based authentication would require the API server itself to obtain and present tokens — increasing complexity and creating a circular dependency (the API server would need breakglass credentials to authorize breakglass requests).
+
+2. **Served by the Gin API server**: The SAR webhook is registered on the shared Gin HTTP server (default port 8080), **not** on the controller-runtime webhook server (port 9443). Port 9443 is used exclusively for validating/mutating admission webhooks, which have their own TLS certificates generated at startup.
+
+3. **Rate limiting**: The endpoint includes built-in per-IP rate limiting to prevent abuse even if an attacker gains network access.
+
+> **⚠️ Security Warning:** Because the SAR endpoint shares the Gin API port (8080) and has no HTTP-layer authentication, **any in-cluster workload with network access to port 8080 can send crafted SubjectAccessReview requests**. Without a NetworkPolicy, this means any pod in the cluster could probe authorization decisions and trigger side effects (rate-limiter counters, metrics, potential session-activity lookups) by sending SAR requests with arbitrary `spec.user`/`spec.groups` values. Note that calling the webhook directly does **not** grant Kubernetes permissions — it only returns an `allowed`/`denied` decision.
+
+**Recommended mitigations:**
+
+- **NetworkPolicy (required)**: Deploy a NetworkPolicy (see above) restricting ingress on port 8080 to the Kubernetes API server's IP range and the ingress controller namespace. This is the primary defense.
+- **Kubernetes audit logging**: Enable audit logging to detect unexpected or malicious SAR requests
+- **Network segmentation**: In multi-tenant clusters, ensure the breakglass service is not exposed to untrusted namespaces
+- In production, consider a dedicated listener for the SAR webhook endpoint to separate it from the general API traffic
+
+### Build Info Endpoint
+
+The `/api/debug/buildinfo` endpoint exposes only the application version and build date. Infrastructure details (Go version, OS/architecture, commit hash) are omitted from the public response to prevent reconnaissance.
+
+If full build metadata is needed for debugging, check the controller logs at startup (which include version, commit, and build date) or inspect the compiled binary's `-ldflags` values.
 
 ## Audit Logging
 
