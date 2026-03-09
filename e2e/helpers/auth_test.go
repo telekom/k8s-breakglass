@@ -15,7 +15,7 @@ import (
 )
 
 // TestGetToken_RetriesTransientFailures verifies that GetToken retries on
-// connection-level errors and 5xx responses before eventually succeeding.
+// transient 5xx responses before eventually succeeding.
 func TestGetToken_RetriesTransientFailures(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,8 +50,8 @@ func TestGetToken_RetriesTransientFailures(t *testing.T) {
 	assert.Equal(t, int32(3), calls.Load(), "expected 3 HTTP calls (2 failures + 1 success)")
 }
 
-// TestGetToken_NoRetryOn401 verifies that GetToken does NOT retry when
-// Keycloak returns 401 (bad credentials).
+// TestGetToken_NoRetryOn401 verifies that getTokenViaHTTP returns a
+// non-retryable tokenRequestError for 401 (bad credentials).
 func TestGetToken_NoRetryOn401(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -66,8 +66,8 @@ func TestGetToken_NoRetryOn401(t *testing.T) {
 		ClientID:     "test-client",
 	}
 
-	// Test the underlying getTokenViaHTTP — GetToken calls require.NoError
-	// which would abort the test before we can assert retry counts.
+	// Call getTokenViaHTTP directly so we can inspect the error;
+	// GetToken calls require.NoError which would abort the test.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -138,10 +138,11 @@ func TestGetToken_retryableVsNonRetryable(t *testing.T) {
 	}
 }
 
-// TestGetToken_ContextCancellation verifies that GetToken's retry loop
-// respects context cancellation during the backoff wait, exiting promptly
-// instead of sleeping through all retry attempts.
-// We test via GetToken on a real *testing.T and assert it fails fast.
+// TestGetToken_ContextCancellation verifies that the retry loop used by
+// GetToken respects context cancellation during the backoff wait, exiting
+// promptly instead of sleeping through all retry attempts.
+// This test re-implements the retry loop to call getTokenViaHTTP directly,
+// avoiding GetToken's require.NoError which would abort the test.
 func TestGetToken_ContextCancellation(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

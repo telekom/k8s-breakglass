@@ -62,9 +62,10 @@ func DefaultOIDCProvider() *OIDCTokenProvider {
 }
 
 // tokenRequestError is returned when Keycloak rejects the token request
-// with a non-200 HTTP status. The StatusCode field allows callers to
-// distinguish retryable (5xx / connection errors) from non-retryable (4xx)
-// failures.
+// with a non-2xx HTTP status. The StatusCode field allows callers to
+// distinguish potentially retryable 5xx failures from non-retryable 4xx
+// failures. Connection-level errors are returned as wrapped errors
+// without a StatusCode.
 type tokenRequestError struct {
 	StatusCode int
 	Message    string
@@ -103,8 +104,10 @@ func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username
 	backoff := p.initialBackoff()
 
 	var lastErr error
+	actualAttempts := 0
 retryLoop:
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		actualAttempts = attempt
 		token, lastErr = p.getTokenViaHTTP(ctx, username, password)
 		if lastErr == nil && token != "" {
 			if attempt > 1 {
@@ -136,7 +139,7 @@ retryLoop:
 		}
 	}
 
-	require.NoError(t, lastErr, "Failed to get OIDC token after %d attempts", maxAttempts)
+	require.NoErrorf(t, lastErr, "Failed to get OIDC token after %d attempts", actualAttempts)
 	require.NotEmpty(t, token, "Token is empty")
 
 	return token
