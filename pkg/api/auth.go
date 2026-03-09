@@ -161,9 +161,10 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		// Use the configured client (or default) to fetch discovery
 		client := override.Client
 		if client == nil {
-			// Create client with explicit timeout to prevent goroutine hangs
-			// when OIDC provider is slow or unresponsive
-			client = &http.Client{Timeout: 10 * time.Second}
+			// Create client with explicit timeout and TLS 1.2 minimum to enforce
+			// SEC-003 hardening even when using system root CAs
+			transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
+			client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 		}
 
 		// Try discovery

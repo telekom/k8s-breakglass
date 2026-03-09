@@ -1,7 +1,6 @@
 package api
 
 import (
-	"container/list"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -18,13 +17,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
-	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/config"
 )
 
 // setupTestJWKSServer creates a test JWKS server and returns the server, key, and kid
@@ -547,7 +539,6 @@ func TestAuthMiddleware_AudienceNotValidated(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	issuer := "https://idp.example.com"
 
 	tests := []struct {
 		name          string
@@ -561,32 +552,15 @@ func TestAuthMiddleware_AudienceNotValidated(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-			utilruntime.Must(breakglassv1alpha1.AddToScheme(scheme))
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-			auth := &AuthHandler{
-				jwksCache:   make(map[string]*list.Element),
-				jwksLRUList: list.New(),
-				log:         logger,
-				idpLoader:   config.NewIdentityProviderLoader(fakeClient),
-			}
-
-			entry := &jwksCacheEntry{
-				issuer:   issuer,
-				clientID: "breakglass-ui",
-				jwks:     jwks,
-			}
-			elem := auth.jwksLRUList.PushFront(entry)
-			auth.jwksCache[issuer] = elem
+			// Use the simple single-IDP path — no need for cache internals
+			// since audience validation is disabled regardless.
+			auth := &AuthHandler{jwks: jwks, log: logger}
 
 			router := gin.New()
 			router.Use(auth.Middleware())
 			router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 			claims := jwt.MapClaims{
-				"iss": issuer,
 				"sub": "test-user",
 				"exp": time.Now().Add(time.Hour).Unix(),
 			}
