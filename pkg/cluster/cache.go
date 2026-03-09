@@ -471,6 +471,11 @@ func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubern
 	if canonical, ok := p.bareToCanonical[cacheLookupKey]; ok {
 		cacheLookupKey = canonical
 	}
+	// Fast-path: check cache with canonicalized key before creating a new clientset.
+	if entry, ok := p.clientsets[cacheLookupKey]; ok && time.Now().Before(entry.expiresAt) {
+		p.mu.RUnlock()
+		return entry.clientset, nil
+	}
 	p.mu.RUnlock()
 
 	cs, err := kubernetes.NewForConfig(rc)
