@@ -186,9 +186,9 @@ affinity:
 
 ### Health Checks
 
-- [ ] Liveness probe configured (`/healthz`)
-- [ ] Readiness probe configured (`/readyz`)
-- [ ] Probe timeouts appropriate for load
+- [ ] Liveness probe configured (`/healthz`) — simple ping check
+- [ ] Readiness probe configured (`/readyz`) — verifies controller-runtime informer cache is synced; may take longer during startup with many CRDs
+- [ ] Probe timeouts appropriate for load (readiness probe `initialDelaySeconds` should account for cache sync time)
 
 ---
 

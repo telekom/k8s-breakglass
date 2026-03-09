@@ -2,7 +2,6 @@ package reconciler
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +14,15 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
+
+// fakeCacheSyncer implements CacheSyncer for testing.
+type fakeCacheSyncer struct {
+	synced bool
+}
+
+func (f *fakeCacheSyncer) WaitForCacheSync(_ context.Context) bool {
+	return f.synced
+}
 
 func TestNewManager(t *testing.T) {
 	// Create a minimal scheme
@@ -462,17 +470,10 @@ func TestInformerSyncReadyzCheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Replicate the readyz check function from Setup to verify its logic
-			checkFn := func(req *http.Request) error {
-				// Simulate WaitForCacheSync behavior
-				if !tt.cacheSynced {
-					return fmt.Errorf("informer cache not synced")
-				}
-				return nil
-			}
+			cache := &fakeCacheSyncer{synced: tt.cacheSynced}
+			checkFn := InformerSyncCheck(cache)
 
 			req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-			req = req.WithContext(context.Background())
 			err := checkFn(req)
 
 			if tt.expectError {

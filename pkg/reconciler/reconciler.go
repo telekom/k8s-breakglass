@@ -94,6 +94,22 @@ func NewManager(
 	})
 }
 
+// CacheSyncer is the subset of cache.Cache needed by InformerSyncCheck.
+type CacheSyncer interface {
+	WaitForCacheSync(ctx context.Context) bool
+}
+
+// InformerSyncCheck returns a healthz.Checker that reports ready only when
+// the controller-runtime informer cache has completed its initial sync.
+func InformerSyncCheck(cache CacheSyncer) func(req *http.Request) error {
+	return func(req *http.Request) error {
+		if !cache.WaitForCacheSync(req.Context()) {
+			return fmt.Errorf("informer cache not synced")
+		}
+		return nil
+	}
+}
+
 // Setup starts the controller-runtime manager with field indices and IdentityProvider reconciler.
 // This function handles:
 // - Metrics server configuration with secure serving
@@ -120,12 +136,7 @@ func Setup(
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
 		return fmt.Errorf("failed to add healthz check to reconciler manager: %w", err)
 	}
-	if err := mgr.AddReadyzCheck("informer-sync", func(req *http.Request) error {
-		if !mgr.GetCache().WaitForCacheSync(req.Context()) {
-			return fmt.Errorf("informer cache not synced")
-		}
-		return nil
-	}); err != nil {
+	if err := mgr.AddReadyzCheck("informer-sync", InformerSyncCheck(mgr.GetCache())); err != nil {
 		return fmt.Errorf("failed to add readyz check to reconciler manager: %w", err)
 	}
 	log.Info("Health check handlers registered")
