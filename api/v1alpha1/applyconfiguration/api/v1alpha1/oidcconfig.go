@@ -22,6 +22,14 @@ type OIDCConfigApplyConfiguration struct {
 	JWKSEndpoint *string `json:"jwksEndpoint,omitempty"`
 	// ClientID is the OIDC client ID for user authentication (frontend/UI)
 	ClientID *string `json:"clientID,omitempty"`
+	// ExpectedAudience is the expected JWT audience (aud) claim value.
+	// When set, the API server validates that incoming JWTs contain this value
+	// in their aud claim. This prevents cross-service token confusion from other
+	// OIDC clients at the same identity provider.
+	// Requires a matching audience protocol mapper in the identity provider
+	// that adds this value to the aud claim in issued tokens.
+	// If empty, audience validation is skipped.
+	ExpectedAudience *string `json:"expectedAudience,omitempty"`
 	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
 	InsecureSkipVerify *bool `json:"insecureSkipVerify,omitempty"`
 	// CertificateAuthority contains a PEM encoded CA certificate for TLS validation
@@ -55,6 +63,14 @@ func (b *OIDCConfigApplyConfiguration) WithJWKSEndpoint(value string) *OIDCConfi
 // If called multiple times, the ClientID field is set to the value of the last call.
 func (b *OIDCConfigApplyConfiguration) WithClientID(value string) *OIDCConfigApplyConfiguration {
 	b.ClientID = &value
+	return b
+}
+
+// WithExpectedAudience sets the ExpectedAudience field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ExpectedAudience field is set to the value of the last call.
+func (b *OIDCConfigApplyConfiguration) WithExpectedAudience(value string) *OIDCConfigApplyConfiguration {
+	b.ExpectedAudience = &value
 	return b
 }
 

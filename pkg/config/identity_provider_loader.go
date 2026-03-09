@@ -161,6 +161,7 @@ func (l *IdentityProviderLoader) convertToRuntimeConfig(ctx context.Context, idp
 		Type:                 "OIDC",
 		Authority:            idp.Spec.OIDC.Authority,
 		ClientID:             idp.Spec.OIDC.ClientID,
+		ExpectedAudience:     idp.Spec.OIDC.ExpectedAudience,
 		CertificateAuthority: idp.Spec.OIDC.CertificateAuthority,
 		InsecureSkipVerify:   idp.Spec.OIDC.InsecureSkipVerify,
 	}
