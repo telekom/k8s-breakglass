@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+)
+
 // OIDCAuthConfigApplyConfiguration represents a declarative configuration of the OIDCAuthConfig type for use
 // with apply.
 //
@@ -44,6 +48,28 @@ type OIDCAuthConfigApplyConfiguration struct {
 	// tokenExchange enables token exchange flow instead of client credentials.
 	// When enabled, the controller exchanges the user's token for a cluster-scoped token.
 	TokenExchange *TokenExchangeConfigApplyConfiguration `json:"tokenExchange,omitempty"`
+	// refreshTokenSecretRef references a secret containing an offline refresh token.
+	// When set, the controller uses the refresh token to obtain access tokens
+	// instead of client_credentials flow. This allows reusing an existing OIDC client
+	// without registering a new one for each cluster.
+	// Mutually exclusive with clientSecretRef on OIDCFromIdentityProviderConfig,
+	// but can coexist with clientSecretRef on OIDCAuthConfig (enables explicit fallback).
+	RefreshTokenSecretRef *SecretKeyReferenceApplyConfiguration `json:"refreshTokenSecretRef,omitempty"`
+	// rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+	// refreshTokenSecretRef where the controller writes rotated refresh tokens received
+	// from the OIDC provider. The original key is never modified, making this safe for
+	// GitOps tools (e.g. Flux) that manage the seed token.
+	// When reading, the controller checks the rotated key first and falls back to the
+	// original key — ensuring the freshest token is always used.
+	// Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+	// Must differ from the key in refreshTokenSecretRef.
+	RotatedRefreshTokenKey *string `json:"rotatedRefreshTokenKey,omitempty"`
+	// fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
+	// Only valid when refreshTokenSecretRef is set.
+	// - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
+	// - Auto: silently fall back to client_credentials flow (requires clientSecretRef or IDP Keycloak SA).
+	// - Warn: fall back but also set DegradedAuth condition and emit K8s event.
+	FallbackPolicy *apiv1alpha1.FallbackPolicy `json:"fallbackPolicy,omitempty"`
 }
 
 // OIDCAuthConfigApplyConfiguration constructs a declarative configuration of the OIDCAuthConfig type for use with
@@ -139,5 +165,29 @@ func (b *OIDCAuthConfigApplyConfiguration) WithAllowTOFU(value bool) *OIDCAuthCo
 // If called multiple times, the TokenExchange field is set to the value of the last call.
 func (b *OIDCAuthConfigApplyConfiguration) WithTokenExchange(value *TokenExchangeConfigApplyConfiguration) *OIDCAuthConfigApplyConfiguration {
 	b.TokenExchange = value
+	return b
+}
+
+// WithRefreshTokenSecretRef sets the RefreshTokenSecretRef field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RefreshTokenSecretRef field is set to the value of the last call.
+func (b *OIDCAuthConfigApplyConfiguration) WithRefreshTokenSecretRef(value *SecretKeyReferenceApplyConfiguration) *OIDCAuthConfigApplyConfiguration {
+	b.RefreshTokenSecretRef = value
+	return b
+}
+
+// WithRotatedRefreshTokenKey sets the RotatedRefreshTokenKey field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RotatedRefreshTokenKey field is set to the value of the last call.
+func (b *OIDCAuthConfigApplyConfiguration) WithRotatedRefreshTokenKey(value string) *OIDCAuthConfigApplyConfiguration {
+	b.RotatedRefreshTokenKey = &value
+	return b
+}
+
+// WithFallbackPolicy sets the FallbackPolicy field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the FallbackPolicy field is set to the value of the last call.
+func (b *OIDCAuthConfigApplyConfiguration) WithFallbackPolicy(value apiv1alpha1.FallbackPolicy) *OIDCAuthConfigApplyConfiguration {
+	b.FallbackPolicy = &value
 	return b
 }

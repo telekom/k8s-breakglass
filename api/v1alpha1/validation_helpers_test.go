@@ -2002,17 +2002,23 @@ func TestValidateOIDCAuthConfig_TokenExchangeMissingClientSecretRef(t *testing.T
 }
 
 // TestValidateOIDCAuthConfig_TokenExchangeDisabled tests that disabled token exchange passes
+// when clientSecretRef is still provided (disabled TE alone doesn't waive clientSecretRef requirement)
 func TestValidateOIDCAuthConfig_TokenExchangeDisabled(t *testing.T) {
 	oidc := &OIDCAuthConfig{
 		IssuerURL: "https://keycloak.example.com/realms/test",
 		ClientID:  "breakglass",
 		Server:    "https://api.cluster.example.com:6443",
+		ClientSecretRef: &SecretKeyReference{
+			Name:      "my-secret",
+			Namespace: "default",
+			Key:       "client-secret",
+		},
 		TokenExchange: &TokenExchangeConfig{
-			Enabled: false, // Disabled, so validation should pass
+			Enabled: false, // Disabled, so it doesn't affect validation
 		},
 	}
 	errs := validateOIDCAuthConfig(oidc, field.NewPath("spec", "oidcAuth"))
-	assert.Empty(t, errs, "disabled token exchange should pass validation")
+	assert.Empty(t, errs, "disabled token exchange with clientSecretRef should pass validation")
 }
 
 // TestValidateOIDCAuthConfig_NilConfig tests nil config handling
@@ -2735,5 +2741,562 @@ func TestValidateAuxiliaryResources_InvalidTemplateSyntax(t *testing.T) {
 		}
 		errs := validateAuxiliaryResources(res, fieldPath)
 		assert.Empty(t, errs)
+	})
+}
+
+// =============================================================================
+// OIDCFromIdentityProviderConfig — Refresh Token, Token Exchange, Parity Fields
+// =============================================================================
+
+// TestValidateOIDCFromIDP_RefreshTokenOnly tests valid config with refreshTokenSecretRef and no clientSecretRef.
+func TestValidateOIDCFromIDP_RefreshTokenOnly(t *testing.T) {
+	cfg := &OIDCFromIdentityProviderConfig{
+		Name:   "my-idp",
+		Server: "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &SecretKeyReference{
+			Name:      "my-refresh-token",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+	}
+	errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+	assert.Empty(t, errs, "refreshTokenSecretRef without clientSecretRef should pass validation")
+}
+
+// TestValidateOIDCFromIDP_RefreshTokenAndClientSecretMutuallyExclusive tests that both cannot be set.
+func TestValidateOIDCFromIDP_RefreshTokenAndClientSecretMutuallyExclusive(t *testing.T) {
+	cfg := &OIDCFromIdentityProviderConfig{
+		Name:   "my-idp",
+		Server: "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &SecretKeyReference{
+			Name:      "my-refresh-token",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+		ClientSecretRef: &SecretKeyReference{
+			Name:      "my-client-secret",
+			Namespace: "breakglass-system",
+			Key:       "client-secret",
+		},
+	}
+	errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+	assert.NotEmpty(t, errs, "refreshTokenSecretRef and clientSecretRef together should fail")
+	errStr := errs.ToAggregate().Error()
+	assert.Contains(t, errStr, "mutually exclusive")
+}
+
+// TestValidateOIDCFromIDP_RefreshTokenMissingFields tests refreshTokenSecretRef field validation.
+func TestValidateOIDCFromIDP_RefreshTokenMissingFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       *OIDCFromIdentityProviderConfig
+		expectErr string
+	}{
+		{
+			name: "refreshTokenSecretRef missing name",
+			cfg: &OIDCFromIdentityProviderConfig{
+				Name:   "my-idp",
+				Server: "https://api.cluster.example.com:6443",
+				RefreshTokenSecretRef: &SecretKeyReference{
+					Namespace: "breakglass-system",
+					Key:       "refresh-token",
+				},
+			},
+			expectErr: "refreshTokenSecretRef.name",
+		},
+		{
+			name: "refreshTokenSecretRef missing namespace",
+			cfg: &OIDCFromIdentityProviderConfig{
+				Name:   "my-idp",
+				Server: "https://api.cluster.example.com:6443",
+				RefreshTokenSecretRef: &SecretKeyReference{
+					Name: "my-refresh-token",
+					Key:  "refresh-token",
+				},
+			},
+			expectErr: "refreshTokenSecretRef.namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateOIDCFromIdentityProviderConfig(tt.cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+			assert.NotEmpty(t, errs, "missing fields should fail validation")
+			errStr := errs.ToAggregate().Error()
+			assert.Contains(t, errStr, tt.expectErr)
+		})
+	}
+}
+
+// TestValidateOIDCFromIDP_TokenExchange tests token exchange validation on OIDCFromIdentityProviderConfig.
+func TestValidateOIDCFromIDP_TokenExchange(t *testing.T) {
+	t.Run("valid token exchange", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			TokenExchange: &TokenExchangeConfig{
+				Enabled: true,
+				SubjectTokenSecretRef: &SecretKeyReference{
+					Name:      "subject-token",
+					Namespace: "breakglass-system",
+					Key:       "token",
+				},
+			},
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "valid token exchange config should pass")
+	})
+
+	t.Run("token exchange enabled without subjectTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			TokenExchange: &TokenExchangeConfig{
+				Enabled: true,
+			},
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "token exchange without subjectTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "subjectTokenSecretRef")
+	})
+
+	t.Run("token exchange subjectTokenSecretRef missing name", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			TokenExchange: &TokenExchangeConfig{
+				Enabled: true,
+				SubjectTokenSecretRef: &SecretKeyReference{
+					Namespace: "breakglass-system",
+				},
+			},
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs)
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "subjectTokenSecretRef.name")
+	})
+
+	t.Run("token exchange actorTokenSecretRef missing name", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			TokenExchange: &TokenExchangeConfig{
+				Enabled: true,
+				SubjectTokenSecretRef: &SecretKeyReference{
+					Name:      "subject-token",
+					Namespace: "breakglass-system",
+				},
+				ActorTokenSecretRef: &SecretKeyReference{
+					Namespace: "breakglass-system",
+				},
+			},
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs)
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "actorTokenSecretRef.name")
+	})
+
+	t.Run("token exchange disabled skips validation", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			TokenExchange: &TokenExchangeConfig{
+				Enabled: false,
+				// No subjectTokenSecretRef — should be fine when disabled
+			},
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "disabled token exchange should skip validation")
+	})
+}
+
+// TestValidateOIDCFromIDP_AudienceAndScopes tests audience and scopes fields.
+func TestValidateOIDCFromIDP_AudienceAndScopes(t *testing.T) {
+	t.Run("valid audience and scopes", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:     "my-idp",
+			Server:   "https://api.cluster.example.com:6443",
+			Audience: "https://api.cluster.example.com",
+			Scopes:   []string{"openid", "groups", "email"},
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "valid audience and scopes should pass")
+	})
+
+	t.Run("duplicate scopes", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			Scopes: []string{"openid", "groups", "openid"},
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "duplicate scopes should fail validation")
+	})
+}
+
+// TestValidateOIDCFromIDP_FallbackPolicy tests fallbackPolicy validation rules.
+func TestValidateOIDCFromIDP_FallbackPolicy(t *testing.T) {
+	t.Run("fallbackPolicy Auto with refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			FallbackPolicy: FallbackPolicyAuto,
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "fallbackPolicy=Auto with refreshTokenSecretRef should pass")
+	})
+
+	t.Run("fallbackPolicy Warn with refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			FallbackPolicy: FallbackPolicyWarn,
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "fallbackPolicy=Warn with refreshTokenSecretRef should pass")
+	})
+
+	t.Run("fallbackPolicy None with refreshTokenSecretRef (default)", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			FallbackPolicy: FallbackPolicyNone,
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "fallbackPolicy=None with refreshTokenSecretRef should pass")
+	})
+
+	t.Run("fallbackPolicy Auto without refreshTokenSecretRef is invalid", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:           "my-idp",
+			Server:         "https://api.cluster.example.com:6443",
+			FallbackPolicy: FallbackPolicyAuto,
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "fallbackPolicy=Auto without refreshTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "fallbackPolicy")
+		assert.Contains(t, errStr, "refreshTokenSecretRef")
+	})
+
+	t.Run("fallbackPolicy Warn without refreshTokenSecretRef is invalid", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:           "my-idp",
+			Server:         "https://api.cluster.example.com:6443",
+			FallbackPolicy: FallbackPolicyWarn,
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "fallbackPolicy=Warn without refreshTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "fallbackPolicy")
+	})
+}
+
+// =============================================================================
+// OIDCAuthConfig — Refresh Token, Fallback Policy
+// =============================================================================
+
+// TestValidateOIDCAuth_RefreshTokenOnly tests OIDCAuthConfig with refreshTokenSecretRef and no clientSecretRef.
+func TestValidateOIDCAuth_RefreshTokenOnly(t *testing.T) {
+	cfg := &OIDCAuthConfig{
+		IssuerURL: "https://keycloak.example.com/realms/myrealm",
+		ClientID:  "breakglass-cluster",
+		Server:    "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &SecretKeyReference{
+			Name:      "my-refresh-token",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+	}
+	errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+	assert.Empty(t, errs, "refreshTokenSecretRef should satisfy clientSecretRef requirement")
+}
+
+// TestValidateOIDCAuth_NoClientSecretAndNoRefreshToken tests that clientSecretRef is required without refresh token.
+func TestValidateOIDCAuth_NoClientSecretAndNoRefreshToken(t *testing.T) {
+	cfg := &OIDCAuthConfig{
+		IssuerURL: "https://keycloak.example.com/realms/myrealm",
+		ClientID:  "breakglass-cluster",
+		Server:    "https://api.cluster.example.com:6443",
+	}
+	errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+	assert.NotEmpty(t, errs, "missing clientSecretRef without refreshTokenSecretRef should fail")
+	errStr := errs.ToAggregate().Error()
+	assert.Contains(t, errStr, "clientSecretRef")
+}
+
+// TestValidateOIDCAuth_RefreshTokenMissingFields tests refreshTokenSecretRef validation on OIDCAuthConfig.
+func TestValidateOIDCAuth_RefreshTokenMissingFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		oidc      *OIDCAuthConfig
+		expectErr string
+	}{
+		{
+			name: "refreshTokenSecretRef missing name",
+			oidc: &OIDCAuthConfig{
+				IssuerURL: "https://keycloak.example.com/realms/myrealm",
+				ClientID:  "breakglass-cluster",
+				Server:    "https://api.cluster.example.com:6443",
+				RefreshTokenSecretRef: &SecretKeyReference{
+					Namespace: "breakglass-system",
+					Key:       "refresh-token",
+				},
+			},
+			expectErr: "refreshTokenSecretRef.name",
+		},
+		{
+			name: "refreshTokenSecretRef missing namespace",
+			oidc: &OIDCAuthConfig{
+				IssuerURL: "https://keycloak.example.com/realms/myrealm",
+				ClientID:  "breakglass-cluster",
+				Server:    "https://api.cluster.example.com:6443",
+				RefreshTokenSecretRef: &SecretKeyReference{
+					Name: "my-refresh-token",
+					Key:  "refresh-token",
+				},
+			},
+			expectErr: "refreshTokenSecretRef.namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateOIDCAuthConfig(tt.oidc, field.NewPath("spec", "oidcAuth"))
+			assert.NotEmpty(t, errs)
+			errStr := errs.ToAggregate().Error()
+			assert.Contains(t, errStr, tt.expectErr)
+		})
+	}
+}
+
+// TestValidateOIDCAuth_FallbackPolicy tests fallbackPolicy validation on OIDCAuthConfig.
+func TestValidateOIDCAuth_FallbackPolicy(t *testing.T) {
+	t.Run("fallbackPolicy Auto with refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			FallbackPolicy: FallbackPolicyAuto,
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.Empty(t, errs, "fallbackPolicy=Auto with refreshTokenSecretRef should pass")
+	})
+
+	t.Run("fallbackPolicy Auto without refreshTokenSecretRef is invalid", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			ClientSecretRef: &SecretKeyReference{
+				Name:      "my-secret",
+				Namespace: "breakglass-system",
+			},
+			FallbackPolicy: FallbackPolicyAuto,
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.NotEmpty(t, errs, "fallbackPolicy=Auto without refreshTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "fallbackPolicy")
+	})
+
+	t.Run("clientSecretRef and refreshTokenSecretRef coexist on OIDCAuthConfig", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			ClientSecretRef: &SecretKeyReference{
+				Name:      "my-secret",
+				Namespace: "breakglass-system",
+			},
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			FallbackPolicy: FallbackPolicyAuto,
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.Empty(t, errs, "clientSecretRef and refreshTokenSecretRef can coexist on OIDCAuthConfig for explicit fallback")
+	})
+}
+
+// =============================================================================
+// RotatedRefreshTokenKey Validation Tests
+// =============================================================================
+
+// TestValidateOIDCFromIDP_RotatedRefreshTokenKey validates rotatedRefreshTokenKey rules on OIDCFromIdentityProviderConfig.
+func TestValidateOIDCFromIDP_RotatedRefreshTokenKey(t *testing.T) {
+	t.Run("valid: rotatedRefreshTokenKey with refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "rotatedRefreshTokenKey with refreshTokenSecretRef and different key should pass")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey without refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:                   "my-idp",
+			Server:                 "https://api.cluster.example.com:6443",
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey without refreshTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "refreshTokenSecretRef")
+		assert.Contains(t, errStr, "rotatedRefreshTokenKey")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey same as refreshTokenSecretRef.Key", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey same as refreshTokenSecretRef key should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey equals default key 'value'", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				// Key empty => defaults to "value"
+			},
+			RotatedRefreshTokenKey: "value",
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'value' should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
+	})
+
+	t.Run("empty rotatedRefreshTokenKey is valid (disabled)", func(t *testing.T) {
+		cfg := &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			// RotatedRefreshTokenKey intentionally empty
+		}
+		errs := validateOIDCFromIdentityProviderConfig(cfg, field.NewPath("spec", "oidcFromIdentityProvider"))
+		assert.Empty(t, errs, "empty rotatedRefreshTokenKey should pass (rotation disabled)")
+	})
+}
+
+// TestValidateOIDCAuth_RotatedRefreshTokenKey validates rotatedRefreshTokenKey rules on OIDCAuthConfig.
+func TestValidateOIDCAuth_RotatedRefreshTokenKey(t *testing.T) {
+	t.Run("valid: rotatedRefreshTokenKey with refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.Empty(t, errs, "rotatedRefreshTokenKey with refreshTokenSecretRef and different key should pass")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey without refreshTokenSecretRef", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			ClientSecretRef: &SecretKeyReference{
+				Name:      "my-secret",
+				Namespace: "breakglass-system",
+			},
+			RotatedRefreshTokenKey: "refresh-token-rotated",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey without refreshTokenSecretRef should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "refreshTokenSecretRef")
+		assert.Contains(t, errStr, "rotatedRefreshTokenKey")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey same as refreshTokenSecretRef.Key", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				Key:       "refresh-token",
+			},
+			RotatedRefreshTokenKey: "refresh-token",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey same as refreshTokenSecretRef key should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
+	})
+
+	t.Run("invalid: rotatedRefreshTokenKey equals default key 'value'", func(t *testing.T) {
+		cfg := &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/myrealm",
+			ClientID:  "breakglass-cluster",
+			Server:    "https://api.cluster.example.com:6443",
+			RefreshTokenSecretRef: &SecretKeyReference{
+				Name:      "my-rt",
+				Namespace: "breakglass-system",
+				// Key empty => defaults to "value"
+			},
+			RotatedRefreshTokenKey: "value",
+		}
+		errs := validateOIDCAuthConfig(cfg, field.NewPath("spec", "oidcAuth"))
+		assert.NotEmpty(t, errs, "rotatedRefreshTokenKey matching default key 'value' should fail")
+		errStr := errs.ToAggregate().Error()
+		assert.Contains(t, errStr, "must differ")
 	})
 }

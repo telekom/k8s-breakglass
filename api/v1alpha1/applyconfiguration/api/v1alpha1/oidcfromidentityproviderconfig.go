@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+)
+
 // OIDCFromIdentityProviderConfigApplyConfiguration represents a declarative configuration of the OIDCFromIdentityProviderConfig type for use
 // with apply.
 //
@@ -24,6 +28,7 @@ type OIDCFromIdentityProviderConfigApplyConfiguration struct {
 	ClientID *string `json:"clientID,omitempty"`
 	// clientSecretRef references a secret containing the client secret for the controller.
 	// Required for client credentials flow when using a service account client.
+	// Mutually exclusive with refreshTokenSecretRef.
 	ClientSecretRef *SecretKeyReferenceApplyConfiguration `json:"clientSecretRef,omitempty"`
 	// server is the URL of the target cluster's Kubernetes API server.
 	// Required - this is cluster-specific and cannot be inherited from IdentityProvider.
@@ -35,6 +40,37 @@ type OIDCFromIdentityProviderConfigApplyConfiguration struct {
 	// allowTOFU enables Trust On First Use (TOFU) for cluster CAs when no CA is provided.
 	// When false (default), the controller relies on system trust or explicit CA configuration.
 	AllowTOFU *bool `json:"allowTOFU,omitempty"`
+	// refreshTokenSecretRef references a secret containing an offline refresh token.
+	// When set, the controller uses the refresh token to obtain access tokens
+	// using the IDP's existing client — no new OIDC client registration is needed.
+	// Mutually exclusive with clientSecretRef.
+	RefreshTokenSecretRef *SecretKeyReferenceApplyConfiguration `json:"refreshTokenSecretRef,omitempty"`
+	// rotatedRefreshTokenKey specifies an additional key in the same secret referenced by
+	// refreshTokenSecretRef where the controller writes rotated refresh tokens received
+	// from the OIDC provider. The original key is never modified, making this safe for
+	// GitOps tools (e.g. Flux) that manage the seed token.
+	// When reading, the controller checks the rotated key first and falls back to the
+	// original key — ensuring the freshest token is always used.
+	// Opt-in: if empty, refresh token rotation is not persisted (tokens are cached in-memory only).
+	// Must differ from the key in refreshTokenSecretRef.
+	RotatedRefreshTokenKey *string `json:"rotatedRefreshTokenKey,omitempty"`
+	// tokenExchange enables RFC 8693 token exchange flow via the referenced IdentityProvider.
+	// When enabled, the controller uses the IDP's Keycloak service account credentials
+	// (unless clientSecretRef is explicitly provided) to exchange a subject token
+	// for a cluster-scoped access token.
+	TokenExchange *TokenExchangeConfigApplyConfiguration `json:"tokenExchange,omitempty"`
+	// audience specifies the intended audience for the token (typically the cluster's API server).
+	// If empty, defaults to the target server URL.
+	Audience *string `json:"audience,omitempty"`
+	// scopes specifies additional OIDC scopes to request.
+	// Default scopes (openid, email, groups) are always included.
+	Scopes []string `json:"scopes,omitempty"`
+	// fallbackPolicy controls behavior when the primary auth flow (refresh token) fails.
+	// Only valid when refreshTokenSecretRef is set.
+	// - None (default): hard fail, set RefreshTokenExpired condition, no fallback.
+	// - Auto: silently fall back to IDP's Keycloak service account client_credentials flow.
+	// - Warn: fall back but also set DegradedAuth condition and emit K8s event.
+	FallbackPolicy *apiv1alpha1.FallbackPolicy `json:"fallbackPolicy,omitempty"`
 }
 
 // OIDCFromIdentityProviderConfigApplyConfiguration constructs a declarative configuration of the OIDCFromIdentityProviderConfig type for use with
@@ -96,5 +132,55 @@ func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithInsecureSkipTLSVe
 // If called multiple times, the AllowTOFU field is set to the value of the last call.
 func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithAllowTOFU(value bool) *OIDCFromIdentityProviderConfigApplyConfiguration {
 	b.AllowTOFU = &value
+	return b
+}
+
+// WithRefreshTokenSecretRef sets the RefreshTokenSecretRef field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RefreshTokenSecretRef field is set to the value of the last call.
+func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithRefreshTokenSecretRef(value *SecretKeyReferenceApplyConfiguration) *OIDCFromIdentityProviderConfigApplyConfiguration {
+	b.RefreshTokenSecretRef = value
+	return b
+}
+
+// WithRotatedRefreshTokenKey sets the RotatedRefreshTokenKey field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RotatedRefreshTokenKey field is set to the value of the last call.
+func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithRotatedRefreshTokenKey(value string) *OIDCFromIdentityProviderConfigApplyConfiguration {
+	b.RotatedRefreshTokenKey = &value
+	return b
+}
+
+// WithTokenExchange sets the TokenExchange field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TokenExchange field is set to the value of the last call.
+func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithTokenExchange(value *TokenExchangeConfigApplyConfiguration) *OIDCFromIdentityProviderConfigApplyConfiguration {
+	b.TokenExchange = value
+	return b
+}
+
+// WithAudience sets the Audience field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Audience field is set to the value of the last call.
+func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithAudience(value string) *OIDCFromIdentityProviderConfigApplyConfiguration {
+	b.Audience = &value
+	return b
+}
+
+// WithScopes adds the given value to the Scopes field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Scopes field.
+func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithScopes(values ...string) *OIDCFromIdentityProviderConfigApplyConfiguration {
+	for i := range values {
+		b.Scopes = append(b.Scopes, values[i])
+	}
+	return b
+}
+
+// WithFallbackPolicy sets the FallbackPolicy field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the FallbackPolicy field is set to the value of the last call.
+func (b *OIDCFromIdentityProviderConfigApplyConfiguration) WithFallbackPolicy(value apiv1alpha1.FallbackPolicy) *OIDCFromIdentityProviderConfigApplyConfiguration {
+	b.FallbackPolicy = &value
 	return b
 }

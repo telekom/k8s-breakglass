@@ -58,6 +58,15 @@ cluster:
   #       namespace: breakglass-system
   #       key: token
   #     resource: https://api.cluster.example.com:6443
+  #   # Optional: Offline refresh token for token renewal (alternative to clientSecretRef)
+  #   refreshTokenSecretRef:
+  #     name: offline-refresh-token
+  #     namespace: breakglass-system
+  #     key: refresh-token
+  #   # Optional: Persist rotated refresh tokens to this key in the same secret (Flux-safe)
+  #   rotatedRefreshTokenKey: refresh-token-rotated
+  #   # Optional: Fallback policy when refresh token fails (None|Auto|Warn)
+  #   fallbackPolicy: None
   
   # Option 2: OIDC from IdentityProvider reference
   # authType: OIDC
@@ -78,6 +87,15 @@ cluster:
   #     namespace: breakglass-system
   #   # Optional: Skip TLS verification
   #   insecureSkipTLSVerify: false
+  #   # Optional: Offline refresh token for token renewal
+  #   refreshTokenSecretRef:
+  #     name: offline-refresh-token
+  #     namespace: breakglass-system
+  #     key: refresh-token
+  #   # Optional: Persist rotated refresh tokens to this key in the same secret (Flux-safe)
+  #   rotatedRefreshTokenKey: refresh-token-rotated
+  #   # Optional: Fallback policy when refresh token fails (None|Auto|Warn)
+  #   fallbackPolicy: None
   
   # ==========================================
   # Additional Options

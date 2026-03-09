@@ -20,6 +20,11 @@ TIMEOUT=${TIMEOUT:-60}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Source OIDC-from-IDP test definitions (OI-001 through OI-008)
+if [ -f "${SCRIPT_DIR}/oidc_from_idp_tests.sh" ]; then
+  source "${SCRIPT_DIR}/oidc_from_idp_tests.sh"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -598,6 +603,17 @@ run_all_tests() {
   test_I002_identityprovider_status || true
   echo ""
   
+  log_info "=== OIDC FROM IDP ==="
+  test_OI001_offline_refresh_token || true
+  test_OI002_missing_refresh_token_secret || true
+  test_OI003_fallback_none || true
+  test_OI004_fallback_auto || true
+  test_OI005_webhook_rejects_invalid || true
+  test_OI006_audience_and_scopes || true
+  test_OI007_secret_invalidation || true
+  test_OI008_fallback_warn || true
+  echo ""
+  
   log_info "=== MAIL PROVIDER ==="
   test_M001_mailhog_ready || true
   test_M002_mailhog_api || true
@@ -644,12 +660,21 @@ else
     V-001) test_V001_crds_installed ;;
     R-001) test_R001_serviceaccount ;;
     R-002) test_R002_clusterroles ;;
+    OI-001) test_OI001_offline_refresh_token ;;
+    OI-002) test_OI002_missing_refresh_token_secret ;;
+    OI-003) test_OI003_fallback_none ;;
+    OI-004) test_OI004_fallback_auto ;;
+    OI-005) test_OI005_webhook_rejects_invalid ;;
+    OI-006) test_OI006_audience_and_scopes ;;
+    OI-007) test_OI007_secret_invalidation ;;
+    OI-008) test_OI008_fallback_warn ;;
     all) run_all_tests ;;
     *)
       echo "Unknown test: $1"
       echo "Available tests: C-001, C-002, K-001, K-002, W-001, W-002, W-003, W-004,"
       echo "                 T-001, T-002, E-001, E-002, S-001, P-001, P-002,"
-      echo "                 I-001, I-002, M-001, M-002, V-001, R-001, R-002, all"
+      echo "                 I-001, I-002, M-001, M-002, V-001, R-001, R-002,"
+      echo "                 OI-001, OI-002, OI-003, OI-004, OI-005, OI-006, OI-007, OI-008, all"
       exit 1
       ;;
   esac

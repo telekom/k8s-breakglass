@@ -893,6 +893,12 @@ func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig,
 		errs = append(errs, validateHTTPSURL(cfg.Server, fieldPath.Child("server"))...)
 	}
 
+	// refreshTokenSecretRef and clientSecretRef are mutually exclusive
+	if cfg.RefreshTokenSecretRef != nil && cfg.ClientSecretRef != nil {
+		errs = append(errs, field.Invalid(fieldPath, nil,
+			"refreshTokenSecretRef and clientSecretRef are mutually exclusive"))
+	}
+
 	// Validate clientSecretRef if provided
 	if cfg.ClientSecretRef != nil {
 		if cfg.ClientSecretRef.Name == "" {
@@ -900,6 +906,33 @@ func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig,
 		}
 		if cfg.ClientSecretRef.Namespace == "" {
 			errs = append(errs, field.Required(fieldPath.Child("clientSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate refreshTokenSecretRef if provided
+	if cfg.RefreshTokenSecretRef != nil {
+		if cfg.RefreshTokenSecretRef.Name == "" {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef", "name"), "secret name is required"))
+		}
+		if cfg.RefreshTokenSecretRef.Namespace == "" {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate rotatedRefreshTokenKey
+	if cfg.RotatedRefreshTokenKey != "" {
+		if cfg.RefreshTokenSecretRef == nil {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef"),
+				"refreshTokenSecretRef is required when rotatedRefreshTokenKey is set"))
+		} else {
+			originalKey := cfg.RefreshTokenSecretRef.Key
+			if originalKey == "" {
+				originalKey = "value"
+			}
+			if cfg.RotatedRefreshTokenKey == originalKey {
+				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), cfg.RotatedRefreshTokenKey,
+					"must differ from the key in refreshTokenSecretRef to avoid overwriting the original token"))
+			}
 		}
 	}
 
@@ -911,6 +944,47 @@ func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig,
 		if cfg.CASecretRef.Namespace == "" {
 			errs = append(errs, field.Required(fieldPath.Child("caSecretRef", "namespace"), "secret namespace is required"))
 		}
+	}
+
+	// Validate token exchange config if provided
+	if cfg.TokenExchange != nil && cfg.TokenExchange.Enabled {
+		// Token exchange requires a subject token secret reference
+		if cfg.TokenExchange.SubjectTokenSecretRef == nil {
+			errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "subjectTokenSecretRef"),
+				"subjectTokenSecretRef is required when token exchange is enabled"))
+		} else {
+			if cfg.TokenExchange.SubjectTokenSecretRef.Name == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "subjectTokenSecretRef", "name"),
+					"secret name is required"))
+			}
+			if cfg.TokenExchange.SubjectTokenSecretRef.Namespace == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "subjectTokenSecretRef", "namespace"),
+					"secret namespace is required"))
+			}
+		}
+
+		// Validate actor token secret reference if provided
+		if cfg.TokenExchange.ActorTokenSecretRef != nil {
+			if cfg.TokenExchange.ActorTokenSecretRef.Name == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "actorTokenSecretRef", "name"),
+					"secret name is required"))
+			}
+			if cfg.TokenExchange.ActorTokenSecretRef.Namespace == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "actorTokenSecretRef", "namespace"),
+					"secret namespace is required"))
+			}
+		}
+	}
+
+	// Validate scopes - check for duplicates
+	if len(cfg.Scopes) > 0 {
+		errs = append(errs, validateStringListNoDuplicates(cfg.Scopes, fieldPath.Child("scopes"))...)
+	}
+
+	// fallbackPolicy is only valid when refreshTokenSecretRef is set
+	if cfg.FallbackPolicy != "" && cfg.FallbackPolicy != FallbackPolicyNone && cfg.RefreshTokenSecretRef == nil {
+		errs = append(errs, field.Invalid(fieldPath.Child("fallbackPolicy"), cfg.FallbackPolicy,
+			"fallbackPolicy is only valid when refreshTokenSecretRef is set"))
 	}
 
 	return errs
@@ -941,6 +1015,13 @@ func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.E
 		errs = append(errs, validateHTTPSURL(oidc.Server, fieldPath.Child("server"))...)
 	}
 
+	// clientSecretRef is required unless refreshTokenSecretRef is set (refresh token mode
+	// doesn't need a client secret — it uses the IDP's existing client)
+	if oidc.ClientSecretRef == nil && oidc.RefreshTokenSecretRef == nil && (oidc.TokenExchange == nil || !oidc.TokenExchange.Enabled) {
+		errs = append(errs, field.Required(fieldPath.Child("clientSecretRef"),
+			"clientSecretRef is required (unless refreshTokenSecretRef or tokenExchange is configured)"))
+	}
+
 	// Validate clientSecretRef if provided
 	if oidc.ClientSecretRef != nil {
 		if oidc.ClientSecretRef.Name == "" {
@@ -948,6 +1029,33 @@ func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.E
 		}
 		if oidc.ClientSecretRef.Namespace == "" {
 			errs = append(errs, field.Required(fieldPath.Child("clientSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate refreshTokenSecretRef if provided
+	if oidc.RefreshTokenSecretRef != nil {
+		if oidc.RefreshTokenSecretRef.Name == "" {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef", "name"), "secret name is required"))
+		}
+		if oidc.RefreshTokenSecretRef.Namespace == "" {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate rotatedRefreshTokenKey
+	if oidc.RotatedRefreshTokenKey != "" {
+		if oidc.RefreshTokenSecretRef == nil {
+			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef"),
+				"refreshTokenSecretRef is required when rotatedRefreshTokenKey is set"))
+		} else {
+			originalKey := oidc.RefreshTokenSecretRef.Key
+			if originalKey == "" {
+				originalKey = "value"
+			}
+			if oidc.RotatedRefreshTokenKey == originalKey {
+				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), oidc.RotatedRefreshTokenKey,
+					"must differ from the key in refreshTokenSecretRef to avoid overwriting the original token"))
+			}
 		}
 	}
 
@@ -991,6 +1099,12 @@ func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.E
 	// Validate scopes - check for duplicates
 	if len(oidc.Scopes) > 0 {
 		errs = append(errs, validateStringListNoDuplicates(oidc.Scopes, fieldPath.Child("scopes"))...)
+	}
+
+	// fallbackPolicy is only valid when refreshTokenSecretRef is set
+	if oidc.FallbackPolicy != "" && oidc.FallbackPolicy != FallbackPolicyNone && oidc.RefreshTokenSecretRef == nil {
+		errs = append(errs, field.Invalid(fieldPath.Child("fallbackPolicy"), oidc.FallbackPolicy,
+			"fallbackPolicy is only valid when refreshTokenSecretRef is set"))
 	}
 
 	return errs

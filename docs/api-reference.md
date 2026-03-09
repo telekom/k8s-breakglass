@@ -188,13 +188,11 @@ Authorization: Bearer <token>
     "spec": {
       "cluster": "prod-cluster-1",
       "user": "user@example.com",
-      "group": "cluster-admin",
-      "requestReason": "Emergency access for incident response",
-      "approvalReason": ""
+      "grantedGroup": "cluster-admin",
+      "requestReason": "Emergency access for incident response"
     },
     "status": {
       "state": "Pending",
-      "createdAt": "2024-01-15T10:30:00Z",
       "expiresAt": null,
       "approver": "",
       "approvers": []
@@ -265,13 +263,11 @@ Authorization: Bearer <token>
   "spec": {
     "cluster": "prod-cluster-1",
     "user": "user@example.com",
-    "group": "cluster-admin",
-    "requestReason": "Emergency access for incident response",
-    "approvalReason": ""
+    "grantedGroup": "cluster-admin",
+    "requestReason": "Emergency access for incident response"
   },
   "status": {
     "state": "Pending",
-    "createdAt": "2024-01-15T10:30:00Z",
     "expiresAt": null,
     "rejectedAt": null,
     "withdrawnAt": null,
@@ -324,17 +320,16 @@ Authorization: Bearer <token>
   "spec": {
     "cluster": "prod-cluster-1",
     "user": "user@example.com",
-    "group": "cluster-admin",
-    "requestReason": "Emergency access for incident response",
-    "approvalReason": "Verified identity and incident details"
+    "grantedGroup": "cluster-admin",
+    "requestReason": "Emergency access for incident response"
   },
   "status": {
     "state": "Approved",
-    "createdAt": "2024-01-15T10:30:00Z",
     "approvedAt": "2024-01-15T10:31:00Z",
     "expiresAt": "2024-01-15T12:31:00Z",
     "approver": "admin@example.com",
     "approvers": ["admin@example.com"],
+    "approvalReason": "Verified identity and incident details",
     "conditions": [
       {
         "type": "Approved",
@@ -381,13 +376,11 @@ Authorization: Bearer <token>
   "spec": {
     "cluster": "prod-cluster-1",
     "user": "user@example.com",
-    "group": "cluster-admin",
-    "requestReason": "Emergency access for incident response",
-    "approvalReason": ""
+    "grantedGroup": "cluster-admin",
+    "requestReason": "Emergency access for incident response"
   },
   "status": {
     "state": "Rejected",
-    "createdAt": "2024-01-15T10:30:00Z",
     "rejectedAt": "2024-01-15T10:31:00Z",
     "expiresAt": null,
     "approver": "admin@example.com",
@@ -432,13 +425,11 @@ Authorization: Bearer <token>
   "spec": {
     "cluster": "prod-cluster-1",
     "user": "user@example.com",
-    "group": "cluster-admin",
-    "requestReason": "Emergency access for incident response",
-    "approvalReason": ""
+    "grantedGroup": "cluster-admin",
+    "requestReason": "Emergency access for incident response"
   },
   "status": {
     "state": "Approved",
-    "createdAt": "2024-01-15T10:30:00Z",
     "approvedAt": "2024-01-15T10:31:00Z",
     "expiresAt": "2024-01-15T12:31:00Z",
     "approver": "admin@example.com",
@@ -484,14 +475,12 @@ Authorization: Bearer <token>
   "spec": {
     "cluster": "prod-cluster-1",
     "user": "user@example.com",
-    "group": "cluster-admin",
-    "requestReason": "Emergency access for incident response",
-    "approvalReason": ""
+    "grantedGroup": "cluster-admin",
+    "requestReason": "Emergency access for incident response"
   },
   "status": {
     "state": "Withdrawn",
-    "createdAt": "2024-01-15T10:30:00Z",
-    "rejectedAt": "2024-01-15T10:31:00Z",
+    "withdrawnAt": "2024-01-15T10:31:00Z",
     "expiresAt": null,
     "approver": "",
     "approvers": [],
@@ -645,9 +634,12 @@ GET /api/config
 
 ```json
 {
-  "oidcAuthority": "https://keycloak.example.com/realms/master",
-  "oidcClientID": "breakglass-ui",
-  "baseURL": "https://breakglass.example.com"
+  "frontend": {
+    "oidcAuthority": "https://keycloak.example.com/realms/master",
+    "oidcClientID": "breakglass-ui",
+    "brandingName": "Breakglass",
+    "uiFlavour": "oss"
+  }
 }
 ```
 
@@ -665,9 +657,9 @@ GET /api/identity-provider
 {
   "type": "keycloak",
   "authority": "https://keycloak.example.com/realms/master",
-  "clientID": "breakglass-ui",
+  "clientId": "breakglass-ui",
   "keycloakMetadata": {
-    "baseURL": "https://keycloak.example.com",
+    "baseUrl": "https://keycloak.example.com",
     "realm": "master"
   }
 }
@@ -681,9 +673,9 @@ GET /api/identity-provider
 |-------|------|-------------|
 | `type` | string | Identity provider type (e.g., "keycloak", "oidc") |
 | `authority` | string | OIDC authority URL for token validation |
-| `clientID` | string | OIDC client ID for frontend authentication |
+| `clientId` | string | OIDC client ID for frontend authentication |
 | `keycloakMetadata` | object | Optional Keycloak-specific metadata (only present for Keycloak IDPs) |
-| `keycloakMetadata.baseURL` | string | Keycloak server base URL |
+| `keycloakMetadata.baseUrl` | string | Keycloak server base URL |
 | `keycloakMetadata.realm` | string | Keycloak realm name |
 
 **Security Note:** This endpoint never exposes secrets (client secrets, service account tokens, etc.).

@@ -536,6 +536,118 @@ groups:
           description: "Provider cannot be loaded or is in error state"
 ```
 
+## JWT & JWKS Metrics
+
+Track JWT token validation and JWKS key fetching performance.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_jwt_validation_requests_total` | Counter | `issuer`, `mode` | Total JWT validation attempts |
+| `breakglass_jwt_validation_success_total` | Counter | `issuer` | Successful JWT validations |
+| `breakglass_jwt_validation_failure_total` | Counter | `issuer`, `reason` | Failed JWT validations |
+| `breakglass_jwt_validation_duration_seconds` | Histogram | `issuer` | JWT validation latency |
+| `breakglass_jwks_cache_hits_total` | Counter | `issuer` | JWKS key cache hits |
+| `breakglass_jwks_cache_misses_total` | Counter | `issuer` | JWKS key cache misses |
+| `breakglass_jwks_fetch_requests_total` | Counter | `issuer`, `status` | JWKS endpoint fetch attempts |
+| `breakglass_jwks_fetch_duration_seconds` | Histogram | `issuer` | JWKS endpoint fetch latency |
+| `breakglass_jwks_cache_size` | Gauge | `issuer` | Number of cached JWKS key sets |
+
+## Multi-IDP & OIDC Proxy Metrics
+
+Track multi-identity-provider configuration and OIDC proxy operations.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_multi_idp_config_requests_total` | Counter | | Multi-IDP config requests |
+| `breakglass_multi_idp_config_success_total` | Counter | | Successful multi-IDP config responses |
+| `breakglass_multi_idp_config_failure_total` | Counter | `reason` | Failed multi-IDP config responses |
+| `breakglass_idp_selector_used_total` | Counter | | IDP selector usage in session creation |
+| `breakglass_idp_selection_validations_total` | Counter | `result` | IDP selection validation results |
+| `breakglass_oidc_proxy_requests_total` | Counter | `endpoint` | OIDC proxy requests |
+| `breakglass_oidc_proxy_success_total` | Counter | `endpoint` | Successful OIDC proxy responses |
+| `breakglass_oidc_proxy_failure_total` | Counter | `endpoint`, `reason` | Failed OIDC proxy requests |
+| `breakglass_oidc_proxy_duration_seconds` | Histogram | `endpoint` | OIDC proxy request latency |
+| `breakglass_oidc_proxy_path_validation_failure_total` | Counter | `reason` | Rejected proxy paths |
+| `breakglass_oidc_proxy_tls_mode` | Gauge | `mode` | TLS mode for OIDC proxy connections |
+
+## Session-IDP Association Metrics
+
+Track which identity providers are used for session creation and approval.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_session_created_with_idp_total` | Counter | `idp` | Sessions created via specific IDP |
+| `breakglass_session_approved_with_idp_total` | Counter | `idp` | Sessions approved via specific IDP |
+| `breakglass_escalation_idp_authorization_checks_total` | Counter | `result` | IDP authorization checks for escalations |
+| `breakglass_escalation_allowed_idps_count` | Gauge | `escalation` | Number of allowed IDPs per escalation |
+
+## Mail Queue Metrics
+
+Track the asynchronous mail queue and delivery pipeline.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_mail_queued_total` | Counter | | Emails added to send queue |
+| `breakglass_mail_queue_dropped_total` | Counter | | Emails dropped (queue full) |
+| `breakglass_mail_sent_total` | Counter | | Emails successfully sent from queue |
+| `breakglass_mail_retry_scheduled_total` | Counter | | Emails scheduled for retry |
+| `breakglass_mail_failed_total` | Counter | | Emails permanently failed |
+
+## MailProvider Metrics
+
+Track mail provider health and email delivery.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_mailprovider_configured` | Gauge | `provider` | Whether a mail provider is configured |
+| `breakglass_mailprovider_health_check_total` | Counter | `provider`, `result` | Health check results |
+| `breakglass_mailprovider_health_check_duration_seconds` | Histogram | `provider` | Health check latency |
+| `breakglass_mailprovider_status` | Gauge | `provider` | Provider status (1=ready, 0=not ready) |
+| `breakglass_mailprovider_emails_sent_total` | Counter | `provider` | Emails sent via provider |
+| `breakglass_mailprovider_emails_failed_total` | Counter | `provider` | Failed emails via provider |
+
+## Debug Session Metrics
+
+Track debug session lifecycle and resource usage.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_debug_sessions_created_total` | Counter | `cluster`, `template` | Debug sessions created |
+| `breakglass_debug_sessions_active` | Gauge | `cluster` | Currently active debug sessions |
+| `breakglass_debug_sessions_terminated_total` | Counter | `cluster`, `reason` | Debug sessions terminated |
+| `breakglass_debug_sessions_expired_total` | Counter | `cluster` | Debug sessions expired |
+| `breakglass_debug_sessions_failed_total` | Counter | `cluster`, `reason` | Debug sessions failed |
+| `breakglass_debug_session_pod_restarts_total` | Counter | `cluster` | Debug pod restarts |
+| `breakglass_debug_session_pod_failures_total` | Counter | `cluster` | Debug pod failures |
+| `breakglass_debug_session_duration_seconds` | Histogram | `cluster` | Debug session duration |
+| `breakglass_debug_session_participants` | Gauge | `session` | Active participants per session |
+| `breakglass_debug_session_pods_deployed` | Gauge | `cluster` | Debug pods currently deployed |
+| `breakglass_debug_session_approval_required_total` | Counter | | Debug sessions requiring approval |
+| `breakglass_debug_session_approved_total` | Counter | | Debug sessions approved |
+| `breakglass_debug_session_rejected_total` | Counter | | Debug sessions rejected |
+
+## Field Index Metrics
+
+Track field indexer performance for efficient lookups.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_index_lookup_total` | Counter | `index` | Index lookups performed |
+| `breakglass_index_fallback_scans_total` | Counter | `index` | Fallback full-scans when index misses |
+| `breakglass_index_registrations` | Gauge | | Number of registered field indexes |
+
+## Cluster Cache Metrics
+
+Track cluster client caching and rest config loading.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_cluster_cache_hits_total` | Counter | `cluster` | Cluster client cache hits |
+| `breakglass_cluster_cache_misses_total` | Counter | `cluster` | Cluster client cache misses |
+| `breakglass_cluster_rest_config_loaded_total` | Counter | `cluster` | REST configs loaded |
+| `breakglass_cluster_rest_config_errors_total` | Counter | `cluster` | REST config load errors |
+| `breakglass_cluster_cache_invalidations_total` | Counter | `cluster` | Cache invalidations |
+
 ## Scrape Configuration Best Practices
 
 1. **Set appropriate scrape intervals** - Default 15s is usually fine, but high-volume environments may use 30s

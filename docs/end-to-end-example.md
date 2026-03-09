@@ -184,10 +184,6 @@ spec:
   sender:
     address: breakglass-notifications@examplecorp.com
     name: "ExampleCorp Breakglass System"
-  # Optional: Test email on provider creation
-  healthCheck:
-    enabled: true
-    testRecipient: "breakglass-admin@examplecorp.com"
 ```
 
 ```bash
@@ -257,17 +253,10 @@ metadata:
   namespace: breakglass-system
 spec:
   clusterID: prod-eu-1
-  displayName: "Production EU (Frankfurt)"
-  kubeconfigRef:
+  kubeconfigSecretRef:
     name: prod-eu-1-kubeconfig
     namespace: breakglass-system
     key: kubeconfig
-  # Optional: Custom webhook URL if not using default
-  webhookEndpoint: "https://breakglass.examplecorp.com/api/breakglass/webhook/authorize/prod-eu-1"
-  # Optional: Health check settings
-  healthCheck:
-    enabled: true
-    intervalSeconds: 60
 ```
 
 ```bash
@@ -361,28 +350,17 @@ spec:
     groups:
       - "security-team"
       - "sre-leads"
-    # Require at least 1 approval
-    minRequired: 1
-    # Optional: require approvers from multiple groups
-    # requireApprovalFromEachGroup: true
   
   # Session constraints
   maxValidFor: "2h"        # Maximum session duration
-  defaultValidFor: "1h"    # Default if not specified
   
-  # Approval settings
-  approvalRequired: true
-  # autoApprove: false     # Never auto-approve production access
+  # Block self-approval for production
+  blockSelfApproval: true
   
   # Request metadata
   requestReason:
     mandatory: true
-    minLength: 20
-    placeholderText: "Describe the incident/issue and what access is needed"
-  
-  # Optional: Scheduled sessions
-  # allowScheduled: true
-  # maxScheduleAhead: "168h"  # Up to 1 week in advance
+    description: "Describe the incident/issue and what access is needed"
   
   # Optional: Pod security overrides for this escalation
   # podSecurityOverrides:
@@ -407,13 +385,9 @@ spec:
       - "developers"
       - "sre-team"
   approvers:
-    # Self-approval allowed for staging
-    selfApproval: true
-    # Or: auto-approve during business hours
-    # autoApprove: true
+    groups:
+      - "sre-team"
   maxValidFor: "8h"
-  defaultValidFor: "4h"
-  approvalRequired: false
   requestReason:
     mandatory: false
 ```
@@ -440,12 +414,14 @@ metadata:
   namespace: breakglass-system
 spec:
   # Apply to all clusters
-  clusters:
-    - "*"
+  appliesTo:
+    clusters:
+      - "*"
   
   # Block dangerous operations on critical namespaces
   rules:
     - verbs: ["delete", "deletecollection"]
+      apiGroups: [""]
       resources: ["namespaces"]
       resourceNames:
         - "kube-system"
@@ -458,22 +434,18 @@ spec:
       resources: ["secrets"]
       namespaces:
         - "kube-system"
-      # Exception for specific escalation
-      # exemptEscalations:
-      #   - "emergency-access"
   
-  # Pod security rules
+  # Pod security rules (risk-factor-based evaluation)
   podSecurityRules:
-    - action: "deny"
-      matchConditions:
-        hostNetwork: true
-        hostPID: true
-      message: "Host network/PID access is denied"
-    
-    - action: "warn"
-      matchConditions:
-        privileged: true
-      message: "Privileged containers are logged for audit"
+    riskFactors:
+      hostNetwork: 30
+      hostPID: 30
+      privilegedContainer: 20
+    thresholds:
+      - score: 50
+        action: deny
+      - score: 20
+        action: warn
 ```
 
 ```bash

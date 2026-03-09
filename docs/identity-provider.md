@@ -175,6 +175,13 @@ When `groupSyncProvider: Keycloak` is set, the `keycloak` section configures how
 
 **Important:** The Keycloak `clientID` in this section is the **admin/service account** client used for API queries (to fetch user groups). This is different from the OIDC `clientID` which is the user-facing client in the `oidc` section above.
 
+> **JWKS Endpoint Auto-Discovery:** When a Keycloak provider is configured, the JWKS endpoint for JWT validation is automatically derived as `{baseURL}/realms/{realm}/protocol/openid-connect/certs`. You do not need to set `oidc.jwksEndpoint` separately for Keycloak providers.
+
+> **Keycloak URL Alignment:** When using Keycloak as both the OIDC provider and group sync source, note the relationship between fields:
+> - `spec.oidc.authority` — The OIDC authority URL (usually `https://keycloak.example.com/realms/{realm}`)
+> - `spec.keycloak.baseURL` — The Keycloak server root URL (e.g., `https://keycloak.example.com`)
+> - `spec.issuer` — Must match the `iss` claim in JWT tokens (for Keycloak: `https://keycloak.example.com/realms/{realm}`)
+
 ## Cross-Namespace Secrets
 
 IdentityProvider is cluster-scoped, meaning it can reference secrets in any namespace. Specify the namespace in `SecretKeyReference`:

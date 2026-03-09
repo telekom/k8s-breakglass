@@ -28,7 +28,7 @@ Admission webhooks enforce valid state transitions and reject invalid updates (f
 
 | State | Meaning | Valid for Access? | When It Happens | Timestamp |
 |-------|---------|-------------------|-----------------|-----------|
-| `Pending` | Awaiting approval or scheduled start | ❌ No | Session created | `createdAt` |
+| `Pending` | Awaiting approval or scheduled start | ❌ No | Session created | `metadata.creationTimestamp` |
 | `WaitingForScheduledTime` | Approved but waiting for scheduled start | ❌ No | Approved with future `scheduledStartTime` | `approvedAt` + `scheduledStartTime` |
 | `Approved` | Active and granting privileges | ✅ Yes (if not expired) | Approver approved OR scheduled time reached | `approvedAt`, `expiresAt` |
 | `Rejected` | Approver denied the request | ❌ No | Approver rejected request | `rejectedAt` (Terminal) |
@@ -51,7 +51,7 @@ Timestamps are preserved across state transitions to maintain audit history:
 
 | Timestamp | Purpose | Set When | Cleared When |
 |-----------|---------|----------|--------------|
-| `createdAt` | Session object creation | Initial creation | Never |
+| `metadata.creationTimestamp` | Session object creation (standard K8s field) | Initial creation | Never |
 | `approvedAt` | When session was approved | Transition to Approved | Never |
 | `rejectedAt` | When session was rejected | Transition to Rejected ONLY | Never |
 | `withdrawnAt` | When session was withdrawn | Transition to Withdrawn ONLY | Never |
@@ -62,7 +62,7 @@ Timestamps are preserved across state transitions to maintain audit history:
 
 **Example timestamp preservation:**
 ```
-Initial (Pending): createdAt=10:30
+Initial (Pending): metadata.creationTimestamp=10:30
 ↓ User approves: approvedAt=10:31, expiresAt=10:32
 ↓ Admin drops early: expiresAt=10:31 (UPDATED), approvedAt=10:31 (PRESERVED)
   Terminal state: Expired, retainedUntil=11:01, all previous timestamps intact
@@ -378,7 +378,7 @@ See [API Reference](./api-reference.md) for detailed endpoint documentation.
 ### Create Session Request
 
 ```bash
-POST /api/breakglass/request
+POST /api/breakglassSessions
 Content-Type: application/json
 Authorization: Bearer <token>
 
@@ -392,7 +392,7 @@ Authorization: Bearer <token>
 ### Query Sessions
 
 ```bash
-GET /api/breakglass/status?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>
+GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>
 Authorization: Bearer <token>
 ```
 
@@ -409,14 +409,13 @@ Supported query parameters:
 ### Approve/Reject Sessions
 
 ```bash
-POST /api/breakglass/approve/{username}
-POST /api/breakglass/reject/{username}
+POST /api/breakglassSessions/{session-name}/approve
+POST /api/breakglassSessions/{session-name}/reject
 Content-Type: application/json
 Authorization: Bearer <token>
 
 {
-  "cluster": "prod-cluster-1",
-  "group": "cluster-admin"
+  "reason": "Verified identity and incident details"
 }
 ```
 
@@ -441,9 +440,11 @@ The webhook checks:
 
 The controller exposes session metrics:
 
-- `breakglass_active_sessions` - Number of active sessions
-- `breakglass_session_duration_seconds` - Duration distribution
-- `breakglass_session_requests_total` - Total requests by status
+- `breakglass_session_created_total` - Total sessions created
+- `breakglass_session_approved_total` - Total sessions approved
+- `breakglass_session_rejected_total` - Total sessions rejected
+- `breakglass_session_expired_total` - Total sessions expired
+- `breakglass_session_idle_expired_total` - Sessions expired due to idle timeout
 
 ### Audit Logging
 

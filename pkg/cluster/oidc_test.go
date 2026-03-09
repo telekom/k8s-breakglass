@@ -19,6 +19,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -773,7 +775,7 @@ func TestOIDCTokenProvider_OIDCFromIdentityProvider_MissingClientSecret(t *testi
 
 	_, err := provider.GetRESTConfig(context.Background(), cc)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "clientSecretRef is required")
+	assert.Contains(t, err.Error(), "no auth method available")
 }
 
 func TestOIDCTokenProvider_TokenExchange(t *testing.T) {
@@ -1124,4 +1126,917 @@ func TestOIDCTokenProvider_InvalidateTOFU(t *testing.T) {
 	assert.Nil(t, provider.tofuCAs["https://api.cluster1.example.com:6443"])
 	assert.NotNil(t, provider.tofuCAs["https://api.cluster2.example.com:6443"])
 	provider.tofuMu.RUnlock()
+}
+
+// =============================================================================
+// Refresh Token From Secret Tests
+// =============================================================================
+
+// TestOIDCTokenProvider_RefreshTokenFromSecret tests the full refresh-from-secret flow.
+func TestOIDCTokenProvider_RefreshTokenFromSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	// Mock OIDC server
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			_ = r.ParseForm()
+			grantType := r.FormValue("grant_type")
+			refreshToken := r.FormValue("refresh_token")
+
+			if grantType == "refresh_token" && refreshToken == "my-offline-rt" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"access_token":  "fresh-access-token",
+					"token_type":    "Bearer",
+					"expires_in":    3600,
+					"refresh_token": "my-offline-rt",
+				})
+				return
+			}
+
+			http.Error(w, `{"error":"invalid_grant","error_description":"Token is not active"}`, http.StatusBadRequest)
+			return
+		}
+	}))
+	defer oidcServer.Close()
+
+	// Create K8s objects
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-refresh-token", Namespace: "breakglass-system"},
+		Data:       map[string][]byte{"refresh-token": []byte("my-offline-rt")},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "my-refresh-token",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+	}
+
+	token, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "default")
+	assert.NoError(t, err)
+	assert.Equal(t, "fresh-access-token", token)
+}
+
+// TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackNone tests that expired
+// refresh token with FallbackPolicy=None returns ErrRefreshTokenExpired.
+func TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackNone(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	// Mock OIDC server that always rejects refresh tokens
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			http.Error(w, `{"error":"invalid_grant","error_description":"Token is not active"}`, http.StatusBadRequest)
+			return
+		}
+	}))
+	defer oidcServer.Close()
+
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-rt", Namespace: "breakglass-system"},
+		Data:       map[string][]byte{"refresh-token": []byte("expired-token")},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "expired-rt",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+		FallbackPolicy: breakglassv1alpha1.FallbackPolicyNone,
+	}
+
+	_, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "default")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrRefreshTokenExpired)
+}
+
+// TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackAuto tests that expired
+// refresh token with FallbackPolicy=Auto silently falls back to client_credentials.
+func TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackAuto(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	// Mock OIDC server: rejects refresh, accepts client_credentials
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			_ = r.ParseForm()
+			grantType := r.FormValue("grant_type")
+
+			if grantType == "refresh_token" {
+				http.Error(w, `{"error":"invalid_grant","error_description":"Token is not active"}`, http.StatusBadRequest)
+				return
+			}
+			if grantType == "client_credentials" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"access_token": "fallback-access-token",
+					"token_type":   "Bearer",
+					"expires_in":   3600,
+				})
+				return
+			}
+		}
+	}))
+	defer oidcServer.Close()
+
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-rt", Namespace: "breakglass-system"},
+		Data:       map[string][]byte{"refresh-token": []byte("expired-token")},
+	}
+	clientSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "client-secret", Namespace: "breakglass-system"},
+		Data:       map[string][]byte{"value": []byte("my-client-secret")},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret, clientSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "expired-rt",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "client-secret",
+			Namespace: "breakglass-system",
+		},
+		FallbackPolicy: breakglassv1alpha1.FallbackPolicyAuto,
+	}
+
+	token, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "default")
+	assert.NoError(t, err)
+	assert.Equal(t, "fallback-access-token", token)
+}
+
+// TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackWarn tests that expired
+// refresh token with FallbackPolicy=Warn falls back but still succeeds.
+func TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackWarn(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	// Mock OIDC server: rejects refresh, accepts client_credentials
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			_ = r.ParseForm()
+			if r.FormValue("grant_type") == "refresh_token" {
+				http.Error(w, `{"error":"invalid_grant","error_description":"Token is not active"}`, http.StatusBadRequest)
+				return
+			}
+			if r.FormValue("grant_type") == "client_credentials" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"access_token": "warn-fallback-token",
+					"token_type":   "Bearer",
+					"expires_in":   3600,
+				})
+				return
+			}
+		}
+	}))
+	defer oidcServer.Close()
+
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-rt", Namespace: "breakglass-system"},
+		Data:       map[string][]byte{"refresh-token": []byte("expired-token")},
+	}
+	clientSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "client-secret", Namespace: "breakglass-system"},
+		Data:       map[string][]byte{"value": []byte("my-client-secret")},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret, clientSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "expired-rt",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+		ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "client-secret",
+			Namespace: "breakglass-system",
+		},
+		FallbackPolicy: breakglassv1alpha1.FallbackPolicyWarn,
+	}
+
+	token, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "default")
+	assert.ErrorIs(t, err, ErrDegradedAuth, "getToken should return ErrDegradedAuth for FallbackPolicyWarn")
+	assert.Equal(t, "warn-fallback-token", token)
+}
+
+// TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackAutoNoClientSecret tests
+// that FallbackPolicy=Auto without client credentials returns ErrRefreshTokenExpired.
+func TestOIDCTokenProvider_RefreshTokenFromSecret_Expired_FallbackAutoNoClientSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			http.Error(w, `{"error":"invalid_grant","error_description":"Refresh token expired"}`, http.StatusBadRequest)
+			return
+		}
+	}))
+	defer oidcServer.Close()
+
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-rt", Namespace: "breakglass-system"},
+		Data:       map[string][]byte{"refresh-token": []byte("expired-token")},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "expired-rt",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+		FallbackPolicy: breakglassv1alpha1.FallbackPolicyAuto,
+	}
+
+	_, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "default")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrRefreshTokenExpired)
+	assert.Contains(t, err.Error(), "no client credentials available for fallback")
+}
+
+// TestOIDCTokenProvider_RefreshTokenFromSecret_MissingSecret tests missing Secret.
+func TestOIDCTokenProvider_RefreshTokenFromSecret_MissingSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: "https://auth.example.com",
+		ClientID:  "test-client",
+		Server:    "https://api.cluster.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "non-existent",
+			Namespace: "breakglass-system",
+			Key:       "refresh-token",
+		},
+		FallbackPolicy: breakglassv1alpha1.FallbackPolicyNone,
+	}
+
+	_, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "default")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read refresh token from secret")
+}
+
+// TestOIDCTokenProvider_ResolveOIDCFromIDP_RefreshToken tests resolveOIDCFromIdentityProvider
+// with refreshTokenSecretRef and no clientSecretRef.
+func TestOIDCTokenProvider_ResolveOIDCFromIDP_RefreshToken(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "ui-client",
+			},
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				ClientID: "keycloak-sa",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name:      "keycloak-secret",
+					Namespace: "breakglass-system",
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(idp).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "my-idp",
+				Server: "https://api.cluster.example.com:6443",
+				RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+					Name:      "my-refresh-token",
+					Namespace: "breakglass-system",
+					Key:       "refresh-token",
+				},
+				FallbackPolicy: breakglassv1alpha1.FallbackPolicyWarn,
+			},
+		},
+	}
+
+	resolved, err := provider.resolveOIDCFromIdentityProvider(context.Background(), cc)
+	assert.NoError(t, err)
+	assert.NotNil(t, resolved)
+	assert.Equal(t, "https://auth.example.com", resolved.IssuerURL)
+	assert.Equal(t, "https://api.cluster.example.com:6443", resolved.Server)
+	// RefreshTokenSecretRef should be propagated
+	assert.NotNil(t, resolved.RefreshTokenSecretRef)
+	assert.Equal(t, "my-refresh-token", resolved.RefreshTokenSecretRef.Name)
+	// FallbackPolicy should be propagated
+	assert.Equal(t, breakglassv1alpha1.FallbackPolicyWarn, resolved.FallbackPolicy)
+	// In refresh-token mode, ClientSecretRef must NOT be overwritten from IDP Keycloak SA,
+	// because the refresh token was issued to the original OIDC client (not the SA).
+	assert.Nil(t, resolved.ClientSecretRef, "ClientSecretRef should remain nil in refresh-token mode")
+	// ClientID should be the IDP's OIDC ClientID, NOT the Keycloak SA ClientID
+	assert.Equal(t, "ui-client", resolved.ClientID, "ClientID should be the IDP's OIDC ClientID for refresh token grants")
+	// Instead, IDP Keycloak SA credentials should be stored as fallback on the provider
+	cacheKey := tokenCacheKey(cc.Namespace, cc.Name)
+	provider.fallbackMu.RLock()
+	fb := provider.fallbackCreds[cacheKey]
+	provider.fallbackMu.RUnlock()
+	assert.NotNil(t, fb, "fallback credentials should be stored on the provider")
+	assert.Equal(t, "keycloak-sa", fb.clientID)
+	assert.Equal(t, "keycloak-secret", fb.clientSecretRef.Name)
+}
+
+// TestOIDCTokenProvider_ResolveOIDCFromIDP_TokenExchange tests resolveOIDCFromIdentityProvider
+// with tokenExchange config.
+func TestOIDCTokenProvider_ResolveOIDCFromIDP_TokenExchange(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "ui-client",
+			},
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				ClientID: "keycloak-sa",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name:      "keycloak-secret",
+					Namespace: "breakglass-system",
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(idp).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "my-idp",
+				Server: "https://api.cluster.example.com:6443",
+				TokenExchange: &breakglassv1alpha1.TokenExchangeConfig{
+					Enabled: true,
+					SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+						Name:      "subject-token",
+						Namespace: "breakglass-system",
+						Key:       "token",
+					},
+				},
+				Audience: "https://api.cluster.example.com",
+				Scopes:   []string{"groups", "email"},
+			},
+		},
+	}
+
+	resolved, err := provider.resolveOIDCFromIdentityProvider(context.Background(), cc)
+	assert.NoError(t, err)
+	assert.NotNil(t, resolved)
+	// TokenExchange should be propagated
+	assert.NotNil(t, resolved.TokenExchange)
+	assert.True(t, resolved.TokenExchange.Enabled)
+	assert.NotNil(t, resolved.TokenExchange.SubjectTokenSecretRef)
+	// Audience and scopes should be propagated
+	assert.Equal(t, "https://api.cluster.example.com", resolved.Audience)
+	assert.Equal(t, []string{"groups", "email"}, resolved.Scopes)
+	// Uses Keycloak SA credentials (no explicit clientSecretRef)
+	assert.Equal(t, "keycloak-sa", resolved.ClientID)
+	assert.NotNil(t, resolved.ClientSecretRef)
+}
+
+// TestOIDCTokenProvider_ResolveOIDCFromIDP_RefreshTokenNoKeycloak tests that
+// refreshTokenSecretRef works even without Keycloak SA (no fallback available).
+func TestOIDCTokenProvider_ResolveOIDCFromIDP_RefreshTokenNoKeycloak(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "ui-client",
+			},
+			// No Keycloak config — no fallback available
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(idp).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "my-idp",
+				Server: "https://api.cluster.example.com:6443",
+				RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+					Name:      "my-refresh-token",
+					Namespace: "breakglass-system",
+					Key:       "refresh-token",
+				},
+				FallbackPolicy: breakglassv1alpha1.FallbackPolicyNone,
+			},
+		},
+	}
+
+	resolved, err := provider.resolveOIDCFromIdentityProvider(context.Background(), cc)
+	assert.NoError(t, err)
+	assert.NotNil(t, resolved)
+	assert.NotNil(t, resolved.RefreshTokenSecretRef)
+	// ClientSecretRef should be nil (no Keycloak SA, no explicit clientSecretRef)
+	assert.Nil(t, resolved.ClientSecretRef)
+	// ClientID should remain from IDP OIDC config
+	assert.Equal(t, "ui-client", resolved.ClientID)
+}
+
+// TestIsInvalidGrantError tests the isInvalidGrantError helper.
+func TestIsInvalidGrantError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{"unrelated error", fmt.Errorf("connection refused"), false},
+		{"invalid_grant", fmt.Errorf("status 400: {\"error\":\"invalid_grant\"}"), true},
+		{"Token is not active", fmt.Errorf("Token is not active"), true},
+		{"Session not active", fmt.Errorf("Session not active"), true},
+		{"Refresh token expired", fmt.Errorf("Refresh token expired"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isInvalidGrantError(tt.err))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Refresh Token Rotation Tests
+// ---------------------------------------------------------------------------
+
+func TestOIDCTokenProvider_RefreshTokenRotation_Persisted(t *testing.T) {
+	// When the IDP returns a new refresh token and rotatedRefreshTokenKey is configured,
+	// the controller should persist the new token to the secret under the rotated key.
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	newRT := "rotated-refresh-token-value"
+
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token":  "fresh-access-token",
+				"token_type":    "Bearer",
+				"expires_in":    3600,
+				"refresh_token": newRT, // IDP returns a NEW refresh token
+			})
+			return
+		}
+	}))
+	defer oidcServer.Close()
+
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-secret", Namespace: "ns"},
+		Data:       map[string][]byte{"refresh-token": []byte("original-seed-token")},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "rt-secret",
+			Namespace: "ns",
+			Key:       "refresh-token",
+		},
+		RotatedRefreshTokenKey: "refresh-token-rotated",
+	}
+
+	token, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "ns")
+	require.NoError(t, err)
+	assert.Equal(t, "fresh-access-token", token)
+
+	// Verify: the rotated key should now be present in the secret
+	var secret corev1.Secret
+	err = k8sClient.Get(context.Background(), client.ObjectKey{Name: "rt-secret", Namespace: "ns"}, &secret)
+	require.NoError(t, err)
+	rotatedValue := string(secret.Data["refresh-token-rotated"])
+	assert.Equal(t, newRT, rotatedValue, "rotated key should contain the new refresh token")
+
+	// Original key should be unchanged
+	assert.Equal(t, "original-seed-token", string(secret.Data["refresh-token"]),
+		"original key should not be modified")
+}
+
+func TestOIDCTokenProvider_RefreshTokenRotation_SameToken_StillPersisted(t *testing.T) {
+	// When IDP returns the same refresh token, the rotated key should still be
+	// populated as a "last known good" marker. This is critical for IDPs like
+	// Keycloak that return the same offline token unless revokeRefreshToken is
+	// enabled.
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	seedToken := "my-offline-rt"
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token":  "fresh-access-token",
+				"token_type":    "Bearer",
+				"expires_in":    3600,
+				"refresh_token": seedToken, // Same token returned
+			})
+			return
+		}
+	}))
+	defer oidcServer.Close()
+
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-secret", Namespace: "ns"},
+		Data:       map[string][]byte{"refresh-token": []byte(seedToken)},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "rt-secret",
+			Namespace: "ns",
+			Key:       "refresh-token",
+		},
+		RotatedRefreshTokenKey: "refresh-token-rotated",
+	}
+
+	_, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "ns")
+	require.NoError(t, err)
+
+	// Verify: rotated key should exist even when IDP returns the same token.
+	// This ensures the key is populated as a "last known good" marker.
+	var secret corev1.Secret
+	err = k8sClient.Get(context.Background(), client.ObjectKey{Name: "rt-secret", Namespace: "ns"}, &secret)
+	require.NoError(t, err)
+	rotatedValue, exists := secret.Data["refresh-token-rotated"]
+	assert.True(t, exists, "rotated key should be written even when token is the same")
+	assert.Equal(t, seedToken, string(rotatedValue), "rotated key should contain the token value")
+
+	// Original key should be unchanged
+	assert.Equal(t, seedToken, string(secret.Data["refresh-token"]),
+		"original key should not be modified")
+}
+
+func TestOIDCTokenProvider_RefreshTokenRotation_Disabled(t *testing.T) {
+	// When RotatedRefreshTokenKey is empty, no rotation persist should happen.
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token":  "fresh-access-token",
+				"token_type":    "Bearer",
+				"expires_in":    3600,
+				"refresh_token": "new-rotated-rt",
+			})
+			return
+		}
+	}))
+	defer oidcServer.Close()
+
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-secret", Namespace: "ns"},
+		Data:       map[string][]byte{"refresh-token": []byte("original-rt")},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "rt-secret",
+			Namespace: "ns",
+			Key:       "refresh-token",
+		},
+		// RotatedRefreshTokenKey intentionally empty — disabled
+	}
+
+	_, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "ns")
+	require.NoError(t, err)
+
+	// Verify: secret should only have the original key
+	var secret corev1.Secret
+	err = k8sClient.Get(context.Background(), client.ObjectKey{Name: "rt-secret", Namespace: "ns"}, &secret)
+	require.NoError(t, err)
+	assert.Len(t, secret.Data, 1, "secret should only have the original key")
+}
+
+func TestOIDCTokenProvider_RefreshTokenRotation_ReadOrder(t *testing.T) {
+	// When both original and rotated keys exist, the rotated key should be preferred.
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	validRT := "valid-rotated-token"
+	bogusRT := "bogus-original-token"
+
+	oidcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "https://auth.example.com",
+				"token_endpoint":         fmt.Sprintf("http://%s/token", r.Host),
+				"authorization_endpoint": fmt.Sprintf("http://%s/auth", r.Host),
+				"jwks_uri":               fmt.Sprintf("http://%s/jwks", r.Host),
+			})
+			return
+		}
+		if r.URL.Path == "/token" {
+			_ = r.ParseForm()
+			rt := r.FormValue("refresh_token")
+			if rt == validRT {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"access_token":  "good-access-token",
+					"token_type":    "Bearer",
+					"expires_in":    3600,
+					"refresh_token": validRT,
+				})
+				return
+			}
+			// Reject any other refresh token
+			http.Error(w, `{"error":"invalid_grant","error_description":"Token is not active"}`, http.StatusBadRequest)
+			return
+		}
+	}))
+	defer oidcServer.Close()
+
+	// Secret with both keys — original is bogus, rotated is valid
+	refreshTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rt-secret", Namespace: "ns"},
+		Data: map[string][]byte{
+			"refresh-token":         []byte(bogusRT),
+			"refresh-token-rotated": []byte(validRT),
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(refreshTokenSecret).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	oidcCfg := &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: oidcServer.URL,
+		ClientID:  "test-client",
+		Server:    "https://api.example.com:6443",
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      "rt-secret",
+			Namespace: "ns",
+			Key:       "refresh-token",
+		},
+		RotatedRefreshTokenKey: "refresh-token-rotated",
+	}
+
+	// Should succeed because it reads the rotated key (valid) first, not the bogus original
+	token, err := provider.getToken(context.Background(), "test-cluster", oidcCfg, "ns")
+	require.NoError(t, err)
+	assert.Equal(t, "good-access-token", token)
+}
+
+func TestOIDCTokenProvider_ResolveOIDCFromIDP_RotatedRefreshTokenKey(t *testing.T) {
+	// Verify that RotatedRefreshTokenKey is propagated through resolveOIDCFromIdentityProvider.
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "ui-client",
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(idp).
+		Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "my-idp",
+				Server: "https://api.cluster.example.com:6443",
+				RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+					Name:      "my-refresh-token",
+					Namespace: "breakglass-system",
+					Key:       "refresh-token",
+				},
+				RotatedRefreshTokenKey: "refresh-token-rotated",
+				FallbackPolicy:         breakglassv1alpha1.FallbackPolicyWarn,
+			},
+		},
+	}
+
+	resolved, err := provider.resolveOIDCFromIdentityProvider(context.Background(), cc)
+	require.NoError(t, err)
+	assert.Equal(t, "refresh-token-rotated", resolved.RotatedRefreshTokenKey,
+		"RotatedRefreshTokenKey should be propagated from OIDCFromIdentityProviderConfig")
+	assert.NotNil(t, resolved.RefreshTokenSecretRef)
+	assert.Equal(t, breakglassv1alpha1.FallbackPolicyWarn, resolved.FallbackPolicy)
 }

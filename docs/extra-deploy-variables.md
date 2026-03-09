@@ -396,6 +396,5 @@ spec:
 
 ## See Also
 
-- [Debug Session Templates](./debug-session-template.md)
-- [Template Security](./template-security.md)
+- [Debug Sessions](./debug-session.md)
 - [API Reference](./api-reference.md#debug-sessions)

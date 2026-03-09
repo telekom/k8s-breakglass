@@ -239,11 +239,11 @@ curl -X POST https://breakglass.example.com/api/breakglass/webhook/authorize/pro
 kubectl get secret <secret-name> -n <namespace>
 ```
 
-2. Verify kubeconfig is valid
+2. Verify kubeconfig is valid (replace `value` with the key specified in `kubeconfigSecretRef.key`)
 
 ```bash
 kubectl get secret <secret-name> -n <namespace> \
-  -o jsonpath='{.data.kubeconfig}' | base64 -d > /tmp/test.kubeconfig
+  -o jsonpath='{.data.value}' | base64 -d > /tmp/test.kubeconfig
 kubectl --kubeconfig=/tmp/test.kubeconfig cluster-info
 ```
 

@@ -219,6 +219,82 @@
       "fullScopeAllowed": true,
       "protocolMappers": [
         {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "kubernetes-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "included.custom.audience": "kubernetes"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "breakglass-e2e-oidc",
+      "name": "Breakglass E2E OIDC Test Client",
+      "description": "Confidential client with direct-access-grants and token exchange for E2E OIDC tests (refresh token, token exchange, fallback flows)",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "breakglass-e2e-oidc-secret",
+      "serviceAccountsEnabled": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "access.token.lifespan": "300",
+        "token.exchange.standard.enabled": "true"
+      },
+      "fullScopeAllowed": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "defaultClientScopes": [],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
           "name": "kubernetes-audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
@@ -1729,6 +1805,34 @@
       },
       "firstName": "Ui",
       "lastName": "E2e approver"
+    },
+    {
+      "username": "breakglass-sa",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "breakglass-sa@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "breakglass-sa-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "breakglass-users"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "breakglass-sa"
+        ]
+      },
+      "firstName": "Breakglass",
+      "lastName": "ServiceAccount"
     },
     {
       "username": "service-account-breakglass-group-sync",

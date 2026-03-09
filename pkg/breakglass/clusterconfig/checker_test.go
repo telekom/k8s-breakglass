@@ -536,6 +536,10 @@ func TestDescribeFailure(t *testing.T) {
 		{"secret_key_missing", "secret_key_missing", "", "secret_key_missing"},
 		{"not_configured", "not_configured", "", "not_configured"},
 		{"unknown", "unknown", "something else", "validation_failed"},
+		// Refresh token / fallback cases
+		{"refresh_token_expired", "refresh_token_expired", "token revoked", "refresh_token_expired"},
+		{"degraded_auth", "degraded_auth", "using fallback", "degraded_auth"},
+		{"refresh_token_secret_missing", "refresh_token_secret_missing", "", "refresh_token_secret_missing"},
 		// OIDC Cases
 		{"oidc_discovery", "oidc_discovery", "connection refused", "oidc_discovery_failed"},
 		{"oidc_token", "oidc_token", "invalid client", "oidc_token_failed"},
@@ -562,9 +566,12 @@ func TestDetermineClusterConfigFailureType(t *testing.T) {
 		expected string
 	}{
 		// OIDC cases
+		{"refresh_token_expired", "refresh token expired or revoked", "refresh_token_expired"},
+		{"degraded_auth", "degraded auth: using fallback credentials", "degraded_auth"},
+		{"refresh_token_secret_missing", "refresh token secret missing key: refresh-token", "refresh_token_secret_missing"},
 		{"oidc_discovery", "OIDC discovery failed: connection refused", "oidc_discovery"},
 		{"oidc_token", "failed to get OIDC token: invalid client", "oidc_token"},
-		{"oidc_refresh", "refresh token expired", "oidc_refresh"},
+		{"oidc_refresh", "failed to refresh cached token", "oidc_refresh"},
 		{"oidc_config", "OIDC config missing", "oidc_config"},
 		{"tofu_failed", "TOFU failed to fetch certificate", "tofu"},
 		{"ca_secret_missing", "cluster CA secret missing", "oidc_ca_missing"},
@@ -1000,7 +1007,7 @@ func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T)
 }
 
 // TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey tests that
-// when no key is specified, "client-secret" is used as the default
+// when no key is specified, "value" is used as the default (matching CRD/OpenAPI docs)
 func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 	idp := &breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-default-key"},
@@ -1012,15 +1019,15 @@ func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 					Name:      "keycloak-secret-default",
 					Namespace: "default",
-					// Key is empty - should default to "client-secret"
+					// Key is empty - should default to "value" per CRD/OpenAPI
 				},
 			},
 		},
 	}
-	// Secret with default key
+	// Secret with default key "value" (matching SecretKeyReference CRD default)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret-default", Namespace: "default"},
-		Data:       map[string][]byte{"client-secret": []byte("secret-value")},
+		Data:       map[string][]byte{"value": []byte("secret-value")},
 	}
 	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "oidc-default-key", Namespace: "default"},

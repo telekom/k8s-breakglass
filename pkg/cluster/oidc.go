@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -32,6 +33,22 @@ import (
 // TokenRefreshBuffer is the duration before expiry when we proactively refresh tokens
 const TokenRefreshBuffer = 30 * time.Second
 
+// ErrRefreshTokenExpired indicates the offline refresh token is invalid, expired, or revoked.
+// The checker uses this to set the RefreshTokenExpired condition on ClusterConfig.
+var ErrRefreshTokenExpired = errors.New("refresh token expired or revoked")
+
+// ErrDegradedAuth indicates the primary auth flow (refresh token) failed but fallback
+// to client_credentials succeeded. The checker uses this to set DegradedAuth condition.
+var ErrDegradedAuth = errors.New("primary auth degraded, using fallback credentials")
+
+// fallbackCredentials stores IDP Keycloak SA credentials for fallback auth
+// when the primary refresh token flow fails. Stored separately from the primary
+// OIDCAuthConfig to avoid overwriting the client_id used for refresh token grants.
+type fallbackCredentials struct {
+	clientID        string
+	clientSecretRef *breakglassv1alpha1.SecretKeyReference
+}
+
 // OIDCTokenProvider manages OIDC token acquisition for cluster authentication.
 // It supports both client credentials flow and token exchange flow, with automatic
 // token refresh and TOFU (Trust On First Use) for API server CA certificates.
@@ -49,6 +66,11 @@ type OIDCTokenProvider struct {
 	// issuerTOFUCAs stores discovered CA certificates for OIDC issuers (issuer URL -> CA PEM)
 	issuerTOFUCAs map[string][]byte
 	issuerTOFUMu  sync.RWMutex
+	// fallbackCreds stores IDP Keycloak SA credentials for fallback auth,
+	// keyed by tokenCacheKey(namespace, clusterName). Used instead of
+	// overwriting the primary OIDCAuthConfig.ClientID.
+	fallbackCreds map[string]*fallbackCredentials
+	fallbackMu    sync.RWMutex
 }
 
 // cachedToken stores a token with its expiry time and refresh token
@@ -84,6 +106,7 @@ func NewOIDCTokenProvider(k8s client.Client, log *zap.SugaredLogger) *OIDCTokenP
 		httpClients:   make(map[string]*http.Client),
 		tofuCAs:       make(map[string][]byte),
 		issuerTOFUCAs: make(map[string][]byte),
+		fallbackCreds: make(map[string]*fallbackCredentials),
 	}
 }
 
@@ -145,6 +168,16 @@ func (p *OIDCTokenProvider) GetRESTConfig(ctx context.Context, cc *breakglassv1a
 		cfg.Burst = int(*cc.Spec.Burst)
 	}
 
+	// Preflight token acquisition: warm the cache and detect degraded/expired auth early.
+	// This allows callers (e.g., checker's handleOIDCAuthError) to set the
+	// DegradedAuth or RefreshTokenExpired condition before the first real request.
+	// Other errors are intentionally NOT propagated here — they will surface at
+	// request time via the transport wrapper (preserving lazy token semantics).
+	_, preflightErr := p.getToken(ctx, cc.Name, oidc, cc.Namespace)
+	if errors.Is(preflightErr, ErrDegradedAuth) || errors.Is(preflightErr, ErrRefreshTokenExpired) {
+		return cfg, preflightErr
+	}
+
 	return cfg, nil
 }
 
@@ -161,7 +194,7 @@ type tokenInjectorRoundTripper struct {
 func (t *tokenInjectorRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Get fresh token (uses cache with automatic refresh)
 	token, err := t.provider.getToken(req.Context(), t.clusterName, t.oidc, t.namespace)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrDegradedAuth) {
 		return nil, fmt.Errorf("failed to get OIDC token for cluster %s: %w", t.clusterName, err)
 	}
 
@@ -221,17 +254,64 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 		AllowTOFU:             ref.AllowTOFU,
 	}
 
-	// If client secret is not specified in the reference, try to use Keycloak service account credentials
-	if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil {
+	// Propagate new fields from OIDCFromIdentityProviderConfig
+	oidc.RefreshTokenSecretRef = ref.RefreshTokenSecretRef
+	oidc.RotatedRefreshTokenKey = ref.RotatedRefreshTokenKey
+	oidc.FallbackPolicy = ref.FallbackPolicy
+
+	// Propagate audience — default to server URL if not specified
+	if ref.Audience != "" {
+		oidc.Audience = ref.Audience
+	}
+
+	// Propagate scopes
+	if len(ref.Scopes) > 0 {
+		oidc.Scopes = ref.Scopes
+	}
+
+	// Propagate token exchange config — when using via IDP reference and no
+	// clientSecretRef is set, the IDP's Keycloak SA credentials will be used
+	if ref.TokenExchange != nil {
+		oidc.TokenExchange = ref.TokenExchange
+	}
+
+	// Determine auth flow and resolve credentials:
+	// 1. RefreshTokenSecretRef set → refresh token flow (no client secret needed for primary auth)
+	// 2. TokenExchange set + ClientSecretRef present → token exchange with explicit credentials
+	// 3. TokenExchange set + no ClientSecretRef → token exchange with IDP Keycloak SA
+	// 4. ClientSecretRef present → client_credentials flow
+	// 5. No ClientSecretRef → try IDP Keycloak SA for client_credentials
+
+	if oidc.RefreshTokenSecretRef != nil {
+		// Refresh token mode: client secret is NOT required for the primary flow.
+		// We intentionally do NOT overwrite oidc.ClientID or oidc.ClientSecretRef here,
+		// to avoid changing the client_id used for refresh-token grants (the refresh
+		// token was issued to the original OIDC client, not the Keycloak SA).
+		// Instead, we store the IDP Keycloak SA credentials separately for use as
+		// fallback if the refresh token expires (see evaluateFallback).
+		if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil {
+			p.log.Debugw("Storing IDP Keycloak SA credentials for potential fallback",
+				"cluster", cc.Name, "identityProvider", ref.Name,
+				"fallbackPolicy", string(ref.FallbackPolicy))
+			cacheKey := tokenCacheKey(cc.Namespace, cc.Name)
+			p.fallbackMu.Lock()
+			p.fallbackCreds[cacheKey] = &fallbackCredentials{
+				clientID:        idp.Spec.Keycloak.ClientID,
+				clientSecretRef: &idp.Spec.Keycloak.ClientSecretRef,
+			}
+			p.fallbackMu.Unlock()
+		}
+	} else if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil {
+		// No refresh token and no explicit client secret → use Keycloak SA
 		p.log.Debugw("Using Keycloak service account credentials for OIDC auth",
 			"cluster", cc.Name, "identityProvider", ref.Name)
 		oidc.ClientID = idp.Spec.Keycloak.ClientID
 		oidc.ClientSecretRef = &idp.Spec.Keycloak.ClientSecretRef
 	}
 
-	// Validate required fields
-	if oidc.ClientSecretRef == nil {
-		return nil, fmt.Errorf("clientSecretRef is required: either specify it in oidcFromIdentityProvider or ensure the IdentityProvider has Keycloak service account configured")
+	// Validate: at least one auth method must be available
+	if oidc.RefreshTokenSecretRef == nil && oidc.ClientSecretRef == nil && (oidc.TokenExchange == nil || !oidc.TokenExchange.Enabled) {
+		return nil, fmt.Errorf("no auth method available: specify refreshTokenSecretRef, clientSecretRef, or tokenExchange in oidcFromIdentityProvider, or ensure the IdentityProvider has Keycloak service account configured")
 	}
 
 	p.log.Debugw("Resolved OIDC config from IdentityProvider",
@@ -239,13 +319,16 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 		"identityProvider", ref.Name,
 		"issuerURL", oidc.IssuerURL,
 		"clientID", oidc.ClientID,
-		"server", oidc.Server)
+		"server", oidc.Server,
+		"hasRefreshTokenSecretRef", oidc.RefreshTokenSecretRef != nil,
+		"hasTokenExchange", oidc.TokenExchange != nil && oidc.TokenExchange.Enabled,
+		"fallbackPolicy", string(oidc.FallbackPolicy))
 
 	return oidc, nil
 }
 
 // getToken retrieves a valid token, refreshing if necessary using refresh tokens when available.
-// This follows kubelogin's pattern: check cache -> try refresh token -> fall back to full auth
+// Flow: cache → refresh(cached RT) → refresh(secret RT) → evaluate fallback → token_exchange/client_credentials
 func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) (string, error) {
 	cacheKey := tokenCacheKey(namespace, clusterName)
 	p.mu.RLock()
@@ -258,35 +341,72 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 		return cached.accessToken, nil
 	}
 
-	// Try to refresh using refresh token if available
+	// Step 1: Try to refresh using cached refresh token if available
 	if ok && cached.refreshToken != "" {
-		p.log.Debugw("Attempting token refresh", "cluster", clusterName, "namespace", namespace)
-		token, err := p.refreshToken(ctx, oidc, cached.refreshToken)
+		p.log.Debugw("Attempting token refresh from cache", "cluster", clusterName, "namespace", namespace)
+		oldRT := cached.refreshToken
+		token, err := p.refreshToken(ctx, oidc, oldRT)
 		if err == nil {
 			p.cacheTokenWithNamespace(namespace, clusterName, token)
-			p.log.Debugw("Token refreshed successfully", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn)
+			p.persistRotatedRefreshToken(ctx, oidc, namespace, token.RefreshToken, oldRT)
+			p.log.Debugw("Token refreshed successfully from cache", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn)
 			return token.AccessToken, nil
 		}
-		// Refresh failed, fall through to full authentication
-		p.log.Warnw("Token refresh failed, will re-authenticate", "cluster", clusterName, "namespace", namespace, "error", err)
+		p.log.Warnw("Cached refresh token failed, trying next auth method", "cluster", clusterName, "namespace", namespace, "error", err)
 	}
 
-	// Acquire new token
+	// Step 2: Try to refresh using offline refresh token from K8s Secret
+	if oidc.RefreshTokenSecretRef != nil {
+		token, err := p.refreshTokenFromSecret(ctx, oidc, namespace)
+		if err == nil {
+			p.cacheTokenWithNamespace(namespace, clusterName, token)
+			// Best-effort persist: read the seed token we used so we can detect rotation.
+			// If readBestRefreshToken picked the rotated key, token.RefreshToken should
+			// equal it and persistRotatedRefreshToken will no-op.
+			if seedRT, seedErr := p.readBestRefreshToken(ctx, oidc, namespace); seedErr == nil {
+				p.persistRotatedRefreshToken(ctx, oidc, namespace, token.RefreshToken, seedRT)
+			}
+			p.log.Debugw("Token refreshed from secret", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn)
+			return token.AccessToken, nil
+		}
+
+		// Refresh from secret failed — evaluate fallback policy
+		p.log.Warnw("Refresh token from secret failed", "cluster", clusterName, "namespace", namespace, "error", err)
+
+		token, fallbackErr := p.evaluateFallback(ctx, clusterName, oidc, namespace, err)
+		if token != nil {
+			p.cacheTokenWithNamespace(namespace, clusterName, token)
+			if errors.Is(fallbackErr, ErrDegradedAuth) {
+				// Degraded auth: token is valid but using fallback credentials.
+				// Propagate ErrDegradedAuth so callers (e.g., checker via
+				// handleOIDCAuthError) can set the DegradedAuth condition.
+				p.log.Warnw("Cluster operating in degraded auth mode",
+					"cluster", clusterName, "namespace", namespace)
+				return token.AccessToken, fallbackErr
+			}
+			return token.AccessToken, nil
+		}
+		if fallbackErr != nil {
+			return "", fallbackErr
+		}
+	}
+
+	// Step 3: Acquire new token via token exchange or client credentials
 	var token *tokenResponse
 	var err error
 
 	if oidc.TokenExchange != nil && oidc.TokenExchange.Enabled {
-		// Token exchange flow - exchange a subject token for a cluster-scoped token
 		token, err = p.tokenExchangeFromSecret(ctx, oidc, namespace)
 		if err != nil {
 			return "", fmt.Errorf("token exchange flow failed: %w", err)
 		}
-	} else {
-		// Client credentials flow
+	} else if oidc.ClientSecretRef != nil {
 		token, err = p.clientCredentialsFlow(ctx, oidc)
 		if err != nil {
 			return "", fmt.Errorf("client credentials flow failed: %w", err)
 		}
+	} else {
+		return "", fmt.Errorf("no auth method available: refresh token, token exchange, or client credentials required")
 	}
 
 	// Cache the token (including refresh token if provided)
@@ -294,6 +414,202 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 
 	p.log.Debugw("Acquired OIDC token", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn, "hasRefreshToken", token.RefreshToken != "")
 	return token.AccessToken, nil
+}
+
+// refreshTokenFromSecret reads an offline refresh token from a K8s Secret and attempts
+// to exchange it for a fresh access token. This is the primary flow for the refresh token
+// auth mode — no client secret is required because the IDP's existing client is reused.
+//
+// Read order when rotatedRefreshTokenKey is configured:
+//  1. Try the rotated key first (freshest token from a previous rotation)
+//  2. Fall back to the original key (seed token, e.g. managed by Flux)
+func (p *OIDCTokenProvider) refreshTokenFromSecret(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) (*tokenResponse, error) {
+	if oidc.RefreshTokenSecretRef == nil {
+		return nil, fmt.Errorf("refreshTokenSecretRef is nil")
+	}
+
+	// Read the offline refresh token — prefer rotated key if configured and present
+	refreshTok, err := p.readBestRefreshToken(ctx, oidc, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read refresh token from secret: %w", err)
+	}
+
+	// Use the existing refreshToken method to exchange it
+	token, err := p.refreshToken(ctx, oidc, refreshTok)
+	if err != nil {
+		// Detect invalid_grant (expired/revoked refresh token)
+		if isInvalidGrantError(err) {
+			return nil, fmt.Errorf("%w: %w", ErrRefreshTokenExpired, err)
+		}
+		return nil, fmt.Errorf("refresh token exchange failed: %w", err)
+	}
+
+	return token, nil
+}
+
+// readBestRefreshToken reads the freshest refresh token from the secret.
+// If rotatedRefreshTokenKey is configured, it tries that key first and falls
+// back to the original key.
+func (p *OIDCTokenProvider) readBestRefreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string) (string, error) {
+	if oidc.RotatedRefreshTokenKey != "" {
+		// Try the rotated key first — it holds the freshest token after rotation
+		rotatedRef := &breakglassv1alpha1.SecretKeyReference{
+			Name:      oidc.RefreshTokenSecretRef.Name,
+			Namespace: oidc.RefreshTokenSecretRef.Namespace,
+			Key:       oidc.RotatedRefreshTokenKey,
+		}
+		rotatedTok, err := p.getTokenFromSecret(ctx, rotatedRef, namespace)
+		if err == nil && rotatedTok != "" {
+			p.log.Debugw("Using rotated refresh token", "key", oidc.RotatedRefreshTokenKey)
+			return rotatedTok, nil
+		}
+		// Rotated key not found or empty — fall through to original key
+		p.log.Debugw("Rotated refresh token key not found, falling back to original key",
+			"rotatedKey", oidc.RotatedRefreshTokenKey, "error", err)
+	}
+
+	return p.getTokenFromSecret(ctx, oidc.RefreshTokenSecretRef, namespace)
+}
+
+// persistRotatedRefreshToken writes a rotated refresh token back to the K8s Secret
+// under the configured rotatedRefreshTokenKey using SSA. This is a best-effort
+// operation — failures are logged but do not break the auth flow.
+// No-op when rotation is not configured.
+//
+// The token is always persisted when rotatedRefreshTokenKey is set, even when
+// the IDP returns the same refresh token (e.g. Keycloak offline tokens without
+// revokeRefreshToken). This ensures the rotated key exists as a "last known
+// good" marker. The SSA pre-check in ApplyObject prevents redundant API calls
+// when the token value is unchanged because we omit the rotated-at annotation
+// from the initial apply — it is only set on actual token changes.
+func (p *OIDCTokenProvider) persistRotatedRefreshToken(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace, newRefreshToken, _ string) {
+	if oidc.RotatedRefreshTokenKey == "" {
+		return
+	}
+	if newRefreshToken == "" {
+		return
+	}
+
+	ns := namespace
+	if oidc.RefreshTokenSecretRef.Namespace != "" {
+		ns = oidc.RefreshTokenSecretRef.Namespace
+	}
+
+	secret := corev1.Secret{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "Secret",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      oidc.RefreshTokenSecretRef.Name,
+			Namespace: ns,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "breakglass",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			oidc.RotatedRefreshTokenKey: []byte(newRefreshToken),
+		},
+	}
+	if err := utils.ApplyObject(ctx, p.k8s, &secret); err != nil {
+		p.log.Warnw("Failed to persist rotated refresh token (best-effort)",
+			"secret", oidc.RefreshTokenSecretRef.Name, "namespace", ns,
+			"key", oidc.RotatedRefreshTokenKey, "error", err)
+		return
+	}
+	p.log.Infow("Persisted rotated refresh token",
+		"secret", oidc.RefreshTokenSecretRef.Name, "namespace", ns,
+		"key", oidc.RotatedRefreshTokenKey)
+}
+
+// evaluateFallback handles the fallback logic when the primary refresh token flow fails.
+// It evaluates the FallbackPolicy and either falls back to client_credentials or returns an error.
+// For FallbackPolicyWarn, it returns both a valid token and ErrDegradedAuth so the caller
+// can use the token while signalling the degraded state.
+func (p *OIDCTokenProvider) evaluateFallback(ctx context.Context, clusterName string, oidc *breakglassv1alpha1.OIDCAuthConfig, namespace string, primaryErr error) (*tokenResponse, error) {
+	policy := oidc.FallbackPolicy
+	if policy == "" {
+		policy = breakglassv1alpha1.FallbackPolicyNone
+	}
+
+	switch policy {
+	case breakglassv1alpha1.FallbackPolicyNone:
+		// Hard fail — no fallback. Propagate the primary error as-is; it is
+		// already wrapped with ErrRefreshTokenExpired by refreshTokenFromSecret
+		// when the failure is actually an expired/revoked refresh token.
+		p.log.Errorw("Refresh token failed and fallbackPolicy=None, cluster is unreachable",
+			"cluster", clusterName, "namespace", namespace, "error", primaryErr)
+		return nil, primaryErr
+
+	case breakglassv1alpha1.FallbackPolicyAuto:
+		// Silent fallback to client_credentials
+		fbOIDC := p.applyFallbackCredentials(oidc, namespace, clusterName)
+		if fbOIDC.ClientSecretRef == nil {
+			return nil, fmt.Errorf("%w: fallbackPolicy=Auto but no client credentials available for fallback: %w", ErrRefreshTokenExpired, primaryErr)
+		}
+		p.log.Warnw("Refresh token failed, silently falling back to client_credentials (fallbackPolicy=Auto)",
+			"cluster", clusterName, "namespace", namespace)
+		token, err := p.clientCredentialsFlow(ctx, fbOIDC)
+		if err != nil {
+			return nil, fmt.Errorf("fallback client_credentials flow also failed: %w", err)
+		}
+		return token, nil
+
+	case breakglassv1alpha1.FallbackPolicyWarn:
+		// Fallback with degraded auth warning
+		fbOIDC := p.applyFallbackCredentials(oidc, namespace, clusterName)
+		if fbOIDC.ClientSecretRef == nil {
+			return nil, fmt.Errorf("%w: fallbackPolicy=Warn but no client credentials available for fallback: %w", ErrRefreshTokenExpired, primaryErr)
+		}
+		p.log.Warnw("Refresh token failed, falling back to client_credentials with degraded warning (fallbackPolicy=Warn)",
+			"cluster", clusterName, "namespace", namespace)
+		token, err := p.clientCredentialsFlow(ctx, fbOIDC)
+		if err != nil {
+			return nil, fmt.Errorf("fallback client_credentials flow also failed: %w", err)
+		}
+		// Signal degraded auth to the caller — the checker sets the DegradedAuth condition
+		p.log.Warnw("Cluster is operating in degraded auth mode (using fallback credentials)",
+			"cluster", clusterName, "namespace", namespace)
+		return token, fmt.Errorf("%w: primary refresh token failed (%w), using fallback credentials", ErrDegradedAuth, primaryErr)
+
+	default:
+		return nil, fmt.Errorf("unknown fallback policy %q: %w", policy, primaryErr)
+	}
+}
+
+// applyFallbackCredentials returns a deep copy of the OIDC config with fallback
+// credentials applied (if available). If no fallback credentials are stored or the
+// config already has a ClientSecretRef, the original config is returned as-is.
+func (p *OIDCTokenProvider) applyFallbackCredentials(oidc *breakglassv1alpha1.OIDCAuthConfig, namespace, clusterName string) *breakglassv1alpha1.OIDCAuthConfig {
+	if oidc.ClientSecretRef != nil {
+		return oidc // already has explicit client credentials
+	}
+	cacheKey := tokenCacheKey(namespace, clusterName)
+	p.fallbackMu.RLock()
+	fb := p.fallbackCreds[cacheKey]
+	p.fallbackMu.RUnlock()
+	if fb == nil {
+		return oidc // no fallback credentials available
+	}
+	// Deep copy to avoid mutating the primary OIDC config
+	fbOIDC := oidc.DeepCopy()
+	fbOIDC.ClientID = fb.clientID
+	fbOIDC.ClientSecretRef = fb.clientSecretRef
+	return fbOIDC
+}
+
+// isInvalidGrantError checks if an error indicates an expired or revoked refresh token.
+// The OAuth 2.0 spec returns "invalid_grant" for expired/revoked refresh tokens.
+func isInvalidGrantError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "invalid_grant") ||
+		strings.Contains(errStr, "Token is not active") ||
+		strings.Contains(errStr, "Session not active") ||
+		strings.Contains(errStr, "Refresh token expired")
 }
 
 // cacheTokenWithNamespace stores a token in the cache using a namespaced key.
@@ -327,18 +643,20 @@ func (p *OIDCTokenProvider) refreshToken(ctx context.Context, oidc *breakglassv1
 		return nil, fmt.Errorf("failed to discover token endpoint: %w", err)
 	}
 
-	// Get client secret (may be needed for token refresh)
-	clientSecret, err := p.getClientSecret(ctx, oidc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client secret: %w", err)
-	}
-
 	// Build refresh token request
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {oidc.ClientID},
-		"client_secret": {clientSecret},
 		"refresh_token": {refreshTok},
+	}
+
+	// Get client secret if available (not required for public clients in refresh token flow)
+	if oidc.ClientSecretRef != nil {
+		clientSecret, err := p.getClientSecret(ctx, oidc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get client secret: %w", err)
+		}
+		data.Set("client_secret", clientSecret)
 	}
 
 	// Create HTTP client
@@ -1085,18 +1403,24 @@ func (p *OIDCTokenProvider) InvalidateTOFU(apiServerURL string) {
 	p.tofuMu.Unlock()
 }
 
-// Invalidate removes a cached token for the specified namespace/cluster combination.
+// Invalidate removes a cached token and fallback credentials for the specified namespace/cluster combination.
 // Callers must provide the namespace to avoid cross-namespace collisions.
 func (p *OIDCTokenProvider) Invalidate(namespace, clusterName string) {
 	cacheKey := tokenCacheKey(namespace, clusterName)
 	p.mu.Lock()
 	delete(p.tokens, cacheKey)
 	p.mu.Unlock()
+	p.fallbackMu.Lock()
+	delete(p.fallbackCreds, cacheKey)
+	p.fallbackMu.Unlock()
 }
 
-// InvalidateAll removes all cached tokens
+// InvalidateAll removes all cached tokens and fallback credentials
 func (p *OIDCTokenProvider) InvalidateAll() {
 	p.mu.Lock()
 	p.tokens = make(map[string]*cachedToken)
 	p.mu.Unlock()
+	p.fallbackMu.Lock()
+	p.fallbackCreds = make(map[string]*fallbackCredentials)
+	p.fallbackMu.Unlock()
 }

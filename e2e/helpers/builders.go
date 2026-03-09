@@ -838,6 +838,125 @@ func (b *ClusterConfigBuilder) WithOIDCFromIdentityProvider(idpName, server stri
 	return b
 }
 
+// WithOIDCFromIDPInsecureSkipTLSVerify sets insecure TLS verification on OIDCFromIdentityProvider (for testing only).
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPInsecureSkipTLSVerify(skip bool) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.InsecureSkipTLSVerify = skip
+	return b
+}
+
+// WithOIDCFromIDPRefreshToken sets the refresh token secret reference on OIDCFromIdentityProvider.
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPRefreshToken(secretName, secretNamespace, secretKey string) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.RefreshTokenSecretRef = &breakglassv1alpha1.SecretKeyReference{
+		Name:      secretName,
+		Namespace: secretNamespace,
+		Key:       secretKey,
+	}
+	return b
+}
+
+// WithOIDCFromIDPTokenExchange enables token exchange on OIDCFromIdentityProvider.
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPTokenExchange(subjectTokenSecretName, subjectTokenSecretNs, subjectTokenSecretKey string) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.TokenExchange = &breakglassv1alpha1.TokenExchangeConfig{
+		Enabled: true,
+		SubjectTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name:      subjectTokenSecretName,
+			Namespace: subjectTokenSecretNs,
+			Key:       subjectTokenSecretKey,
+		},
+	}
+	return b
+}
+
+// WithOIDCFromIDPClientSecret sets the client secret ref on OIDCFromIdentityProvider.
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPClientSecret(secretName, secretNamespace, secretKey string) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.ClientSecretRef = &breakglassv1alpha1.SecretKeyReference{
+		Name:      secretName,
+		Namespace: secretNamespace,
+		Key:       secretKey,
+	}
+	return b
+}
+
+// WithOIDCFromIDPAudience sets the audience on OIDCFromIdentityProvider.
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPAudience(audience string) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.Audience = audience
+	return b
+}
+
+// WithOIDCFromIDPScopes sets additional scopes on OIDCFromIdentityProvider.
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPScopes(scopes ...string) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.Scopes = scopes
+	return b
+}
+
+// WithOIDCFromIDPFallbackPolicy sets the fallback policy on OIDCFromIdentityProvider.
+// Must be called after WithOIDCFromIdentityProvider.
+func (b *ClusterConfigBuilder) WithOIDCFromIDPFallbackPolicy(policy breakglassv1alpha1.FallbackPolicy) *ClusterConfigBuilder {
+	if b.oidcFromIdentityProvider == nil {
+		b.oidcFromIdentityProvider = &breakglassv1alpha1.OIDCFromIdentityProviderConfig{}
+	}
+	b.oidcFromIdentityProvider.FallbackPolicy = policy
+	return b
+}
+
+// WithOIDCRefreshToken sets the refresh token secret reference for direct OIDC auth.
+// Must be called after WithOIDCAuth.
+func (b *ClusterConfigBuilder) WithOIDCRefreshToken(secretName, secretNamespace, secretKey string) *ClusterConfigBuilder {
+	if b.oidcAuth == nil {
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
+	}
+	b.oidcAuth.RefreshTokenSecretRef = &breakglassv1alpha1.SecretKeyReference{
+		Name:      secretName,
+		Namespace: secretNamespace,
+		Key:       secretKey,
+	}
+	return b
+}
+
+// WithOIDCFallbackPolicy sets the fallback policy for direct OIDC auth.
+// Must be called after WithOIDCAuth.
+func (b *ClusterConfigBuilder) WithOIDCFallbackPolicy(policy breakglassv1alpha1.FallbackPolicy) *ClusterConfigBuilder {
+	if b.oidcAuth == nil {
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
+	}
+	b.oidcAuth.FallbackPolicy = policy
+	return b
+}
+
+// WithOIDCRotatedRefreshTokenKey sets the rotated refresh token key for automatic
+// refresh token rotation persistence. Must be called after WithOIDCAuth and WithOIDCRefreshToken.
+func (b *ClusterConfigBuilder) WithOIDCRotatedRefreshTokenKey(key string) *ClusterConfigBuilder {
+	if b.oidcAuth == nil {
+		b.oidcAuth = &breakglassv1alpha1.OIDCAuthConfig{}
+	}
+	b.oidcAuth.RotatedRefreshTokenKey = key
+	return b
+}
+
 // Build constructs the ClusterConfig resource.
 func (b *ClusterConfigBuilder) Build() *breakglassv1alpha1.ClusterConfig {
 	config := &breakglassv1alpha1.ClusterConfig{

@@ -282,52 +282,43 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 		return nil, errors.New(msg)
 	}
 
+	// Validate refresh token secret if configured
+	if ref.RefreshTokenSecretRef != nil {
+		if err := ccc.validateSecretExists(ctx, cc, ref.RefreshTokenSecretRef, "refresh token", lg); err != nil {
+			return nil, err
+		}
+	}
+
+	// Validate token exchange subject token secret if configured
+	if ref.TokenExchange != nil && ref.TokenExchange.Enabled && ref.TokenExchange.SubjectTokenSecretRef != nil {
+		if err := ccc.validateSecretExists(ctx, cc, ref.TokenExchange.SubjectTokenSecretRef, "subject token", lg); err != nil {
+			return nil, err
+		}
+	}
+
 	// Determine which client secret to use
-	secretRef := ref.ClientSecretRef
-	if secretRef == nil && idp.Spec.Keycloak != nil {
-		// Use Keycloak service account credentials if no explicit secret provided
-		secretRef = &idp.Spec.Keycloak.ClientSecretRef
-	}
-	if secretRef == nil {
-		msg := "oidcFromIdentityProvider requires clientSecretRef or IdentityProvider must have Keycloak service account configured"
-		lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
-		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
-			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+	// With refresh token mode, client secret is optional (used only for fallback)
+	if ref.RefreshTokenSecretRef == nil {
+		secretRef := ref.ClientSecretRef
+		if secretRef == nil && idp.Spec.Keycloak != nil {
+			// Use Keycloak service account credentials if no explicit secret provided
+			secretRef = &idp.Spec.Keycloak.ClientSecretRef
 		}
-		return nil, errors.New(msg)
-	}
-
-	// Validate client secret exists
-	key := client.ObjectKey{Namespace: secretRef.Namespace, Name: secretRef.Name}
-	sec := corev1.Secret{}
-	if err := ccc.Client.Get(ctx, key, &sec); err != nil {
-		msg := "Referenced OIDC client secret missing or unreadable"
-		lg.Warnw(msg,
-			"cluster", cc.Name,
-			"secret", secretRef.Name,
-			"secretNamespace", secretRef.Namespace,
-			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
-			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		// Client secret is required when not using refresh token or token exchange mode
+		if secretRef == nil && (ref.TokenExchange == nil || !ref.TokenExchange.Enabled) {
+			msg := "oidcFromIdentityProvider requires clientSecretRef, refreshTokenSecretRef, or tokenExchange; alternatively, the IdentityProvider must have Keycloak service account configured"
+			lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
+			if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+			}
+			return nil, errors.New(msg)
 		}
-		return nil, err
-	}
-
-	// Check for secret key
-	keyName := secretRef.Key
-	if keyName == "" {
-		keyName = "client-secret"
-	}
-	if _, ok := sec.Data[keyName]; !ok {
-		msg := "Referenced OIDC client secret missing key: " + keyName
-		lg.Warnw(msg,
-			"cluster", cc.Name,
-			"secret", secretRef.Name,
-			"secretNamespace", secretRef.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
-			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		// Validate client secret exists
+		if secretRef != nil {
+			if err := ccc.validateSecretExists(ctx, cc, secretRef, "OIDC client", lg); err != nil {
+				return nil, err
+			}
 		}
-		return nil, errors.New(msg)
 	}
 
 	// Check cluster CA secret exists if configured
@@ -368,21 +359,185 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	lg.Debugw("ClusterConfig OIDC from IdentityProvider validated",
 		"cluster", cc.Name,
 		"identityProvider", ref.Name,
-		"server", ref.Server)
+		"server", ref.Server,
+		"hasRefreshToken", ref.RefreshTokenSecretRef != nil,
+		"hasTokenExchange", ref.TokenExchange != nil && ref.TokenExchange.Enabled,
+		"fallbackPolicy", string(ref.FallbackPolicy))
 
 	// Use the OIDCTokenProvider to get a rest.Config - it handles resolving the IdentityProvider
 	tokenProvider := cluster.NewOIDCTokenProvider(ccc.Client, lg)
 	restCfg, err := tokenProvider.GetRESTConfig(ctx, cc)
 	if err != nil {
-		msg := "Failed to build OIDC rest config: " + err.Error()
-		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+		// Handle typed errors for more specific conditions
+		return ccc.handleOIDCAuthError(ctx, cc, restCfg, err, lg)
+	}
+
+	// Auth succeeded without degradation — clear any stale DegradedAuth/RefreshTokenExpired
+	// conditions from previous check cycles so operators see recovery.
+	ccc.clearOIDCDegradedConditions(ctx, cc, lg)
+
+	return restCfg, nil
+}
+
+// validateSecretExists checks that a referenced Secret exists and contains the expected key.
+func (ccc ClusterConfigChecker) validateSecretExists(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, secretRef *breakglassv1alpha1.SecretKeyReference, description string, lg *zap.SugaredLogger) error {
+	key := client.ObjectKey{Namespace: secretRef.Namespace, Name: secretRef.Name}
+	sec := corev1.Secret{}
+	if err := ccc.Client.Get(ctx, key, &sec); err != nil {
+		msg := fmt.Sprintf("Referenced %s secret missing or unreadable", description)
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace,
+			"error", err)
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return err
+	}
+
+	keyName := secretRef.Key
+	if keyName == "" {
+		// Default to "value" to match SecretKeyReference.key default in CRD/OpenAPI.
+		// This avoids inconsistencies between checker, token provider, and docs.
+		keyName = "value"
+	}
+	if _, ok := sec.Data[keyName]; !ok {
+		msg := fmt.Sprintf("Referenced %s secret missing key: %s", description, keyName)
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace)
+		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return errors.New(msg)
+	}
+
+	return nil
+}
+
+// handleOIDCAuthError handles errors from OIDCTokenProvider.GetRESTConfig,
+// checking for typed errors to set more specific conditions.
+// When ErrDegradedAuth is returned, the caller must pass the restCfg which is
+// still valid (fallback auth succeeded). handleOIDCAuthError returns it as-is.
+func (ccc ClusterConfigChecker) handleOIDCAuthError(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, restCfg *rest.Config, err error, lg *zap.SugaredLogger) (*rest.Config, error) {
+	if errors.Is(err, cluster.ErrDegradedAuth) {
+		// Degraded auth: primary refresh token failed but fallback succeeded.
+		// Set DegradedAuth condition but don't fail — the cluster is still reachable.
+		baseMsg := "Primary auth degraded, using fallback credentials"
+		msg := baseMsg
+		if cause := errors.Unwrap(err); cause != nil {
+			msg = fmt.Sprintf("%s: %v", baseMsg, cause)
+		}
+		lg.Warnw(baseMsg, "cluster", cc.Name, "error", err)
+		if err2 := ccc.setCondition(ctx, cc,
+			breakglassv1alpha1.ClusterConfigConditionDegradedAuth,
+			metav1.ConditionTrue,
+			breakglassv1alpha1.ClusterConfigReasonDegradedAuth,
+			msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to set DegradedAuth condition", "cluster", cc.Name, "error", err2)
+		}
+		return restCfg, nil
+	}
+
+	if errors.Is(err, cluster.ErrRefreshTokenExpired) {
+		// Refresh token expired/revoked and fallback policy is None
+		msg := "Refresh token expired or revoked: " + err.Error()
+		lg.Warnw(msg, "cluster", cc.Name)
+		if err2 := ccc.setCondition(ctx, cc,
+			breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired,
+			metav1.ConditionTrue,
+			breakglassv1alpha1.ClusterConfigReasonRefreshTokenExpired,
+			msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		// Also set Ready=False
+		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist Ready=False for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
 	}
 
-	return restCfg, nil
+	// Default: generic failure
+	msg := "Failed to build OIDC rest config: " + err.Error()
+	lg.Warnw(msg, "cluster", cc.Name)
+	if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
+		lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+	}
+	return nil, err
+}
+
+// clearOIDCDegradedConditions clears DegradedAuth and RefreshTokenExpired
+// conditions when OIDC auth succeeds without degradation. This prevents stale
+// conditions from persisting after recovery (e.g., refresh token rotation).
+func (ccc ClusterConfigChecker) clearOIDCDegradedConditions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, lg *zap.SugaredLogger) {
+	// Re-fetch latest to check current condition state
+	var latest breakglassv1alpha1.ClusterConfig
+	if err := ccc.Client.Get(ctx, client.ObjectKeyFromObject(cc), &latest); err != nil {
+		lg.Warnw("failed to fetch ClusterConfig for condition clearing", "cluster", cc.Name, "error", err)
+		return
+	}
+
+	for _, condType := range []breakglassv1alpha1.ClusterConfigConditionType{
+		breakglassv1alpha1.ClusterConfigConditionDegradedAuth,
+		breakglassv1alpha1.ClusterConfigConditionRefreshTokenExpired,
+	} {
+		// Only clear if the condition is currently True (actual transition)
+		existing := apimeta.FindStatusCondition(latest.Status.Conditions, string(condType))
+		if existing == nil || existing.Status == metav1.ConditionFalse {
+			continue
+		}
+		if err := ccc.setCondition(ctx, cc,
+			condType,
+			metav1.ConditionFalse,
+			breakglassv1alpha1.ClusterConfigReasonAuthRecovered,
+			"OIDC auth recovered; primary credentials are healthy",
+			corev1.EventTypeNormal, lg); err != nil {
+			lg.Warnw("failed to clear condition on recovery", "cluster", cc.Name, "condition", condType, "error", err)
+		}
+	}
+}
+
+// setCondition sets a specific (non-Ready) condition on the ClusterConfig.
+func (ccc ClusterConfigChecker) setCondition(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig,
+	condType breakglassv1alpha1.ClusterConfigConditionType,
+	status metav1.ConditionStatus,
+	reason breakglassv1alpha1.ClusterConfigConditionReason,
+	message string, eventType string, lg *zap.SugaredLogger) error {
+	// Re-fetch latest
+	var latest breakglassv1alpha1.ClusterConfig
+	if err := ccc.Client.Get(ctx, client.ObjectKeyFromObject(cc), &latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	now := metav1.Now()
+	condition := metav1.Condition{
+		Type:               string(condType),
+		Status:             status,
+		ObservedGeneration: latest.Generation,
+		Reason:             string(reason),
+		Message:            message,
+		LastTransitionTime: now,
+	}
+	apimeta.SetStatusCondition(&latest.Status.Conditions, condition)
+
+	if err := ccc.applyStatus(ctx, &latest); err != nil {
+		if apierrors.IsConflict(err) {
+			return nil
+		}
+		return err
+	}
+
+	if ccc.Recorder != nil {
+		eventReason := string(reason)
+		ccc.Recorder.Eventf(&latest, nil, eventType, eventReason, eventReason, "%s", message)
+	}
+
+	return nil
 }
 
 // validateDirectOIDCAuth validates direct oidcAuth configuration
@@ -403,9 +558,16 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 		return nil, errors.New(msg)
 	}
 
-	// Fetch client secret if configured (required for client credentials flow)
-	if oidcConfig.ClientSecretRef == nil {
-		msg := "OIDC config missing clientSecretRef (required for client credentials flow)"
+	// Validate refresh token secret if configured
+	if oidcConfig.RefreshTokenSecretRef != nil {
+		if err := ccc.validateSecretExists(ctx, cc, oidcConfig.RefreshTokenSecretRef, "refresh token", lg); err != nil {
+			return nil, err
+		}
+	}
+
+	// Client secret is required unless refresh token or token exchange is configured
+	if oidcConfig.ClientSecretRef == nil && oidcConfig.RefreshTokenSecretRef == nil && (oidcConfig.TokenExchange == nil || !oidcConfig.TokenExchange.Enabled) {
+		msg := "OIDC config missing clientSecretRef (required unless refreshTokenSecretRef or tokenExchange is configured)"
 		lg.Warnw(msg, "cluster", cc.Name)
 		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
@@ -413,47 +575,25 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 		return nil, errors.New(msg)
 	}
 
-	secretRef := oidcConfig.ClientSecretRef
-	key := client.ObjectKey{Namespace: secretRef.Namespace, Name: secretRef.Name}
-	sec := corev1.Secret{}
-	if err := ccc.Client.Get(ctx, key, &sec); err != nil {
-		msg := "Referenced OIDC client secret missing or unreadable"
-		lg.Warnw(msg,
-			"cluster", cc.Name,
-			"secret", secretRef.Name,
-			"secretNamespace", secretRef.Namespace,
-			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
-			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+	// Validate client secret if provided
+	if oidcConfig.ClientSecretRef != nil {
+		if err := ccc.validateSecretExists(ctx, cc, oidcConfig.ClientSecretRef, "OIDC client", lg); err != nil {
+			return nil, err
 		}
-		return nil, err
 	}
 
-	// Check for secret key
-	keyName := secretRef.Key
-	if keyName == "" {
-		keyName = "client-secret"
-	}
-	if _, ok := sec.Data[keyName]; !ok {
-		msg := "Referenced OIDC client secret missing key: " + keyName
-		lg.Warnw(msg,
-			"cluster", cc.Name,
-			"secret", secretRef.Name,
-			"secretNamespace", secretRef.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
-			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+	// Validate token exchange subject token secret if configured
+	if oidcConfig.TokenExchange != nil && oidcConfig.TokenExchange.Enabled && oidcConfig.TokenExchange.SubjectTokenSecretRef != nil {
+		if err := ccc.validateSecretExists(ctx, cc, oidcConfig.TokenExchange.SubjectTokenSecretRef, "subject token", lg); err != nil {
+			return nil, err
 		}
-		return nil, errors.New(msg)
 	}
 
 	// Check CA certificate secret exists if configured
-	// NOTE: We don't fail if the CA key is missing - the OIDCTokenProvider supports TOFU
-	// (Trust On First Use) which will auto-discover the CA and persist it to the secret
 	if oidcConfig.CASecretRef != nil {
 		caKey := client.ObjectKey{Namespace: oidcConfig.CASecretRef.Namespace, Name: oidcConfig.CASecretRef.Name}
 		caSec := corev1.Secret{}
 		if err := ccc.Client.Get(ctx, caKey, &caSec); err != nil {
-			// Secret doesn't exist at all - this is an error (we need a place to persist TOFU CA)
 			msg := "Referenced cluster CA secret missing or unreadable"
 			lg.Warnw(msg,
 				"cluster", cc.Name,
@@ -465,9 +605,6 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			}
 			return nil, err
 		}
-		// Note: We intentionally don't check if the CA key exists in the secret.
-		// If the secret exists but the key is missing, TOFU will discover the CA
-		// and persist it to this secret. See pkg/cluster/oidc.go configureTLS().
 		caKeyName := oidcConfig.CASecretRef.Key
 		if caKeyName == "" {
 			caKeyName = "ca.crt"
@@ -485,19 +622,22 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 		"cluster", cc.Name,
 		"issuerURL", oidcConfig.IssuerURL,
 		"clientID", oidcConfig.ClientID,
-		"server", oidcConfig.Server)
+		"server", oidcConfig.Server,
+		"hasRefreshToken", oidcConfig.RefreshTokenSecretRef != nil,
+		"hasTokenExchange", oidcConfig.TokenExchange != nil && oidcConfig.TokenExchange.Enabled,
+		"fallbackPolicy", string(oidcConfig.FallbackPolicy))
 
 	// Use the OIDCTokenProvider to get a rest.Config and validate we can get a token
 	tokenProvider := cluster.NewOIDCTokenProvider(ccc.Client, lg)
 	restCfg, err := tokenProvider.GetRESTConfig(ctx, cc)
 	if err != nil {
-		msg := "Failed to build OIDC rest config: " + err.Error()
-		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
-			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
-		}
-		return nil, err
+		// Handle typed errors for more specific conditions
+		return ccc.handleOIDCAuthError(ctx, cc, restCfg, err, lg)
 	}
+
+	// Auth succeeded without degradation — clear any stale DegradedAuth/RefreshTokenExpired
+	// conditions from previous check cycles so operators see recovery.
+	ccc.clearOIDCDegradedConditions(ctx, cc, lg)
 
 	return restCfg, nil
 }
@@ -661,6 +801,13 @@ func NewStatusUpdateHelper(phase, message, eventType string) *StatusUpdateHelper
 // DescribeFailure provides a human-readable description of what failed and why
 func DescribeFailure(failureType, message string) (failureCategory, advice string) {
 	switch failureType {
+	// Refresh token / fallback failures
+	case "refresh_token_expired":
+		return "refresh_token_expired", fmt.Sprintf("Offline refresh token has expired or been revoked. Obtain a new token and update the secret. Error: %s", message)
+	case "degraded_auth":
+		return "degraded_auth", fmt.Sprintf("Primary auth (refresh token) failed; operating with fallback credentials. Re-provision the refresh token to restore preferred auth flow. Error: %s", message)
+	case "refresh_token_secret_missing":
+		return "refresh_token_secret_missing", "Referenced refresh token secret doesn't exist, is inaccessible, or missing the expected key. Check refreshTokenSecretRef."
 	// OIDC-specific failures
 	case "oidc_discovery":
 		return "oidc_discovery_failed", fmt.Sprintf("OIDC discovery failed. Check issuer URL is correct and reachable. Error: %s", message)
@@ -694,6 +841,13 @@ func DescribeFailure(failureType, message string) (failureCategory, advice strin
 func determineClusterConfigFailureType(message string) string {
 	lowerMsg := strings.ToLower(message)
 	switch {
+	// Refresh token / fallback failures
+	case strings.Contains(lowerMsg, "refresh token expired") || strings.Contains(lowerMsg, "refresh token revoked"):
+		return "refresh_token_expired"
+	case strings.Contains(lowerMsg, "degraded auth") || strings.Contains(lowerMsg, "fallback credentials"):
+		return "degraded_auth"
+	case strings.Contains(lowerMsg, "refresh token secret"):
+		return "refresh_token_secret_missing"
 	// OIDC-specific failures
 	case strings.Contains(lowerMsg, "oidc") && strings.Contains(lowerMsg, "discovery"):
 		return "oidc_discovery"

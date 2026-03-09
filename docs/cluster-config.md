@@ -38,8 +38,8 @@ This ensures that:
 
 The following Prometheus metrics are updated during cluster deletion:
 
-- `breakglass_cluster_configs_deleted_total{cluster}` - Counter for deleted ClusterConfigs
-- `breakglass_sessions_expired_total{cluster}` - Incremented for each session expired due to cluster deletion
+- `breakglass_clusterconfigs_deleted_total{cluster}` - Counter for deleted ClusterConfigs
+- `breakglass_session_expired_total{cluster}` - Incremented for each session expired due to cluster deletion
 - `breakglass_debug_sessions_failed_total{cluster,reason="cluster_deleted"}` - Incremented for each debug session failed due to cluster deletion
 
 ## Authentication Methods
@@ -47,7 +47,12 @@ The following Prometheus metrics are updated during cluster deletion:
 ClusterConfig supports two authentication methods for connecting to managed clusters:
 
 1. **Kubeconfig-based authentication** (traditional) - Uses a kubeconfig file stored in a Secret
-2. **OIDC-based authentication** - Uses OIDC tokens obtained via client credentials flow
+2. **OIDC-based authentication** - Uses OIDC tokens for cluster authentication
+
+OIDC authentication supports multiple token acquisition strategies:
+- **Client credentials flow** — dedicated client ID and secret (default)
+- **Offline refresh token** — pre-provisioned long-lived refresh token exchanged for access tokens
+- **Token exchange** — OAuth 2.0 Token Exchange (RFC 8693) to swap a subject token for a cluster token
 
 Only one authentication method can be configured per ClusterConfig. The method is determined by either:
 - The `authType` field (explicit)
@@ -221,8 +226,11 @@ OIDC authentication allows the breakglass controller to obtain tokens from an OI
 |-------|----------|-------------|
 | `issuerURL` | Yes | OIDC issuer URL (must match cluster API server config) |
 | `clientID` | Yes | OIDC client ID for the breakglass controller |
-| `clientSecretRef` | Yes | Reference to secret containing client secret |
+| `clientSecretRef` | No* | Reference to secret containing client secret. *Required unless `refreshTokenSecretRef` is set. |
 | `server` | Yes | URL of the target cluster's API server |
+| `refreshTokenSecretRef` | No | Secret containing an offline refresh token (alternative to `clientSecretRef`) |
+| `fallbackPolicy` | No | Behavior when refresh token expires: `None` (default), `Auto`, or `Warn` |
+| `rotatedRefreshTokenKey` | No | Key in the same secret where rotated refresh tokens are persisted (see [Automatic Refresh Token Rotation](#automatic-refresh-token-rotation)) |
 | `caSecretRef` | No | CA certificate for the cluster API server |
 | `insecureSkipTLSVerify` | No | Skip TLS verification (NOT for production) |
 | `audience` | No | Token audience (defaults to server) |
@@ -317,7 +325,13 @@ If you have an `IdentityProvider` already configured for user authentication, yo
 | `name` | Yes | Name of the IdentityProvider resource to inherit OIDC settings from |
 | `server` | Yes | URL of the target cluster's API server (cluster-specific) |
 | `clientID` | No | Override the client ID (defaults to IdentityProvider's clientID) |
-| `clientSecretRef` | No | Override the client secret (falls back to Keycloak service account) |
+| `clientSecretRef` | No | Override the client secret (falls back to Keycloak service account). Mutually exclusive with `refreshTokenSecretRef`. |
+| `refreshTokenSecretRef` | No | Secret containing an offline refresh token. Mutually exclusive with `clientSecretRef`. |
+| `tokenExchange` | No | Enable OAuth 2.0 Token Exchange (see [Token Exchange Mode](#token-exchange-mode)) |
+| `audience` | No | Target audience for OIDC token requests |
+| `scopes` | No | Additional OAuth scopes to request |
+| `fallbackPolicy` | No | Behavior when refresh token expires: `None` (default), `Auto`, or `Warn` |
+| `rotatedRefreshTokenKey` | No | Key in the same secret where rotated refresh tokens are persisted (see [Automatic Refresh Token Rotation](#automatic-refresh-token-rotation)) |
 | `caSecretRef` | No | CA certificate for the cluster API server |
 | `insecureSkipTLSVerify` | No | Skip TLS verification (NOT for production) |
 
@@ -387,6 +401,227 @@ spec:
   - The cluster uses a different OIDC issuer than user authentication
 
 **Note:** `oidcAuth` and `oidcFromIdentityProvider` are mutually exclusive. Configure one or the other, not both.
+
+### Extended OIDC Authentication Modes
+
+In addition to the standard client credentials flow, breakglass supports two additional OIDC authentication modes that provide flexibility for different deployment scenarios.
+
+#### Offline Refresh Token Mode
+
+Instead of using a dedicated `clientSecret`, you can provide an **offline refresh token** (obtained via Keycloak's `offline_access` scope). The controller uses this token to obtain fresh access tokens without requiring persistent client credentials.
+
+**When to use:**
+- You want to avoid sharing a service account client secret
+- You have a long-lived refresh token provisioned by an admin
+- You need token-level (per-user) isolation rather than shared client credentials
+
+**Configuration:**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: my-cluster-refresh-token
+spec:
+  authType: OIDC
+  oidcFromIdentityProvider:
+    name: corp-keycloak
+    server: https://my-cluster-api.example.com:6443
+    refreshTokenSecretRef:
+      name: offline-refresh-token
+      namespace: breakglass-system
+      key: refresh-token
+```
+
+On `oidcFromIdentityProvider`, `refreshTokenSecretRef` and `clientSecretRef` are **mutually exclusive** — configure one or the other.
+
+On `oidcAuth` (direct OIDC), both can coexist: the refresh token is tried first, and `clientSecretRef` serves as a fallback (controlled by `fallbackPolicy`).
+
+**Obtaining an offline refresh token:**
+
+```bash
+# Example: Obtain offline refresh token from Keycloak
+# Use --cacert to verify the server's TLS certificate; avoid -k in production.
+curl -s -X POST \
+  --cacert /path/to/ca.crt \
+  https://keycloak.example.com/realms/kubernetes/protocol/openid-connect/token \
+  -d "grant_type=password" \
+  -d "client_id=breakglass-service" \
+  -d "client_secret=<secret>" \
+  -d "username=breakglass-sa" \
+  -d "password=<password>" \
+  -d "scope=openid offline_access"
+
+# Store the refresh_token from the response:
+kubectl create secret generic offline-refresh-token \
+  -n breakglass-system \
+  --from-literal=refresh-token="<refresh_token_value>"
+```
+
+#### Automatic Refresh Token Rotation
+
+When using offline refresh tokens, the controller can **persist the refresh token** returned by the OIDC provider to a dedicated key in the Kubernetes Secret. This ensures the token survives controller restarts and provides a "last known good" marker.
+
+> **Keycloak behaviour:** By default, Keycloak returns the **same** offline refresh token on every exchange (the realm-level `revokeRefreshToken` setting defaults to `false`). With `revokeRefreshToken` enabled, Keycloak issues a **new** token on each use and revokes the previous one. The controller handles both scenarios — the token is always written to the rotated key via SSA, and the cache-aware pre-check prevents redundant API calls when the value is unchanged. See [Keycloak Configuration — Realm Settings](keycloak-configuration.md#realm-configuration) for details.
+
+**Configuration:**
+
+Add `rotatedRefreshTokenKey` to your ClusterConfig:
+
+```yaml
+spec:
+  oidcFromIdentityProvider:
+    name: corp-keycloak
+    server: https://my-cluster-api.example.com:6443
+    refreshTokenSecretRef:
+      name: offline-refresh-token
+      namespace: breakglass-system
+      key: refresh-token
+    rotatedRefreshTokenKey: refresh-token-rotated  # opt-in
+```
+
+Or with `oidcAuth`:
+
+```yaml
+spec:
+  oidcAuth:
+    issuerURL: https://keycloak.example.com/realms/myrealm
+    clientID: breakglass-cluster
+    server: https://my-cluster-api.example.com:6443
+    refreshTokenSecretRef:
+      name: offline-refresh-token
+      namespace: breakglass-system
+      key: refresh-token
+    rotatedRefreshTokenKey: refresh-token-rotated  # opt-in
+    fallbackPolicy: None
+```
+
+**How it works:**
+
+1. **Read order:** The controller checks the rotated key first, then falls back to the original key — ensuring the freshest token is always used
+2. **Write on every refresh:** After a successful token exchange, the returned refresh token is always persisted to the rotated key via Server-Side Apply (SSA). This applies even when the OIDC provider returns the same token (e.g. Keycloak with `revokeRefreshToken` disabled). The SSA cache-aware pre-check (`PatchApplyObject`) avoids redundant API calls when the value is unchanged.
+3. **Original key preserved:** The original key (e.g., `refresh-token`) is **never modified** — safe for GitOps tools (Flux, ArgoCD) that manage the seed token
+4. **Best-effort:** Rotation write failures are logged but don't break authentication
+
+**Requirements:**
+
+- `rotatedRefreshTokenKey` must differ from the key in `refreshTokenSecretRef`
+- The controller needs `update` permission on Secrets in the token's namespace (already granted by default RBAC)
+
+**Annotations added on rotation:**
+
+| Annotation | Description |
+|------------|-------------|
+| `breakglass.t-caas.telekom.com/rotated-at` | RFC 3339 timestamp of the last successful rotation |
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `rotatedRefreshTokenKey` | No | Key in the same secret where rotated refresh tokens are persisted. Must differ from `refreshTokenSecretRef.key`. |
+
+> **Note:** If omitted, refresh token rotation is not persisted — rotated tokens are cached in-memory only and lost on controller restart.
+
+#### Token Exchange Mode
+
+Uses the [OAuth 2.0 Token Exchange](https://datatracker.ietf.org/doc/html/rfc8693) grant to exchange a subject token for an access token valid on the target cluster.
+
+**When to use:**
+- You need to exchange tokens between different OIDC audiences
+- Your IDP supports token exchange (e.g., Keycloak with token exchange feature enabled)
+- You want to delegate authentication to a separate service
+
+**Configuration:**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: my-cluster-token-exchange
+spec:
+  authType: OIDC
+  oidcFromIdentityProvider:
+    name: corp-keycloak
+    server: https://my-cluster-api.example.com:6443
+    tokenExchange:
+      enabled: true
+      subjectTokenSecretRef:
+        name: subject-token
+        namespace: breakglass-system
+        key: token
+    audience: kubernetes
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `tokenExchange.enabled` | Yes | Must be `true` to activate token exchange |
+| `tokenExchange.subjectTokenSecretRef` | Yes | Secret containing the subject token to exchange |
+| `tokenExchange.actorTokenSecretRef` | No | Optional actor token for delegation |
+| `tokenExchange.audience` | No | Target audience for the exchanged token |
+| `tokenExchange.subjectTokenType` | No | Type of subject token (default: `urn:ietf:params:oauth:token-type:access_token`) |
+| `tokenExchange.actorTokenType` | No | Type of actor token |
+
+#### Audience and Scopes
+
+Both `oidcAuth` and `oidcFromIdentityProvider` support explicit audience and scope configuration:
+
+```yaml
+spec:
+  oidcFromIdentityProvider:
+    name: corp-keycloak
+    server: https://my-cluster-api.example.com:6443
+    audience: kubernetes
+    scopes:
+      - openid
+      - groups
+      - email
+```
+
+| Field | Description |
+|-------|-------------|
+| `audience` | Sets the `audience` parameter in OIDC token requests |
+| `scopes` | Additional OAuth scopes to request (deduplicated, must not be empty strings) |
+
+#### Fallback Policy
+
+When using `refreshTokenSecretRef`, you can configure a **fallback policy** that determines what happens when the refresh token expires or is revoked:
+
+| Policy | Behavior |
+|--------|----------|
+| `None` (default) | Fail immediately — no fallback. A `RefreshTokenExpired` condition is set. |
+| `Auto` | Silently fall back to client credentials (`clientSecretRef` or Keycloak SA). |
+| `Warn` | Fall back to client credentials but set a `DegradedAuth` condition and emit a warning event. |
+
+**Example with fallback:**
+
+```yaml
+# Direct oidcAuth — both refreshTokenSecretRef and clientSecretRef
+spec:
+  oidcAuth:
+    issuerURL: https://keycloak.example.com/realms/kubernetes
+    clientID: breakglass-service
+    server: https://my-cluster-api.example.com:6443
+    refreshTokenSecretRef:
+      name: offline-rt
+      namespace: breakglass-system
+      key: refresh-token
+    clientSecretRef:
+      name: client-creds
+      namespace: breakglass-system
+      key: client-secret
+    fallbackPolicy: Warn
+```
+
+With `Warn`, the controller will:
+1. Try the refresh token first
+2. If it fails (expired/revoked), fall back to `clientSecretRef`
+3. Set a `DegradedAuth` condition on the ClusterConfig status
+4. Emit a Kubernetes warning event
+
+**Condition types** set by the fallback system:
+
+| Condition | When set |
+|-----------|----------|
+| `RefreshTokenExpired` | Refresh token is expired/revoked and fallback is `None` |
+| `DegradedAuth` | Fallback succeeded but operating with secondary credentials |
 
 ### Token Refresh and TOFU
 

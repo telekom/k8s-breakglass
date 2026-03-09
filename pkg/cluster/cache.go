@@ -81,6 +81,11 @@ type ClientProvider struct {
 	clusterToSecret map[string]string
 	// secretToClusters tracks all clusters backed by a given secret (keyed by namespace/name)
 	secretToClusters map[string]map[string]struct{}
+	// clusterToOIDCSecrets tracks which OIDC-related secrets each ClusterConfig uses
+	// (refresh token, client secret, subject token, CA). Maps cluster key to set of secret keys.
+	clusterToOIDCSecrets map[string]map[string]struct{}
+	// oidcSecretToClusters reverse index: maps OIDC secret key to set of cluster keys
+	oidcSecretToClusters map[string]map[string]struct{}
 	// oidcProvider handles OIDC token acquisition for clusters using OIDC auth
 	oidcProvider *OIDCTokenProvider
 	// circuitBreakers manages per-cluster circuit breakers for spoke cluster resilience.
@@ -99,16 +104,18 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 // NewClientProviderWithCircuitBreaker creates a ClientProvider with explicit circuit breaker configuration.
 func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLogger, cbCfg ClusterCircuitBreakerConfig) *ClientProvider {
 	return &ClientProvider{
-		k8s:              c,
-		log:              log,
-		data:             map[string]*breakglassv1alpha1.ClusterConfig{},
-		rest:             map[string]*cachedRESTConfig{},
-		bareToCanonical:  map[string]string{},
-		clusterToSecret:  map[string]string{},
-		secretToClusters: map[string]map[string]struct{}{},
-		oidcProvider:     NewOIDCTokenProvider(c, log),
-		circuitBreakers:  NewCircuitBreakerRegistry(cbCfg, log),
-		clientsets:       map[string]*cachedClientset{},
+		k8s:                  c,
+		log:                  log,
+		data:                 map[string]*breakglassv1alpha1.ClusterConfig{},
+		rest:                 map[string]*cachedRESTConfig{},
+		bareToCanonical:      map[string]string{},
+		clusterToSecret:      map[string]string{},
+		secretToClusters:     map[string]map[string]struct{}{},
+		clusterToOIDCSecrets: map[string]map[string]struct{}{},
+		oidcSecretToClusters: map[string]map[string]struct{}{},
+		oidcProvider:         NewOIDCTokenProvider(c, log),
+		circuitBreakers:      NewCircuitBreakerRegistry(cbCfg, log),
+		clientsets:           map[string]*cachedClientset{},
 	}
 }
 
@@ -377,8 +384,16 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		return nil, fmt.Errorf("unsupported auth type: %s", authType)
 	}
 
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrDegradedAuth) {
 		return nil, err
+	}
+	// ErrDegradedAuth means fallback auth succeeded — the config is valid.
+	// Log the degraded state but don't propagate the error to callers, as
+	// non-checker callers (webhook, session controller) treat any error as fatal.
+	// The checker sets the DegradedAuth condition via OIDCTokenProvider directly.
+	if errors.Is(err, ErrDegradedAuth) {
+		p.log.Warnw("Cluster operating in degraded auth mode (using fallback credentials)",
+			"cluster", finalCacheKey, "error", err)
 	}
 
 	// Cache with TTL (keyed by namespace/name)
@@ -575,7 +590,17 @@ func (p *ClientProvider) getRESTConfigFromOIDC(ctx context.Context, cc *breakgla
 	if p.oidcProvider == nil {
 		return nil, fmt.Errorf("OIDC provider not initialized")
 	}
-	return p.oidcProvider.GetRESTConfig(ctx, cc)
+	cfg, err := p.oidcProvider.GetRESTConfig(ctx, cc)
+	if err != nil && !errors.Is(err, ErrDegradedAuth) {
+		return nil, err
+	}
+
+	// Track OIDC-related secrets for cache invalidation on secret changes.
+	// This allows the Secret watcher to evict cached REST configs when
+	// refresh tokens, client secrets, subject tokens, or CAs are rotated.
+	p.trackOIDCSecretsLocked(cacheKey(cc.Namespace, cc.Name), cc)
+
+	return cfg, err // err is nil or ErrDegradedAuth (valid config with degraded auth)
 }
 
 // Invalidate removes an entry (called by informer/controller update hooks later).
@@ -611,6 +636,121 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 	return ok
 }
 
+// trackOIDCSecretsLocked records all OIDC-related secret references from a ClusterConfig
+// for cache invalidation.
+//
+// The "Locked" suffix follows Go convention to indicate the caller MUST already
+// hold p.mu as a write lock. The function cannot self-lock because its only
+// production caller (getRESTConfigFromOIDC) already holds p.mu, and sync.Mutex
+// is not re-entrant.
+func (p *ClientProvider) trackOIDCSecretsLocked(clusterKey string, cc *breakglassv1alpha1.ClusterConfig) {
+	// Collect all secret references from OIDC configs
+	var secretRefs []breakglassv1alpha1.SecretKeyReference
+
+	if cc.Spec.OIDCAuth != nil {
+		if cc.Spec.OIDCAuth.ClientSecretRef != nil {
+			secretRefs = append(secretRefs, *cc.Spec.OIDCAuth.ClientSecretRef)
+		}
+		if cc.Spec.OIDCAuth.RefreshTokenSecretRef != nil {
+			secretRefs = append(secretRefs, *cc.Spec.OIDCAuth.RefreshTokenSecretRef)
+		}
+		if cc.Spec.OIDCAuth.CASecretRef != nil {
+			secretRefs = append(secretRefs, *cc.Spec.OIDCAuth.CASecretRef)
+		}
+		if cc.Spec.OIDCAuth.TokenExchange != nil {
+			if cc.Spec.OIDCAuth.TokenExchange.SubjectTokenSecretRef != nil {
+				secretRefs = append(secretRefs, *cc.Spec.OIDCAuth.TokenExchange.SubjectTokenSecretRef)
+			}
+			if cc.Spec.OIDCAuth.TokenExchange.ActorTokenSecretRef != nil {
+				secretRefs = append(secretRefs, *cc.Spec.OIDCAuth.TokenExchange.ActorTokenSecretRef)
+			}
+		}
+	}
+
+	if cc.Spec.OIDCFromIdentityProvider != nil {
+		if cc.Spec.OIDCFromIdentityProvider.ClientSecretRef != nil {
+			secretRefs = append(secretRefs, *cc.Spec.OIDCFromIdentityProvider.ClientSecretRef)
+		}
+		if cc.Spec.OIDCFromIdentityProvider.RefreshTokenSecretRef != nil {
+			secretRefs = append(secretRefs, *cc.Spec.OIDCFromIdentityProvider.RefreshTokenSecretRef)
+		}
+		if cc.Spec.OIDCFromIdentityProvider.CASecretRef != nil {
+			secretRefs = append(secretRefs, *cc.Spec.OIDCFromIdentityProvider.CASecretRef)
+		}
+		if cc.Spec.OIDCFromIdentityProvider.TokenExchange != nil {
+			if cc.Spec.OIDCFromIdentityProvider.TokenExchange.SubjectTokenSecretRef != nil {
+				secretRefs = append(secretRefs, *cc.Spec.OIDCFromIdentityProvider.TokenExchange.SubjectTokenSecretRef)
+			}
+			if cc.Spec.OIDCFromIdentityProvider.TokenExchange.ActorTokenSecretRef != nil {
+				secretRefs = append(secretRefs, *cc.Spec.OIDCFromIdentityProvider.TokenExchange.ActorTokenSecretRef)
+			}
+		}
+	}
+
+	if len(secretRefs) == 0 {
+		return
+	}
+
+	// Clear previous tracking for this cluster
+	if oldSecrets, ok := p.clusterToOIDCSecrets[clusterKey]; ok {
+		for secretKey := range oldSecrets {
+			if clusters, found := p.oidcSecretToClusters[secretKey]; found {
+				delete(clusters, clusterKey)
+				if len(clusters) == 0 {
+					delete(p.oidcSecretToClusters, secretKey)
+				}
+			}
+		}
+	}
+
+	// Record new tracking
+	p.clusterToOIDCSecrets[clusterKey] = make(map[string]struct{}, len(secretRefs))
+	for _, ref := range secretRefs {
+		secretKey := cacheKey(ref.Namespace, ref.Name)
+		p.clusterToOIDCSecrets[clusterKey][secretKey] = struct{}{}
+		if _, ok := p.oidcSecretToClusters[secretKey]; !ok {
+			p.oidcSecretToClusters[secretKey] = map[string]struct{}{}
+		}
+		p.oidcSecretToClusters[secretKey][clusterKey] = struct{}{}
+	}
+}
+
+// IsOIDCSecretTracked reports whether any cluster OIDC configs reference this secret.
+func (p *ClientProvider) IsOIDCSecretTracked(namespace, name string) bool {
+	key := cacheKey(namespace, name)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	_, ok := p.oidcSecretToClusters[key]
+	return ok
+}
+
+// InvalidateOIDCSecrets removes all cached entries for clusters that reference
+// the given OIDC-related secret (refresh token, client secret, subject token, CA).
+func (p *ClientProvider) InvalidateOIDCSecrets(namespace, name string) {
+	key := cacheKey(namespace, name)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	clusters, ok := p.oidcSecretToClusters[key]
+	if !ok {
+		return
+	}
+	metrics.ClusterCacheInvalidations.WithLabelValues("oidc_secret_update").Inc()
+	// Copy cluster keys to a slice before iterating to avoid panic from
+	// evictClusterLocked mutating oidcSecretToClusters during iteration.
+	clusterKeys := make([]string, 0, len(clusters))
+	for cluster := range clusters {
+		clusterKeys = append(clusterKeys, cluster)
+	}
+	for _, cluster := range clusterKeys {
+		p.log.Debugw("Invalidating cluster cache due to OIDC secret change",
+			"cluster", cluster, "secret", key)
+		p.evictClusterLocked(cluster)
+	}
+	p.log.Infow("Invalidated cluster caches due to OIDC secret change",
+		"secret", key, "clusterCount", len(clusterKeys))
+	delete(p.oidcSecretToClusters, key)
+}
+
 func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 	delete(p.data, clusterKey)
 	delete(p.rest, clusterKey)
@@ -640,6 +780,18 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 			}
 		}
 		delete(p.clusterToSecret, clusterKey)
+	}
+	// Clean up OIDC secret tracking
+	if oidcSecrets, ok := p.clusterToOIDCSecrets[clusterKey]; ok {
+		for secretKey := range oidcSecrets {
+			if clusters, found := p.oidcSecretToClusters[secretKey]; found {
+				delete(clusters, clusterKey)
+				if len(clusters) == 0 {
+					delete(p.oidcSecretToClusters, secretKey)
+				}
+			}
+		}
+		delete(p.clusterToOIDCSecrets, clusterKey)
 	}
 }
 
