@@ -478,7 +478,7 @@ The chart supports creating a PodDisruptionBudget for HA deployments:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `pdb.enabled` | bool | `false` | Create a PodDisruptionBudget |
-| `pdb.minAvailable` | int/string | `1` | Minimum available pods during disruptions |
+| `pdb.minAvailable` | int/string | — | Minimum available pods during disruptions (template defaults to `1` when neither is set) |
 | `pdb.maxUnavailable` | int/string | — | Maximum unavailable pods (mutually exclusive with `minAvailable`) |
 
 ```yaml
@@ -489,7 +489,9 @@ pdb:
   # maxUnavailable: 1
 ```
 
-> **Note:** `minAvailable` and `maxUnavailable` are mutually exclusive. If `maxUnavailable` is set, it takes precedence. When neither is specified, `minAvailable: 1` is the default.
+> **Note:** If `maxUnavailable` is set, it takes precedence over `minAvailable`. When neither is specified, the template defaults to `minAvailable: 1`.
+>
+> **Important:** The PDB selector uses labels `app.kubernetes.io/name: breakglass` and `app.kubernetes.io/instance: <release>`. This only protects a controller Deployment with matching labels (i.e., installed via the same Helm release). Operators using kustomize or a separate Helm release must ensure their Deployment labels align with these selectors.
 
 ## Examples
 
