@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dockerfile: fragile single-file COPY** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Changed `COPY cmd/main.go cmd/main.go` to `COPY cmd/ cmd/` so new files added to `cmd/` are automatically included in builds
 - **Makefile: test flag deduplication** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Factored duplicated `-race -count=…` flags into `GO_TEST_FLAGS` variable used by `test`, `test-controller`, and `test-cli` targets; fixed e2e exclusion grep `grep -v /e2e` → `grep -vE '/e2e($|/)'` to prevent false exclusion; `GO_TEST_COUNT` defaults to `1` and supports empty override to re-enable caching
 - **Metrics: `MetricsHandler()` now uses correct registry** ([#465](https://github.com/telekom/k8s-breakglass/issues/465)): Fixed to serve from `ctrlmetrics.Registry` which contains all breakglass metrics, instead of the default registry which was empty
+- **E2E: retry OIDC token acquisition with backoff** ([#476](https://github.com/telekom/k8s-breakglass/issues/476)): `GetToken()` in `e2e/helpers/auth.go` now retries up to 5 times with exponential backoff (2 s → 16 s) when Keycloak is temporarily unreachable, reducing false-negative E2E failures from transient Keycloak pod restarts
 
 ### Removed
 
