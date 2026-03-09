@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Makefile: test flag deduplication** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Factored duplicated `-race -count=…` flags into `GO_TEST_FLAGS` variable used by `test`, `test-controller`, and `test-cli` targets; fixed e2e exclusion grep `grep -v /e2e` → `grep -vE '/e2e($|/)'` to prevent false exclusion; `GO_TEST_COUNT` defaults to `1` and supports empty override to re-enable caching
 - **Metrics: `MetricsHandler()` now uses correct registry** ([#465](https://github.com/telekom/k8s-breakglass/issues/465)): Fixed to serve from `ctrlmetrics.Registry` which contains all breakglass metrics, instead of the default registry which was empty
 - **E2E: retry OIDC token acquisition with backoff** ([#476](https://github.com/telekom/k8s-breakglass/issues/476)): `GetToken()` in `e2e/helpers/auth.go` now retries up to 5 times with exponential backoff (2 s → 16 s) when Keycloak is temporarily unreachable, reducing false-negative E2E failures from transient Keycloak pod restarts
+- **CI Build Image attestation 404 flake**: Fixed intermittent `actions/attest-build-provenance` failures (`OCIError: Error fetching manifest — expected 200, received 404`) caused by manifest propagation delays in GHCR by: (1) separating Docker image build (local load) from registry push to eliminate digest mismatch, (2) capturing the actual registry digest from `docker push` output, and (3) adding a manifest-availability polling step (`docker buildx imagetools inspect`) that retries up to 30 times with 10 s intervals before attestation
 
 ### Removed
 
@@ -62,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Reconciler: meaningful readiness probe** ([#460](https://github.com/telekom/k8s-breakglass/issues/460)): Replaced readyz "ping" with informer cache sync check — readiness now reflects whether the controller-runtime cache is warmed
+- **Reconciler: controller-runtime leader election** ([#464](https://github.com/telekom/k8s-breakglass/issues/464)): Reconciler manager now participates in leader election (when enabled) to prevent writes from non-leader replicas
+- **Extracted `resolveLeaseNamespace` helper** in `cmd/main.go` to DRY two inline namespace resolution blocks
 - **SessionManager pointer receivers** ([#471](https://github.com/telekom/k8s-breakglass/issues/471), [#474](https://github.com/telekom/k8s-breakglass/issues/474) GO-011): Changed all 14 `SessionManager` methods from value to pointer receivers for correctness with pointer fields
 - **Deprecated `NewSessionManager`** ([#471](https://github.com/telekom/k8s-breakglass/issues/471)): Marked `NewSessionManager(contextName)` deprecated in favor of `NewSessionManagerWithClient` for explicit caching behavior
 - **Logger fallback warning** ([#466](https://github.com/telekom/k8s-breakglass/issues/466)): `SessionManager.getLogger()` now logs a warning when falling back to the global logger

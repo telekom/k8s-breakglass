@@ -236,8 +236,13 @@ func run() error {
 		return fmt.Errorf("create uncached kubernetes client: %w", err)
 	}
 
+	// Reconciler manager runs WITHOUT leader election — reconcilers (e.g. IdentityProvider)
+	// run on all replicas as documented. Leader election is handled separately for background
+	// loops via leaderelection.Start(). Using a separate lease here would risk split-brain
+	// where different replicas lead reconcilers vs background loops.
 	reconcilerMgr, err := reconciler.NewManager(restConfig, scheme, cliConfig.MetricsAddr, cliConfig.MetricsSecure,
-		cliConfig.MetricsCertPath, cliConfig.MetricsCertName, cliConfig.MetricsCertKey, cliConfig.ProbeAddr, cliConfig.EnableHTTP2, log)
+		cliConfig.MetricsCertPath, cliConfig.MetricsCertName, cliConfig.MetricsCertKey, cliConfig.ProbeAddr, cliConfig.EnableHTTP2,
+		false, "", "", log)
 	if err != nil {
 		return fmt.Errorf("create controller-runtime manager: %w", err)
 	}
@@ -499,19 +504,26 @@ func createEventRecorder(restConfig *rest.Config, scheme *runtime.Scheme,
 	return kubeClientset, recorder, nil
 }
 
+// resolveLeaseNamespace returns the namespace for leader election leases,
+// falling back to PodNamespace then "default".
+func resolveLeaseNamespace(cfg *cli.Config) string {
+	ns := cfg.LeaderElectNamespace
+	if ns == "" {
+		ns = cfg.PodNamespace
+	}
+	if ns == "" {
+		ns = "default"
+	}
+	return ns
+}
+
 // createLeaderElectionLock sets up the leader election resource lock and event broadcaster.
 // It returns the lock, broadcaster (caller must defer Shutdown), and any error.
 func createLeaderElectionLock(kubeClientset kubernetes.Interface, scheme *runtime.Scheme,
 	hostname string, cliConfig *cli.Config, log *zap.SugaredLogger,
 ) (resourcelock.Interface, record.EventBroadcaster, error) {
 	leaseName := cliConfig.LeaderElectID
-	leaseNamespace := cliConfig.LeaderElectNamespace
-	if leaseNamespace == "" {
-		leaseNamespace = cliConfig.PodNamespace
-	}
-	if leaseNamespace == "" {
-		leaseNamespace = "default"
-	}
+	leaseNamespace := resolveLeaseNamespace(cliConfig)
 	log.Infow("Creating leader election lease", "id", leaseName, "namespace", leaseNamespace)
 
 	// hostname was already retrieved for event source - retry if it was empty (critical for leader election)
@@ -629,13 +641,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 
 	// Leader election
 	if deps.cliConfig.EnableLeaderElection {
-		leaseNamespace := deps.cliConfig.LeaderElectNamespace
-		if leaseNamespace == "" {
-			leaseNamespace = deps.cliConfig.PodNamespace
-		}
-		if leaseNamespace == "" {
-			leaseNamespace = "default"
-		}
+		leaseNamespace := resolveLeaseNamespace(deps.cliConfig)
 		wg.Add(1)
 		go func() {
 			leaderelection.Start(ctx, wg, &leaderElectedCh, deps.resourceLock,

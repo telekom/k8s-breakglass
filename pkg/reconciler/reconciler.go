@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -43,8 +45,15 @@ func NewManager(
 	metricsCertKey string,
 	probeAddr string,
 	enableHTTP2 bool,
+	leaderElection bool,
+	leaderElectionID string,
+	leaderElectionNamespace string,
 	log *zap.SugaredLogger,
 ) (ctrl.Manager, error) {
+	if leaderElection && strings.TrimSpace(leaderElectionID) == "" {
+		return nil, fmt.Errorf("leaderElectionID must not be empty when leader election is enabled")
+	}
+
 	tlsOpts := []func(*tls.Config){}
 	if !enableHTTP2 {
 		tlsOpts = append(tlsOpts, cli.DisableHTTP2)
@@ -66,11 +75,13 @@ func NewManager(
 	}
 
 	return ctrl.NewManager(restCfg, ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		HealthProbeBindAddress: probeAddr,
-		WebhookServer:          nil,
-		LeaderElection:         false,
+		Scheme:                  scheme,
+		Metrics:                 metricsServerOptions,
+		HealthProbeBindAddress:  probeAddr,
+		WebhookServer:           nil,
+		LeaderElection:          leaderElection,
+		LeaderElectionID:        leaderElectionID,
+		LeaderElectionNamespace: leaderElectionNamespace,
 		Client: crclient.Options{
 			FieldOwner:      utils.FieldOwnerController,
 			FieldValidation: metav1.FieldValidationWarn,
@@ -81,6 +92,22 @@ func NewManager(
 			ReconciliationTimeout: 5 * time.Minute,
 		},
 	})
+}
+
+// CacheSyncer is the subset of cache.Cache needed by InformerSyncCheck.
+type CacheSyncer interface {
+	WaitForCacheSync(ctx context.Context) bool
+}
+
+// InformerSyncCheck returns a healthz.Checker that reports ready only when
+// the controller-runtime informer cache has completed its initial sync.
+func InformerSyncCheck(cache CacheSyncer) func(req *http.Request) error {
+	return func(req *http.Request) error {
+		if !cache.WaitForCacheSync(req.Context()) {
+			return fmt.Errorf("informer cache not synced")
+		}
+		return nil
+	}
 }
 
 // Setup starts the controller-runtime manager with field indices and IdentityProvider reconciler.
@@ -109,7 +136,7 @@ func Setup(
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
 		return fmt.Errorf("failed to add healthz check to reconciler manager: %w", err)
 	}
-	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+	if err := mgr.AddReadyzCheck("informer-sync", InformerSyncCheck(mgr.GetCache())); err != nil {
 		return fmt.Errorf("failed to add readyz check to reconciler manager: %w", err)
 	}
 	log.Info("Health check handlers registered")
