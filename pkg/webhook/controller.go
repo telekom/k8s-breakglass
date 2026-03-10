@@ -848,17 +848,21 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		// Find a primary prefix by matching incoming groups to allowed groups.
 		// Pre-build a map of valid prefix+group combinations for O(n) lookup
 		// instead of O(n*m*k) triple-nested loop.
+		// NOTE: This uses exact match (prefix+group == incoming group), which is
+		// stricter than the previous HasPrefix+HasSuffix approach. This is
+		// intentional and consistent with StripOIDCPrefixes elsewhere.
 		var primaryPrefix string
 		if incoming.Spec.Groups != nil && len(prefixes) > 0 {
-			validCombinations := make(map[string]string, len(prefixes)*len(allowedGroupsToCheck))
+			type prefixGroup struct{ prefix, group string }
+			validCombinations := make(map[string]prefixGroup, len(prefixes)*len(allowedGroupsToCheck))
 			for _, p := range prefixes {
 				for _, allowed := range allowedGroupsToCheck {
-					validCombinations[p+allowed] = p
+					validCombinations[p+allowed] = prefixGroup{prefix: p, group: allowed}
 				}
 			}
 			for _, ig := range incoming.Spec.Groups {
-				if p, ok := validCombinations[ig]; ok {
-					primaryPrefix = p
+				if pg, ok := validCombinations[ig]; ok {
+					primaryPrefix = pg.prefix
 					break
 				}
 			}
