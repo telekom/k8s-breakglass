@@ -420,14 +420,12 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 	})
 
 	t.Run("session approval times out in reconciler", func(t *testing.T) {
-		// Save and restore original timeout
-		origTimeout := breakglass.DebugSessionApprovalTimeout
-		breakglass.DebugSessionApprovalTimeout = 1 * time.Hour
-		defer func() { breakglass.DebugSessionApprovalTimeout = origTimeout }()
+		// Use the current configured approval timeout and create a session older than that
+		timeout := breakglass.DebugSessionApprovalTimeout
 
-		// Create session with CreationTimestamp >1h ago
+		// Create session with CreationTimestamp sufficiently in the past to exceed the timeout
 		session := newTestDebugSession("timeout-session", "test-template", "production", "user@example.com")
-		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * time.Hour))
+		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * timeout))
 		session.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 			Required: true,
@@ -464,12 +462,11 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 	})
 
 	t.Run("session within approval timeout requeues", func(t *testing.T) {
-		origTimeout := breakglass.DebugSessionApprovalTimeout
-		breakglass.DebugSessionApprovalTimeout = 24 * time.Hour
-		defer func() { breakglass.DebugSessionApprovalTimeout = origTimeout }()
+		// Use the current configured timeout and create a session well within it
+		timeout := breakglass.DebugSessionApprovalTimeout
 
 		session := newTestDebugSession("pending-session", "test-template", "production", "user@example.com")
-		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-timeout / 4))
 		session.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 			Required: true,
