@@ -177,12 +177,14 @@ spec:
   {{- /* Default: Kubeconfig Authentication */}}
   {{- else }}
   authType: Kubeconfig
+  {{- with required "cluster.kubeconfigSecretRef is required when using Kubeconfig auth" .Values.cluster.kubeconfigSecretRef }}
   kubeconfigSecretRef:
-    name: {{ .Values.cluster.kubeconfigSecretRef.name }}
-    namespace: {{ .Values.cluster.kubeconfigSecretRef.namespace }}
-    {{- if .Values.cluster.kubeconfigSecretRef.key }}
-    key: {{ .Values.cluster.kubeconfigSecretRef.key }}
+    name: {{ required "cluster.kubeconfigSecretRef.name is required when using Kubeconfig auth" .name | quote }}
+    namespace: {{ required "cluster.kubeconfigSecretRef.namespace is required when using Kubeconfig auth" .namespace | quote }}
+    {{- if .key }}
+    key: {{ .key | quote }}
     {{- end }}
+  {{- end }}
   {{- end }}
   
   {{- /* Optional: Identity Provider Restrictions */}}
