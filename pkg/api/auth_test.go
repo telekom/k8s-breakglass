@@ -148,17 +148,19 @@ func TestNewAuth_DefaultHTTPClient(t *testing.T) {
 	handler := NewAuth(log, config.Config{})
 
 	require.NotNil(t, handler.defaultHTTPClient, "defaultHTTPClient must be initialized")
-	assert.Equal(t, 10*time.Second, handler.defaultHTTPClient.Timeout)
+	assert.Equal(t, defaultOIDCTimeout, handler.defaultHTTPClient.Timeout)
 
 	transport, ok := handler.defaultHTTPClient.Transport.(*http.Transport)
 	require.True(t, ok, "transport must be *http.Transport")
 	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
 
 	// Verify the transport inherits DefaultTransport settings (proxy, timeouts)
-	defaultT := http.DefaultTransport.(*http.Transport)
-	assert.NotNil(t, transport.Proxy, "transport should inherit proxy from DefaultTransport")
-	assert.Equal(t, defaultT.MaxIdleConns, transport.MaxIdleConns)
-	assert.Equal(t, defaultT.IdleConnTimeout, transport.IdleConnTimeout)
+	defaultT, dtOK := http.DefaultTransport.(*http.Transport)
+	if dtOK {
+		assert.NotNil(t, transport.Proxy, "transport should inherit proxy from DefaultTransport")
+		assert.Equal(t, defaultT.MaxIdleConns, transport.MaxIdleConns)
+		assert.Equal(t, defaultT.IdleConnTimeout, transport.IdleConnTimeout)
+	}
 }
 
 func TestDefaultOIDCTransport(t *testing.T) {
@@ -166,9 +168,11 @@ func TestDefaultOIDCTransport(t *testing.T) {
 	require.NotNil(t, transport)
 	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
 
-	defaultT := http.DefaultTransport.(*http.Transport)
-	assert.Equal(t, defaultT.MaxIdleConns, transport.MaxIdleConns)
-	assert.Equal(t, defaultT.IdleConnTimeout, transport.IdleConnTimeout)
+	defaultT, ok := http.DefaultTransport.(*http.Transport)
+	if ok {
+		assert.Equal(t, defaultT.MaxIdleConns, transport.MaxIdleConns)
+		assert.Equal(t, defaultT.IdleConnTimeout, transport.IdleConnTimeout)
+	}
 }
 
 func TestAuthHeaderKey(t *testing.T) {
