@@ -58,11 +58,17 @@ var allowedJWTAlgs = []string{
 
 // jwksCacheEntry holds the JWKS and its position in the LRU list
 type jwksCacheEntry struct {
-	issuer           string
-	expectedAudience string // from IDP config; when non-empty, JWT aud claim is validated
-	jwks             keyfunc.Keyfunc
-	cancel           context.CancelFunc // stops the background refresh goroutine
+	issuer              string
+	expectedAudience    string // from IDP config; when non-empty, JWT aud claim is validated
+	audienceRefreshedAt time.Time
+	jwks                keyfunc.Keyfunc
+	cancel              context.CancelFunc // stops the background refresh goroutine
 }
+
+// audienceRefreshInterval controls how often expectedAudience is re-read from
+// the live IDP config on cache hits. This avoids a K8s API call on every request
+// while still picking up config changes within a reasonable window.
+const audienceRefreshInterval = 30 * time.Second
 
 type AuthHandler struct {
 	// Multi-IDP support: LRU cache for JWKS by issuer URL
@@ -168,13 +174,16 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		entry := elem.Value.(*jwksCacheEntry)
 		a.jwksMutex.Unlock()
 
-		// Refresh expectedAudience from the live IDP config so changes take
-		// effect without waiting for JWKS cache eviction or a restart.
-		if idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer); err == nil {
-			a.jwksMutex.Lock()
-			entry.expectedAudience = idpCfg.ExpectedAudience
-			a.jwksMutex.Unlock()
-			return entry.jwks, idpCfg.ExpectedAudience, nil
+		// Refresh expectedAudience from the live IDP config periodically so
+		// changes take effect without waiting for JWKS cache eviction or a restart.
+		if time.Since(entry.audienceRefreshedAt) > audienceRefreshInterval {
+			if idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer); err == nil {
+				a.jwksMutex.Lock()
+				entry.expectedAudience = idpCfg.ExpectedAudience
+				entry.audienceRefreshedAt = time.Now()
+				a.jwksMutex.Unlock()
+				return entry.jwks, idpCfg.ExpectedAudience, nil
+			}
 		}
 
 		return entry.jwks, entry.expectedAudience, nil
@@ -369,7 +378,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	}
 
 	// Add new entry at front (most recently used)
-	entry := &jwksCacheEntry{issuer: issuer, expectedAudience: idpCfg.ExpectedAudience, jwks: k, cancel: entryCancel}
+	entry := &jwksCacheEntry{issuer: issuer, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: time.Now(), jwks: k, cancel: entryCancel}
 	elem := a.jwksLRUList.PushFront(entry)
 	a.jwksCache[issuer] = elem
 
@@ -418,7 +427,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// The issuer is extracted from the unverified token, so we must ensure it
 	// is a well-formed HTTPS URL to prevent SSRF and log injection attacks.
 	if issuer != "" && !isValidIssuer(issuer) {
-		metrics.JWTValidationFailure.WithLabelValues("", "invalid_issuer_format").Inc()
+		metrics.JWTValidationFailure.WithLabelValues("unknown", "invalid_issuer_format").Inc()
 		RespondUnauthorizedWithMessage(c, "Invalid token issuer format")
 		c.Abort()
 		return false
@@ -451,7 +460,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		loadedJwks, loadedAudience, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
-			metrics.JWTValidationFailure.WithLabelValues("", "jwks_load_failed").Inc()
+			metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
 
 			// Try to provide helpful error message with IDP suggestions.
 			// Do not echo the raw issuer back to the client to avoid reconnaissance leaks.
@@ -485,7 +494,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		}
 	} else if a.idpLoader != nil && issuer == "" {
 		// Multi-IDP mode but no issuer in token: require issuer claim
-		metrics.JWTValidationFailure.WithLabelValues("", "missing_issuer").Inc()
+		metrics.JWTValidationFailure.WithLabelValues("unknown", "missing_issuer").Inc()
 		RespondUnauthorizedWithMessage(c, "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.")
 		c.Abort()
 		return false
@@ -532,6 +541,10 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			failureReason = "token_expired"
 		} else if errors.Is(err, jwt.ErrTokenInvalidAudience) {
 			failureReason = "audience_mismatch"
+		} else if errors.Is(err, jwt.ErrTokenMalformed) {
+			failureReason = "malformed_token"
+		} else if errors.Is(err, jwt.ErrTokenNotValidYet) {
+			failureReason = "token_not_yet_valid"
 		}
 		metrics.JWTValidationFailure.WithLabelValues(selectedIDP, failureReason).Inc()
 
