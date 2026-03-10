@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -2439,8 +2440,15 @@ func TestValidateAuxiliaryResources(t *testing.T) {
 // ============================================================================
 
 func TestParseDuration_EdgeCases(t *testing.T) {
-	// Verify the constant is as expected
-	assert.Equal(t, 365, maxDurationDays)
+	// Verify boundary behavior: exactly maxDurationDays succeeds, maxDurationDays+1 fails
+	maxDaysStr := fmt.Sprintf("%dd", maxDurationDays)
+	overMaxStr := fmt.Sprintf("%dd", maxDurationDays+1)
+
+	_, err := ParseDuration(maxDaysStr)
+	assert.NoError(t, err, "duration of exactly maxDurationDays should be valid")
+
+	_, err = ParseDuration(overMaxStr)
+	assert.Error(t, err, "duration exceeding maxDurationDays should fail")
 
 	tests := []struct {
 		name        string

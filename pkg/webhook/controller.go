@@ -851,18 +851,21 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		// NOTE: This uses exact match (prefix+group == incoming group), which is
 		// stricter than the previous HasPrefix+HasSuffix approach. This is
 		// intentional and consistent with StripOIDCPrefixes elsewhere.
+		// The map key is the full concatenated string (prefix+group), which is
+		// exactly the form incoming groups appear in. If two different
+		// (prefix, group) pairs produce the same concatenation, either prefix
+		// is a valid match for that incoming group string.
 		var primaryPrefix string
 		if incoming.Spec.Groups != nil && len(prefixes) > 0 {
-			type prefixGroup struct{ prefix, group string }
-			validCombinations := make(map[string]prefixGroup, len(prefixes)*len(allowedGroupsToCheck))
+			validCombinations := make(map[string]string, len(prefixes)*len(allowedGroupsToCheck))
 			for _, p := range prefixes {
 				for _, allowed := range allowedGroupsToCheck {
-					validCombinations[p+allowed] = prefixGroup{prefix: p, group: allowed}
+					validCombinations[p+allowed] = p
 				}
 			}
 			for _, ig := range incoming.Spec.Groups {
-				if pg, ok := validCombinations[ig]; ok {
-					primaryPrefix = pg.prefix
+				if p, ok := validCombinations[ig]; ok {
+					primaryPrefix = p
 					break
 				}
 			}
