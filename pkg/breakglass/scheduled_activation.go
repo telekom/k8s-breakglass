@@ -74,6 +74,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 				"session", ses.Name,
 				"namespace", ses.Namespace)
 			ses.Status.State = breakglassv1alpha1.SessionStateExpired
+			ses.Status.ReasonEnded = "missingScheduledStartTime"
 			retainFor := ParseRetainFor(ses.Spec, ssa.log)
 			ses.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 			ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
@@ -86,6 +87,8 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 			if err := ssa.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err != nil {
 				ssa.log.Errorw("failed to expire stuck scheduled session",
 					"session", ses.Name, "namespace", ses.Namespace, "error", err)
+			} else {
+				metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
 			}
 			continue
 		}

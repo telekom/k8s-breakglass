@@ -167,7 +167,8 @@ func TestSendSessionApprovalEmail_NoMailAvailable(t *testing.T) {
 	}
 
 	// Call without any mail queue or service - should log warning but not panic
-	ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	sent := ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	assert.False(t, sent, "should return false when mail is not available")
 }
 
 // TestSendSessionApprovalEmail_WithMailService tests approval email with mail service
@@ -206,7 +207,8 @@ func TestSendSessionApprovalEmail_WithMailService(t *testing.T) {
 		},
 	}
 
-	ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	sent := ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	assert.True(t, sent, "should return true when email is enqueued")
 
 	// Verify email was enqueued
 	messages := mockMailService.GetMessages()
@@ -250,7 +252,8 @@ func TestSendSessionApprovalEmail_WithScheduledTime(t *testing.T) {
 		},
 	}
 
-	ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	sent := ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	assert.True(t, sent, "should return true for scheduled session")
 
 	// Verify email was enqueued for scheduled session
 	assert.Len(t, mockMailService.GetMessages(), 1)
@@ -288,7 +291,8 @@ func TestSendSessionApprovalEmail_WithMailServiceDisabled(t *testing.T) {
 		},
 	}
 
-	ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	sent := ctrl.sendSessionApprovalEmail(logger.Sugar(), session)
+	assert.False(t, sent, "should return false when mail service is disabled")
 
 	// No email should be enqueued when mail service is disabled
 	assert.Len(t, mockMailService.GetMessages(), 0)
