@@ -177,6 +177,11 @@ helm upgrade breakglass charts/escalation-config \
    - Additional metrics for debug sessions
    - Some metric names may have changed
 
+3. **Session SAR Metrics Label Changes**
+   - The `group` label has been removed from `breakglass_webhook_session_sar_allowed_total`, `breakglass_webhook_session_sar_denied_total`, and `breakglass_webhook_session_sar_errors_total`
+   - These metrics now use only the `cluster` label
+   - **Action required**: Update any Prometheus queries or dashboards that reference the `group` label on these metrics
+
 #### Migration Steps
 
 Standard upgrade - no special migration required.
