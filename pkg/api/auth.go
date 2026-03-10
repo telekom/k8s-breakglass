@@ -186,7 +186,11 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 			client = a.defaultHTTPClient
 		}
 		if client == nil {
-			client = http.DefaultClient
+			// Fallback for struct-literal construction: ensure TLS 1.2 minimum
+			client = &http.Client{
+				Transport: defaultOIDCTransport(),
+				Timeout:   10 * time.Second,
+			}
 		}
 
 		// Try discovery
