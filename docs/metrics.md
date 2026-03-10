@@ -427,7 +427,7 @@ Consider creating Grafana dashboards with these panels:
 **Cardinality Considerations:**
 
 - Webhook SAR metrics include `namespace` and `subresource` labels which may have high cardinality in large clusters
-- Session SAR metrics use the `cluster` label for audit trails
+- Session SAR metrics use the `cluster` label for per-cluster monitoring and alerting
 - Consider using label relabeling in Prometheus to drop high-cardinality labels if needed
 
 **Example Prometheus relabeling:**
