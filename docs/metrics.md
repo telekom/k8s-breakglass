@@ -628,7 +628,7 @@ Track debug session lifecycle and resource usage.
 
 ## Field Index Metrics
 
-Track field indexer performance for efficient lookups.
+Track field indexer registrations at startup.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
