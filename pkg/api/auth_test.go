@@ -492,7 +492,7 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 
 // --- SEC-003: isValidHTTPSURL tests ---
 
-func TestIsValidIssuer(t *testing.T) {
+func TestIsValidHTTPSURL(t *testing.T) {
 	tests := []struct {
 		name   string
 		issuer string
@@ -519,6 +519,29 @@ func TestIsValidIssuer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isValidHTTPSURL(tt.issuer)
 			assert.Equal(t, tt.valid, got, "isValidHTTPSURL(%q)", tt.issuer)
+		})
+	}
+}
+
+func TestIsValidJWKSURL(t *testing.T) {
+	tests := []struct {
+		name  string
+		url   string
+		valid bool
+	}{
+		{name: "valid JWKS URL", url: "https://auth.example.com/.well-known/jwks.json", valid: true},
+		{name: "valid JWKS URL with query", url: "https://auth.example.com/jwks?version=2", valid: true},
+		{name: "HTTP rejected", url: "http://auth.example.com/jwks", valid: false},
+		{name: "empty string", url: "", valid: false},
+		{name: "fragment rejected", url: "https://auth.example.com/jwks#frag", valid: false},
+		{name: "userinfo rejected", url: "https://user:pass@auth.example.com/jwks", valid: false},
+		{name: "extremely long URL", url: "https://auth.example.com/" + strings.Repeat("a", maxIssuerLength), valid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidJWKSURL(tt.url)
+			assert.Equal(t, tt.valid, got, "isValidJWKSURL(%q)", tt.url)
 		})
 	}
 }
