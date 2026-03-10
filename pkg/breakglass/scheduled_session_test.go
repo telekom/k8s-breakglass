@@ -580,7 +580,7 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 		t.Errorf("session-already-approved should remain Approved, got %s", approvedSession.Status.State)
 	}
 
-	// Verify sessionMissingScheduledTime was NOT activated (edge case handling)
+	// Verify sessionMissingScheduledTime was expired (safety net for invalid state)
 	var missingTimeSession breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(context.Background(), client.ObjectKey{
 		Name:      "session-missing-time",
@@ -589,8 +589,8 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get session-missing-time: %v", err)
 	}
-	if missingTimeSession.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
-		t.Errorf("session-missing-time should still be WaitingForScheduledTime (invalid state), got %s", missingTimeSession.Status.State)
+	if missingTimeSession.Status.State != breakglassv1alpha1.SessionStateExpired {
+		t.Errorf("session-missing-time should be Expired (missing scheduled start time), got %s", missingTimeSession.Status.State)
 	}
 
 	// Verify email was sent for activated session only

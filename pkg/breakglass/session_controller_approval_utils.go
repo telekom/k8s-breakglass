@@ -430,12 +430,12 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 }
 
 // sendSessionApprovalEmail sends an approval notification to the requester
-func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session breakglassv1alpha1.BreakglassSession) {
+func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session breakglassv1alpha1.BreakglassSession) bool {
 	// Check if mail is available (either via service or legacy queue)
 	mailEnabled := (wc.mailService != nil && wc.mailService.IsEnabled()) || wc.mailQueue != nil
 	if !mailEnabled {
 		log.Warnw("mail not available, cannot send approval email", "session", session.Name)
-		return
+		return false
 	}
 
 	brandingName := "Breakglass"
@@ -486,7 +486,7 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 	body, err := mail.RenderApproved(params)
 	if err != nil {
 		log.Errorw("failed to render approval email template", "error", err, "session", session.Name)
-		return
+		return false
 	}
 
 	// Enqueue the email for sending via mail service (preferred) or legacy queue
@@ -498,20 +498,22 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 	if wc.mailService != nil && wc.mailService.IsEnabled() {
 		if err := wc.mailService.Enqueue(sessionID, recipients, subject, body); err != nil {
 			log.Errorw("failed to enqueue approval email via mail service", "error", err, "session", session.Name, "to", session.Spec.User)
-			return
+			return false
 		}
 		log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
-		return
+		return true
 	}
 
 	// Fallback to legacy queue
 	if wc.mailQueue != nil {
 		if err := wc.mailQueue.Enqueue(sessionID, recipients, subject, body); err != nil {
 			log.Errorw("failed to enqueue approval email", "error", err, "session", session.Name, "to", session.Spec.User)
-			return
+			return false
 		}
 		log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+		return true
 	}
+	return false
 }
 
 // sendSessionRejectionEmail sends a rejection notification to the requester

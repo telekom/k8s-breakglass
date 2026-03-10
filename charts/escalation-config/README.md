@@ -62,6 +62,15 @@ degraded and requests are rejected immediately instead of blocking on TCP timeou
 | `cluster.circuitBreaker.openDuration` | How long to wait before probing a tripped circuit | `"30s"` |
 | `cluster.circuitBreaker.halfOpenMaxRequests` | Max concurrent requests allowed in half-open state | `1` |
 
+> **Note:** When circuit breaker or telemetry options are enabled, this chart renders
+> ConfigMaps (`<release>-circuit-breaker`, `<release>-telemetry`) containing the
+> configuration fragments. These ConfigMaps are **not** automatically mounted into
+> the breakglass controller. You must either mount them as volumes in the controller
+> Deployment and reference them via the `--config-path` flag, or merge their contents
+> into the controller's primary `config.yaml`. See the
+> [Configuration Reference](https://github.com/telekom/k8s-breakglass/blob/main/docs/configuration-reference.md)
+> for details.
+
 #### Kubeconfig Authentication (Default)
 
 ```yaml

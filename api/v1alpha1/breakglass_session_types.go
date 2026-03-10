@@ -374,6 +374,8 @@ func validateMonotonicStatusFields(oldObj, newObj *BreakglassSession) field.Erro
 //	                  |
 //	                  +--> WaitingForScheduledTime --> Approved --> Expired
 //	                  |                    |
+//	                  |                    +--> Expired (terminal, e.g. missing schedule)
+//	                  |                    |
 //	                  |                    └--> Withdrawn (terminal)
 //	                  |
 //	                  +--> Rejected (terminal)
@@ -397,7 +399,7 @@ func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bo
 			to == SessionStateWithdrawn ||
 			to == SessionStateTimeout
 	case SessionStateWaitingForScheduledTime:
-		return to == SessionStateApproved || to == SessionStateWithdrawn
+		return to == SessionStateApproved || to == SessionStateWithdrawn || to == SessionStateExpired
 	case SessionStateApproved:
 		return to == SessionStateExpired || to == SessionStateIdleExpired
 	case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateIdleExpired, SessionStateTimeout:
