@@ -448,10 +448,11 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		return false
 	}
 
-	// Canonicalize issuer by trimming a single trailing slash so that
-	// "https://auth.example.com" and "https://auth.example.com/" map to the
-	// same cache/limiter key, consistent with LoadIdentityProviderByIssuer.
-	issuer = strings.TrimSuffix(issuer, "/")
+	// Canonicalize issuer by trimming all trailing slashes so that
+	// "https://auth.example.com", "https://auth.example.com/" and
+	// "https://auth.example.com//" all map to the same cache/limiter key,
+	// consistent with LoadIdentityProviderByIssuer.
+	issuer = strings.TrimRight(issuer, "/")
 
 	startTime := time.Now()
 
@@ -474,6 +475,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		loadedJwks, loadedAudience, loadedIDPName, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
+			metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
 			metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
 
 			// Try to provide helpful error message with IDP suggestions.
@@ -779,7 +781,7 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 
 	// Canonicalize issuer consistently with authenticate() to avoid
 	// duplicate cache entries from trailing slash variations.
-	issuer = strings.TrimSuffix(issuer, "/")
+	issuer = strings.TrimRight(issuer, "/")
 
 	// Get JWKS for verification
 	jwks, expectedAudience, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)

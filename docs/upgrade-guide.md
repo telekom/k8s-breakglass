@@ -72,9 +72,9 @@ The following Prometheus metrics have had their `issuer` label renamed to `ident
 - `breakglass_jwt_validation_requests_total`
 - `breakglass_jwt_validation_success_total`
 - `breakglass_jwt_validation_failure_total`
+- `breakglass_jwt_validation_duration_seconds`
 - `breakglass_jwks_cache_hits_total`
 - `breakglass_jwks_cache_misses_total`
-- `breakglass_jwks_cache_evictions_total`
 
 **Not renamed** (these retain the `issuer` label):
 - `breakglass_jwks_fetch_requests_total`
