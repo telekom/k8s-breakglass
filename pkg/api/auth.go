@@ -219,8 +219,9 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	if elem, exists := a.jwksCache[issuer]; exists {
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
+		result := &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience, idpName: entry.idpName}
 		a.jwksMutex.Unlock()
-		return &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience, idpName: entry.idpName}, nil
+		return result, nil
 	}
 	a.jwksMutex.Unlock()
 
@@ -232,9 +233,12 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	// refreshes are bounded by keyfunc's own per-URL deduplication and the
 	// configurable RefreshInterval (set to 1h above).
 	if lastFetch, ok := a.jwksFetchLimiter.Load(issuer); ok {
-		if t, ok := lastFetch.(time.Time); ok && time.Since(t) < jwksFetchMinInterval {
-			retryAfter := jwksFetchMinInterval - time.Since(t)
-			return nil, fmt.Errorf("jwks fetch rate limited; retry after %s", retryAfter.Truncate(time.Millisecond))
+		if t, ok := lastFetch.(time.Time); ok {
+			elapsed := time.Since(t)
+			if elapsed < jwksFetchMinInterval {
+				retryAfter := jwksFetchMinInterval - elapsed
+				return nil, fmt.Errorf("jwks fetch rate limited; retry after %s", retryAfter.Truncate(time.Millisecond))
+			}
 		}
 	}
 
