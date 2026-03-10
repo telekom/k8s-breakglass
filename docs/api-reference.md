@@ -305,44 +305,43 @@ Authorization: Bearer <token>
 
 **Authorization:** Only users who can approve the escalation (approvers or approver groups)
 
-**Response:** JSON object with the updated session and notification status:
+**Response:** Complete updated `BreakglassSession` resource with approved status.
+
+When the approval notification email is successfully enqueued, the response includes an `X-Notification-Sent: true` header.
 
 ```json
 {
-  "session": {
-    "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
-    "kind": "BreakglassSession",
-    "metadata": {
-      "name": "session-abc123",
-      "namespace": "breakglass-system",
-      "uid": "...",
-      "creationTimestamp": "2024-01-15T10:30:00Z"
-    },
-    "spec": {
-      "cluster": "prod-cluster-1",
-      "user": "user@example.com",
-      "grantedGroup": "cluster-admin",
-      "requestReason": "Emergency access for incident response"
-    },
-    "status": {
-      "state": "Approved",
-      "approvedAt": "2024-01-15T10:31:00Z",
-      "expiresAt": "2024-01-15T12:31:00Z",
-      "approver": "admin@example.com",
-      "approvers": ["admin@example.com"],
-      "approvalReason": "Verified identity and incident details",
-      "conditions": [
-        {
-          "type": "Approved",
-          "status": "True",
-          "lastTransitionTime": "2024-01-15T10:31:00Z",
-          "reason": "ApprovedByUser",
-          "message": "Session approved by admin@example.com"
-        }
-      ]
-    }
+  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
+  "kind": "BreakglassSession",
+  "metadata": {
+    "name": "session-abc123",
+    "namespace": "breakglass-system",
+    "uid": "...",
+    "creationTimestamp": "2024-01-15T10:30:00Z"
   },
-  "notificationSent": true
+  "spec": {
+    "cluster": "prod-cluster-1",
+    "user": "user@example.com",
+    "grantedGroup": "cluster-admin",
+    "requestReason": "Emergency access for incident response"
+  },
+  "status": {
+    "state": "Approved",
+    "approvedAt": "2024-01-15T10:31:00Z",
+    "expiresAt": "2024-01-15T12:31:00Z",
+    "approver": "admin@example.com",
+    "approvers": ["admin@example.com"],
+    "approvalReason": "Verified identity and incident details",
+    "conditions": [
+      {
+        "type": "Approved",
+        "status": "True",
+        "lastTransitionTime": "2024-01-15T10:31:00Z",
+        "reason": "ApprovedByUser",
+        "message": "Session approved by admin@example.com"
+      }
+    ]
+  }
 }
 ```
 
