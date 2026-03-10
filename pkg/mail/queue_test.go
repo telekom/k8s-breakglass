@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 )
@@ -502,7 +503,8 @@ func TestQueue_PanicRecoveryBehavior(t *testing.T) {
 
 	// Enqueue enough items to trigger maxPanicRecoveries panics
 	for i := range maxPanicRecoveries + 1 {
-		_ = queue.Enqueue("panic-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
+		err := queue.Enqueue("panic-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
+		require.NoError(t, err, "Enqueue should succeed before worker exhaustion")
 	}
 
 	// Poll until panics settle instead of using a fixed sleep
@@ -513,6 +515,12 @@ func TestQueue_PanicRecoveryBehavior(t *testing.T) {
 	// Worker should have panicked exactly maxPanicRecoveries times and then stopped
 	assert.Equal(t, maxPanicRecoveries, panicSender.PanicCount(),
 		"worker should stop restarting after %d consecutive panics", maxPanicRecoveries)
+
+	// After max panics the queue context is cancelled, so Enqueue should fail
+	assert.Eventually(t, func() bool {
+		err := queue.Enqueue("post-failure", []string{"user@example.com"}, "Subject", "Body")
+		return err != nil
+	}, 5*time.Second, 50*time.Millisecond, "Enqueue should return error after worker exhaustion")
 }
 
 // IntermittentPanickingSender panics for certain send counts and succeeds otherwise,
