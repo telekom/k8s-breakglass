@@ -211,4 +211,48 @@ describe("DebugSessionDetails", () => {
     const html = wrapper.html();
     expect(html).toContain("Missing session name in URL");
   });
+
+  it("shows error when route param name is undefined", async () => {
+    (mockRouteParams as Record<string, unknown>).name = undefined;
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSession).not.toHaveBeenCalled();
+    const html = wrapper.html();
+    expect(html).toContain("Missing session name in URL");
+  });
+
+  it("shows error when route param name is an array", async () => {
+    (mockRouteParams as Record<string, unknown>).name = ["a", "b"];
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSession).not.toHaveBeenCalled();
+    const html = wrapper.html();
+    expect(html).toContain("Missing session name in URL");
+  });
 });
