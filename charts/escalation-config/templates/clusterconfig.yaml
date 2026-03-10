@@ -178,8 +178,8 @@ spec:
   {{- else }}
   authType: Kubeconfig
   kubeconfigSecretRef:
-    name: {{ .Values.cluster.kubeconfigSecretRef.name }}
-    namespace: {{ .Values.cluster.kubeconfigSecretRef.namespace }}
+    name: {{ required "cluster.kubeconfigSecretRef.name is required when using Kubeconfig auth" .Values.cluster.kubeconfigSecretRef.name }}
+    namespace: {{ required "cluster.kubeconfigSecretRef.namespace is required when using Kubeconfig auth" .Values.cluster.kubeconfigSecretRef.namespace }}
     {{- if .Values.cluster.kubeconfigSecretRef.key }}
     key: {{ .Values.cluster.kubeconfigSecretRef.key }}
     {{- end }}
