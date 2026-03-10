@@ -292,13 +292,6 @@ bgctl update rollback
 
 - `0` - Success
 - `1` - General error
-- `2` - Invalid arguments/usage
-- `3` - Authentication required/failed
-- `4` - Authorization denied
-- `5` - Resource not found
-- `6` - Conflict
-- `7` - Server error
-- `8` - Timeout
 
 ## Environment Variables
 

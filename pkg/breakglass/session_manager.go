@@ -2,7 +2,6 @@ package breakglass
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -40,8 +39,6 @@ func (c *SessionManager) getLogger() *zap.SugaredLogger {
 	})
 	return zap.S()
 }
-
-var ErrAccessNotFound = errors.New("access not found")
 
 // SessionManagerOption configures a SessionManager during construction.
 type SessionManagerOption func(*SessionManager)

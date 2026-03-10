@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docs: wrong file reference** ([#530](https://github.com/telekom/k8s-breakglass/issues/530)): Fixed `copilot-instructions.md` referencing non-existent `pkg/policy/evaluator.go` → `pkg/policy/deny.go`
+- **Docs: unimplemented exit codes** ([#542](https://github.com/telekom/k8s-breakglass/issues/542)): Removed documented exit codes 2-8 from `docs/cli.md` that were never implemented in `bgctl`
+
+### Removed
+
+- **Dead code: unused `ErrAccessNotFound`** ([#534](https://github.com/telekom/k8s-breakglass/issues/534)): Removed unused sentinel error from `pkg/breakglass/session_manager.go`
+- **Dead code: 6 unwired metrics** ([#540](https://github.com/telekom/k8s-breakglass/issues/540)): Removed `IndexLookupTotal`, `IndexFallbackScans`, `AuxiliaryResourceFailures`, `AuditSinkHealthy`, `AuditSinkConsecutiveFailures`, `AuditSinkLastSuccessTime` — declared and registered but never incremented anywhere
+- **Helm: orphaned PodDisruptionBudget** ([#541](https://github.com/telekom/k8s-breakglass/issues/541)): Removed PDB template from `escalation-config` chart — it references a Deployment that doesn't exist in this chart
+
 ### Security
 
 - **JWT audience validation preparation (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459), [#472](https://github.com/telekom/k8s-breakglass/issues/472)): Added `clientID` plumbing from IDP config to JWT authenticator for future audience validation; audience validation is intentionally disabled by default as it depends on audience protocol mappers that are not configured in all environments — a dedicated CRD field is needed before enabling

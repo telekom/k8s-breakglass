@@ -632,8 +632,6 @@ Track field indexer performance for efficient lookups.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `breakglass_index_lookup_total` | Counter | `index` | Index lookups performed |
-| `breakglass_index_fallback_scans_total` | Counter | `index` | Fallback full-scans when index misses |
 | `breakglass_index_registrations` | Gauge | | Number of registered field indexes |
 
 ## Cluster Cache Metrics
