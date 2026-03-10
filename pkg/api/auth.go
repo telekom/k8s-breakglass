@@ -172,21 +172,26 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		// Move to front of LRU list (mark as recently used)
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
+		// Snapshot mutable fields under the lock to avoid a data race:
+		// another goroutine could write these fields concurrently.
+		cachedJWKS := entry.jwks
+		cachedAudience := entry.expectedAudience
+		lastRefresh := entry.audienceRefreshedAt
 		a.jwksMutex.Unlock()
 
 		// Refresh expectedAudience from the live IDP config periodically so
 		// changes take effect without waiting for JWKS cache eviction or a restart.
-		if time.Since(entry.audienceRefreshedAt) > audienceRefreshInterval {
+		if time.Since(lastRefresh) > audienceRefreshInterval {
 			if idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer); err == nil {
 				a.jwksMutex.Lock()
 				entry.expectedAudience = idpCfg.ExpectedAudience
 				entry.audienceRefreshedAt = time.Now()
 				a.jwksMutex.Unlock()
-				return entry.jwks, idpCfg.ExpectedAudience, nil
+				return cachedJWKS, idpCfg.ExpectedAudience, nil
 			}
 		}
 
-		return entry.jwks, entry.expectedAudience, nil
+		return cachedJWKS, cachedAudience, nil
 	}
 	a.jwksMutex.Unlock()
 
@@ -215,9 +220,13 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	}
 	a.jwksMutex.Unlock()
 
-	// SEC-004: per-issuer rate limiting on JWKS fetches.
-	// Prevents an attacker from flooding requests with different kid values
-	// to trigger excessive JWKS fetches against the upstream OIDC provider.
+	// SEC-004: per-issuer rate limiting on initial JWKS fetches.
+	// Prevents an attacker from flooding requests with crafted issuer claims
+	// to trigger excessive JWKS fetches against upstream OIDC providers.
+	// Note: keyfunc/v3 background refreshes (on unknown kid) bypass this limiter
+	// because they are managed internally by keyfunc via RefreshInterval. Those
+	// refreshes are bounded by keyfunc's own per-URL deduplication and the
+	// configurable RefreshInterval (set to 1h above).
 	if lastFetch, ok := a.jwksFetchLimiter.Load(issuer); ok {
 		if t, ok := lastFetch.(time.Time); ok && time.Since(t) < jwksFetchMinInterval {
 			return nil, fmt.Errorf("JWKS fetch rate limited for issuer")
@@ -310,7 +319,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 					if err := json.NewDecoder(resp.Body).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
 						// Validate the discovered JWKS URI to prevent SSRF if an IDP
 						// is compromised and returns a malicious jwks_uri.
-						if isValidIssuer(discovery.JWKSURI) {
+						if isValidHTTPSURL(discovery.JWKSURI) {
 							jwksURL = discovery.JWKSURI
 							discoverySuccess = true
 						} else {
@@ -426,7 +435,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// SEC-003: Validate issuer format before using it for JWKS routing.
 	// The issuer is extracted from the unverified token, so we must ensure it
 	// is a well-formed HTTPS URL to prevent SSRF and log injection attacks.
-	if issuer != "" && !isValidIssuer(issuer) {
+	if issuer != "" && !isValidHTTPSURL(issuer) {
 		metrics.JWTValidationFailure.WithLabelValues("unknown", "invalid_issuer_format").Inc()
 		RespondUnauthorizedWithMessage(c, "Invalid token issuer format")
 		c.Abort()
@@ -546,7 +555,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		} else if errors.Is(err, jwt.ErrTokenNotValidYet) {
 			failureReason = "token_not_yet_valid"
 		}
-		metrics.JWTValidationFailure.WithLabelValues(selectedIDP, failureReason).Inc()
+		metrics.JWTValidationFailure.WithLabelValues(idpLabel, failureReason).Inc()
 
 		errorMsg := "Token verification failed. Please re-authenticate."
 		RespondUnauthorizedWithMessage(c, errorMsg)
@@ -554,9 +563,9 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		return false
 	}
 
-	// Record successful validation with duration — use resolved IDP name (bounded cardinality)
-	metrics.JWTValidationSuccess.WithLabelValues(selectedIDP).Inc()
-	metrics.JWTValidationDuration.WithLabelValues(selectedIDP).Observe(time.Since(startTime).Seconds())
+	// Record successful validation with duration — use normalized IDP label (bounded cardinality)
+	metrics.JWTValidationSuccess.WithLabelValues(idpLabel).Inc()
+	metrics.JWTValidationDuration.WithLabelValues(idpLabel).Observe(time.Since(startTime).Seconds())
 
 	// Extract core identity claims
 	userID := claims["sub"]
@@ -763,7 +772,7 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 	}
 
 	// SEC-003: reject malformed issuers in optional auth path too
-	if issuer != "" && !isValidIssuer(issuer) {
+	if issuer != "" && !isValidHTTPSURL(issuer) {
 		return ""
 	}
 
@@ -812,11 +821,11 @@ type RateLimiter interface {
 	Allow(c *gin.Context) (allowed bool, isAuthenticated bool)
 }
 
-// isValidIssuer validates that a JWT issuer claim is a well-formed HTTPS URL
-// with reasonable length limits. Rejects query strings, fragments, and userinfo
-// to prevent issuers that differ only by non-path components from creating
-// many distinct-but-same-origin entries. (SEC-003)
-func isValidIssuer(issuer string) bool {
+// isValidHTTPSURL validates that a URL is a well-formed HTTPS URL with reasonable
+// length limits. Rejects query strings, fragments, and userinfo to prevent URLs
+// that differ only by non-path components from creating many distinct entries.
+// Used for both JWT issuer validation (SEC-003) and OIDC discovery jwks_uri validation.
+func isValidHTTPSURL(issuer string) bool {
 	if len(issuer) == 0 || len(issuer) > maxIssuerLength {
 		return false
 	}

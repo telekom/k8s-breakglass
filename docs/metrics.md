@@ -546,8 +546,8 @@ Track JWT token validation and JWKS key fetching performance.
 | `breakglass_jwt_validation_success_total` | Counter | `identity_provider` | Successful JWT validations |
 | `breakglass_jwt_validation_failure_total` | Counter | `identity_provider`, `reason` | Failed JWT validations |
 | `breakglass_jwt_validation_duration_seconds` | Histogram | `identity_provider` | JWT validation latency |
-| `breakglass_jwks_cache_hits_total` | Counter | `issuer` | JWKS key cache hits |
-| `breakglass_jwks_cache_misses_total` | Counter | `issuer` | JWKS key cache misses |
+| `breakglass_jwks_cache_hits_total` | Counter | `identity_provider` | JWKS key cache hits |
+| `breakglass_jwks_cache_misses_total` | Counter | `identity_provider` | JWKS key cache misses |
 | `breakglass_jwks_fetch_requests_total` | Counter | `issuer`, `status` | JWKS endpoint fetch attempts |
 | `breakglass_jwks_fetch_duration_seconds` | Histogram | `issuer` | JWKS endpoint fetch latency |
 | `breakglass_jwks_cache_size` | Gauge | `issuer` | Number of cached JWKS key sets |
