@@ -501,10 +501,20 @@ func TestQueue_PanicRecoveryBehavior(t *testing.T) {
 		_ = queue.Stop(context.Background())
 	}()
 
-	// Enqueue enough items to trigger maxPanicRecoveries panics
+	// Enqueue items one at a time, waiting for each panic to be processed.
+	// The worker can cancel the queue after reaching maxPanicRecoveries,
+	// so later enqueues may legitimately fail.
 	for i := range maxPanicRecoveries + 1 {
 		err := queue.Enqueue("panic-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
-		require.NoError(t, err, "Enqueue should succeed before worker exhaustion")
+		if err != nil {
+			// Queue was cancelled after the worker hit the panic limit — that's expected
+			break
+		}
+		// Wait for this panic to be counted before enqueueing the next item
+		expected := min(i+1, maxPanicRecoveries)
+		assert.Eventually(t, func() bool {
+			return panicSender.PanicCount() >= expected
+		}, 5*time.Second, 50*time.Millisecond, "worker should have panicked at least %d times", expected)
 	}
 
 	// Poll until panics settle instead of using a fixed sleep
