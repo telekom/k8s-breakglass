@@ -181,7 +181,7 @@ spec:
     name: {{ required "cluster.kubeconfigSecretRef.name is required when using Kubeconfig auth" .Values.cluster.kubeconfigSecretRef.name | quote }}
     namespace: {{ required "cluster.kubeconfigSecretRef.namespace is required when using Kubeconfig auth" .Values.cluster.kubeconfigSecretRef.namespace | quote }}
     {{- if .Values.cluster.kubeconfigSecretRef.key }}
-    key: {{ .Values.cluster.kubeconfigSecretRef.key }}
+    key: {{ .Values.cluster.kubeconfigSecretRef.key | quote }}
     {{- end }}
   {{- end }}
   
