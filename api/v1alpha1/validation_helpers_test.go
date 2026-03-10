@@ -2238,7 +2238,7 @@ func TestParseDuration_InvalidFormats(t *testing.T) {
 		{"abc", "non-numeric"},
 		{"1x", "unknown unit"},
 		{"1d1x", "invalid unit after days"},
-		{"366d", "exceeds max days"},
+		{fmt.Sprintf("%dd", maxDurationDays+1), "exceeds max days"},
 		{"999999999d", "overflow days"},
 	}
 

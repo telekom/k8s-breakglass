@@ -44,10 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug session metrics docs labels** ([#537](https://github.com/telekom/k8s-breakglass/issues/537)): Fixed incorrect label definitions for 10 of 13 debug session metrics in `docs/metrics.md` to match `pkg/metrics/metrics.go`
 - **ParseDuration bounds checking** ([#525](https://github.com/telekom/k8s-breakglass/issues/525)): Added maximum 365-day limit to `ParseDuration` to prevent integer overflow from extremely large day values (e.g., `999999999d`)
 
-### Changed
-
-- **Webhook OIDC prefix matching** ([#539](https://github.com/telekom/k8s-breakglass/issues/539)): Replaced O(n*m*k) triple-nested loop in `authorizeViaSessions` with O(n) map-based lookup. This changes matching semantics from `HasPrefix+HasSuffix` to exact `prefix+group` equality, which is stricter but consistent with `StripOIDCPrefixes` elsewhere. Groups previously matched via suffix (e.g., `oidc:cluster-admins` matching allowed group `admins`) will no longer match
-
 ### Removed
 
 - **Dead code: unused `ErrAccessNotFound`** ([#534](https://github.com/telekom/k8s-breakglass/issues/534)): Removed unused sentinel error from `pkg/breakglass/session_manager.go`
@@ -96,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Webhook OIDC prefix matching** ([#539](https://github.com/telekom/k8s-breakglass/issues/539)): Replaced O(n*m*k) triple-nested loop in `authorizeViaSessions` with O(n) map-based lookup. This changes matching semantics from `HasPrefix+HasSuffix` to exact `prefix+group` equality, which is stricter but consistent with `StripOIDCPrefixes` elsewhere. Groups previously matched via suffix (e.g., `oidc:cluster-admins` matching allowed group `admins`) will no longer match
 - **Reconciler: meaningful readiness probe** ([#460](https://github.com/telekom/k8s-breakglass/issues/460)): Replaced readyz "ping" with informer cache sync check — readiness now reflects whether the controller-runtime cache is warmed
 - **Reconciler: controller-runtime leader election** ([#464](https://github.com/telekom/k8s-breakglass/issues/464)): Reconciler manager now participates in leader election (when enabled) to prevent writes from non-leader replicas
 - **Extracted `resolveLeaseNamespace` helper** in `cmd/main.go` to DRY two inline namespace resolution blocks
