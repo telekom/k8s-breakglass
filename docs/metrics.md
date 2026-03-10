@@ -628,13 +628,11 @@ Track debug session lifecycle and resource usage.
 
 ## Field Index Metrics
 
-Track field indexer performance for efficient lookups.
+Track field indexer registrations at startup.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `breakglass_index_lookup_total` | Counter | `index` | Index lookups performed |
-| `breakglass_index_fallback_scans_total` | Counter | `index` | Fallback full-scans when index misses |
-| `breakglass_index_registrations` | Gauge | | Number of registered field indexes |
+| `breakglass_index_registrations` | Gauge | `resource` | Number of registered field indexes |
 
 ## Cluster Cache Metrics
 

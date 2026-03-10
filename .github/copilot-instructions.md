@@ -119,7 +119,7 @@ npm test           # Vitest
 | Debug sessions | `pkg/breakglass/debug/debug_session_*.go`, `api/v1alpha1/debug_session_types.go` |
 | REST API | `pkg/api/server.go`, handlers in `pkg/api/` |
 | Cluster connectivity | `pkg/cluster/client_provider.go` |
-| Policy evaluation | `pkg/policy/evaluator.go` |
+| Policy evaluation | `pkg/policy/deny.go` |
 | Dev environment | `config/dev/`, `e2e/kind-setup-single.sh` |
 | Helm chart | `charts/escalation-config/` |
 

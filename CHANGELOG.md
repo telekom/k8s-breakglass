@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Docs: wrong file reference** ([#530](https://github.com/telekom/k8s-breakglass/issues/530)): Fixed `.github/copilot-instructions.md` referencing non-existent `pkg/policy/evaluator.go` → `pkg/policy/deny.go`
+- **Docs: unimplemented exit codes** ([#542](https://github.com/telekom/k8s-breakglass/issues/542)): Removed documented exit codes 2-8 from `docs/cli.md` that were never implemented in `bgctl`
 - **Leader election race condition** ([#461](https://github.com/telekom/k8s-breakglass/issues/461)): Added mutex to protect concurrent `*leaderElectedCh` access from `OnStartedLeading`/`OnStoppedLeading` callbacks in `pkg/leaderelection/`
 - **Dockerfile: fragile single-file COPY** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Changed `COPY cmd/main.go cmd/main.go` to `COPY cmd/ cmd/` so new files added to `cmd/` are automatically included in builds
 - **Makefile: test flag deduplication** ([#474](https://github.com/telekom/k8s-breakglass/issues/474) partial): Factored duplicated `-race -count=…` flags into `GO_TEST_FLAGS` variable used by `test`, `test-controller`, and `test-cli` targets; fixed e2e exclusion grep `grep -v /e2e` → `grep -vE '/e2e($|/)'` to prevent false exclusion; `GO_TEST_COUNT` defaults to `1` and supports empty override to re-enable caching
@@ -27,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead code: unused `ErrAccessNotFound`** ([#534](https://github.com/telekom/k8s-breakglass/issues/534)): Removed unused sentinel error from `pkg/breakglass/session_manager.go`
+- **Dead code: 6 unwired metrics** ([#540](https://github.com/telekom/k8s-breakglass/issues/540)): Removed `IndexLookupTotal`, `IndexFallbackScans`, `AuxiliaryResourceFailures`, `AuditSinkHealthy`, `AuditSinkConsecutiveFailures`, `AuditSinkLastSuccessTime` — declared and registered but never incremented anywhere
+- **Helm: orphaned PodDisruptionBudget** ([#541](https://github.com/telekom/k8s-breakglass/issues/541)): Removed PDB template from `escalation-config` chart — it references a Deployment that doesn't exist in this chart
 - **Gateway API documentation** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Removed `docs/gateway-api-configuration.md` — feature not shipped yet
 - **OpenTelemetry tracing documentation and Helm values** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Removed `docs/opentelemetry-tracing.md`, `configmap-telemetry.yaml` template, and `cluster.telemetry` Helm values — tracing not yet implemented
 - **Deprecated `logger-console` module** ([#421](https://github.com/telekom/k8s-breakglass/issues/421)): Deleted `frontend/src/services/logger-console.ts` — all logging consolidated into `@/services/logger`
@@ -36,7 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Helm chart `values.schema.json`** ([#473](https://github.com/telekom/k8s-breakglass/issues/473) OPS-004): Added JSON Schema validation for the escalation-config Helm chart values, enabling IDE autocompletion and `helm lint` validation
 - **Cache-Control headers for frontend assets** ([#473](https://github.com/telekom/k8s-breakglass/issues/473) OPS-006): `/assets/` paths now return `Cache-Control: public, max-age=31536000, immutable` for Vite-hashed static files
 - **OTel init failure metric and `--otel-required` flag** ([#473](https://github.com/telekom/k8s-breakglass/issues/473) OPS-007): New `breakglass_telemetry_init_failed` gauge is set to 1 when OpenTelemetry initialization fails; new `--otel-required` flag makes this failure fatal instead of degrading gracefully
-- **PodDisruptionBudget template** ([#473](https://github.com/telekom/k8s-breakglass/issues/473) OPS-011): New `pdb.yaml` Helm template with `pdb.enabled`, `pdb.minAvailable`, `pdb.maxUnavailable` values for HA deployments
 - **Extended OIDC authentication modes** ([#479](https://github.com/telekom/k8s-breakglass/issues/479)): Added offline refresh token flow, token exchange support, and configurable fallback policy (`fail` or `skip`) for ClusterConfig OIDC authentication. Includes OIDC secret watching for automatic cache invalidation, E2E tests, and comprehensive documentation
 - **Test coverage for `awaitShutdownSignal`** ([#469](https://github.com/telekom/k8s-breakglass/issues/469)): Added 4 unit tests in `cmd/main_test.go` covering signal-handling, error-propagation, unbuffered-channel, and race scenarios; added 3 tests in `pkg/webhook/webhook_controller_test.go` verifying functional option injection, default initialization, and nil guards
 - **Cached Kubernetes Clientset per cluster** ([#457](https://github.com/telekom/k8s-breakglass/issues/457)): `fetchPodFromCluster` and `fetchNamespaceLabels` in the webhook controller now use a cached `kubernetes.Clientset` per cluster (with TTL-based eviction) instead of creating a new clientset on every call

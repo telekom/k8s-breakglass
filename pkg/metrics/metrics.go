@@ -70,14 +70,6 @@ var (
 	}, []string{"cluster"})
 
 	// Field index metrics
-	IndexLookupTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "breakglass_index_lookup_total",
-		Help: "Total number of field index lookups",
-	}, []string{"resource", "field", "result"})
-	IndexFallbackScans = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "breakglass_index_fallback_scans_total",
-		Help: "Total number of fallback full scans when index lookup failed or was unavailable",
-	}, []string{"resource", "field"})
 	IndexRegistrationTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "breakglass_index_registrations",
 		Help: "Number of successfully registered field indexes (should equal expected count at startup)",
@@ -489,10 +481,6 @@ var (
 		Name: "breakglass_auxiliary_resource_cleanups_total",
 		Help: "Total number of auxiliary resources cleaned up",
 	}, []string{"cluster", "category", "status"})
-	AuxiliaryResourceFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "breakglass_auxiliary_resource_failures_total",
-		Help: "Total number of auxiliary resource deployment failures",
-	}, []string{"cluster", "category", "reason"})
 
 	// Debug session cluster binding metrics
 	ClusterBindingsResolved = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -560,18 +548,6 @@ var (
 		Name: "breakglass_audit_circuit_breaker_state_transitions_total",
 		Help: "Total number of circuit breaker state transitions",
 	}, []string{"sink", "from", "to"})
-	AuditSinkHealthy = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "breakglass_audit_sink_healthy",
-		Help: "Whether the audit sink is healthy (1) or not (0), based on circuit breaker state",
-	}, []string{"sink"})
-	AuditSinkConsecutiveFailures = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "breakglass_audit_sink_consecutive_failures",
-		Help: "Number of consecutive failures for the audit sink",
-	}, []string{"sink"})
-	AuditSinkLastSuccessTime = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "breakglass_audit_sink_last_success_timestamp",
-		Help: "Unix timestamp of the last successful write to the sink",
-	}, []string{"sink"})
 
 	// Session activity tracking metrics
 	SessionActivityRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -632,8 +608,6 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ClusterCircuitBreakerConsecutiveFailures)
 
 	// Register field index metrics
-	ctrlmetrics.Registry.MustRegister(IndexLookupTotal)
-	ctrlmetrics.Registry.MustRegister(IndexFallbackScans)
 	ctrlmetrics.Registry.MustRegister(IndexRegistrationTotal)
 
 	ctrlmetrics.Registry.MustRegister(WebhookSARRequests)
@@ -745,7 +719,6 @@ func init() {
 	// Register auxiliary resource metrics
 	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceDeployments)
 	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceCleanups)
-	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceFailures)
 	ctrlmetrics.Registry.MustRegister(ClusterBindingsResolved)
 
 	// Register audit metrics
@@ -765,9 +738,6 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(AuditCircuitBreakerState)
 	ctrlmetrics.Registry.MustRegister(AuditCircuitBreakerRejections)
 	ctrlmetrics.Registry.MustRegister(AuditCircuitBreakerStateTransitions)
-	ctrlmetrics.Registry.MustRegister(AuditSinkHealthy)
-	ctrlmetrics.Registry.MustRegister(AuditSinkConsecutiveFailures)
-	ctrlmetrics.Registry.MustRegister(AuditSinkLastSuccessTime)
 
 	// Register session activity tracking metrics
 	ctrlmetrics.Registry.MustRegister(SessionActivityRequests)
