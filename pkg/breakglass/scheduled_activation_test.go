@@ -165,6 +165,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		require.NoError(t, err)
 		// Session should be expired — nil ScheduledStartTime is invalid
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
+		assert.False(t, updated.Status.ExpiresAt.IsZero(), "ExpiresAt should be set when expiring stuck session")
 
 		// Verify the SessionExpired condition was added
 		var hasCondition bool
@@ -209,6 +210,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			&updated)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
+		assert.False(t, updated.Status.ExpiresAt.IsZero(), "ExpiresAt should be set when expiring stuck session")
 	})
 
 	t.Run("handles multiple sessions with different scheduled times", func(t *testing.T) {

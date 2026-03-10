@@ -75,6 +75,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 				"namespace", ses.Namespace)
 			ses.Status.State = breakglassv1alpha1.SessionStateExpired
 			ses.Status.ReasonEnded = "missingScheduledStartTime"
+			ses.Status.ExpiresAt = metav1.NewTime(now)
 			retainFor := ParseRetainFor(ses.Spec, ssa.log)
 			ses.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 			ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
