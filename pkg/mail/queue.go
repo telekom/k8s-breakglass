@@ -153,22 +153,23 @@ func (q *Queue) worker() {
 	q.workerWithRecoveryLimit(0)
 }
 
-func (q *Queue) workerWithRecoveryLimit(recoveries int) {
+func (q *Queue) workerWithRecoveryLimit(consecutivePanics int) {
 	defer q.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
+			consecutivePanics++
 			q.log.Errorw("panic in mail queue worker recovered",
 				"panic", r,
-				"recoveries", recoveries+1)
+				"consecutivePanics", consecutivePanics)
 			metrics.MailFailed.WithLabelValues(q.sender.GetHost()).Inc()
-			if recoveries+1 >= maxPanicRecoveries {
-				q.log.Errorw("mail queue worker exceeded max panic recoveries, not restarting",
+			if consecutivePanics >= maxPanicRecoveries {
+				q.log.Errorw("mail queue worker exceeded max consecutive panic recoveries, not restarting",
 					"maxRecoveries", maxPanicRecoveries)
 				return
 			}
 			// Restart the worker to maintain processing capacity
 			q.wg.Add(1)
-			go q.workerWithRecoveryLimit(recoveries + 1)
+			go q.workerWithRecoveryLimit(consecutivePanics)
 		}
 	}()
 
@@ -187,6 +188,8 @@ func (q *Queue) workerWithRecoveryLimit(recoveries int) {
 		case item := <-q.queue:
 			if item != nil {
 				q.processItem(item)
+				// Reset consecutive panic counter after successful processing
+				consecutivePanics = 0
 				// Track pending items only if not succeeded and we have retries left
 				if !item.Succeeded && item.Attempt < q.maxRetries {
 					pendingItems = append(pendingItems, item)
@@ -208,6 +211,8 @@ func (q *Queue) workerWithRecoveryLimit(recoveries int) {
 				}
 			}
 			pendingItems = remainingPending
+			// Reset consecutive panic counter after successful tick processing
+			consecutivePanics = 0
 		}
 	}
 }

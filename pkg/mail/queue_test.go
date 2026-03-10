@@ -516,3 +516,77 @@ func TestQueue_PanicRecoveryBehavior(t *testing.T) {
 	assert.Equal(t, maxPanicRecoveries, panicSender.PanicCount(),
 		"worker should stop restarting after %d consecutive panics", maxPanicRecoveries)
 }
+
+// IntermittentPanickingSender panics for certain send counts and succeeds otherwise,
+// used to test that successful sends reset the consecutive panic counter.
+type IntermittentPanickingSender struct {
+	mu      sync.Mutex
+	sends   int
+	panics  int
+	panicAt map[int]bool // which send attempt numbers should panic
+	host    string
+}
+
+func (s *IntermittentPanickingSender) Send(receivers []string, subject, body string) error {
+	s.mu.Lock()
+	s.sends++
+	current := s.sends
+	shouldPanic := s.panicAt[current]
+	if shouldPanic {
+		s.panics++
+	}
+	s.mu.Unlock()
+	if shouldPanic {
+		panic("intentional intermittent test panic")
+	}
+	return nil
+}
+
+func (s *IntermittentPanickingSender) GetHost() string { return s.host }
+func (s *IntermittentPanickingSender) GetPort() int    { return 25 }
+
+func TestQueue_PanicRecoveryResetsOnSuccess(t *testing.T) {
+	logger := zap.NewNop()
+	sugar := logger.Sugar()
+
+	// Panics on sends 1 and 3, succeeds on send 2 (between panics).
+	// If consecutive counter resets on success, the worker should survive
+	// because neither panic run reaches maxPanicRecoveries (3).
+	sender := &IntermittentPanickingSender{
+		host:    "test.example.com",
+		panicAt: map[int]bool{1: true, 3: true},
+	}
+	queue := NewQueue(sender, sugar, 3, 10, 10)
+	queue.Start()
+	defer func() {
+		_ = queue.Stop(context.Background())
+	}()
+
+	// Enqueue 3 items: first will panic, second will succeed (resetting counter),
+	// third will panic again but counter is back to 0 so worker survives.
+	for i := range 3 {
+		_ = queue.Enqueue("intermittent-"+string(rune(48+i)), []string{"user@example.com"}, "Subject", "Body")
+		time.Sleep(100 * time.Millisecond) // space out to ensure ordering
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	sender.mu.Lock()
+	totalSends := sender.sends
+	totalPanics := sender.panics
+	sender.mu.Unlock()
+
+	// All 3 items should have been processed (2 panics + 1 success),
+	// and the worker should still be alive (not stopped).
+	assert.Equal(t, 3, totalSends, "all 3 items should have been sent")
+	assert.Equal(t, 2, totalPanics, "exactly 2 panics should have occurred")
+
+	// Verify worker is still alive by enqueueing one more item
+	_ = queue.Enqueue("after-reset", []string{"user@example.com"}, "Subject", "Body")
+	time.Sleep(200 * time.Millisecond)
+
+	sender.mu.Lock()
+	finalSends := sender.sends
+	sender.mu.Unlock()
+	assert.Equal(t, 4, finalSends, "worker should still be alive and process items after non-consecutive panics")
+}
