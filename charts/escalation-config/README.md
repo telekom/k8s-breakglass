@@ -67,8 +67,9 @@ degraded and requests are rejected immediately instead of blocking on TCP timeou
 > configuration fragments. These ConfigMaps are **not** automatically mounted into
 > the breakglass controller. You must either mount them as volumes in the controller
 > Deployment and reference them via the `--config-path` flag, or merge their contents
-> into the controller's primary `config.yaml`. See
-> [Configuration Reference](../../docs/configuration-reference.md) for details.
+> into the controller's primary `config.yaml`. See the
+> [Configuration Reference](https://github.com/telekom/k8s-breakglass/blob/main/docs/configuration-reference.md)
+> for details.
 
 #### Kubeconfig Authentication (Default)
 
