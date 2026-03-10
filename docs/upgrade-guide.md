@@ -65,6 +65,24 @@ kubectl logs -l app=breakglass -n breakglass-system --tail=100
    - These metrics now use only the `cluster` label
    - **Action required**: Update any Prometheus queries or dashboards that reference the `group` label on these metrics
 
+#### Metrics Label Rename: `issuer` → `identity_provider`
+
+The following Prometheus metrics have had their `issuer` label renamed to `identity_provider`:
+
+- `breakglass_jwt_validation_requests_total`
+- `breakglass_jwt_validation_success_total`
+- `breakglass_jwt_validation_failure_total`
+- `breakglass_jwks_cache_hits_total`
+- `breakglass_jwks_cache_misses_total`
+- `breakglass_jwks_cache_evictions_total`
+
+**Not renamed** (these retain the `issuer` label):
+- `breakglass_jwks_fetch_requests_total`
+- `breakglass_jwks_fetch_duration_seconds`
+- `breakglass_jwks_cache_size`
+
+**Action required**: Update Prometheus dashboards and alerting rules to use `identity_provider` instead of `issuer` for the affected metrics.
+
 ### Upgrading to v1.0.0 (from v0.x)
 
 #### Breaking Changes
