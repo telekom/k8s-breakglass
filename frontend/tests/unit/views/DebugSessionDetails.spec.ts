@@ -189,7 +189,7 @@ describe("DebugSessionDetails", () => {
     expect(mockCleanup).toHaveBeenCalled();
   });
 
-  it("shows error when route param name is missing", async () => {
+  it("shows error when route param name is empty", async () => {
     mockRouteParams.name = "";
 
     wrapper = shallowMount(DebugSessionDetails, {
