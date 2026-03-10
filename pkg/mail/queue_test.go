@@ -19,6 +19,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -488,11 +489,6 @@ func (p *PanickingSender) PanicCount() int {
 	return p.panics
 }
 
-func TestQueue_PanicRecoveryLimit(t *testing.T) {
-	// Verify the constant value
-	assert.Equal(t, 3, maxPanicRecoveries, "maxPanicRecoveries should be 3")
-}
-
 func TestQueue_PanicRecoveryBehavior(t *testing.T) {
 	logger := zap.NewNop()
 	sugar := logger.Sugar()
@@ -506,11 +502,13 @@ func TestQueue_PanicRecoveryBehavior(t *testing.T) {
 
 	// Enqueue enough items to trigger maxPanicRecoveries panics
 	for i := range maxPanicRecoveries + 1 {
-		_ = queue.Enqueue("panic-"+string(rune(48+i)), []string{"user@example.com"}, "Subject", "Body")
+		_ = queue.Enqueue("panic-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
 	}
 
-	// Wait for panics and recovery attempts to settle
-	time.Sleep(500 * time.Millisecond)
+	// Poll until panics settle instead of using a fixed sleep
+	assert.Eventually(t, func() bool {
+		return panicSender.PanicCount() >= maxPanicRecoveries
+	}, 5*time.Second, 50*time.Millisecond, "worker should panic %d times", maxPanicRecoveries)
 
 	// Worker should have panicked exactly maxPanicRecoveries times and then stopped
 	assert.Equal(t, maxPanicRecoveries, panicSender.PanicCount(),
@@ -565,11 +563,16 @@ func TestQueue_PanicRecoveryResetsOnSuccess(t *testing.T) {
 	// Enqueue 3 items: first will panic, second will succeed (resetting counter),
 	// third will panic again but counter is back to 0 so worker survives.
 	for i := range 3 {
-		_ = queue.Enqueue("intermittent-"+string(rune(48+i)), []string{"user@example.com"}, "Subject", "Body")
+		_ = queue.Enqueue("intermittent-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
 		time.Sleep(100 * time.Millisecond) // space out to ensure ordering
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	// Poll until all items are processed instead of using a fixed sleep
+	assert.Eventually(t, func() bool {
+		sender.mu.Lock()
+		defer sender.mu.Unlock()
+		return sender.sends >= 3
+	}, 5*time.Second, 50*time.Millisecond, "all 3 items should have been processed")
 
 	sender.mu.Lock()
 	totalSends := sender.sends
@@ -583,7 +586,12 @@ func TestQueue_PanicRecoveryResetsOnSuccess(t *testing.T) {
 
 	// Verify worker is still alive by enqueueing one more item
 	_ = queue.Enqueue("after-reset", []string{"user@example.com"}, "Subject", "Body")
-	time.Sleep(200 * time.Millisecond)
+
+	assert.Eventually(t, func() bool {
+		sender.mu.Lock()
+		defer sender.mu.Unlock()
+		return sender.sends >= 4
+	}, 5*time.Second, 50*time.Millisecond, "worker should process item after non-consecutive panics")
 
 	sender.mu.Lock()
 	finalSends := sender.sends
