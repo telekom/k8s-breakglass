@@ -632,7 +632,7 @@ Track field indexer performance for efficient lookups.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `breakglass_index_registrations` | Gauge | | Number of registered field indexes |
+| `breakglass_index_registrations` | Gauge | `resource` | Number of registered field indexes |
 
 ## Cluster Cache Metrics
 
