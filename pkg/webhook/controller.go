@@ -845,22 +845,20 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		}
 
 		prefixes := wc.config.Kubernetes.OIDCPrefixes
-		// Find a primary prefix by matching incoming groups to allowed groups
+		// Find a primary prefix by matching incoming groups to allowed groups.
+		// Pre-build a map of valid prefix+group combinations for O(n) lookup
+		// instead of O(n*m*k) triple-nested loop.
 		var primaryPrefix string
 		if incoming.Spec.Groups != nil && len(prefixes) > 0 {
-			for _, ig := range incoming.Spec.Groups {
+			validCombinations := make(map[string]string, len(prefixes)*len(allowedGroupsToCheck))
+			for _, p := range prefixes {
 				for _, allowed := range allowedGroupsToCheck {
-					for _, p := range prefixes {
-						if strings.HasPrefix(ig, p) && strings.HasSuffix(ig, allowed) {
-							primaryPrefix = p
-							break
-						}
-					}
-					if primaryPrefix != "" {
-						break
-					}
+					validCombinations[p+allowed] = p
 				}
-				if primaryPrefix != "" {
+			}
+			for _, ig := range incoming.Spec.Groups {
+				if p, ok := validCombinations[ig]; ok {
+					primaryPrefix = p
 					break
 				}
 			}

@@ -2237,6 +2237,8 @@ func TestParseDuration_InvalidFormats(t *testing.T) {
 		{"abc", "non-numeric"},
 		{"1x", "unknown unit"},
 		{"1d1x", "invalid unit after days"},
+		{"366d", "exceeds max days"},
+		{"999999999d", "overflow days"},
 	}
 
 	for _, tt := range tests {
@@ -2437,6 +2439,9 @@ func TestValidateAuxiliaryResources(t *testing.T) {
 // ============================================================================
 
 func TestParseDuration_EdgeCases(t *testing.T) {
+	// Verify the constant is as expected
+	assert.Equal(t, 365, maxDurationDays)
+
 	tests := []struct {
 		name        string
 		input       string
@@ -2447,6 +2452,7 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 		{"simple days", "1d", false, 86400},
 		{"days with hours", "1d12h", false, 129600},
 		{"large days value", "365d", false, 31536000},
+		{"days exceed maximum", "366d", true, 0},
 		{"zero days", "0d", false, 0},
 		{"negative hours are valid in Go", "-1h", false, -3600}, // Go stdlib accepts negative
 		{"invalid unit", "1x", true, 0},
