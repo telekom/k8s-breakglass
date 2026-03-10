@@ -70,9 +70,21 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 	for _, ses := range sessions {
 		// Sanity check: session should have a scheduledStartTime
 		if ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero() {
-			ssa.log.Warnw("session in WaitingForScheduledTime state has no ScheduledStartTime",
+			ssa.log.Errorw("expiring session in WaitingForScheduledTime state with no ScheduledStartTime",
 				"session", ses.Name,
 				"namespace", ses.Namespace)
+			ses.Status.State = breakglassv1alpha1.SessionStateExpired
+			ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
+				Type:               string(breakglassv1alpha1.SessionConditionTypeSessionExpired),
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: metav1.Now(),
+				Reason:             "MissingScheduledStartTime",
+				Message:            "Session expired: WaitingForScheduledTime with no ScheduledStartTime set",
+			})
+			if err := ssa.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err != nil {
+				ssa.log.Errorw("failed to expire stuck scheduled session",
+					"session", ses.Name, "namespace", ses.Namespace, "error", err)
+			}
 			continue
 		}
 

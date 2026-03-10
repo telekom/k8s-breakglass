@@ -283,9 +283,12 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionApproved, &bs, approver, "Session approved")
 
 		// Send approval notification email to requester
+		emailSent := false
 		if !wc.disableEmail && bs.Spec.User != "" && (wc.mailService != nil && wc.mailService.IsEnabled() || wc.mailQueue != nil) {
-			wc.sendSessionApprovalEmail(reqLog, bs)
+			emailSent = wc.sendSessionApprovalEmail(reqLog, bs)
 		}
+		c.JSON(http.StatusOK, gin.H{"session": bs, "notificationSent": emailSent})
+		return
 	case breakglassv1alpha1.SessionConditionTypeRejected:
 		metrics.SessionRejected.WithLabelValues(bs.Spec.Cluster).Inc()
 		// Emit audit event for session rejection

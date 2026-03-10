@@ -131,7 +131,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.True(t, updated.Status.ActualStartTime.IsZero(), "ActualStartTime should not be set yet")
 	})
 
-	t.Run("skips session with nil scheduledStartTime", func(t *testing.T) {
+	t.Run("expires session with nil scheduledStartTime", func(t *testing.T) {
 		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "no-schedule",
@@ -163,11 +163,21 @@ func TestActivateScheduledSessions(t *testing.T) {
 			client.ObjectKey{Namespace: "breakglass", Name: "no-schedule"},
 			&updated)
 		require.NoError(t, err)
-		// State should not change — session has invalid data
-		assert.Equal(t, breakglassv1alpha1.SessionStateWaitingForScheduledTime, updated.Status.State)
+		// Session should be expired — nil ScheduledStartTime is invalid
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
+
+		// Verify the SessionExpired condition was added
+		var hasCondition bool
+		for _, cond := range updated.Status.Conditions {
+			if cond.Type == string(breakglassv1alpha1.SessionConditionTypeSessionExpired) {
+				hasCondition = true
+				assert.Equal(t, "MissingScheduledStartTime", cond.Reason)
+			}
+		}
+		assert.True(t, hasCondition, "expected SessionExpired condition")
 	})
 
-	t.Run("skips session with zero scheduledStartTime", func(t *testing.T) {
+	t.Run("expires session with zero scheduledStartTime", func(t *testing.T) {
 		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "zero-schedule",
@@ -198,7 +208,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			client.ObjectKey{Namespace: "breakglass", Name: "zero-schedule"},
 			&updated)
 		require.NoError(t, err)
-		assert.Equal(t, breakglassv1alpha1.SessionStateWaitingForScheduledTime, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
 	})
 
 	t.Run("handles multiple sessions with different scheduled times", func(t *testing.T) {
