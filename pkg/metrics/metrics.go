@@ -293,11 +293,11 @@ var (
 	JWKSCacheHits = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_jwks_cache_hits_total",
 		Help: "Total number of JWKS cache hits",
-	}, []string{"issuer"})
+	}, []string{"identity_provider"})
 	JWKSCacheMisses = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_jwks_cache_misses_total",
 		Help: "Total number of JWKS cache misses (requiring fetch)",
-	}, []string{"issuer"})
+	}, []string{"identity_provider"})
 	JWKSFetchRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_jwks_fetch_requests_total",
 		Help: "Total number of JWKS endpoint fetch requests",
