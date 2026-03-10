@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -18,7 +19,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
+
+	"github.com/telekom/k8s-breakglass/pkg/config"
 )
 
 func TestAuthHandler_Middleware(t *testing.T) {
@@ -137,6 +141,18 @@ func TestAuthHandler_Structure(t *testing.T) {
 		authHandler := &AuthHandler{}
 		assert.NotNil(t, authHandler, "AuthHandler should be creatable")
 	})
+}
+
+func TestNewAuth_DefaultHTTPClient(t *testing.T) {
+	log := zaptest.NewLogger(t).Sugar()
+	handler := NewAuth(log, config.Config{})
+
+	require.NotNil(t, handler.defaultHTTPClient, "defaultHTTPClient must be initialized")
+	assert.Equal(t, 10*time.Second, handler.defaultHTTPClient.Timeout)
+
+	transport, ok := handler.defaultHTTPClient.Transport.(*http.Transport)
+	require.True(t, ok, "transport must be *http.Transport")
+	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
 }
 
 func TestAuthHeaderKey(t *testing.T) {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Webhook SAR metrics: removed high-cardinality `group` label** ([#527](https://github.com/telekom/k8s-breakglass/issues/527)): Removed unbounded `group` label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` metrics to prevent time-series explosion in Prometheus
+
 ### Security
 
 - **JWT audience validation preparation (SEC-005)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459), [#472](https://github.com/telekom/k8s-breakglass/issues/472)): Added `clientID` plumbing from IDP config to JWT authenticator for future audience validation; audience validation is intentionally disabled by default as it depends on audience protocol mappers that are not configured in all environments — a dedicated CRD field is needed before enabling
@@ -36,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Metrics: `MetricsHandler()` now uses correct registry** ([#465](https://github.com/telekom/k8s-breakglass/issues/465)): Fixed to serve from `ctrlmetrics.Registry` which contains all breakglass metrics, instead of the default registry which was empty
 - **E2E: retry OIDC token acquisition with backoff** ([#476](https://github.com/telekom/k8s-breakglass/issues/476)): `GetToken()` in `e2e/helpers/auth.go` now retries up to 5 times with exponential backoff (2 s → 16 s) when Keycloak is temporarily unreachable, reducing false-negative E2E failures from transient Keycloak pod restarts
 - **CI Build Image attestation 404 flake**: Fixed intermittent `actions/attest-build-provenance` failures (`OCIError: Error fetching manifest — expected 200, received 404`) caused by manifest propagation delays in GHCR by: (1) separating Docker image build (local load) from registry push to eliminate digest mismatch, (2) capturing the actual registry digest from `docker push` output, and (3) adding a manifest-availability polling step (`docker buildx imagetools inspect`) that retries up to 30 times with 10 s intervals before attestation
+- **JWKS auth: reuse HTTP client** ([#529](https://github.com/telekom/k8s-breakglass/issues/529)): Replaced per-request HTTP client creation in OIDC discovery with a shared `defaultHTTPClient` on `AuthHandler` for connection pooling and reduced allocations
+- **Debug session metrics docs labels** ([#537](https://github.com/telekom/k8s-breakglass/issues/537)): Fixed incorrect label definitions for 10 of 13 debug session metrics in `docs/metrics.md` to match `pkg/metrics/metrics.go`
 
 ### Removed
 

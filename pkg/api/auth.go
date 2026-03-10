@@ -61,6 +61,11 @@ type AuthHandler struct {
 
 	// IDPLoader for multi-IDP mode
 	idpLoader *config.IdentityProviderLoader
+
+	// defaultHTTPClient is a shared HTTP client for OIDC discovery when no
+	// custom CA is configured. Reusing it avoids per-request allocations and
+	// enables connection pooling.
+	defaultHTTPClient *http.Client
 }
 
 func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
@@ -70,6 +75,10 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 		jwksCache:   make(map[string]*list.Element),
 		jwksLRUList: list.New(),
 		log:         log,
+		defaultHTTPClient: &http.Client{
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+			Timeout:   10 * time.Second,
+		},
 	}
 }
 
@@ -161,10 +170,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		// Use the configured client (or default) to fetch discovery
 		client := override.Client
 		if client == nil {
-			// Create client with explicit timeout and TLS 1.2 minimum to enforce
-			// SEC-003 hardening even when using system root CAs
-			transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
-			client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+			client = a.defaultHTTPClient
 		}
 
 		// Try discovery
