@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug session approval fail-closed** ([#524](https://github.com/telekom/k8s-breakglass/issues/524)): Changed debug session approval authorization to fail closed when the template cannot be fetched, preventing unauthorized approvals during API errors
 - **Mail queue panic recovery limit** ([#526](https://github.com/telekom/k8s-breakglass/issues/526)): Mail queue worker now stops restarting after 3 consecutive panics to prevent infinite restart loops from persistent bugs
 
+### Changed
+
+- **JWT metrics label renamed from `issuer` to `identity_provider`** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Prometheus metrics `breakglass_jwt_validation_*` now use the `identity_provider` label (resolved IDP name) instead of `issuer` (raw URL) to prevent unbounded cardinality from attacker-controlled issuer claims. Dashboards/alerts referencing the old `issuer` label on these metrics must be updated.
+
 ### Fixed
 
 - **Docs: wrong file reference** ([#530](https://github.com/telekom/k8s-breakglass/issues/530)): Fixed `.github/copilot-instructions.md` referencing non-existent `pkg/policy/evaluator.go` → `pkg/policy/deny.go`
