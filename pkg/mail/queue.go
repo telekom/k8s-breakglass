@@ -165,7 +165,7 @@ func (q *Queue) worker() {
 func (q *Queue) workerLoop(consecutivePanics *int) (stopped bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			*consecutivePanics++
+			(*consecutivePanics)++
 			q.log.Errorw("panic in mail queue worker recovered",
 				"panic", r,
 				"consecutivePanics", *consecutivePanics)

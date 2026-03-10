@@ -571,7 +571,8 @@ func TestQueue_PanicRecoveryResetsOnSuccess(t *testing.T) {
 	// Enqueue 3 items: first will panic, second will succeed (resetting counter),
 	// third will panic again but counter is back to 0 so worker survives.
 	for i := range 3 {
-		_ = queue.Enqueue("intermittent-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
+		err := queue.Enqueue("intermittent-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
+		require.NoError(t, err, "Enqueue should succeed for item %d", i)
 		// Wait for this item to be processed before sending the next,
 		// ensuring deterministic ordering of panic/success sequences.
 		expected := i + 1
@@ -600,7 +601,8 @@ func TestQueue_PanicRecoveryResetsOnSuccess(t *testing.T) {
 	assert.Equal(t, 2, totalPanics, "exactly 2 panics should have occurred")
 
 	// Verify worker is still alive by enqueueing one more item
-	_ = queue.Enqueue("after-reset", []string{"user@example.com"}, "Subject", "Body")
+	err := queue.Enqueue("after-reset", []string{"user@example.com"}, "Subject", "Body")
+	require.NoError(t, err, "Enqueue should succeed after panic counter reset")
 
 	assert.Eventually(t, func() bool {
 		sender.mu.Lock()
