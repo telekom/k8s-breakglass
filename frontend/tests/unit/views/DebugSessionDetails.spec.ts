@@ -15,10 +15,11 @@ const mockGetSession = vi.fn();
 const mockCopy = vi.fn().mockResolvedValue(true);
 const mockCleanup = vi.fn();
 const mockCopied = ref(false);
+const mockRouteParams = { name: "dbg-1" };
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({
-    params: { name: "dbg-1" },
+    params: mockRouteParams,
   }),
   useRouter: () => ({
     push: mockPush,
@@ -76,6 +77,7 @@ describe("DebugSessionDetails", () => {
     vi.useFakeTimers();
     mockPush.mockReset();
     mockGetSession.mockReset();
+    mockRouteParams.name = "dbg-1";
   });
 
   afterEach(() => {
@@ -185,5 +187,28 @@ describe("DebugSessionDetails", () => {
     wrapper.unmount();
     wrapper = null;
     expect(mockCleanup).toHaveBeenCalled();
+  });
+
+  it("shows error when route param name is missing", async () => {
+    mockRouteParams.name = "";
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSession).not.toHaveBeenCalled();
+    // With shallowMount, EmptyState is stubbed; check its attributes
+    const html = wrapper.html();
+    expect(html).toContain("Missing session name in URL");
   });
 });
