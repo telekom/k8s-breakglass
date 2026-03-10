@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **X-Request-ID sanitization (SEC-004)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Validate `X-Request-ID` header (alphanumeric + `-_.:`; max 128 chars) and replace invalid values with a generated UUID to prevent log injection
 - **Build info endpoint hardened** ([#472](https://github.com/telekom/k8s-breakglass/issues/472), SEC-008): `/api/debug/buildinfo` now exposes only `version` and `buildDate`; infrastructure details (Go version, platform, commit hash) are omitted to prevent reconnaissance
 - **Security documentation expanded** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Added SAR webhook design decision (SEC-007), token storage tradeoffs (SEC-017), build info endpoint rationale (SEC-008), and `hardenedIDPHints` default-on guidance (SEC-015) to `docs/security-best-practices.md`
+- **Debug session approval fail-closed** ([#524](https://github.com/telekom/k8s-breakglass/issues/524)): Changed debug session approval authorization to fail closed when the template cannot be fetched, preventing unauthorized approvals during API errors
+- **Mail queue panic recovery limit** ([#526](https://github.com/telekom/k8s-breakglass/issues/526)): Limited mail queue worker panic recovery to 3 restarts to prevent infinite restart loops from persistent bugs
 
 ### Fixed
 

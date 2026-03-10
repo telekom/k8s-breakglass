@@ -82,7 +82,7 @@ func TestIsUserAuthorizedToApprove_NoResolvedTemplate(t *testing.T) {
 }
 
 func TestIsUserAuthorizedToApprove_TemplateFetchFails(t *testing.T) {
-	// When template cannot be fetched, allow approval (fail open)
+	// When template cannot be fetched, deny approval (fail closed for security)
 
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -103,7 +103,7 @@ func TestIsUserAuthorizedToApprove_TemplateFetchFails(t *testing.T) {
 
 	ctx := context.Background()
 	result := ctrl.isUserAuthorizedToApprove(ctx, session, "anyuser@example.com", nil)
-	assert.True(t, result, "should allow approval when template cannot be fetched (fail open)")
+	assert.False(t, result, "should deny approval when template cannot be fetched (fail closed)")
 }
 
 func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {

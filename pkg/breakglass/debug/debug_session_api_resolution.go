@@ -563,10 +563,10 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 		// Fetch the template to check approvers
 		template := &breakglassv1alpha1.DebugSessionTemplate{}
 		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
-			// If we can't fetch template, allow approval (fail open for usability)
-			c.log.Warnw("Could not fetch template to check approvers, allowing approval",
+			// If we can't fetch template, deny approval (fail closed for security)
+			c.log.Errorw("Could not fetch template to check approvers, denying approval",
 				"session", session.Name, "template", session.Spec.TemplateRef, "error", err)
-			return true
+			return false
 		}
 
 		// If template has no approvers configured, allow any authenticated user

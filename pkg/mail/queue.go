@@ -144,17 +144,31 @@ func (q *Queue) Enqueue(id string, receivers []string, subject, body string) err
 	}
 }
 
+// maxPanicRecoveries limits the number of times a worker will restart after a panic
+// to prevent infinite restart loops from persistent bugs.
+const maxPanicRecoveries = 3
+
 // worker processes items from the queue
 func (q *Queue) worker() {
+	q.workerWithRecoveryLimit(0)
+}
+
+func (q *Queue) workerWithRecoveryLimit(recoveries int) {
 	defer q.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			q.log.Errorw("panic in mail queue worker recovered",
-				"panic", r)
+				"panic", r,
+				"recoveries", recoveries+1)
 			metrics.MailFailed.WithLabelValues(q.sender.GetHost()).Inc()
+			if recoveries+1 >= maxPanicRecoveries {
+				q.log.Errorw("mail queue worker exceeded max panic recoveries, not restarting",
+					"maxRecoveries", maxPanicRecoveries)
+				return
+			}
 			// Restart the worker to maintain processing capacity
 			q.wg.Add(1)
-			go q.worker()
+			go q.workerWithRecoveryLimit(recoveries + 1)
 		}
 	}()
 

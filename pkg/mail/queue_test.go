@@ -464,3 +464,8 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 
 	assert.Equal(t, 10, sender.Attempts())
 }
+
+func TestQueue_PanicRecoveryLimit(t *testing.T) {
+	// Verify the panic recovery limit constant is set to a reasonable value
+	assert.Equal(t, 3, maxPanicRecoveries, "maxPanicRecoveries should be 3")
+}
