@@ -188,7 +188,7 @@ func (q *Queue) workerWithRecoveryLimit(consecutivePanics int) {
 		case item := <-q.queue:
 			if item != nil {
 				q.processItem(item)
-				// Reset consecutive panic counter after successful processing
+				// Reset consecutive panic counter after processing without panic
 				consecutivePanics = 0
 				// Track pending items only if not succeeded and we have retries left
 				if !item.Succeeded && item.Attempt < q.maxRetries {
@@ -200,10 +200,12 @@ func (q *Queue) workerWithRecoveryLimit(consecutivePanics int) {
 			// Check for items ready for retry every 50ms
 			now := time.Now()
 			remainingPending := make([]*QueueItem, 0)
+			processedCount := 0
 
 			for _, item := range pendingItems {
 				if !item.Succeeded && now.After(item.NextRetry) {
 					q.processItem(item)
+					processedCount++
 				}
 				// Keep in pending list if not succeeded and still has retries
 				if !item.Succeeded && item.Attempt < q.maxRetries {
@@ -211,8 +213,10 @@ func (q *Queue) workerWithRecoveryLimit(consecutivePanics int) {
 				}
 			}
 			pendingItems = remainingPending
-			// Reset consecutive panic counter after successful tick processing
-			consecutivePanics = 0
+			// Reset consecutive panic counter only if items were processed without panic
+			if processedCount > 0 {
+				consecutivePanics = 0
+			}
 		}
 	}
 }

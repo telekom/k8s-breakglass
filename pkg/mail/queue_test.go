@@ -564,7 +564,14 @@ func TestQueue_PanicRecoveryResetsOnSuccess(t *testing.T) {
 	// third will panic again but counter is back to 0 so worker survives.
 	for i := range 3 {
 		_ = queue.Enqueue("intermittent-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
-		time.Sleep(100 * time.Millisecond) // space out to ensure ordering
+		// Wait for this item to be processed before sending the next,
+		// ensuring deterministic ordering of panic/success sequences.
+		expected := i + 1
+		assert.Eventually(t, func() bool {
+			sender.mu.Lock()
+			defer sender.mu.Unlock()
+			return sender.sends >= expected
+		}, 5*time.Second, 10*time.Millisecond, "item %d should have been processed", i)
 	}
 
 	// Poll until all items are processed instead of using a fixed sleep
