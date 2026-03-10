@@ -167,6 +167,16 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
 		a.jwksMutex.Unlock()
+
+		// Refresh expectedAudience from the live IDP config so changes take
+		// effect without waiting for JWKS cache eviction or a restart.
+		if idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer); err == nil {
+			a.jwksMutex.Lock()
+			entry.expectedAudience = idpCfg.ExpectedAudience
+			a.jwksMutex.Unlock()
+			return entry.jwks, idpCfg.ExpectedAudience, nil
+		}
+
 		return entry.jwks, entry.expectedAudience, nil
 	}
 	a.jwksMutex.Unlock()
@@ -372,7 +382,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		return true
 	}
 
-	// Record JWT validation request
+	// Determine IDP mode for metrics (recorded after IDP resolution below)
 	mode := "single-idp"
 	if a.idpLoader != nil {
 		mode = "multi-idp"
@@ -419,9 +429,6 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// same cache/limiter key, consistent with LoadIdentityProviderByIssuer.
 	issuer = strings.TrimRight(issuer, "/")
 
-	// Record validation attempt — use empty issuer label before IDP resolution
-	// to prevent unbounded Prometheus cardinality from attacker-controlled issuers.
-	metrics.JWTValidationRequests.WithLabelValues("", mode).Inc()
 	startTime := time.Now()
 
 	// Get appropriate JWKS (based on issuer or default)
@@ -437,11 +444,8 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		_, cacheHit := a.jwksCache[issuer]
 		a.jwksMutex.RUnlock()
 
-		if cacheHit {
-			metrics.JWKSCacheHits.WithLabelValues("").Inc()
-		} else {
-			metrics.JWKSCacheMisses.WithLabelValues("").Inc()
-		}
+		// Record JWKS cache hit/miss after IDP resolution (label set below)
+		wasCacheHit := cacheHit
 
 		var loadedAudience string
 		loadedJwks, loadedAudience, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
@@ -468,6 +472,17 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		} else {
 			selectedIDP = idpName
 		}
+
+		// Record JWKS cache hit/miss with bounded IDP name label
+		cacheLabel := selectedIDP
+		if cacheLabel == "" {
+			cacheLabel = "unknown"
+		}
+		if wasCacheHit {
+			metrics.JWKSCacheHits.WithLabelValues(cacheLabel).Inc()
+		} else {
+			metrics.JWKSCacheMisses.WithLabelValues(cacheLabel).Inc()
+		}
 	} else if a.idpLoader != nil && issuer == "" {
 		// Multi-IDP mode but no issuer in token: require issuer claim
 		metrics.JWTValidationFailure.WithLabelValues("", "missing_issuer").Inc()
@@ -478,6 +493,14 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		// Single-IDP mode: use default JWKS (issuer claim optional for backward compatibility)
 		jwks = a.jwks
 	}
+
+	// Record validation attempt after IDP resolution so the label carries
+	// the resolved provider name instead of an empty string.
+	idpLabel := selectedIDP
+	if idpLabel == "" {
+		idpLabel = "unknown"
+	}
+	metrics.JWTValidationRequests.WithLabelValues(idpLabel, mode).Inc()
 
 	// Verify and parse JWT with selected JWKS
 	// Note: keyfunc/v3 automatically refreshes on unknown kid, so no manual refresh needed
@@ -730,6 +753,10 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 	if issuer != "" && !isValidIssuer(issuer) {
 		return ""
 	}
+
+	// Canonicalize issuer consistently with authenticate() to avoid
+	// duplicate cache entries from trailing slash variations.
+	issuer = strings.TrimRight(issuer, "/")
 
 	// Get JWKS for verification
 	jwks, expectedAudience, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
