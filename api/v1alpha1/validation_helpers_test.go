@@ -2239,7 +2239,7 @@ func TestParseDuration_InvalidFormats(t *testing.T) {
 		{"1x", "unknown unit"},
 		{"1d1x", "invalid unit after days"},
 		{fmt.Sprintf("%dd", maxDurationDays+1), "exceeds max days"},
-		{"999999999d", "overflow days"},
+		{"999999999d", "exceeds max days (large value)"},
 	}
 
 	for _, tt := range tests {
