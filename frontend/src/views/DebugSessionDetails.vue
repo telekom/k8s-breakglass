@@ -56,7 +56,10 @@ const currentUserEmail = computed(() => {
   return u?.profile?.email || u?.profile?.preferred_username || u?.email || "";
 });
 
-const sessionName = computed(() => route.params.name as string);
+const sessionName = computed(() => {
+  const name = route.params.name;
+  return typeof name === "string" ? name : "";
+});
 const session = ref<DebugSession | null>(null);
 const loading = ref(true);
 const error = ref("");
@@ -102,6 +105,12 @@ const rejectReason = ref("");
 async function fetchSession() {
   loading.value = true;
   error.value = "";
+
+  if (!sessionName.value) {
+    error.value = "Missing session name in URL";
+    loading.value = false;
+    return;
+  }
 
   try {
     session.value = await debugSessionService.getSession(sessionName.value);

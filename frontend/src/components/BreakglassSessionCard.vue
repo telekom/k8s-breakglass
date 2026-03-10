@@ -34,7 +34,11 @@ const props = defineProps<{
   currentUserEmail?: string;
 }>();
 
-const emit = defineEmits(["review", "drop", "cancel"]);
+const emit = defineEmits<{
+  review: [];
+  drop: [];
+  cancel: [];
+}>();
 
 // Get normalized state for action logic
 const sessionState = computed(() => {
