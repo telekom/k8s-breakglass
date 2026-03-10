@@ -172,6 +172,9 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		if client == nil {
 			client = a.defaultHTTPClient
 		}
+		if client == nil {
+			client = http.DefaultClient
+		}
 
 		// Try discovery
 		var discoverySuccess bool
