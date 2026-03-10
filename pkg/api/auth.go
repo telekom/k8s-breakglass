@@ -289,8 +289,14 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 						JWKSURI string `json:"jwks_uri"`
 					}
 					if err := json.NewDecoder(resp.Body).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
-						jwksURL = discovery.JWKSURI
-						discoverySuccess = true
+						// Validate the discovered JWKS URI to prevent SSRF if an IDP
+						// is compromised and returns a malicious jwks_uri.
+						if isValidIssuer(discovery.JWKSURI) {
+							jwksURL = discovery.JWKSURI
+							discoverySuccess = true
+						} else {
+							a.log.Warnw("OIDC discovery returned invalid jwks_uri, ignoring", "jwks_uri", discovery.JWKSURI)
+						}
 					}
 				}
 			}
