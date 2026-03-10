@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 // Helper to create a fake client with status subresource support
@@ -219,7 +220,7 @@ func TestDebugSessionReconciler_ParticipantManagement(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		// Verify initial state
@@ -271,7 +272,7 @@ func TestDebugSessionReconciler_ParticipantManagement(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		// Get session
@@ -321,7 +322,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -345,7 +346,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -385,7 +386,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -417,6 +418,88 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		assert.NotNil(t, fetchedSession.Status.Approval.RejectedAt)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
 	})
+
+	t.Run("session approval times out in reconciler", func(t *testing.T) {
+		// Use the current configured approval timeout and create a session older than that
+		timeout := breakglass.DebugSessionApprovalTimeout
+
+		// Create session with CreationTimestamp sufficiently in the past to exceed the timeout
+		session := newTestDebugSession("timeout-session", "test-template", "production", "user@example.com")
+		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * timeout))
+		session.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
+			Required: true,
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := NewDebugSessionController(
+			zap.NewNop().Sugar(), fakeClient, nil,
+		)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "timeout-session",
+				Namespace: "breakglass",
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		// Verify session is now Failed
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      "timeout-session",
+			Namespace: "breakglass",
+		}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Contains(t, updated.Status.Message, "Approval timed out")
+	})
+
+	t.Run("session within approval timeout requeues", func(t *testing.T) {
+		// Use the current configured timeout and create a session well within it
+		timeout := breakglass.DebugSessionApprovalTimeout
+
+		session := newTestDebugSession("pending-session", "test-template", "production", "user@example.com")
+		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-timeout / 4))
+		session.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
+			Required: true,
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := NewDebugSessionController(
+			zap.NewNop().Sugar(), fakeClient, nil,
+		)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "pending-session",
+				Namespace: "breakglass",
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, DefaultDebugSessionRequeue, result.RequeueAfter)
+
+		// Verify session is still PendingApproval
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      "pending-session",
+			Namespace: "breakglass",
+		}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, updated.Status.State)
+	})
 }
 
 func TestDebugSessionReconciler_RenewalTracking(t *testing.T) {
@@ -435,7 +518,7 @@ func TestDebugSessionReconciler_RenewalTracking(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -471,7 +554,7 @@ func TestDebugSessionReconciler_RenewalTracking(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -500,7 +583,7 @@ func TestDebugSessionReconciler_ExpirationHandling(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -549,7 +632,7 @@ func TestDebugSessionReconciler_DeployedResourcesTracking(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -589,7 +672,7 @@ func TestDebugSessionReconciler_DeployedResourcesTracking(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -627,7 +710,7 @@ func TestDebugSessionReconciler_AllowedPodsTracking(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -658,7 +741,7 @@ func TestDebugSessionReconciler_AllowedPodsTracking(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -699,7 +782,7 @@ func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -738,7 +821,7 @@ func TestDebugSessionReconciler_KubectlDebugStatus(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -774,7 +857,7 @@ func TestDebugSessionReconciler_KubectlDebugStatus(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -811,7 +894,7 @@ func TestDebugSessionReconciler_ResolvedTemplate(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -846,7 +929,7 @@ func TestDebugSessionReconciler_AllowedPodOperationsStatus(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -871,7 +954,7 @@ func TestDebugSessionReconciler_AllowedPodOperationsStatus(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1021,7 +1104,7 @@ func TestDebugSessionReconciler_ReconcileRequest(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		req := reconcile.Request{
@@ -1075,7 +1158,7 @@ func TestDebugSessionReconciler_SessionConditions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1120,7 +1203,7 @@ func TestDebugSessionReconciler_SessionConditions(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1147,7 +1230,7 @@ func TestDebugSessionReconciler_InvalidTemplateReference(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		// Attempt to fetch the non-existent template
@@ -1233,7 +1316,7 @@ func TestDebugSessionReconciler_RenewalErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1255,7 +1338,7 @@ func TestDebugSessionReconciler_RenewalErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1276,7 +1359,7 @@ func TestDebugSessionReconciler_RenewalErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1307,7 +1390,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1336,7 +1419,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1371,7 +1454,7 @@ func TestDebugSessionReconciler_ParticipantErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1392,7 +1475,7 @@ func TestDebugSessionReconciler_ParticipantErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1425,7 +1508,7 @@ func TestDebugSessionReconciler_ParticipantErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1458,7 +1541,7 @@ func TestDebugSessionReconciler_TerminationErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1478,7 +1561,7 @@ func TestDebugSessionReconciler_TerminationErrors(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1529,7 +1612,7 @@ func TestDebugSessionReconciler_DurationValidation(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		var fetchedSession breakglassv1alpha1.DebugSession
@@ -1688,7 +1771,7 @@ func TestDebugSessionController_Reconcile_PendingWithMissingTemplate(t *testing.
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session).
-		WithStatusSubresource(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 	logger := zap.NewNop().Sugar()
 
@@ -1732,7 +1815,7 @@ func TestDebugSessionController_Reconcile_FailedState(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session).
-		WithStatusSubresource(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 	logger := zap.NewNop().Sugar()
 
@@ -4274,7 +4357,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(session).
-				WithStatusSubresource(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 				Build()
 
 			controller := &DebugSessionController{
@@ -4313,7 +4396,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4334,7 +4417,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4359,7 +4442,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4383,7 +4466,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4421,7 +4504,7 @@ func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		ctrl := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
@@ -4464,7 +4547,7 @@ func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		ctrl := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
@@ -4503,7 +4586,7 @@ func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		ctrl := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
@@ -4529,7 +4612,7 @@ func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4563,7 +4646,7 @@ func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4617,7 +4700,7 @@ func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T)
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4648,7 +4731,7 @@ func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T)
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4691,7 +4774,7 @@ func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T)
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4720,7 +4803,7 @@ func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T)
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{
@@ -4754,7 +4837,7 @@ func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T)
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(session).
-			WithStatusSubresource(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 
 		controller := &DebugSessionController{

@@ -245,6 +245,26 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 	}
 
+	// Check if approval has timed out
+	timeout := breakglass.DebugSessionApprovalTimeout
+	if ds.CreationTimestamp.Add(timeout).Before(time.Now()) {
+		reason := fmt.Sprintf("Approval timed out after %s", timeout)
+		c.log.Errorw("Debug session approval timed out",
+			"debugSession", ds.Name, "namespace", ds.Namespace,
+			"reason", reason)
+
+		if c.shouldEmitAudit(ds) && c.auditManager != nil {
+			c.auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+		}
+
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		ds.Status.Message = reason
+		c.sendDebugSessionFailedEmail(ds, reason)
+		metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
+
+		return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	}
+
 	// Still waiting for approval
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 }

@@ -305,7 +305,9 @@ Authorization: Bearer <token>
 
 **Authorization:** Only users who can approve the escalation (approvers or approver groups)
 
-**Response:** Complete updated `BreakglassSession` resource with approved status:
+**Response:** Complete updated `BreakglassSession` resource with approved status.
+
+When the approval notification email is successfully enqueued, the response includes an `X-Notification-Sent: true` header.
 
 ```json
 {
