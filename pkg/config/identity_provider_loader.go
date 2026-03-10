@@ -352,9 +352,9 @@ func (l *IdentityProviderLoader) LoadIdentityProviderByIssuer(ctx context.Contex
 	l.logger.Debugw("No exact issuer match found, trying authority fallback", "issuer", issuer)
 	for i := range idpList.Items {
 		idp := &idpList.Items[i]
-		// Normalize both URLs for comparison (trim a single trailing slash)
-		authority := strings.TrimSuffix(idp.Spec.OIDC.Authority, "/")
-		issuerNorm := strings.TrimSuffix(issuer, "/")
+		// Normalize both URLs for comparison (trim all trailing slashes)
+		authority := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
+		issuerNorm := strings.TrimRight(issuer, "/")
 
 		if !idp.Spec.Disabled && authority == issuerNorm {
 			l.logger.Debugw("Found IdentityProvider by authority fallback", "name", idp.Name, "authority", authority, "issuer", issuer)
