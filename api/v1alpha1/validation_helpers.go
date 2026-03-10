@@ -30,7 +30,7 @@ const maxDurationDays = 365
 
 // ParseDuration parses a duration string with extended support for day units.
 // Go's time.ParseDuration only supports up to hours (h), but this function
-// also accepts days (d) where 1d = 24h. Day values are bounded to 365.
+// also accepts days (d) where 1d = 24h. Day values are bounded to maxDurationDays.
 //
 // Examples:
 //   - "90d" -> 90 days (2160 hours)
@@ -38,7 +38,7 @@ const maxDurationDays = 365
 //   - "1d12h" -> 1 day and 12 hours (36 hours)
 //   - "2h30m" -> 2 hours and 30 minutes (standard Go duration)
 //
-// Returns an error if the duration string is invalid or exceeds 365 days.
+// Returns an error if the duration string is invalid or exceeds maxDurationDays.
 func ParseDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
