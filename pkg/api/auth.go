@@ -68,6 +68,19 @@ type AuthHandler struct {
 	defaultHTTPClient *http.Client
 }
 
+// defaultOIDCTransport clones http.DefaultTransport to inherit its sensible
+// defaults (proxy support, dial/idle timeouts, keep-alives) and layers TLS 1.2
+// minimum on top.
+func defaultOIDCTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else {
+		t.TLSClientConfig.MinVersion = tls.VersionTLS12
+	}
+	return t
+}
+
 func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 	// JWKS loading happens dynamically via WithIdentityProviderLoader()
 	// using IdentityProvider CRDs configured in the cluster
@@ -76,7 +89,7 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 		jwksLRUList: list.New(),
 		log:         log,
 		defaultHTTPClient: &http.Client{
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+			Transport: defaultOIDCTransport(),
 			Timeout:   10 * time.Second,
 		},
 	}

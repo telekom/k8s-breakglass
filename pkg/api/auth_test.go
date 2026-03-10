@@ -153,6 +153,22 @@ func TestNewAuth_DefaultHTTPClient(t *testing.T) {
 	transport, ok := handler.defaultHTTPClient.Transport.(*http.Transport)
 	require.True(t, ok, "transport must be *http.Transport")
 	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
+
+	// Verify the transport inherits DefaultTransport settings (proxy, timeouts)
+	defaultT := http.DefaultTransport.(*http.Transport)
+	assert.NotNil(t, transport.Proxy, "transport should inherit proxy from DefaultTransport")
+	assert.Equal(t, defaultT.MaxIdleConns, transport.MaxIdleConns)
+	assert.Equal(t, defaultT.IdleConnTimeout, transport.IdleConnTimeout)
+}
+
+func TestDefaultOIDCTransport(t *testing.T) {
+	transport := defaultOIDCTransport()
+	require.NotNil(t, transport)
+	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
+
+	defaultT := http.DefaultTransport.(*http.Transport)
+	assert.Equal(t, defaultT.MaxIdleConns, transport.MaxIdleConns)
+	assert.Equal(t, defaultT.IdleConnTimeout, transport.IdleConnTimeout)
 }
 
 func TestAuthHeaderKey(t *testing.T) {
