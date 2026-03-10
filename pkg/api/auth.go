@@ -319,7 +319,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 					if err := json.NewDecoder(resp.Body).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
 						// Validate the discovered JWKS URI to prevent SSRF if an IDP
 						// is compromised and returns a malicious jwks_uri.
-						if isValidHTTPSURL(discovery.JWKSURI) {
+						if isValidJWKSURL(discovery.JWKSURI) {
 							jwksURL = discovery.JWKSURI
 							discoverySuccess = true
 						} else {
@@ -436,6 +436,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// The issuer is extracted from the unverified token, so we must ensure it
 	// is a well-formed HTTPS URL to prevent SSRF and log injection attacks.
 	if issuer != "" && !isValidHTTPSURL(issuer) {
+		metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
 		metrics.JWTValidationFailure.WithLabelValues("unknown", "invalid_issuer_format").Inc()
 		RespondUnauthorizedWithMessage(c, "Invalid token issuer format")
 		c.Abort()
@@ -503,6 +504,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		}
 	} else if a.idpLoader != nil && issuer == "" {
 		// Multi-IDP mode but no issuer in token: require issuer claim
+		metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
 		metrics.JWTValidationFailure.WithLabelValues("unknown", "missing_issuer").Inc()
 		RespondUnauthorizedWithMessage(c, "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.")
 		c.Abort()
@@ -821,10 +823,9 @@ type RateLimiter interface {
 	Allow(c *gin.Context) (allowed bool, isAuthenticated bool)
 }
 
-// isValidHTTPSURL validates that a URL is a well-formed HTTPS URL with reasonable
-// length limits. Rejects query strings, fragments, and userinfo to prevent URLs
-// that differ only by non-path components from creating many distinct entries.
-// Used for both JWT issuer validation (SEC-003) and OIDC discovery jwks_uri validation.
+// isValidHTTPSURL validates that a URL is a well-formed HTTPS issuer URL with
+// reasonable length limits. Rejects query strings, fragments, and userinfo per
+// the OIDC Discovery spec (issuer identifiers must not contain these).
 func isValidHTTPSURL(issuer string) bool {
 	if len(issuer) == 0 || len(issuer) > maxIssuerLength {
 		return false
@@ -838,6 +839,27 @@ func isValidHTTPSURL(issuer string) bool {
 	}
 	// OIDC issuer identifiers must not contain query, fragment, or userinfo
 	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return false
+	}
+	return true
+}
+
+// isValidJWKSURL validates that a JWKS URI is a well-formed HTTPS URL.
+// Unlike isValidHTTPSURL, this allows query parameters since legitimate
+// JWKS endpoints may include them (e.g., versioned endpoints).
+func isValidJWKSURL(jwksURI string) bool {
+	if len(jwksURI) == 0 || len(jwksURI) > maxIssuerLength {
+		return false
+	}
+	u, err := url.Parse(jwksURI)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return false
+	}
+	// Reject fragment and userinfo but allow query parameters
+	if u.Fragment != "" || u.User != nil {
 		return false
 	}
 	return true
