@@ -152,7 +152,8 @@ func TestNewAuth_DefaultHTTPClient(t *testing.T) {
 
 	transport, ok := handler.defaultHTTPClient.Transport.(*http.Transport)
 	require.True(t, ok, "transport must be *http.Transport")
-	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
+	assert.GreaterOrEqual(t, transport.TLSClientConfig.MinVersion, uint16(tls.VersionTLS12),
+		"TLS minimum version must be at least 1.2")
 
 	// Verify the transport inherits DefaultTransport settings (proxy, timeouts)
 	defaultT, dtOK := http.DefaultTransport.(*http.Transport)
@@ -166,7 +167,8 @@ func TestNewAuth_DefaultHTTPClient(t *testing.T) {
 func TestDefaultOIDCTransport(t *testing.T) {
 	transport := defaultOIDCTransport()
 	require.NotNil(t, transport)
-	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
+	assert.GreaterOrEqual(t, transport.TLSClientConfig.MinVersion, uint16(tls.VersionTLS12),
+		"TLS minimum version must be at least 1.2")
 
 	defaultT, ok := http.DefaultTransport.(*http.Transport)
 	if ok {
