@@ -465,7 +465,54 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 	assert.Equal(t, 10, sender.Attempts())
 }
 
+// PanickingSender panics on every Send call for testing recovery limits.
+type PanickingSender struct {
+	mu     sync.Mutex
+	panics int
+	host   string
+}
+
+func (p *PanickingSender) Send(receivers []string, subject, body string) error {
+	p.mu.Lock()
+	p.panics++
+	p.mu.Unlock()
+	panic("intentional test panic")
+}
+
+func (p *PanickingSender) GetHost() string { return p.host }
+func (p *PanickingSender) GetPort() int    { return 25 }
+
+func (p *PanickingSender) PanicCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.panics
+}
+
 func TestQueue_PanicRecoveryLimit(t *testing.T) {
-	// Verify the panic recovery limit constant is set to a reasonable value
+	// Verify the constant value
 	assert.Equal(t, 3, maxPanicRecoveries, "maxPanicRecoveries should be 3")
+}
+
+func TestQueue_PanicRecoveryBehavior(t *testing.T) {
+	logger := zap.NewNop()
+	sugar := logger.Sugar()
+
+	panicSender := &PanickingSender{host: "test.example.com"}
+	queue := NewQueue(panicSender, sugar, 3, 10, 10)
+	queue.Start()
+	defer func() {
+		_ = queue.Stop(context.Background())
+	}()
+
+	// Enqueue enough items to trigger maxPanicRecoveries panics
+	for i := range maxPanicRecoveries + 1 {
+		_ = queue.Enqueue("panic-"+string(rune(48+i)), []string{"user@example.com"}, "Subject", "Body")
+	}
+
+	// Wait for panics and recovery attempts to settle
+	time.Sleep(500 * time.Millisecond)
+
+	// Worker should have panicked exactly maxPanicRecoveries times and then stopped
+	assert.Equal(t, maxPanicRecoveries, panicSender.PanicCount(),
+		"worker should stop restarting after %d consecutive panics", maxPanicRecoveries)
 }

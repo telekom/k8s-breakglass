@@ -144,8 +144,8 @@ func (q *Queue) Enqueue(id string, receivers []string, subject, body string) err
 	}
 }
 
-// maxPanicRecoveries limits the number of times a worker will restart after a panic
-// to prevent infinite restart loops from persistent bugs.
+// maxPanicRecoveries is the maximum number of consecutive panics a worker tolerates
+// before it stops restarting, to prevent infinite restart loops from persistent bugs.
 const maxPanicRecoveries = 3
 
 // worker processes items from the queue
