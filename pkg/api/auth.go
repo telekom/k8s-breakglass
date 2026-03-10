@@ -59,6 +59,7 @@ var allowedJWTAlgs = []string{
 // jwksCacheEntry holds the JWKS and its position in the LRU list
 type jwksCacheEntry struct {
 	issuer              string
+	idpName             string // resolved IDP name, cached to avoid redundant K8s API calls
 	expectedAudience    string // from IDP config; when non-empty, JWT aud claim is validated
 	audienceRefreshedAt time.Time
 	jwks                keyfunc.Keyfunc
@@ -153,6 +154,7 @@ func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProvider
 type jwksFetchResult struct {
 	jwks     keyfunc.Keyfunc
 	audience string
+	idpName  string // resolved IDP name, avoids a second K8s lookup in the request path
 }
 
 // getJWKSForIssuer returns the JWKS and expected audience for a given issuer URL,
@@ -160,10 +162,10 @@ type jwksFetchResult struct {
 // For single-IDP mode (no idpLoader), returns the default JWKS with empty audience.
 // Uses LRU eviction to prevent memory exhaustion when cache is full.
 // Concurrent fetches for the same issuer are deduplicated via singleflight (SEC-004).
-func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyfunc.Keyfunc, string, error) {
+func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyfunc.Keyfunc, string, string, error) {
 	// Single-IDP mode: use default JWKS
 	if a.idpLoader == nil {
-		return a.jwks, "", nil
+		return a.jwks, "", "", nil
 	}
 
 	// Multi-IDP mode: check LRU cache for specific issuer (fast path)
@@ -176,6 +178,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		// another goroutine could write these fields concurrently.
 		cachedJWKS := entry.jwks
 		cachedAudience := entry.expectedAudience
+		cachedIDPName := entry.idpName
 		lastRefresh := entry.audienceRefreshedAt
 		a.jwksMutex.Unlock()
 
@@ -185,13 +188,14 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 			if idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer); err == nil {
 				a.jwksMutex.Lock()
 				entry.expectedAudience = idpCfg.ExpectedAudience
+				entry.idpName = idpCfg.Name
 				entry.audienceRefreshedAt = time.Now()
 				a.jwksMutex.Unlock()
-				return cachedJWKS, idpCfg.ExpectedAudience, nil
+				return cachedJWKS, idpCfg.ExpectedAudience, idpCfg.Name, nil
 			}
 		}
 
-		return cachedJWKS, cachedAudience, nil
+		return cachedJWKS, cachedAudience, cachedIDPName, nil
 	}
 	a.jwksMutex.Unlock()
 
@@ -201,10 +205,10 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		return a.loadJWKSForIssuer(ctx, issuer)
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	res := v.(*jwksFetchResult)
-	return res.jwks, res.audience, nil
+	return res.jwks, res.audience, res.idpName, nil
 }
 
 // loadJWKSForIssuer performs the actual JWKS fetch, IDP resolution, and cache population.
@@ -216,7 +220,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
 		a.jwksMutex.Unlock()
-		return &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience}, nil
+		return &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience, idpName: entry.idpName}, nil
 	}
 	a.jwksMutex.Unlock()
 
@@ -229,7 +233,8 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	// configurable RefreshInterval (set to 1h above).
 	if lastFetch, ok := a.jwksFetchLimiter.Load(issuer); ok {
 		if t, ok := lastFetch.(time.Time); ok && time.Since(t) < jwksFetchMinInterval {
-			return nil, fmt.Errorf("JWKS fetch rate limited for issuer")
+			retryAfter := jwksFetchMinInterval - time.Since(t)
+			return nil, fmt.Errorf("jwks fetch rate limited; retry after %s", retryAfter.Truncate(time.Millisecond))
 		}
 	}
 
@@ -361,7 +366,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		entryCancel()
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
-		return &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience}, nil
+		return &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience, idpName: entry.idpName}, nil
 	}
 
 	// LRU eviction: remove least recently used entries if cache is full
@@ -387,12 +392,12 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	}
 
 	// Add new entry at front (most recently used)
-	entry := &jwksCacheEntry{issuer: issuer, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: time.Now(), jwks: k, cancel: entryCancel}
+	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: time.Now(), jwks: k, cancel: entryCancel}
 	elem := a.jwksLRUList.PushFront(entry)
 	a.jwksCache[issuer] = elem
 
 	a.log.Debugw("loaded JWKS for issuer", "issuer", issuer, "idp_name", idpCfg.Name)
-	return &jwksFetchResult{jwks: k, audience: idpCfg.ExpectedAudience}, nil
+	return &jwksFetchResult{jwks: k, audience: idpCfg.ExpectedAudience, idpName: idpCfg.Name}, nil
 }
 
 func (a *AuthHandler) authenticate(c *gin.Context) bool {
@@ -443,10 +448,10 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		return false
 	}
 
-	// Canonicalize issuer by trimming trailing slashes so that
+	// Canonicalize issuer by trimming a single trailing slash so that
 	// "https://auth.example.com" and "https://auth.example.com/" map to the
 	// same cache/limiter key, consistent with LoadIdentityProviderByIssuer.
-	issuer = strings.TrimRight(issuer, "/")
+	issuer = strings.TrimSuffix(issuer, "/")
 
 	startTime := time.Now()
 
@@ -466,8 +471,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		// Record JWKS cache hit/miss after IDP resolution (label set below)
 		wasCacheHit := cacheHit
 
-		var loadedAudience string
-		loadedJwks, loadedAudience, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+		loadedJwks, loadedAudience, loadedIDPName, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
 			metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
@@ -485,12 +489,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		}
 		jwks = loadedJwks
 		expectedAudience = loadedAudience
-		idpName, err := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
-		if err != nil {
-			a.log.Debugw("failed to get IDP name by issuer", "issuer", issuer, "error", err)
-		} else {
-			selectedIDP = idpName
-		}
+		selectedIDP = loadedIDPName
 
 		// Record JWKS cache hit/miss with bounded IDP name label
 		cacheLabel := selectedIDP
@@ -780,10 +779,10 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 
 	// Canonicalize issuer consistently with authenticate() to avoid
 	// duplicate cache entries from trailing slash variations.
-	issuer = strings.TrimRight(issuer, "/")
+	issuer = strings.TrimSuffix(issuer, "/")
 
 	// Get JWKS for verification
-	jwks, expectedAudience, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+	jwks, expectedAudience, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 	if err != nil || jwks == nil {
 		return ""
 	}
