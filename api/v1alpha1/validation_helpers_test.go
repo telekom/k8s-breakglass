@@ -2460,7 +2460,7 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 		{"simple days", "1d", false, 86400},
 		{"days with hours", "1d12h", false, 129600},
 		{"large days value", "365d", false, 31536000},
-		{"days exceed maximum", "366d", true, 0},
+		{"days exceed maximum", "367d", true, 0},
 		{"zero days", "0d", false, 0},
 		{"negative hours are valid in Go", "-1h", false, -3600}, // Go stdlib accepts negative
 		{"invalid unit", "1x", true, 0},

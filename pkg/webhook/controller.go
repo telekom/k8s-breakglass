@@ -847,7 +847,8 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		prefixes := wc.config.Kubernetes.OIDCPrefixes
 		// Find a primary prefix by matching incoming groups to allowed groups.
 		// Pre-build a map of valid prefix+group combinations for O(n) lookup
-		// instead of O(n*m*k) triple-nested loop.
+		// per session. The map itself is O(m*k) to build (m prefixes × k allowed
+		// groups), then each of the n incoming groups is a single map lookup.
 		// NOTE: This uses exact match (prefix+group == incoming group), which is
 		// stricter than the previous HasPrefix+HasSuffix approach. This is
 		// intentional and consistent with StripOIDCPrefixes elsewhere.
