@@ -274,20 +274,20 @@ var (
 	JWTValidationRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_jwt_validation_requests_total",
 		Help: "Total number of JWT validation requests",
-	}, []string{"issuer", "mode"})
+	}, []string{"identity_provider", "mode"})
 	JWTValidationSuccess = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_jwt_validation_success_total",
 		Help: "Total number of successful JWT validations",
-	}, []string{"issuer"})
+	}, []string{"identity_provider"})
 	JWTValidationFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_jwt_validation_failure_total",
 		Help: "Total number of failed JWT validations",
-	}, []string{"issuer", "reason"})
+	}, []string{"identity_provider", "reason"})
 	JWTValidationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "breakglass_jwt_validation_duration_seconds",
 		Help:    "Time taken to validate JWT token",
 		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5},
-	}, []string{"issuer"})
+	}, []string{"identity_provider"})
 
 	// JWKS Caching metrics
 	JWKSCacheHits = prometheus.NewCounterVec(prometheus.CounterOpts{

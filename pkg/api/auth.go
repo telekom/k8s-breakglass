@@ -408,6 +408,11 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		return false
 	}
 
+	// Canonicalize issuer by trimming trailing slashes so that
+	// "https://auth.example.com" and "https://auth.example.com/" map to the
+	// same cache/limiter key, consistent with LoadIdentityProviderByIssuer.
+	issuer = strings.TrimRight(issuer, "/")
+
 	// Record validation attempt — use empty issuer label before IDP resolution
 	// to prevent unbounded Prometheus cardinality from attacker-controlled issuers.
 	metrics.JWTValidationRequests.WithLabelValues("", mode).Inc()

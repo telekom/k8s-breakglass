@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -508,7 +509,7 @@ func TestIsValidIssuer(t *testing.T) {
 		{name: "no scheme", issuer: "auth.example.com", valid: false},
 		{name: "ftp scheme", issuer: "ftp://auth.example.com", valid: false},
 		{name: "https without host", issuer: "https://", valid: false},
-		{name: "extremely long issuer", issuer: "https://auth.example.com/" + string(make([]byte, maxIssuerLength)), valid: false},
+		{name: "extremely long issuer", issuer: "https://auth.example.com/" + strings.Repeat("a", maxIssuerLength), valid: false},
 		{name: "HTTPS with fragment", issuer: "https://auth.example.com#fragment", valid: false},
 		{name: "HTTPS with query", issuer: "https://auth.example.com?q=1", valid: false},
 		{name: "HTTPS with userinfo", issuer: "https://user:pass@auth.example.com", valid: false},
