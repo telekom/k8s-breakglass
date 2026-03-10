@@ -352,8 +352,8 @@ async function onCancel(bg: SessionCR) {
     </div>
     <div v-else class="masonry-layout">
       <BreakglassSessionCard
-        v-for="(bg, index) in filteredBreakglasses"
-        :key="bg.metadata?.name || bg.name || index"
+        v-for="bg in filteredBreakglasses"
+        :key="bg.metadata?.name || bg.name"
         class="card"
         :breakglass="bg"
         :time="time"
