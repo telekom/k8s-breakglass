@@ -144,17 +144,41 @@ func (q *Queue) Enqueue(id string, receivers []string, subject, body string) err
 	}
 }
 
+// maxPanicRecoveries is the maximum number of consecutive panics a worker tolerates
+// before it stops restarting, to prevent infinite restart loops from persistent bugs.
+const maxPanicRecoveries = 3
+
 // worker processes items from the queue
 func (q *Queue) worker() {
 	defer q.wg.Done()
+	consecutivePanics := 0
+	for {
+		stopped := q.workerLoop(&consecutivePanics)
+		if stopped {
+			return
+		}
+	}
+}
+
+// workerLoop runs the main processing loop with panic recovery.
+// Returns true when the worker should stop (context cancelled or max panics exceeded).
+func (q *Queue) workerLoop(consecutivePanics *int) (stopped bool) {
 	defer func() {
 		if r := recover(); r != nil {
+			(*consecutivePanics)++
 			q.log.Errorw("panic in mail queue worker recovered",
-				"panic", r)
+				"panic", r,
+				"consecutivePanics", *consecutivePanics)
 			metrics.MailFailed.WithLabelValues(q.sender.GetHost()).Inc()
-			// Restart the worker to maintain processing capacity
-			q.wg.Add(1)
-			go q.worker()
+			if *consecutivePanics >= maxPanicRecoveries {
+				q.log.Errorw("mail queue worker exceeded max consecutive panic recoveries, stopping queue",
+					"maxRecoveries", maxPanicRecoveries)
+				// Cancel the queue context so Enqueue returns an error
+				// instead of silently accepting items with no worker running.
+				q.cancel()
+				stopped = true
+			}
+			// Will restart via the for-loop in worker()
 		}
 	}()
 
@@ -168,11 +192,13 @@ func (q *Queue) worker() {
 			q.log.Info("Mail queue worker shutting down")
 			// Process remaining items in queue
 			q.processPending(pendingItems)
-			return
+			return true
 
 		case item := <-q.queue:
 			if item != nil {
 				q.processItem(item)
+				// Reset consecutive panic counter after processing without panic
+				*consecutivePanics = 0
 				// Track pending items only if not succeeded and we have retries left
 				if !item.Succeeded && item.Attempt < q.maxRetries {
 					pendingItems = append(pendingItems, item)
@@ -183,10 +209,12 @@ func (q *Queue) worker() {
 			// Check for items ready for retry every 50ms
 			now := time.Now()
 			remainingPending := make([]*QueueItem, 0)
+			processedCount := 0
 
 			for _, item := range pendingItems {
 				if !item.Succeeded && now.After(item.NextRetry) {
 					q.processItem(item)
+					processedCount++
 				}
 				// Keep in pending list if not succeeded and still has retries
 				if !item.Succeeded && item.Attempt < q.maxRetries {
@@ -194,6 +222,10 @@ func (q *Queue) worker() {
 				}
 			}
 			pendingItems = remainingPending
+			// Reset consecutive panic counter only if items were processed without panic
+			if processedCount > 0 {
+				*consecutivePanics = 0
+			}
 		}
 	}
 }

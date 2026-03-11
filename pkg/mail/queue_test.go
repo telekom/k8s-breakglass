@@ -19,11 +19,13 @@ package mail
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 )
@@ -463,4 +465,163 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	assert.Equal(t, 10, sender.Attempts())
+}
+
+// PanickingSender panics on every Send call for testing recovery limits.
+type PanickingSender struct {
+	mu     sync.Mutex
+	panics int
+	host   string
+}
+
+func (p *PanickingSender) Send(receivers []string, subject, body string) error {
+	p.mu.Lock()
+	p.panics++
+	p.mu.Unlock()
+	panic("intentional test panic")
+}
+
+func (p *PanickingSender) GetHost() string { return p.host }
+func (p *PanickingSender) GetPort() int    { return 25 }
+
+func (p *PanickingSender) PanicCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.panics
+}
+
+func TestQueue_PanicRecoveryBehavior(t *testing.T) {
+	logger := zap.NewNop()
+	sugar := logger.Sugar()
+
+	panicSender := &PanickingSender{host: "test.example.com"}
+	queue := NewQueue(panicSender, sugar, 3, 10, 10)
+	queue.Start()
+	defer func() {
+		_ = queue.Stop(context.Background())
+	}()
+
+	// Enqueue items one at a time, waiting for each panic to be processed.
+	// The worker can cancel the queue after reaching maxPanicRecoveries,
+	// so later enqueues may legitimately fail.
+	for i := range maxPanicRecoveries + 1 {
+		err := queue.Enqueue("panic-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
+		if err != nil {
+			// Queue was cancelled after the worker hit the panic limit — that's expected
+			break
+		}
+		// Wait for this panic to be counted before enqueueing the next item
+		expected := min(i+1, maxPanicRecoveries)
+		assert.Eventually(t, func() bool {
+			return panicSender.PanicCount() >= expected
+		}, 5*time.Second, 50*time.Millisecond, "worker should have panicked at least %d times", expected)
+	}
+
+	// Poll until panics settle instead of using a fixed sleep
+	assert.Eventually(t, func() bool {
+		return panicSender.PanicCount() >= maxPanicRecoveries
+	}, 5*time.Second, 50*time.Millisecond, "worker should panic %d times", maxPanicRecoveries)
+
+	// Worker should have panicked exactly maxPanicRecoveries times and then stopped
+	assert.Equal(t, maxPanicRecoveries, panicSender.PanicCount(),
+		"worker should stop restarting after %d consecutive panics", maxPanicRecoveries)
+
+	// After max panics the queue context is cancelled, so Enqueue should fail
+	assert.Eventually(t, func() bool {
+		err := queue.Enqueue("post-failure", []string{"user@example.com"}, "Subject", "Body")
+		return err != nil
+	}, 5*time.Second, 50*time.Millisecond, "Enqueue should return error after worker exhaustion")
+}
+
+// IntermittentPanickingSender panics for certain send counts and succeeds otherwise,
+// used to test that successful sends reset the consecutive panic counter.
+type IntermittentPanickingSender struct {
+	mu      sync.Mutex
+	sends   int
+	panics  int
+	panicAt map[int]bool // which send attempt numbers should panic
+	host    string
+}
+
+func (s *IntermittentPanickingSender) Send(receivers []string, subject, body string) error {
+	s.mu.Lock()
+	s.sends++
+	current := s.sends
+	shouldPanic := s.panicAt[current]
+	if shouldPanic {
+		s.panics++
+	}
+	s.mu.Unlock()
+	if shouldPanic {
+		panic("intentional intermittent test panic")
+	}
+	return nil
+}
+
+func (s *IntermittentPanickingSender) GetHost() string { return s.host }
+func (s *IntermittentPanickingSender) GetPort() int    { return 25 }
+
+func TestQueue_PanicRecoveryResetsOnSuccess(t *testing.T) {
+	logger := zap.NewNop()
+	sugar := logger.Sugar()
+
+	// Panics on sends 1 and 3, succeeds on send 2 (between panics).
+	// If consecutive counter resets on success, the worker should survive
+	// because neither panic run reaches maxPanicRecoveries (3).
+	sender := &IntermittentPanickingSender{
+		host:    "test.example.com",
+		panicAt: map[int]bool{1: true, 3: true},
+	}
+	queue := NewQueue(sender, sugar, 3, 10, 10)
+	queue.Start()
+	defer func() {
+		_ = queue.Stop(context.Background())
+	}()
+
+	// Enqueue 3 items: first will panic, second will succeed (resetting counter),
+	// third will panic again but counter is back to 0 so worker survives.
+	for i := range 3 {
+		err := queue.Enqueue("intermittent-"+strconv.Itoa(i), []string{"user@example.com"}, "Subject", "Body")
+		require.NoError(t, err, "Enqueue should succeed for item %d", i)
+		// Wait for this item to be processed before sending the next,
+		// ensuring deterministic ordering of panic/success sequences.
+		expected := i + 1
+		assert.Eventually(t, func() bool {
+			sender.mu.Lock()
+			defer sender.mu.Unlock()
+			return sender.sends >= expected
+		}, 5*time.Second, 10*time.Millisecond, "item %d should have been processed", i)
+	}
+
+	// Poll until all items are processed instead of using a fixed sleep
+	assert.Eventually(t, func() bool {
+		sender.mu.Lock()
+		defer sender.mu.Unlock()
+		return sender.sends >= 3
+	}, 5*time.Second, 50*time.Millisecond, "all 3 items should have been processed")
+
+	sender.mu.Lock()
+	totalSends := sender.sends
+	totalPanics := sender.panics
+	sender.mu.Unlock()
+
+	// All 3 items should have been processed (2 panics + 1 success),
+	// and the worker should still be alive (not stopped).
+	assert.Equal(t, 3, totalSends, "all 3 items should have been sent")
+	assert.Equal(t, 2, totalPanics, "exactly 2 panics should have occurred")
+
+	// Verify worker is still alive by enqueueing one more item
+	err := queue.Enqueue("after-reset", []string{"user@example.com"}, "Subject", "Body")
+	require.NoError(t, err, "Enqueue should succeed after panic counter reset")
+
+	assert.Eventually(t, func() bool {
+		sender.mu.Lock()
+		defer sender.mu.Unlock()
+		return sender.sends >= 4
+	}, 5*time.Second, 50*time.Millisecond, "worker should process item after non-consecutive panics")
+
+	sender.mu.Lock()
+	finalSends := sender.sends
+	sender.mu.Unlock()
+	assert.Equal(t, 4, finalSends, "worker should still be alive and process items after non-consecutive panics")
 }
