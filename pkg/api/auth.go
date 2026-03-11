@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -256,7 +257,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		HTTPTimeout:     defaultOIDCTimeout,
 		RefreshErrorHandlerFunc: func(u string) func(ctx context.Context, err error) {
 			return func(_ context.Context, err error) {
-				a.log.Warnf("failed to refresh JWKS for issuer %s (url: %s): %v", issuer, u, err)
+				a.log.Warnw("failed to refresh JWKS", "issuer", issuer, "url", u, "error", err)
 			}
 		},
 	}
@@ -282,7 +283,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		transport := defaultOIDCTransport()
 		transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // Operator-opted via InsecureSkipVerify flag; TLS 1.2 enforced by defaultOIDCTransport
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
-		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
+		a.log.Warnw("TLS verification disabled for IDP (dev/e2e only)", "idp", idpCfg.Name)
 	}
 
 	// Build JWKS endpoint URL from IDP's configuration
@@ -325,7 +326,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 					var discovery struct {
 						JWKSURI string `json:"jwks_uri"`
 					}
-					if err := json.NewDecoder(resp.Body).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
+					if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
 						// Validate the discovered JWKS URI to prevent SSRF if an IDP
 						// is compromised and returns a malicious jwks_uri.
 						if isValidJWKSURL(discovery.JWKSURI) {
