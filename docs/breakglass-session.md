@@ -152,7 +152,7 @@ grantedGroup: "view-only"         # Read-only access
 
 #### maxValidFor
 
-Maximum time the session will be active after approval:
+Maximum time the session will be active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365.
 
 ```yaml
 maxValidFor: "1h"   # 1 hour (default)

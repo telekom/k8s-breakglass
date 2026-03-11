@@ -2440,8 +2440,8 @@ func TestValidateAuxiliaryResources(t *testing.T) {
 // ============================================================================
 
 func TestParseDuration_EdgeCases(t *testing.T) {
-	// Guard: constant value documented in CHANGELOG and docs
-	assert.Equal(t, 365, maxDurationDays, "maxDurationDays must be 365 to match documented day limit")
+	// Guard: constant value documented in CHANGELOG and duration field docs
+	assert.Equal(t, 365, maxDurationDays, "maxDurationDays must be 365; update docs/breakglass-session.md and docs/breakglass-escalation.md if changed")
 
 	// Verify boundary behavior: exactly maxDurationDays succeeds, maxDurationDays+1 fails
 	maxDaysStr := fmt.Sprintf("%dd", maxDurationDays)

@@ -790,6 +790,10 @@ func TestAuthorizeViaSessions_SuffixOnlyNoLongerSetsPrefix(t *testing.T) {
 	var firstGroupSeen string
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || (r.URL.Path != "/apis/authorization.k8s.io/v1/subjectaccessreviews" && r.URL.Path != "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
+			http.NotFound(w, r)
+			return
+		}
 		bodyBytes, _ := io.ReadAll(r.Body)
 		bodyStr := string(bodyBytes)
 		mu.Lock()
