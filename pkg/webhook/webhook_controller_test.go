@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -763,6 +764,67 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 	}
 	if impersonated != "oidc:breakglass-create-all" {
 		t.Fatalf("expected impersonated group to be oidc:breakglass-create-all but got %s", impersonated)
+	}
+}
+
+// TestAuthorizeViaSessions_SuffixOnlyNoLongerSetsPrefix verifies that the old
+// HasPrefix+HasSuffix matching no longer detects a primary prefix for ordering.
+// Previously, an incoming group like "oidc:cluster-admins" would match allowed
+// group "admins" via suffix, setting primaryPrefix. The exact prefix+group lookup
+// now correctly skips it, so the plain group is tried first (no primaryPrefix).
+// Authorization still succeeds via the raw group fallback — the change is about
+// prefix detection ordering, not about blocking access.
+func TestAuthorizeViaSessions_SuffixOnlyNoLongerSetsPrefix(t *testing.T) {
+	controller := SetupController(nil)
+
+	ses := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess-suffix-1"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			GrantedGroup: "admins",
+		},
+	}
+
+	controller.config.Kubernetes.OIDCPrefixes = []string{"oidc:"}
+
+	// Mock SAR server that records the first impersonated group and always allows
+	var firstGroupSeen string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		bodyStr := string(bodyBytes)
+		mu.Lock()
+		if firstGroupSeen == "" {
+			// Detect which group was tried first by checking body content
+			if strings.Contains(bodyStr, "oidc:admins") {
+				firstGroupSeen = "oidc:admins"
+			} else if strings.Contains(bodyStr, "admins") {
+				firstGroupSeen = "admins"
+			}
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`)
+	}))
+	defer srv.Close()
+
+	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
+
+	// Incoming group "oidc:cluster-admins" has prefix "oidc:" and suffix "admins"
+	// but is NOT exactly "oidc:" + "admins" = "oidc:admins"
+	suffixSAR := sar
+	suffixSAR.Spec.Groups = []string{"oidc:cluster-admins"}
+
+	allowed, _, _, _ := controller.authorizeViaSessions(context.Background(), rc, []breakglassv1alpha1.BreakglassSession{ses}, suffixSAR, "test-cluster")
+	if !allowed {
+		t.Fatal("expected authorization to succeed via raw group fallback")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Without prefix detection, the plain group "admins" should be tried first
+	// (not "oidc:admins" which would be first if primaryPrefix were detected)
+	if firstGroupSeen != "admins" {
+		t.Fatalf("expected first SAR group to be 'admins' (no prefix priority) but got %q", firstGroupSeen)
 	}
 }
 
