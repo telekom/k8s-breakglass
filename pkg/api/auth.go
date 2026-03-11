@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -85,6 +86,7 @@ func defaultOIDCTransport() *http.Transport {
 	} else {
 		t = &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          100,
 			IdleConnTimeout:       90 * time.Second,
@@ -169,19 +171,20 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		if err != nil {
 			return nil, "", fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+		transport := defaultOIDCTransport()
+		transport.TLSClientConfig.RootCAs = pool
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
 		pool, err := buildCertPoolFromPEM(idpCfg.Keycloak.CertificateAuthority)
 		if err != nil {
 			return nil, "", fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+		transport := defaultOIDCTransport()
+		transport.TLSClientConfig.RootCAs = pool
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		insecureTLS := &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // Operator-opted via InsecureSkipVerify flag
-		insecureTLS.InsecureSkipVerify = true                    //nolint:gosec // Dev/E2E only; enforced TLS 1.2 above
-		transport := &http.Transport{TLSClientConfig: insecureTLS}
+		transport := defaultOIDCTransport()
+		transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // Operator-opted via InsecureSkipVerify flag; TLS 1.2 enforced by defaultOIDCTransport
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
 	}
