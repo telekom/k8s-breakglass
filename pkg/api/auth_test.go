@@ -622,7 +622,7 @@ func TestJWKSFetchRateLimiting(t *testing.T) {
 
 	// Call getJWKSForIssuer — should return rate-limit error because
 	// the cooldown has not elapsed
-	_, _, _, err := auth.getJWKSForIssuer(t.Context(), issuer)
+	_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), issuer)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limited")
 
@@ -630,7 +630,7 @@ func TestJWKSFetchRateLimiting(t *testing.T) {
 	// rate-limit check and proceeds to IDP resolution (which fails with a
 	// different error because we have no real k8s client).
 	unknownIssuer := "https://unknown.example.com"
-	_, _, _, err = auth.getJWKSForIssuer(t.Context(), unknownIssuer)
+	_, _, _, _, err = auth.getJWKSForIssuer(t.Context(), unknownIssuer)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "rate limited",
 		"unknown issuer should not be rate-limited on first attempt")
@@ -638,7 +638,7 @@ func TestJWKSFetchRateLimiting(t *testing.T) {
 	// Verify that after the cooldown, the same issuer is no longer rate-limited
 	// (it proceeds to IDP resolution which fails differently).
 	auth.jwksFetchLimiter.Store(issuer, time.Now().Add(-jwksFetchMinInterval-time.Second))
-	_, _, _, err = auth.getJWKSForIssuer(t.Context(), issuer)
+	_, _, _, _, err = auth.getJWKSForIssuer(t.Context(), issuer)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "rate limited",
 		"issuer should not be rate-limited after cooldown expires")

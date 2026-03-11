@@ -85,6 +85,7 @@ type OIDCConfig struct {
 	// If empty, audience validation is skipped.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^\S+$`
 	ExpectedAudience string `json:"expectedAudience,omitempty"`
 
 	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
