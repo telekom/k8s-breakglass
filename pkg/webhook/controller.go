@@ -857,7 +857,7 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		// (prefix, group) pairs produce the same concatenation, either prefix
 		// is a valid match for that incoming group string.
 		var primaryPrefix string
-		if incoming.Spec.Groups != nil && len(prefixes) > 0 {
+		if len(incoming.Spec.Groups) > 0 && len(prefixes) > 0 {
 			validCombinations := make(map[string]string, len(prefixes)*len(allowedGroupsToCheck))
 			for _, p := range prefixes {
 				for _, allowed := range allowedGroupsToCheck {
