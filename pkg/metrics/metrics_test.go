@@ -268,30 +268,30 @@ func TestAPIMetrics(t *testing.T) {
 
 // TestJWTMetrics verifies JWT validation metrics
 func TestJWTMetrics(t *testing.T) {
-	issuer := "https://keycloak.test/realms/test"
+	idpName := "keycloak-test"
 
 	t.Run("validation requests", func(t *testing.T) {
-		before := testutil.ToFloat64(JWTValidationRequests.WithLabelValues(issuer, "multi-idp"))
-		JWTValidationRequests.WithLabelValues(issuer, "multi-idp").Inc()
-		after := testutil.ToFloat64(JWTValidationRequests.WithLabelValues(issuer, "multi-idp"))
+		before := testutil.ToFloat64(JWTValidationRequests.WithLabelValues(idpName, "multi-idp"))
+		JWTValidationRequests.WithLabelValues(idpName, "multi-idp").Inc()
+		after := testutil.ToFloat64(JWTValidationRequests.WithLabelValues(idpName, "multi-idp"))
 		if after != before+1 {
 			t.Fatalf("expected JWTValidationRequests to increment")
 		}
 	})
 
 	t.Run("validation success", func(t *testing.T) {
-		before := testutil.ToFloat64(JWTValidationSuccess.WithLabelValues(issuer))
-		JWTValidationSuccess.WithLabelValues(issuer).Inc()
-		after := testutil.ToFloat64(JWTValidationSuccess.WithLabelValues(issuer))
+		before := testutil.ToFloat64(JWTValidationSuccess.WithLabelValues(idpName))
+		JWTValidationSuccess.WithLabelValues(idpName).Inc()
+		after := testutil.ToFloat64(JWTValidationSuccess.WithLabelValues(idpName))
 		if after != before+1 {
 			t.Fatalf("expected JWTValidationSuccess to increment")
 		}
 	})
 
 	t.Run("validation failure", func(t *testing.T) {
-		before := testutil.ToFloat64(JWTValidationFailure.WithLabelValues(issuer, "expired"))
-		JWTValidationFailure.WithLabelValues(issuer, "expired").Inc()
-		after := testutil.ToFloat64(JWTValidationFailure.WithLabelValues(issuer, "expired"))
+		before := testutil.ToFloat64(JWTValidationFailure.WithLabelValues(idpName, "expired"))
+		JWTValidationFailure.WithLabelValues(idpName, "expired").Inc()
+		after := testutil.ToFloat64(JWTValidationFailure.WithLabelValues(idpName, "expired"))
 		if after != before+1 {
 			t.Fatalf("expected JWTValidationFailure to increment")
 		}

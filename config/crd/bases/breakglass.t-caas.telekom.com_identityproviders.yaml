@@ -187,6 +187,7 @@ spec:
                       that adds this value to the aud claim in issued tokens.
                       If empty, audience validation is skipped.
                     maxLength: 253
+                    pattern: ^\S+$
                     type: string
                   insecureSkipVerify:
                     description: InsecureSkipVerify allows skipping TLS verification

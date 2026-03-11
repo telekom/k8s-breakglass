@@ -162,10 +162,10 @@ type jwksFetchResult struct {
 // For single-IDP mode (no idpLoader), returns the default JWKS with empty audience.
 // Uses LRU eviction to prevent memory exhaustion when cache is full.
 // Concurrent fetches for the same issuer are deduplicated via singleflight (SEC-004).
-func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyfunc.Keyfunc, string, string, error) {
+func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks keyfunc.Keyfunc, audience string, idpName string, cacheHit bool, err error) {
 	// Single-IDP mode: use default JWKS
 	if a.idpLoader == nil {
-		return a.jwks, "", "", nil
+		return a.jwks, "", "", true, nil
 	}
 
 	// Multi-IDP mode: check LRU cache for specific issuer (fast path)
@@ -191,11 +191,11 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 				entry.idpName = idpCfg.Name
 				entry.audienceRefreshedAt = time.Now()
 				a.jwksMutex.Unlock()
-				return cachedJWKS, idpCfg.ExpectedAudience, idpCfg.Name, nil
+				return cachedJWKS, idpCfg.ExpectedAudience, idpCfg.Name, true, nil
 			}
 		}
 
-		return cachedJWKS, cachedAudience, cachedIDPName, nil
+		return cachedJWKS, cachedAudience, cachedIDPName, true, nil
 	}
 	a.jwksMutex.Unlock()
 
@@ -205,10 +205,10 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		return a.loadJWKSForIssuer(ctx, issuer)
 	})
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", false, err
 	}
 	res := v.(*jwksFetchResult)
-	return res.jwks, res.audience, res.idpName, nil
+	return res.jwks, res.audience, res.idpName, false, nil
 }
 
 // loadJWKSForIssuer performs the actual JWKS fetch, IDP resolution, and cache population.
@@ -468,15 +468,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 
 	if a.idpLoader != nil && issuer != "" {
 		// Multi-IDP mode: load JWKS for specific issuer
-		// Record cache check (using RLock for read-only check)
-		a.jwksMutex.RLock()
-		_, cacheHit := a.jwksCache[issuer]
-		a.jwksMutex.RUnlock()
-
-		// Record JWKS cache hit/miss after IDP resolution (label set below)
-		wasCacheHit := cacheHit
-
-		loadedJwks, loadedAudience, loadedIDPName, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+		loadedJwks, loadedAudience, loadedIDPName, wasCacheHit, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 		if err != nil {
 			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
 			metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
@@ -788,7 +780,7 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 	issuer = strings.TrimRight(issuer, "/")
 
 	// Get JWKS for verification
-	jwks, expectedAudience, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+	jwks, expectedAudience, _, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 	if err != nil || jwks == nil {
 		return ""
 	}
