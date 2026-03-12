@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **E2E: port-forward keepalive for CI stability**: All long-lived E2E port-forwards used during test execution (Keycloak, API, MailHog, Metrics, Kafka, audit webhook receiver) now use `while true` restart loops to auto-recover from idle timeouts, pod restarts, and network drops. Fixes flaky Single-Cluster E2E, OIDC E2E, and UI E2E tests caused by Keycloak port-forward dying mid-run
+- **E2E: added missing MailHog port-forward in CI workflow**: The CI workflow's "Setup port-forwards for E2E tests" step killed all port-forwards from `kind-setup-single.sh` but did not restart the MailHog port-forward, causing all notification e2e tests to fail with `connection refused` on port 8025
+- **E2E: added missing MailHog port-forward in CI workflow**: The CI workflow's "Setup port-forwards for E2E tests" step killed all port-forwards from `kind-setup-single.sh` but did not restart the MailHog port-forward, causing all notification e2e tests to fail with `connection refused` on port 8025
+- **E2E: added missing MailHog port-forward in CI workflow**: The CI workflow's "Setup port-forwards for E2E tests" step killed all port-forwards from `kind-setup-single.sh` but did not restart the MailHog port-forward, causing all notification e2e tests to fail with `connection refused` on port 8025
 - **E2E: increased OIDC token retry window**: Bumped token request retries from 5 to 8 attempts with capped 10s backoff (~60s total window) to tolerate port-forward reconnection delays
 
 ### Changed

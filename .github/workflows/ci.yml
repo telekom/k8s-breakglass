@@ -923,6 +923,35 @@ jobs:
             echo "Warning: Audit webhook receiver not accessible (tests may fail)"
           fi
 
+          # MailHog port-forward (port 8025) - needed for notification e2e tests
+          echo "Starting MailHog keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-mailhog 8025:8025 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] MailHog port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "MailHog keepalive PID: $!"
+
+          # Wait for MailHog to be accessible
+          for i in {1..30}; do
+            if curl -sf "http://localhost:8025/api/v2/messages" > /dev/null 2>&1; then
+              echo "✓ MailHog port-forward ready"
+              break
+            fi
+            sleep 1
+          done
+
+          if ! curl -sf "http://localhost:8025/api/v2/messages" > /dev/null 2>&1; then
+            echo "Warning: MailHog not accessible on port 8025 (notification tests may fail)"
+          fi
+
           # Wait for Keycloak to be reachable
           for i in {1..30}; do
             if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
