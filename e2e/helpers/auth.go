@@ -114,7 +114,10 @@ func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username
 
 	// Fall back to direct HTTP request with retry + exponential backoff.
 	// Keycloak may still be starting or recovering from a restart.
-	const maxAttempts = 5
+	// The port-forward keepalive loop restarts in ~2s, so 8 retries with
+	// capped backoff gives ~60s total window to tolerate transient drops.
+	const maxAttempts = 8
+	const maxBackoff = 10 * time.Second
 	backoff := p.initialBackoff()
 
 	var lastErr error
@@ -149,7 +152,10 @@ retryLoop:
 				break retryLoop
 			case <-timer.C:
 			}
-			backoff *= 2 // exponential backoff: 2s, 4s, 8s, 16s
+			backoff *= 2 // exponential backoff: 2s, 4s, 8s, 10s (capped), ...
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 	}
 
