@@ -185,14 +185,27 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 
 		// Refresh expectedAudience from the live IDP config periodically so
 		// changes take effect without waiting for JWKS cache eviction or a restart.
+		// Use singleflight to avoid thundering herd when many requests arrive
+		// just after the refresh interval elapses for the same issuer.
 		if time.Since(lastRefresh) > audienceRefreshInterval {
-			if idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer); err == nil {
+			_, refreshErr, _ := a.jwksFlight.Do("audience:"+issuer, func() (interface{}, error) {
+				idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
+				if err != nil {
+					return nil, err
+				}
 				a.jwksMutex.Lock()
 				entry.expectedAudience = idpCfg.ExpectedAudience
 				entry.idpName = idpCfg.Name
 				entry.audienceRefreshedAt = time.Now()
 				a.jwksMutex.Unlock()
-				return cachedJWKS, idpCfg.ExpectedAudience, idpCfg.Name, true, nil
+				return nil, nil
+			})
+			if refreshErr == nil {
+				a.jwksMutex.Lock()
+				refreshedAudience := entry.expectedAudience
+				refreshedIDPName := entry.idpName
+				a.jwksMutex.Unlock()
+				return cachedJWKS, refreshedAudience, refreshedIDPName, true, nil
 			}
 		}
 
@@ -329,11 +342,14 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 					if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
 						// Validate the discovered JWKS URI to prevent SSRF if an IDP
 						// is compromised and returns a malicious jwks_uri.
-						if isValidJWKSURL(discovery.JWKSURI) {
+						if !isValidJWKSURL(discovery.JWKSURI) {
+							a.log.Warnw("OIDC discovery returned invalid jwks_uri, ignoring", "jwks_uri", discovery.JWKSURI)
+						} else if !jwksHostMatchesAuthority(discovery.JWKSURI, idpCfg.Authority) {
+							a.log.Warnw("OIDC discovery returned jwks_uri with mismatched host, ignoring",
+								"jwks_uri", discovery.JWKSURI, "authority", idpCfg.Authority)
+						} else {
 							jwksURL = discovery.JWKSURI
 							discoverySuccess = true
-						} else {
-							a.log.Warnw("OIDC discovery returned invalid jwks_uri, ignoring", "jwks_uri", discovery.JWKSURI)
 						}
 					}
 				}
@@ -861,6 +877,22 @@ func isValidJWKSURL(jwksURI string) bool {
 		return false
 	}
 	return true
+}
+
+// jwksHostMatchesAuthority returns true when the discovered jwks_uri host
+// matches the configured authority host.  This prevents SSRF if a
+// compromised IDP discovery endpoint returns a jwks_uri pointing to an
+// internal or unrelated host.
+func jwksHostMatchesAuthority(jwksURI, authority string) bool {
+	jwksURL, err := url.Parse(jwksURI)
+	if err != nil {
+		return false
+	}
+	authURL, err := url.Parse(authority)
+	if err != nil || !authURL.IsAbs() {
+		return false
+	}
+	return strings.EqualFold(jwksURL.Hostname(), authURL.Hostname())
 }
 
 func buildCertPoolFromPEM(pemData string) (*x509.CertPool, error) {

@@ -546,6 +546,31 @@ func TestIsValidJWKSURL(t *testing.T) {
 	}
 }
 
+func TestJWKSHostMatchesAuthority(t *testing.T) {
+	tests := []struct {
+		name      string
+		jwksURI   string
+		authority string
+		match     bool
+	}{
+		{name: "same host", jwksURI: "https://auth.example.com/jwks", authority: "https://auth.example.com/realms/test", match: true},
+		{name: "case insensitive", jwksURI: "https://Auth.Example.COM/jwks", authority: "https://auth.example.com/", match: true},
+		{name: "different host rejected", jwksURI: "https://evil.com/jwks", authority: "https://auth.example.com/", match: false},
+		{name: "internal IP rejected", jwksURI: "https://169.254.169.254/jwks", authority: "https://auth.example.com/", match: false},
+		{name: "invalid jwks URI", jwksURI: "://bad", authority: "https://auth.example.com/", match: false},
+		{name: "invalid authority", jwksURI: "https://auth.example.com/jwks", authority: "://bad", match: false},
+		{name: "relative authority", jwksURI: "https://auth.example.com/jwks", authority: "/relative/path", match: false},
+		{name: "empty authority", jwksURI: "https://auth.example.com/jwks", authority: "", match: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := jwksHostMatchesAuthority(tt.jwksURI, tt.authority)
+			assert.Equal(t, tt.match, got, "jwksHostMatchesAuthority(%q, %q)", tt.jwksURI, tt.authority)
+		})
+	}
+}
+
 // --- SEC-003: Middleware rejects invalid issuer format ---
 
 func TestAuthMiddleware_RejectsInvalidIssuerFormat(t *testing.T) {

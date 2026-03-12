@@ -1077,3 +1077,110 @@ func TestLoadAllIdentityProviders_MetricsRecorder(t *testing.T) {
 		t.Error("Expected metrics to be recorded for conversion failure")
 	}
 }
+
+func TestLoadIdentityProviderByIssuer_TrailingSlashNormalization(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	idp := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "slash-idp", Namespace: "default"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://auth.example.com/",
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com/realms/test",
+				ClientID:  "test-client",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&idp).
+		Build()
+
+	loader := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar())
+
+	tests := []struct {
+		name    string
+		issuer  string
+		wantErr bool
+	}{
+		{name: "exact match with trailing slash", issuer: "https://auth.example.com/", wantErr: false},
+		{name: "match without trailing slash", issuer: "https://auth.example.com", wantErr: false},
+		{name: "match with multiple trailing slashes", issuer: "https://auth.example.com//", wantErr: false},
+		{name: "different host", issuer: "https://other.example.com", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := loader.LoadIdentityProviderByIssuer(context.Background(), tt.issuer)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for issuer %q, got nil", tt.issuer)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for issuer %q: %v", tt.issuer, err)
+				}
+				if cfg != nil && cfg.Name != "slash-idp" {
+					t.Errorf("expected IDP name 'slash-idp', got %q", cfg.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadIdentityProviderByIssuer_AuthorityFallbackNormalization(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	// IDP without explicit issuer, only authority set
+	idp := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "authority-idp", Namespace: "default"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com/realms/test/",
+				ClientID:  "test-client",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&idp).
+		Build()
+
+	loader := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar())
+
+	tests := []struct {
+		name    string
+		issuer  string
+		wantErr bool
+	}{
+		{name: "authority match with trailing slash", issuer: "https://auth.example.com/realms/test/", wantErr: false},
+		{name: "authority match without trailing slash", issuer: "https://auth.example.com/realms/test", wantErr: false},
+		{name: "no match", issuer: "https://other.example.com/realms/test", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := loader.LoadIdentityProviderByIssuer(context.Background(), tt.issuer)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for issuer %q, got nil", tt.issuer)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for issuer %q: %v", tt.issuer, err)
+				}
+				if cfg != nil && cfg.Name != "authority-idp" {
+					t.Errorf("expected IDP name 'authority-idp', got %q", cfg.Name)
+				}
+			}
+		})
+	}
+}
