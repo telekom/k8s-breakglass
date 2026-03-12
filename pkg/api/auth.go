@@ -239,13 +239,14 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	}
 	a.jwksMutex.Unlock()
 
-	// SEC-004: per-issuer rate limiting on initial JWKS fetches.
+	// SEC-004: per-issuer rate limiting on initial JWKS client creation.
 	// Prevents an attacker from flooding requests with crafted issuer claims
 	// to trigger excessive JWKS fetches against upstream OIDC providers.
-	// Note: keyfunc/v3 background refreshes (on unknown kid) bypass this limiter
-	// because they are managed internally by keyfunc via RefreshInterval. Those
-	// refreshes are bounded by keyfunc's own per-URL deduplication and the
-	// configurable RefreshInterval (set to 1h above).
+	// Note: once a JWKS client is created and cached, subsequent refreshes
+	// (including those triggered by unknown kid values) are managed internally
+	// by keyfunc/v3's RefreshInterval and per-URL deduplication — not by this
+	// limiter. Network-level and IdP-side rate limits should be configured as
+	// additional defense-in-depth for the JWKS endpoint.
 	if lastFetch, ok := a.jwksFetchLimiter.Load(issuer); ok {
 		if t, ok := lastFetch.(time.Time); ok {
 			elapsed := time.Since(t)
@@ -461,7 +462,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// SEC-003: Validate issuer format before using it for JWKS routing.
 	// The issuer is extracted from the unverified token, so we must ensure it
 	// is a well-formed HTTPS URL to prevent SSRF and log injection attacks.
-	if issuer != "" && !isValidHTTPSURL(issuer) {
+	if issuer != "" && !isValidIssuerURL(issuer) {
 		metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
 		metrics.JWTValidationFailure.WithLabelValues("unknown", "invalid_issuer_format").Inc()
 		RespondUnauthorizedWithMessage(c, "Invalid token issuer format")
@@ -788,7 +789,13 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 	}
 
 	// SEC-003: reject malformed issuers in optional auth path too
-	if issuer != "" && !isValidHTTPSURL(issuer) {
+	if issuer != "" && !isValidIssuerURL(issuer) {
+		return ""
+	}
+
+	// Short-circuit empty issuer in multi-IDP mode to avoid unnecessary
+	// loader calls and warning log noise on public endpoints.
+	if a.idpLoader != nil && issuer == "" {
 		return ""
 	}
 
@@ -837,10 +844,10 @@ type RateLimiter interface {
 	Allow(c *gin.Context) (allowed bool, isAuthenticated bool)
 }
 
-// isValidHTTPSURL validates that a URL is a well-formed HTTPS issuer URL with
+// isValidIssuerURL validates that a URL is a well-formed HTTPS issuer URL with
 // reasonable length limits. Rejects query strings, fragments, and userinfo per
 // the OIDC Discovery spec (issuer identifiers must not contain these).
-func isValidHTTPSURL(issuer string) bool {
+func isValidIssuerURL(issuer string) bool {
 	if len(issuer) == 0 || len(issuer) > maxIssuerLength {
 		return false
 	}
@@ -859,7 +866,7 @@ func isValidHTTPSURL(issuer string) bool {
 }
 
 // isValidJWKSURL validates that a JWKS URI is a well-formed HTTPS URL.
-// Unlike isValidHTTPSURL, this allows query parameters since legitimate
+// Unlike isValidIssuerURL, this allows query parameters since legitimate
 // JWKS endpoints may include them (e.g., versioned endpoints).
 func isValidJWKSURL(jwksURI string) bool {
 	if len(jwksURI) == 0 || len(jwksURI) > maxIssuerLength {

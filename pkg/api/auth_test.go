@@ -490,9 +490,9 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 	}
 }
 
-// --- SEC-003: isValidHTTPSURL tests ---
+// --- SEC-003: isValidIssuerURL tests ---
 
-func TestIsValidHTTPSURL(t *testing.T) {
+func TestIsValidIssuerURL(t *testing.T) {
 	tests := []struct {
 		name   string
 		issuer string
@@ -517,8 +517,8 @@ func TestIsValidHTTPSURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isValidHTTPSURL(tt.issuer)
-			assert.Equal(t, tt.valid, got, "isValidHTTPSURL(%q)", tt.issuer)
+			got := isValidIssuerURL(tt.issuer)
+			assert.Equal(t, tt.valid, got, "isValidIssuerURL(%q)", tt.issuer)
 		})
 	}
 }
@@ -718,7 +718,7 @@ func TestAuthMiddleware_AudienceValidation(t *testing.T) {
 			idpLoader:   config.NewIdentityProviderLoader(multiClient),
 		}
 
-		// Use an HTTPS issuer that passes isValidHTTPSURL validation
+		// Use an HTTPS issuer that passes isValidIssuerURL validation
 		testIssuer := "https://test-idp.example.com"
 		entry := &jwksCacheEntry{
 			issuer:           testIssuer,
