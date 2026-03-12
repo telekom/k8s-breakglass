@@ -115,15 +115,15 @@ var (
 	WebhookSessionSARsAllowed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_allowed_total",
 		Help: "Total number of session SAR checks that returned allowed",
-	}, []string{"cluster", "group"})
+	}, []string{"cluster"})
 	WebhookSessionSARsDenied = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_denied_total",
 		Help: "Total number of session SAR checks that returned denied",
-	}, []string{"cluster", "group"})
+	}, []string{"cluster"})
 	WebhookSessionSARErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_errors_total",
 		Help: "Total number of errors during session SAR checks",
-	}, []string{"cluster", "group"})
+	}, []string{"cluster"})
 	WebhookSessionSARSSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sars_skipped_total",
 		Help: "Total number of times session SAR checks were skipped due to cluster config errors",

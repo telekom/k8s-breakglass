@@ -921,7 +921,7 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 					log.With("error", err, "group", g).Warn("session SAR error")
 					log.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
 				}
-				metrics.WebhookSessionSARErrors.WithLabelValues(clusterName, g).Inc()
+				metrics.WebhookSessionSARErrors.WithLabelValues(clusterName).Inc()
 				continue
 			}
 			if resp != nil {
@@ -930,14 +930,14 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 				}
 			}
 			if resp != nil && resp.Status.Allowed {
-				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName, g).Inc()
+				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName).Inc()
 				// Track IDP-based authorization if session has IDP specified
 				if s.Spec.IdentityProviderName != "" {
 					metrics.EscalationIDPAuthorizationChecks.WithLabelValues(s.Spec.GrantedGroup, s.Spec.IdentityProviderName, "allowed").Inc()
 				}
 				return true, s.Spec.GrantedGroup, s.Name, g
 			}
-			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, g).Inc()
+			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName).Inc()
 		}
 	}
 	return false, "", "", ""

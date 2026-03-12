@@ -64,9 +64,9 @@ sum(rate(breakglass_webhook_sar_decisions_by_action_total{decision="denied"}[5m]
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `breakglass_webhook_session_sar_allowed_total` | Counter | `cluster`, `group` | Session grants that allowed access |
-| `breakglass_webhook_session_sar_denied_total` | Counter | `cluster`, `group` | Session grants that denied access |
-| `breakglass_webhook_session_sar_errors_total` | Counter | `cluster`, `group` | Errors checking session grants |
+| `breakglass_webhook_session_sar_allowed_total` | Counter | `cluster` | Session grants that allowed access |
+| `breakglass_webhook_session_sar_denied_total` | Counter | `cluster` | Session grants that denied access |
+| `breakglass_webhook_session_sar_errors_total` | Counter | `cluster` | Errors checking session grants |
 | `breakglass_webhook_session_sars_skipped_total` | Counter | `cluster` | Session checks skipped (e.g., due to config errors) |
 
 ### Session Activity Tracking
@@ -427,7 +427,7 @@ Consider creating Grafana dashboards with these panels:
 **Cardinality Considerations:**
 
 - Webhook SAR metrics include `namespace` and `subresource` labels which may have high cardinality in large clusters
-- Session labels (`session`, `group`) are included in session SAR metrics for audit trails
+- Session SAR metrics use the `cluster` label for per-cluster monitoring and alerting
 - Consider using label relabeling in Prometheus to drop high-cardinality labels if needed
 
 **Example Prometheus relabeling:**
@@ -613,18 +613,18 @@ Track debug session lifecycle and resource usage.
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `breakglass_debug_sessions_created_total` | Counter | `cluster`, `template` | Debug sessions created |
-| `breakglass_debug_sessions_active` | Gauge | `cluster` | Currently active debug sessions |
+| `breakglass_debug_sessions_active` | Gauge | `cluster`, `template` | Currently active debug sessions |
 | `breakglass_debug_sessions_terminated_total` | Counter | `cluster`, `reason` | Debug sessions terminated |
-| `breakglass_debug_sessions_expired_total` | Counter | `cluster` | Debug sessions expired |
-| `breakglass_debug_sessions_failed_total` | Counter | `cluster`, `reason` | Debug sessions failed |
-| `breakglass_debug_session_pod_restarts_total` | Counter | `cluster` | Debug pod restarts |
-| `breakglass_debug_session_pod_failures_total` | Counter | `cluster` | Debug pod failures |
-| `breakglass_debug_session_duration_seconds` | Histogram | `cluster` | Debug session duration |
-| `breakglass_debug_session_participants` | Gauge | `session` | Active participants per session |
+| `breakglass_debug_sessions_expired_total` | Counter | `cluster`, `template` | Debug sessions expired |
+| `breakglass_debug_sessions_failed_total` | Counter | `cluster`, `template` | Debug sessions failed |
+| `breakglass_debug_session_pod_restarts_total` | Counter | `cluster`, `session` | Debug pod restarts |
+| `breakglass_debug_session_pod_failures_total` | Counter | `cluster`, `session`, `reason` | Debug pod failures |
+| `breakglass_debug_session_duration_seconds` | Histogram | `cluster`, `template` | Debug session duration |
+| `breakglass_debug_session_participants` | Gauge | `cluster`, `session` | Active participants per session |
 | `breakglass_debug_session_pods_deployed` | Gauge | `cluster` | Debug pods currently deployed |
-| `breakglass_debug_session_approval_required_total` | Counter | | Debug sessions requiring approval |
-| `breakglass_debug_session_approved_total` | Counter | | Debug sessions approved |
-| `breakglass_debug_session_rejected_total` | Counter | | Debug sessions rejected |
+| `breakglass_debug_session_approval_required_total` | Counter | `cluster`, `template` | Debug sessions requiring approval |
+| `breakglass_debug_session_approved_total` | Counter | `cluster`, `approver_type` | Debug sessions approved |
+| `breakglass_debug_session_rejected_total` | Counter | `cluster`, `reason` | Debug sessions rejected |
 
 ## Field Index Metrics
 

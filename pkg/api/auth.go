@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -26,6 +27,10 @@ const (
 	// maxJWKSCacheSize limits the number of cached JWKS to prevent memory exhaustion
 	// from malicious tokens claiming many different issuers
 	maxJWKSCacheSize = 100
+
+	// defaultOIDCTimeout is the HTTP client timeout for OIDC discovery
+	// and JWKS requests.
+	defaultOIDCTimeout = 10 * time.Second
 )
 
 var allowedJWTAlgs = []string{
@@ -61,6 +66,43 @@ type AuthHandler struct {
 
 	// IDPLoader for multi-IDP mode
 	idpLoader *config.IdentityProviderLoader
+
+	// defaultHTTPClient is a shared HTTP client for OIDC discovery when no
+	// custom CA is configured. Reusing it avoids per-request allocations and
+	// enables connection pooling.
+	defaultHTTPClient *http.Client
+}
+
+// defaultOIDCTransport clones http.DefaultTransport to inherit its sensible
+// defaults (proxy support, dial/idle timeouts, keep-alives) and layers TLS 1.2
+// minimum on top. If http.DefaultTransport is not a *http.Transport, it falls
+// back to a known-good Transport configuration.
+func defaultOIDCTransport() *http.Transport {
+	base, ok := http.DefaultTransport.(*http.Transport)
+
+	var t *http.Transport
+	if ok && base != nil {
+		t = base.Clone()
+	} else {
+		t = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else if t.TLSClientConfig.MinVersion < tls.VersionTLS12 {
+		cfg := t.TLSClientConfig.Clone()
+		cfg.MinVersion = tls.VersionTLS12
+		t.TLSClientConfig = cfg
+	}
+	return t
 }
 
 func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
@@ -70,6 +112,10 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 		jwksCache:   make(map[string]*list.Element),
 		jwksLRUList: list.New(),
 		log:         log,
+		defaultHTTPClient: &http.Client{
+			Transport: defaultOIDCTransport(),
+			Timeout:   defaultOIDCTimeout,
+		},
 	}
 }
 
@@ -111,7 +157,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 	// Create JWKS override options for keyfunc/v3
 	override := keyfunc.Override{
 		RefreshInterval: time.Hour,
-		HTTPTimeout:     10 * time.Second,
+		HTTPTimeout:     defaultOIDCTimeout,
 		RefreshErrorHandlerFunc: func(u string) func(ctx context.Context, err error) {
 			return func(_ context.Context, err error) {
 				a.log.Warnf("failed to refresh JWKS for issuer %s (url: %s): %v", issuer, u, err)
@@ -125,20 +171,21 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		if err != nil {
 			return nil, "", fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
-		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+		transport := defaultOIDCTransport()
+		transport.TLSClientConfig.RootCAs = pool
+		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
 		pool, err := buildCertPoolFromPEM(idpCfg.Keycloak.CertificateAuthority)
 		if err != nil {
 			return nil, "", fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
-		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+		transport := defaultOIDCTransport()
+		transport.TLSClientConfig.RootCAs = pool
+		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		insecureTLS := &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // Operator-opted via InsecureSkipVerify flag
-		insecureTLS.InsecureSkipVerify = true                    //nolint:gosec // Dev/E2E only; enforced TLS 1.2 above
-		transport := &http.Transport{TLSClientConfig: insecureTLS}
-		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+		transport := defaultOIDCTransport()
+		transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // Operator-opted via InsecureSkipVerify flag; TLS 1.2 enforced by defaultOIDCTransport
+		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
 	}
 
@@ -161,10 +208,14 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyf
 		// Use the configured client (or default) to fetch discovery
 		client := override.Client
 		if client == nil {
-			// Create client with explicit timeout and TLS 1.2 minimum to enforce
-			// SEC-003 hardening even when using system root CAs
-			transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
-			client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+			client = a.defaultHTTPClient
+		}
+		if client == nil {
+			// Fallback for struct-literal construction: ensure TLS 1.2 minimum
+			client = &http.Client{
+				Transport: defaultOIDCTransport(),
+				Timeout:   defaultOIDCTimeout,
+			}
 		}
 
 		// Try discovery
