@@ -973,6 +973,25 @@ jobs:
           # Export env var
           echo "AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL=http://localhost:8090" >> $GITHUB_ENV
 
+          # Start port-forward for MailHog (port 8025) - needed for notification tests
+          echo "Starting MailHog port-forward..."
+          kubectl -n breakglass-system port-forward svc/breakglass-mailhog 8025:8025 > /tmp/mailhog-pf.log 2>&1 &
+          echo $! > /tmp/mailhog-pf.pid
+
+          # Wait for MailHog to be accessible
+          for i in {1..30}; do
+            if curl -sf "http://localhost:8025/api/v2/messages" > /dev/null 2>&1; then
+              echo "✓ MailHog port-forward ready"
+              break
+            fi
+            sleep 1
+          done
+
+          if ! curl -sf "http://localhost:8025/api/v2/messages" > /dev/null 2>&1; then
+            echo "Warning: MailHog not accessible on port 8025 (notification tests may fail)"
+            cat /tmp/mailhog-pf.log || true
+          fi
+
       - name: Run Core E2E tests (Kafka audit, metrics, debug session)
         run: |
           set -o pipefail
