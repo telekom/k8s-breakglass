@@ -154,14 +154,17 @@ Before routing a JWT to a JWKS endpoint, the middleware validates the `iss` clai
 - Must be a well-formed HTTPS URL (non-HTTPS schemes like `http://`, `file://`, or `javascript:` are rejected)
 - Must not exceed 512 characters
 - Must have a non-empty host component
+- Must not include query strings, URL fragments, or userinfo (for example, `https://idp.example.com?x=1`, `https://idp.example.com/#foo`, and `https://user@idp.example.com` are all rejected)
 
 This prevents an attacker from using a crafted issuer to trigger SSRF-like JWKS fetches to arbitrary endpoints.
 
 ### JWKS Fetch Rate Limiting (SEC-004)
 
-The system enforces a per-issuer cooldown on JWKS fetches (`10s` minimum interval). This prevents an attacker from flooding the system with tokens bearing valid issuer URLs but unknown `kid` values, which would otherwise cause rapid JWKS re-fetches against the OIDC provider.
+The system enforces a per-issuer cooldown (`10s` minimum interval) on the initial JWKS client load. This reduces repeated startup or misconfiguration-related fetches for the same issuer and limits tight retry loops against the OIDC provider.
 
-The rate limiter is in addition to the existing LRU cache for JWKS key sets.
+Subsequent JWKS refreshes (including those triggered by unknown `kid` values) are handled by the underlying JWKS client library and are not subject to this additional cooldown. You should still configure network-level and IdP-side protections (for example, rate limits) for JWKS endpoints.
+
+These protections are in addition to the existing LRU cache for JWKS key sets.
 
 ### Audience Validation (SEC-005)
 
