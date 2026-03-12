@@ -216,6 +216,9 @@ func isEscalationNotFound(err error) bool {
 		return false
 	}
 	msg := err.Error()
+	if !strings.Contains(msg, "status=403") {
+		return false
+	}
 	return strings.Contains(msg, "no escalation found") ||
 		strings.Contains(msg, "user not authorized for requested group")
 }
@@ -226,7 +229,10 @@ func isTemplateNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "not found") && strings.Contains(err.Error(), "status=400")
+	msg := err.Error()
+	return strings.Contains(msg, "status=400") &&
+		strings.Contains(msg, "template") &&
+		strings.Contains(msg, "not found")
 }
 
 // doCreateSession performs the actual session creation request
