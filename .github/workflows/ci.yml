@@ -797,7 +797,19 @@ jobs:
         run: |
           echo "=== Setting up port-forwards for E2E tests ==="
           
-          # Kill any stale port-forward processes from setup script
+          # Kill keepalive wrapper processes started by kind-setup-single.sh
+          # The setup script records wrapper PIDs in e2e/port-forward-pids
+          PF_FILE="e2e/port-forward-pids"
+          if [ -f "$PF_FILE" ]; then
+            echo "Terminating existing port-forward wrappers from PID file..."
+            while IFS= read -r pf_pid; do
+              if [ -n "$pf_pid" ]; then
+                kill "$pf_pid" 2>/dev/null || true
+              fi
+            done < "$PF_FILE"
+            rm -f "$PF_FILE"
+          fi
+          # Also kill any orphaned port-forward processes not tracked by the PID file
           pkill -f "port-forward.*breakglass" 2>/dev/null || true
           sleep 1
 
