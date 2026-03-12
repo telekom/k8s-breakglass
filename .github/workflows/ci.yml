@@ -821,9 +821,12 @@ jobs:
           echo "Starting Keycloak keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -834,9 +837,12 @@ jobs:
           echo "Starting API keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] API port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -847,9 +853,12 @@ jobs:
           echo "Starting Metrics keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8181:8081 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8181:8081 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Metrics port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -860,9 +869,12 @@ jobs:
           echo "Starting Kafka keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-kafka 9094:9094 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-kafka 9094:9094 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Kafka port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -886,9 +898,12 @@ jobs:
           echo "Starting audit webhook receiver keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-audit-webhook-receiver 8090:80 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-audit-webhook-receiver 8090:80 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Audit webhook receiver port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -1303,9 +1318,12 @@ jobs:
           # network issues. The while loop ensures it restarts automatically.
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -1315,9 +1333,12 @@ jobs:
           # Start API port-forward with keepalive for OIDC test API calls
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] API port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -1550,9 +1571,12 @@ jobs:
           echo "Starting Keycloak keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -1563,9 +1587,12 @@ jobs:
           echo "Starting API keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] API port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -1577,9 +1604,12 @@ jobs:
           echo "MAILHOG_URL=http://127.0.0.1:8025" >> "$GITHUB_ENV"
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-mailhog 8025:8025 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-mailhog 8025:8025 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] MailHog port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -2370,9 +2400,12 @@ jobs:
           # Start keepalive port-forward for hub API
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$API_PORT:8080" 2>/dev/null
+              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$API_PORT:8080" 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] API port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -2397,9 +2430,12 @@ jobs:
           echo "Starting metrics keepalive port-forward on port: $METRICS_PORT"
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$METRICS_PORT:8081" 2>/dev/null
+              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$METRICS_PORT:8081" 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Metrics port-forward exited, restarting in 2s..."
               sleep 2
             done
@@ -2421,9 +2457,12 @@ jobs:
           echo "Starting audit webhook receiver keepalive port-forward..."
           (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-audit-webhook-receiver 8090:80 2>/dev/null
+              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-audit-webhook-receiver 8090:80 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Audit webhook receiver port-forward exited, restarting in 2s..."
               sleep 2
             done

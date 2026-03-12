@@ -61,9 +61,12 @@ start_port_forwards() {
     log "Starting API port-forward: localhost:$API_PORT -> $API_SVC:8080"
     (
         set +e
-        trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+        PF_PID=""
+        trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
         while true; do
-            kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$API_PORT:8080" 2>/dev/null
+            kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$API_PORT:8080" 2>/dev/null &
+            PF_PID=$!
+            wait $PF_PID
             sleep 2
         done
     ) &
@@ -74,9 +77,12 @@ start_port_forwards() {
         log "Starting Keycloak port-forward: localhost:$KEYCLOAK_PORT -> $KEYCLOAK_SVC:8443"
         (
             set +e
-            trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-                kubectl -n "$NAMESPACE" port-forward "svc/$KEYCLOAK_SVC" "$KEYCLOAK_PORT:8443" 2>/dev/null
+                kubectl -n "$NAMESPACE" port-forward "svc/$KEYCLOAK_SVC" "$KEYCLOAK_PORT:8443" 2>/dev/null &
+                PF_PID=$!
+                wait $PF_PID
                 sleep 2
             done
         ) &
@@ -89,9 +95,12 @@ start_port_forwards() {
     log "Starting MailHog port-forward: localhost:$MAILHOG_PORT -> $MAILHOG_SVC:8025"
     (
         set +e
-        trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+        PF_PID=""
+        trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
         while true; do
-            kubectl -n "$NAMESPACE" port-forward "svc/$MAILHOG_SVC" "$MAILHOG_PORT:8025" 2>/dev/null
+            kubectl -n "$NAMESPACE" port-forward "svc/$MAILHOG_SVC" "$MAILHOG_PORT:8025" 2>/dev/null &
+            PF_PID=$!
+            wait $PF_PID
             sleep 2
         done
     ) &
@@ -101,9 +110,12 @@ start_port_forwards() {
     log "Starting Metrics port-forward: localhost:$METRICS_PORT -> $API_SVC:8081"
     (
         set +e
-        trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+        PF_PID=""
+        trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
         while true; do
-            kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$METRICS_PORT:8081" 2>/dev/null
+            kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$METRICS_PORT:8081" 2>/dev/null &
+            PF_PID=$!
+            wait $PF_PID
             sleep 2
         done
     ) &

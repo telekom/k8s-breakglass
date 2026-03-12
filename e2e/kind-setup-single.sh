@@ -183,9 +183,12 @@ start_keepalive_port_forward() {
   (
     # Disable errexit so non-zero kubectl exits don't kill the loop
     set +e
-    trap 'kill $(jobs -p) 2>/dev/null' EXIT TERM INT
+    PF_PID=""
+    trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
     while true; do
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$ns" port-forward svc/"$svc" ${local_port}:${remote_port} 2>/dev/null
+      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$ns" port-forward svc/"$svc" ${local_port}:${remote_port} 2>/dev/null &
+      PF_PID=$!
+      wait $PF_PID
       sleep 2
     done
   ) &
