@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI Build Image attestation 404 flake**: Fixed intermittent `actions/attest-build-provenance` failures (`OCIError: Error fetching manifest — expected 200, received 404`) caused by manifest propagation delays in GHCR by: (1) separating Docker image build (local load) from registry push to eliminate digest mismatch, (2) capturing the actual registry digest from `docker push` output, and (3) adding a manifest-availability polling step (`docker buildx imagetools inspect`) that retries up to 30 times with 10 s intervals before attestation
 - **JWKS auth: reuse HTTP client** ([#529](https://github.com/telekom/k8s-breakglass/issues/529)): Replaced per-request HTTP client creation in OIDC discovery with a shared `defaultHTTPClient` on `AuthHandler` for connection pooling and reduced allocations
 - **Debug session metrics docs labels** ([#537](https://github.com/telekom/k8s-breakglass/issues/537)): Fixed incorrect label definitions for 10 of 13 debug session metrics in `docs/metrics.md` to match `pkg/metrics/metrics.go`
+- **ParseDuration bounds checking** ([#525](https://github.com/telekom/k8s-breakglass/issues/525)): Added maximum 365-day limit to `ParseDuration` to prevent integer overflow from extremely large day values (e.g., `999999999d`)
 
 ### Removed
 
@@ -91,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking — Webhook OIDC prefix matching** ([#539](https://github.com/telekom/k8s-breakglass/issues/539)): Replaced O(n*m*k) triple-nested loop in `authorizeViaSessions` with O(n) map-based lookup. This changes matching semantics from `HasPrefix+HasSuffix` to exact `prefix+group` equality, which is stricter but consistent with `StripOIDCPrefixes` elsewhere. Groups previously matched via suffix (e.g., `oidc:cluster-admins` matching allowed group `admins`) will no longer match. **Migration**: verify that all groups in your BreakglassEscalation `allowedGroups` exactly match the OIDC group name without prefix; if your configuration relied on suffix matching, update the allowed group entries to include the full group name
 - **Reconciler: meaningful readiness probe** ([#460](https://github.com/telekom/k8s-breakglass/issues/460)): Replaced readyz "ping" with informer cache sync check — readiness now reflects whether the controller-runtime cache is warmed
 - **Reconciler: controller-runtime leader election** ([#464](https://github.com/telekom/k8s-breakglass/issues/464)): Reconciler manager now participates in leader election (when enabled) to prevent writes from non-leader replicas
 - **Extracted `resolveLeaseNamespace` helper** in `cmd/main.go` to DRY two inline namespace resolution blocks

@@ -24,9 +24,13 @@ import (
 // dayPattern matches duration strings with day units (e.g., "90d", "7d", "1d12h")
 var dayPattern = regexp.MustCompile(`^(\d+)d(.*)$`)
 
+// maxDurationDays is the upper bound for day values in ParseDuration to prevent
+// integer overflow when converting to time.Duration (int64 nanoseconds).
+const maxDurationDays = 365
+
 // ParseDuration parses a duration string with extended support for day units.
 // Go's time.ParseDuration only supports up to hours (h), but this function
-// also accepts days (d) where 1d = 24h.
+// also accepts days (d) where 1d = 24h. Day values are bounded to maxDurationDays.
 //
 // Examples:
 //   - "90d" -> 90 days (2160 hours)
@@ -34,7 +38,7 @@ var dayPattern = regexp.MustCompile(`^(\d+)d(.*)$`)
 //   - "1d12h" -> 1 day and 12 hours (36 hours)
 //   - "2h30m" -> 2 hours and 30 minutes (standard Go duration)
 //
-// Returns an error if the duration string is invalid.
+// Returns an error if the duration string is invalid or exceeds maxDurationDays.
 func ParseDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
@@ -45,6 +49,9 @@ func ParseDuration(s string) (time.Duration, error) {
 		days, err := strconv.Atoi(matches[1])
 		if err != nil {
 			return 0, fmt.Errorf("invalid day value: %w", err)
+		}
+		if days > maxDurationDays {
+			return 0, fmt.Errorf("day value %d exceeds maximum of %d", days, maxDurationDays)
 		}
 
 		// Convert days to hours

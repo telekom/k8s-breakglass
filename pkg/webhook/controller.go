@@ -845,22 +845,28 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		}
 
 		prefixes := wc.config.Kubernetes.OIDCPrefixes
-		// Find a primary prefix by matching incoming groups to allowed groups
+		// Find a primary prefix by matching incoming groups to allowed groups.
+		// Pre-build a map of valid prefix+group combinations for O(n) lookup
+		// per session. The map itself is O(m*k) to build (m prefixes × k allowed
+		// groups), then each of the n incoming groups is a single map lookup.
+		// NOTE: This uses exact match (prefix+group == incoming group), which is
+		// stricter than the previous HasPrefix+HasSuffix approach. This is
+		// intentional and consistent with StripOIDCPrefixes elsewhere.
+		// The map key is the full concatenated string (prefix+group), which is
+		// exactly the form incoming groups appear in. If two different
+		// (prefix, group) pairs produce the same concatenation, either prefix
+		// is a valid match for that incoming group string.
 		var primaryPrefix string
-		if incoming.Spec.Groups != nil && len(prefixes) > 0 {
-			for _, ig := range incoming.Spec.Groups {
+		if len(incoming.Spec.Groups) > 0 && len(prefixes) > 0 {
+			validCombinations := make(map[string]string, len(prefixes)*len(allowedGroupsToCheck))
+			for _, p := range prefixes {
 				for _, allowed := range allowedGroupsToCheck {
-					for _, p := range prefixes {
-						if strings.HasPrefix(ig, p) && strings.HasSuffix(ig, allowed) {
-							primaryPrefix = p
-							break
-						}
-					}
-					if primaryPrefix != "" {
-						break
-					}
+					validCombinations[p+allowed] = p
 				}
-				if primaryPrefix != "" {
+			}
+			for _, ig := range incoming.Spec.Groups {
+				if p, ok := validCombinations[ig]; ok {
+					primaryPrefix = p
 					break
 				}
 			}

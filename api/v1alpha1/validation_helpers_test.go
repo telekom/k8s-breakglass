@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -2237,6 +2238,8 @@ func TestParseDuration_InvalidFormats(t *testing.T) {
 		{"abc", "non-numeric"},
 		{"1x", "unknown unit"},
 		{"1d1x", "invalid unit after days"},
+		{fmt.Sprintf("%dd", maxDurationDays+1), "exceeds max days"},
+		{"999999999d", "exceeds max days (large value)"},
 	}
 
 	for _, tt := range tests {
@@ -2437,6 +2440,19 @@ func TestValidateAuxiliaryResources(t *testing.T) {
 // ============================================================================
 
 func TestParseDuration_EdgeCases(t *testing.T) {
+	// Guard: constant value documented in CHANGELOG and duration field docs
+	assert.Equal(t, 365, maxDurationDays, "maxDurationDays must be 365; update docs/breakglass-session.md and docs/breakglass-escalation.md if changed")
+
+	// Verify boundary behavior: exactly maxDurationDays succeeds, maxDurationDays+1 fails
+	maxDaysStr := fmt.Sprintf("%dd", maxDurationDays)
+	overMaxStr := fmt.Sprintf("%dd", maxDurationDays+1)
+
+	_, err := ParseDuration(maxDaysStr)
+	assert.NoError(t, err, "duration of exactly maxDurationDays should be valid")
+
+	_, err = ParseDuration(overMaxStr)
+	assert.Error(t, err, "duration exceeding maxDurationDays should fail")
+
 	tests := []struct {
 		name        string
 		input       string
@@ -2447,6 +2463,7 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 		{"simple days", "1d", false, 86400},
 		{"days with hours", "1d12h", false, 129600},
 		{"large days value", "365d", false, 31536000},
+		{"days exceed maximum", overMaxStr, true, 0},
 		{"zero days", "0d", false, 0},
 		{"negative hours are valid in Go", "-1h", false, -3600}, // Go stdlib accepts negative
 		{"invalid unit", "1x", true, 0},

@@ -91,12 +91,13 @@ approvers:
 
 ### maxValidFor
 
-Maximum time a session will remain active after approval:
+Maximum time a session will remain active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365.
 
 ```yaml
 maxValidFor: "2h"    # 2 hours (default: 1h)
 maxValidFor: "30m"   # 30 minutes
 maxValidFor: "4h"    # 4 hours
+maxValidFor: "1d12h" # 1 day and 12 hours
 ```
 
 ### idleTimeout
