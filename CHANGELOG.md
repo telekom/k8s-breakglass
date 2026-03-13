@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **E2E: port-forward keepalive for CI stability**: All long-lived E2E port-forwards used during test execution (Keycloak, API, MailHog, Metrics, Kafka, audit webhook receiver) now use `while true` restart loops to auto-recover from idle timeouts, pod restarts, and network drops. Fixes flaky Single-Cluster E2E, OIDC E2E, and UI E2E tests caused by Keycloak port-forward dying mid-run
 - **E2E: added missing MailHog port-forward in CI workflow**: The CI workflow's "Setup port-forwards for E2E tests" step killed all port-forwards from `kind-setup-single.sh` but did not restart the MailHog port-forward, causing all notification e2e tests to fail with `connection refused` on port 8025
 - **E2E: increased OIDC token retry window**: Bumped token request retries from 5 to 8 attempts with capped 10s backoff (~60s total window) to tolerate port-forward reconnection delays
+- **E2E: increased GetToken retry window to 12 attempts**: Extended from 8 to 12 attempts (~120s total window) to tolerate Keycloak pod recovery during extended outages in CI
+- **E2E: added retry with exponential backoff to offline token requests**: `ObtainOfflineRefreshTokenWithRetry` now uses exponential backoff (matching `GetToken`) and callers increased from 3 to 8 attempts to survive port-forward restarts
+- **E2E: added retry to RequireKeycloakReachable pre-check**: The Keycloak reachability pre-check now retries 5 times with backoff instead of failing immediately on first port-forward drop
+- **E2E: added retry to ObtainClientCredentialsToken**: Client credentials token requests now retry 8 times with exponential backoff to tolerate Keycloak transient unavailability
 
 ### Changed
 

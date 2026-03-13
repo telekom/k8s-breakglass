@@ -114,9 +114,10 @@ func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username
 
 	// Fall back to direct HTTP request with retry + exponential backoff.
 	// Keycloak may still be starting or recovering from a restart.
-	// The port-forward keepalive loop restarts in ~2s, so 8 retries with
-	// capped backoff gives ~60s total window to tolerate transient drops.
-	const maxAttempts = 8
+	// The port-forward keepalive loop restarts in ~2s, but Keycloak itself
+	// may need 60-90s to recover. 12 retries with capped backoff gives
+	// ~120s total window to tolerate extended outages.
+	const maxAttempts = 12
 	const maxBackoff = 10 * time.Second
 	backoff := p.initialBackoff()
 
@@ -429,24 +430,42 @@ func (p *OIDCTokenProvider) TryObtainOfflineRefreshToken(ctx context.Context, us
 
 // ObtainOfflineRefreshTokenWithRetry is like ObtainOfflineRefreshToken but
 // retries up to maxAttempts times on transient Keycloak/infrastructure errors,
-// with a delay between attempts.
+// with exponential backoff between attempts. The port-forward keepalive loop
+// may need ~2-4s to restart, so 8 attempts with backoff gives ~60s window.
 func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx context.Context, username, password string, maxAttempts int) string {
 	t.Helper()
 
 	// Pre-check: verify Keycloak is reachable before starting retry loop.
-	// This fails fast with a clear diagnostic instead of retrying against a dead port-forward.
 	p.RequireKeycloakReachable(t, ctx)
 
+	const maxBackoff = 10 * time.Second
+	backoff := p.initialBackoff()
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		token, err := p.TryObtainOfflineRefreshToken(ctx, username, password)
 		if err == nil {
+			if attempt > 1 {
+				t.Logf("offline token acquired on attempt %d/%d", attempt, maxAttempts)
+			}
 			return token
 		}
 		lastErr = err
 		if attempt < maxAttempts {
-			t.Logf("offline token request failed (attempt %d/%d): %v — retrying in 5s", attempt, maxAttempts, err)
-			time.Sleep(5 * time.Second)
+			t.Logf("offline token request failed (attempt %d/%d): %v — retrying in %v", attempt, maxAttempts, err, backoff)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				lastErr = ctx.Err()
+				t.Logf("Context cancelled while waiting to retry offline token request: %v", lastErr)
+				require.NoError(t, lastErr, "context cancelled during offline token retry")
+				return "" // unreachable
+			case <-timer.C:
+			}
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 	}
 	require.NoError(t, lastErr, "failed to obtain offline refresh token after %d attempts", maxAttempts)
@@ -454,9 +473,8 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx
 }
 
 // RequireKeycloakReachable verifies that Keycloak is reachable from the test runner
-// via the OIDC discovery endpoint. Tests that need to obtain tokens directly from
-// Keycloak (not via the controller) should call this before attempting token operations.
-// This provides a clear diagnostic when port-forwards to Keycloak have died.
+// via the OIDC discovery endpoint. Retries a few times with backoff to tolerate
+// port-forward restarts from the keepalive wrapper.
 func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.Context) {
 	t.Helper()
 
@@ -476,26 +494,40 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 		},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
-	require.NoError(t, err, "failed to create Keycloak reachability request")
+	const maxAttempts = 5
+	backoff := 2 * time.Second
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+		require.NoError(t, err, "failed to create Keycloak reachability request")
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		t.Fatalf("Keycloak not reachable at %s: %v\n"+
-			"This usually means the kubectl port-forward to Keycloak has died.\n"+
-			"Ensure Keycloak is accessible via: curl -sk %s", keycloakHost, err, discoveryURL)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Keycloak returned status %d at %s (expected 200)", resp.StatusCode, discoveryURL)
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				if attempt > 1 {
+					t.Logf("Keycloak reachable on attempt %d/%d", attempt, maxAttempts)
+				}
+				return
+			}
+			if attempt == maxAttempts {
+				t.Fatalf("Keycloak returned status %d at %s (expected 200)", resp.StatusCode, discoveryURL)
+			}
+			t.Logf("Keycloak returned status %d (attempt %d/%d) — retrying in %v", resp.StatusCode, attempt, maxAttempts, backoff)
+		} else {
+			if attempt == maxAttempts {
+				t.Fatalf("Keycloak not reachable at %s after %d attempts: %v\n"+
+					"This usually means the kubectl port-forward to Keycloak has died.\n"+
+					"Ensure Keycloak is accessible via: curl -sk %s", keycloakHost, maxAttempts, err, discoveryURL)
+			}
+			t.Logf("Keycloak not reachable (attempt %d/%d): %v — retrying in %v", attempt, maxAttempts, err, backoff)
+		}
+		time.Sleep(backoff)
+		backoff *= 2
 	}
 }
 
 // ObtainClientCredentialsToken performs a client_credentials grant to obtain an access
-// token. This is useful for obtaining a "subject token" that can be exchanged via RFC 8693
-// token exchange. Requires the provider to be configured with a confidential client that
-// has serviceAccountsEnabled=true (e.g., breakglass-group-sync).
+// token. Retries with backoff to tolerate Keycloak port-forward restarts.
 func (p *OIDCTokenProvider) ObtainClientCredentialsToken(t *testing.T, ctx context.Context) string {
 	keycloakHost := p.KeycloakHost
 	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
@@ -519,30 +551,53 @@ func (p *OIDCTokenProvider) ObtainClientCredentialsToken(t *testing.T, ctx conte
 		},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
-	require.NoError(t, err, "Failed to create client_credentials token request")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	const maxAttempts = 8
+	const maxBackoff = 10 * time.Second
+	backoff := 2 * time.Second
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+		require.NoError(t, err, "Failed to create client_credentials token request")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	if p.IssuerHost != "" {
-		req.Host = p.IssuerHost
+		if p.IssuerHost != "" {
+			req.Host = p.IssuerHost
+		}
+
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode == http.StatusOK {
+				var tokenResp struct {
+					AccessToken string `json:"access_token"`
+					TokenType   string `json:"token_type"`
+					ExpiresIn   int    `json:"expires_in"`
+				}
+				err = json.NewDecoder(resp.Body).Decode(&tokenResp)
+				require.NoError(t, err, "Failed to decode client_credentials token response")
+				require.NotEmpty(t, tokenResp.AccessToken, "No access_token in client_credentials response")
+				if attempt > 1 {
+					t.Logf("client_credentials token acquired on attempt %d/%d", attempt, maxAttempts)
+				}
+				return tokenResp.AccessToken
+			}
+			lastErr = fmt.Errorf("client_credentials token request failed with status %d", resp.StatusCode)
+		} else {
+			lastErr = fmt.Errorf("client_credentials token request failed: %w", err)
+		}
+
+		if attempt < maxAttempts {
+			t.Logf("client_credentials token attempt %d/%d failed: %v — retrying in %v", attempt, maxAttempts, lastErr, backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
 	}
 
-	resp, err := httpClient.Do(req)
-	require.NoError(t, err, "Failed to send client_credentials token request")
-	defer func() { _ = resp.Body.Close() }()
-
-	require.Equal(t, http.StatusOK, resp.StatusCode, "client_credentials token request failed")
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&tokenResp)
-	require.NoError(t, err, "Failed to decode client_credentials token response")
-	require.NotEmpty(t, tokenResp.AccessToken, "No access_token in client_credentials response")
-
-	return tokenResp.AccessToken
+	require.NoError(t, lastErr, "Failed to get client_credentials token after %d attempts", maxAttempts)
+	return "" // unreachable
 }
 
 // ServiceAccountProvider returns an OIDC provider configured with the service account
