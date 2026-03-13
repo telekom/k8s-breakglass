@@ -76,7 +76,7 @@ func TestOIDC_OfflineToken_ValidToken_BecomesReady(t *testing.T) {
 	// so the controller cannot fall back to client_credentials.
 	provider := helpers.E2EOIDCProvider()
 	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, offlineToken, "offline refresh token should not be empty")
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -147,7 +147,7 @@ func TestOIDC_OfflineToken_RenewalStability(t *testing.T) {
 
 	provider := helpers.E2EOIDCProvider()
 	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, offlineToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -455,7 +455,7 @@ func TestOIDC_OfflineToken_Recovery_InvalidToValid(t *testing.T) {
 	// Step 2: Obtain a valid offline token and update the secret (with retry for infra flakiness).
 	provider := helpers.E2EOIDCProvider()
 	validToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, validToken, "valid offline token should not be empty")
 
 	var rtSecret corev1.Secret
@@ -511,7 +511,7 @@ func TestOIDC_OfflineToken_Rotation_PersistsNewToken(t *testing.T) {
 
 	provider := helpers.E2EOIDCProvider()
 	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, offlineToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -589,7 +589,7 @@ func TestOIDC_OfflineToken_Rotation_PreferRotatedKey(t *testing.T) {
 	// Obtain a VALID offline token.
 	provider := helpers.E2EOIDCProvider()
 	validToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, validToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -667,7 +667,7 @@ func TestOIDC_OfflineToken_Rotation_OriginalKeyPreserved(t *testing.T) {
 
 	provider := helpers.E2EOIDCProvider()
 	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, offlineToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -743,7 +743,7 @@ func TestOIDC_OfflineToken_Rotation_Disabled_NoWrite(t *testing.T) {
 
 	provider := helpers.E2EOIDCProvider()
 	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, offlineToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -816,7 +816,7 @@ func TestOIDC_OfflineToken_AccessTokenExpiry_RenewsFromOfflineToken(t *testing.T
 
 	provider := helpers.E2EOIDCProvider()
 	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, offlineToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
@@ -911,7 +911,7 @@ func TestOIDC_OfflineToken_AccessTokenExpiry_WithRotation(t *testing.T) {
 
 	provider := helpers.E2EOIDCProvider()
 	offlineToken := provider.ObtainOfflineRefreshTokenWithRetry(t, ctx,
-		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 3)
+		helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password, 8)
 	require.NotEmpty(t, offlineToken)
 
 	e2eClientID := helpers.GetE2EOIDCClientID()
