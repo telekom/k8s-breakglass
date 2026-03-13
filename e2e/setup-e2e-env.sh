@@ -57,14 +57,35 @@ start_port_forwards() {
     > "$PF_FILE"
     
     # Port-forward API (also serves the SAR webhook at /api/breakglass/webhook/authorize/:cluster)
+    # Use while-true loop so port-forward auto-restarts if it drops during long test runs.
     log "Starting API port-forward: localhost:$API_PORT -> $API_SVC:8080"
-    kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$API_PORT:8080" >/dev/null 2>&1 &
+    (
+        set +e
+        PF_PID=""
+        trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+        while true; do
+            kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$API_PORT:8080" 2>/dev/null &
+            PF_PID=$!
+            wait $PF_PID
+            sleep 2
+        done
+    ) &
     echo $! >> "$PF_FILE"
     
     # Port-forward Keycloak (if not already running)
     if ! curl -sk "https://localhost:$KEYCLOAK_PORT" >/dev/null 2>&1; then
         log "Starting Keycloak port-forward: localhost:$KEYCLOAK_PORT -> $KEYCLOAK_SVC:8443"
-        kubectl -n "$NAMESPACE" port-forward "svc/$KEYCLOAK_SVC" "$KEYCLOAK_PORT:8443" >/dev/null 2>&1 &
+        (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+                kubectl -n "$NAMESPACE" port-forward "svc/$KEYCLOAK_SVC" "$KEYCLOAK_PORT:8443" 2>/dev/null &
+                PF_PID=$!
+                wait $PF_PID
+                sleep 2
+            done
+        ) &
         echo $! >> "$PF_FILE"
     else
         log "Keycloak already accessible on port $KEYCLOAK_PORT"
@@ -72,12 +93,32 @@ start_port_forwards() {
     
     # Port-forward MailHog
     log "Starting MailHog port-forward: localhost:$MAILHOG_PORT -> $MAILHOG_SVC:8025"
-    kubectl -n "$NAMESPACE" port-forward "svc/$MAILHOG_SVC" "$MAILHOG_PORT:8025" >/dev/null 2>&1 &
+    (
+        set +e
+        PF_PID=""
+        trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+        while true; do
+            kubectl -n "$NAMESPACE" port-forward "svc/$MAILHOG_SVC" "$MAILHOG_PORT:8025" 2>/dev/null &
+            PF_PID=$!
+            wait $PF_PID
+            sleep 2
+        done
+    ) &
     echo $! >> "$PF_FILE"
     
     # Port-forward Metrics (controller metrics endpoint on port 8081)
     log "Starting Metrics port-forward: localhost:$METRICS_PORT -> $API_SVC:8081"
-    kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$METRICS_PORT:8081" >/dev/null 2>&1 &
+    (
+        set +e
+        PF_PID=""
+        trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+        while true; do
+            kubectl -n "$NAMESPACE" port-forward "svc/$API_SVC" "$METRICS_PORT:8081" 2>/dev/null &
+            PF_PID=$!
+            wait $PF_PID
+            sleep 2
+        done
+    ) &
     echo $! >> "$PF_FILE"
     
     log "Port-forwards started. PIDs saved to $PF_FILE"
