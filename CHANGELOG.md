@@ -25,12 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Webhook SAR metrics: removed high-cardinality `group` label** ([#527](https://github.com/telekom/k8s-breakglass/issues/527)): Removed unbounded `group` label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` metrics to prevent time-series explosion in Prometheus
+- **JWT and JWKS metrics label renamed from `issuer` to `identity_provider`** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Prometheus metrics `breakglass_jwt_validation_*` and `breakglass_jwks_cache_{hits,misses}_total` now use the `identity_provider` label (resolved IDP name) instead of `issuer` (raw URL) to prevent unbounded cardinality from attacker-controlled issuer claims. Dashboards/alerts referencing the old `issuer` label on these metrics must be updated.
 
 ### Security
 
 - **JWT issuer format validation (SEC-003)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Validate JWT `iss` claim format before JWKS routing — must be an HTTPS URL with a non-empty host and ≤512 characters; rejects `http://`, `file://`, `javascript:`, and other non-HTTPS schemes to prevent SSRF-like JWKS fetches
-- **Per-issuer JWKS fetch rate limiting (SEC-004)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Enforce 10-second minimum cooldown between JWKS fetches for the same issuer, preventing DoS amplification through tokens with valid issuers but unknown `kid` values
-- **OIDC discovery JWKS URI host validation (SEC-003)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Discovered `jwks_uri` host must match the configured authority host to prevent SSRF if a compromised IDP discovery endpoint returns a malicious JWKS URI pointing to an internal or unrelated host
+- **Per-issuer JWKS fetch rate limiting (SEC-004)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Enforce 10-second minimum cooldown between initial JWKS client creation for the same issuer, preventing DoS amplification through tokens with crafted issuer claims. Once a JWKS client is cached, subsequent refreshes (including those triggered by unknown `kid` values) are managed by keyfunc/v3's built-in deduplication; network-level and IDP-side rate limits should be configured as additional defense-in-depth
+- **OIDC discovery JWKS URI origin validation (SEC-003)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Discovered `jwks_uri` origin (hostname and port) must match the configured authority to prevent SSRF if a compromised IDP discovery endpoint returns a malicious JWKS URI pointing to an internal, unrelated, or different-port host
 - **Audience refresh singleflight deduplication** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Periodic audience refresh from IdentityProvider now uses singleflight to prevent thundering herd when many requests arrive simultaneously after the refresh interval elapses
 - **Issuer trailing slash normalization** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): `LoadIdentityProviderByIssuer` now normalizes trailing slashes in both the incoming issuer and `IdentityProvider.spec.issuer` for the primary match, consistent with the auth layer's canonicalization
 - **JWT audience claim validation (SEC-005a)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Conditional JWT `aud` claim validation when `IdentityProvider.spec.oidc.expectedAudience` is configured. Prevents cross-service token confusion from other OIDC clients at the same provider. Requires a matching audience protocol mapper in the IDP. When unconfigured (default), audience validation is skipped for backwards compatibility
@@ -41,10 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security documentation expanded** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Added SAR webhook design decision (SEC-007), token storage tradeoffs (SEC-017), build info endpoint rationale (SEC-008), and `hardenedIDPHints` default-on guidance (SEC-015) to `docs/security-best-practices.md`
 - **Debug session approval fail-closed** ([#524](https://github.com/telekom/k8s-breakglass/issues/524)): Changed debug session approval authorization to fail closed when the template cannot be fetched, preventing unauthorized approvals during API errors
 - **Mail queue panic recovery limit** ([#526](https://github.com/telekom/k8s-breakglass/issues/526)): Mail queue worker now stops restarting after 3 consecutive panics to prevent infinite restart loops from persistent bugs
-
-### Changed
-
-- **JWT and JWKS metrics label renamed from `issuer` to `identity_provider`** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Prometheus metrics `breakglass_jwt_validation_*` and `breakglass_jwks_cache_{hits,misses}_total` now use the `identity_provider` label (resolved IDP name) instead of `issuer` (raw URL) to prevent unbounded cardinality from attacker-controlled issuer claims. Dashboards/alerts referencing the old `issuer` label on these metrics must be updated.
 
 ### Fixed
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1080,8 +1081,8 @@ func TestLoadAllIdentityProviders_MetricsRecorder(t *testing.T) {
 
 func TestLoadIdentityProviderByIssuer_TrailingSlashNormalization(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = breakglassv1alpha1.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 
 	idp := breakglassv1alpha1.IdentityProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "slash-idp", Namespace: "default"},
@@ -1134,8 +1135,8 @@ func TestLoadIdentityProviderByIssuer_TrailingSlashNormalization(t *testing.T) {
 
 func TestLoadIdentityProviderByIssuer_AuthorityFallbackNormalization(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = breakglassv1alpha1.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 
 	// IDP without explicit issuer, only authority set
 	idp := breakglassv1alpha1.IdentityProvider{
