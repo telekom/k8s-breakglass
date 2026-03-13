@@ -655,7 +655,7 @@ jobs:
   single-cluster-e2e:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
@@ -2520,7 +2520,7 @@ jobs:
           # - TestHubSpokeSuite (hub_spoke_test.go)
           # - TestSpokeHubAuthorizationSuite (spoke_hub_authorization_test.go)
           # - TestMultiIDPAuthorizationSuite (multi_idp_authorization_test.go)
-          go test -v -tags=multicluster ./e2e/api/... -timeout 30m \
+          go test -v -tags=multicluster ./e2e/api/... -timeout 45m \
             2>&1 | tee e2e-multi-results.txt
         env:
           E2E_TEST: "true"

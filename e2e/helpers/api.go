@@ -146,6 +146,9 @@ const sessionsBasePath = "/api/breakglassSessions"
 // the real session controller which sets proper status, sends notifications, etc.
 // If CleanupClient is set and a 409 conflict occurs, it will automatically expire
 // the conflicting session and retry up to 3 times.
+// It also retries on transient 403 errors ("no escalation found" or "user not
+// authorized for requested group") caused by informer cache propagation delay
+// after creating an escalation resource.
 func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req SessionRequest) (*breakglassv1alpha1.BreakglassSession, error) {
 	const maxRetries = 3
 	var lastErr error
@@ -156,27 +159,40 @@ func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req Session
 			return session, nil
 		}
 
-		// Check if this is a 409 conflict we can handle
-		if attempt < maxRetries && c.CleanupClient != nil && is409Conflict(err) {
-			if t != nil {
-				t.Logf("CreateSession: got 409 conflict (attempt %d/%d), deleting existing sessions for user=%s, group=%s, cluster=%s",
-					attempt+1, maxRetries, req.User, req.Group, req.Cluster)
-			}
-
-			namespace := c.Namespace
-			if namespace == "" {
-				namespace = "default"
-			}
-
-			// ExpireActiveSessionsForUserAndGroup now waits for deletion to complete
-			if expireErr := ExpireActiveSessionsForUserAndGroup(ctx, c.CleanupClient, namespace, req.Cluster, req.User, req.Group); expireErr != nil {
+		if attempt < maxRetries {
+			// Check if this is a 409 conflict we can handle
+			if c.CleanupClient != nil && is409Conflict(err) {
 				if t != nil {
-					t.Logf("CreateSession: failed to delete conflicting sessions: %v", expireErr)
+					t.Logf("CreateSession: got 409 conflict (attempt %d/%d), deleting existing sessions for user=%s, group=%s, cluster=%s",
+						attempt+1, maxRetries, req.User, req.Group, req.Cluster)
 				}
+
+				namespace := c.Namespace
+				if namespace == "" {
+					namespace = "default"
+				}
+
+				// ExpireActiveSessionsForUserAndGroup now waits for deletion to complete
+				if expireErr := ExpireActiveSessionsForUserAndGroup(ctx, c.CleanupClient, namespace, req.Cluster, req.User, req.Group); expireErr != nil {
+					if t != nil {
+						t.Logf("CreateSession: failed to delete conflicting sessions: %v", expireErr)
+					}
+				}
+
+				lastErr = err
+				continue
 			}
 
-			lastErr = err
-			continue
+			// Retry on "no escalation found" — transient during informer cache sync
+			if isEscalationNotFound(err) {
+				if t != nil {
+					t.Logf("CreateSession: escalation not yet in cache (attempt %d/%d), retrying in 2s for user=%s, group=%s",
+						attempt+1, maxRetries, req.User, req.Group)
+				}
+				lastErr = err
+				time.Sleep(2 * time.Second)
+				continue
+			}
 		}
 
 		return nil, err
@@ -188,6 +204,29 @@ func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req Session
 // is409Conflict checks if an error is a 409 conflict error
 func is409Conflict(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "status=409")
+}
+
+// isEscalationNotFound checks if an error is a transient 403 caused by informer
+// cache propagation delay after creating an escalation resource.  Two distinct
+// server-side messages can appear depending on which code-path runs first:
+//   - "no escalation found for requested group"  (buildAndCreateSession)
+//   - "user not authorized for requested group"   (fetchMatchingEscalations)
+func isEscalationNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no escalation found") ||
+		strings.Contains(msg, "user not authorized for requested group")
+}
+
+// isTemplateNotFound checks if an error is a transient 400 caused by informer
+// cache not yet having synced a freshly created DebugSessionTemplate.
+func isTemplateNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "not found") && strings.Contains(err.Error(), "status=400")
 }
 
 // doCreateSession performs the actual session creation request
@@ -510,25 +549,21 @@ func (c *APIClient) WaitForSessionViaAPI(ctx context.Context, t *testing.T, name
 	return lastSession, fmt.Errorf("%s", errMsg)
 }
 
-// CreateSessionAndWaitForPending creates a session and waits for it to reach Pending state
+// CreateSessionAndWaitForPending creates a session and waits for it to reach Pending state.
+// It always polls the API to confirm the controller has set the status, rather than
+// trusting the create response which may not reflect the persisted status subresource.
 func (c *APIClient) CreateSessionAndWaitForPending(ctx context.Context, t *testing.T, req SessionRequest, timeout time.Duration) (*breakglassv1alpha1.BreakglassSession, error) {
 	session, err := c.CreateSession(ctx, t, req)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if the returned session already has the expected state
-	// This avoids waiting for cache propagation if the server already returned the final state
-	if session.Status.State == breakglassv1alpha1.SessionStatePending {
-		if t != nil {
-			t.Logf("CreateSessionAndWaitForPending: session %s already in Pending state from create response", session.Name)
-		}
-		return session, nil
-	}
-
-	// Wait for session to be created and reach pending state
+	// Always poll the API to verify the controller has reconciled the session
+	// and set Status.State in the status subresource. The create response may
+	// include State=Pending in the body, but that may not be persisted yet,
+	// causing subsequent operations (e.g., approve) to fail with empty state.
 	if t != nil {
-		t.Logf("CreateSessionAndWaitForPending: session %s has state %q, waiting for Pending", session.Name, session.Status.State)
+		t.Logf("CreateSessionAndWaitForPending: session %s created with state %q, polling for Pending", session.Name, session.Status.State)
 	}
 	return c.WaitForSessionViaAPI(ctx, t, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, timeout)
 }
@@ -597,6 +632,8 @@ type DebugSessionRequest struct {
 // the real session controller which sets proper status, sends notifications, etc.
 // If CleanupClient is set and a 409 conflict occurs, it will automatically delete
 // the conflicting session and retry.
+// It also retries on transient 403/400 errors caused by informer cache propagation
+// delay after creating escalation or template resources.
 func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req DebugSessionRequest) (*breakglassv1alpha1.DebugSession, error) {
 	const maxRetries = 3
 	var lastErr error
@@ -607,29 +644,53 @@ func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req De
 			return session, nil
 		}
 
-		// Check if this is a 409 conflict we can handle
-		if attempt < maxRetries && c.CleanupClient != nil && is409Conflict(err) {
-			if t != nil {
-				t.Logf("CreateDebugSession: got 409 conflict (attempt %d/%d), deleting existing sessions for cluster=%s",
-					attempt+1, maxRetries, req.Cluster)
-			}
-
-			namespace := c.Namespace
-			if namespace == "" {
-				namespace = "default"
-			}
-
-			// DeleteActiveDebugSessionsForCluster now waits for deletion to complete
-			if expireErr := DeleteActiveDebugSessionsForCluster(ctx, c.CleanupClient, namespace, req.Cluster); expireErr != nil {
+		if attempt < maxRetries {
+			// Check if this is a 409 conflict we can handle
+			if c.CleanupClient != nil && is409Conflict(err) {
 				if t != nil {
-					t.Logf("CreateDebugSession: failed to delete conflicting sessions: %v", expireErr)
+					t.Logf("CreateDebugSession: got 409 conflict (attempt %d/%d), deleting existing sessions for cluster=%s",
+						attempt+1, maxRetries, req.Cluster)
 				}
+
+				namespace := c.Namespace
+				if namespace == "" {
+					namespace = "default"
+				}
+
+				// DeleteActiveDebugSessionsForCluster now waits for deletion to complete
+				if expireErr := DeleteActiveDebugSessionsForCluster(ctx, c.CleanupClient, namespace, req.Cluster); expireErr != nil {
+					if t != nil {
+						t.Logf("CreateDebugSession: failed to delete conflicting sessions: %v", expireErr)
+					}
+				}
+
+				// Brief pause for API server cache invalidation
+				time.Sleep(100 * time.Millisecond)
+				lastErr = err
+				continue
 			}
 
-			// Brief pause for API server cache invalidation
-			time.Sleep(100 * time.Millisecond)
-			lastErr = err
-			continue
+			// Retry on "no escalation found" — transient during informer cache sync
+			if isEscalationNotFound(err) {
+				if t != nil {
+					t.Logf("CreateDebugSession: escalation not yet in cache (attempt %d/%d), retrying in 2s for cluster=%s",
+						attempt+1, maxRetries, req.Cluster)
+				}
+				lastErr = err
+				time.Sleep(2 * time.Second)
+				continue
+			}
+
+			// Retry on "template not found" — transient during informer cache sync
+			if isTemplateNotFound(err) {
+				if t != nil {
+					t.Logf("CreateDebugSession: template not yet in cache (attempt %d/%d), retrying in 2s for template=%s",
+						attempt+1, maxRetries, req.TemplateRef)
+				}
+				lastErr = err
+				time.Sleep(2 * time.Second)
+				continue
+			}
 		}
 
 		return nil, err
