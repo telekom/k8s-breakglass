@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **E2E: added retry with exponential backoff to offline token requests**: `ObtainOfflineRefreshTokenWithRetry` now uses exponential backoff (matching `GetToken`) and callers increased from 3 to 8 attempts to survive port-forward restarts
 - **E2E: added retry to RequireKeycloakReachable pre-check**: The Keycloak reachability pre-check now retries 5 times with backoff instead of failing immediately on first port-forward drop
 - **E2E: added retry to ObtainClientCredentialsToken**: Client credentials token requests now retry 8 times with exponential backoff to tolerate Keycloak transient unavailability
+- **CI: increase API E2E and OIDC E2E Go test timeouts from 30m to 45m**: Keycloak token retry overhead during port-forward drops can consume 90+ seconds per incident, causing test suite timeouts at 30 minutes
 
 ### Changed
 
