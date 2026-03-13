@@ -886,10 +886,10 @@ func isValidJWKSURL(jwksURI string) bool {
 	return true
 }
 
-// jwksHostMatchesAuthority returns true when the discovered jwks_uri host
-// matches the configured authority host.  This prevents SSRF if a
-// compromised IDP discovery endpoint returns a jwks_uri pointing to an
-// internal or unrelated host.
+// jwksHostMatchesAuthority returns true when the discovered jwks_uri origin
+// matches the configured authority origin (hostname + effective port).
+// This prevents SSRF if a compromised IDP discovery endpoint returns a
+// jwks_uri pointing to an internal, unrelated, or different-port host.
 func jwksHostMatchesAuthority(jwksURI, authority string) bool {
 	jwksURL, err := url.Parse(jwksURI)
 	if err != nil {
@@ -899,7 +899,22 @@ func jwksHostMatchesAuthority(jwksURI, authority string) bool {
 	if err != nil || !authURL.IsAbs() {
 		return false
 	}
-	return strings.EqualFold(jwksURL.Hostname(), authURL.Hostname())
+	if !strings.EqualFold(jwksURL.Hostname(), authURL.Hostname()) {
+		return false
+	}
+	// Compare effective ports (default 443 for HTTPS when unspecified)
+	return effectivePort(jwksURL) == effectivePort(authURL)
+}
+
+// effectivePort returns the port from the URL, defaulting to "443" for https.
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return ""
 }
 
 func buildCertPoolFromPEM(pemData string) (*x509.CertPool, error) {
