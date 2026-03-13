@@ -170,6 +170,34 @@ start_port_forward() {
   echo $pid
 }
 
+start_keepalive_port_forward() {
+  # Usage: start_keepalive_port_forward namespace svc localPort remotePort
+  # Like start_port_forward but wraps kubectl port-forward in a while-true loop
+  # so it auto-restarts if the connection drops (pod restart, idle timeout, etc.).
+  # Uses global $HUB_KUBECONFIG, $PF_FILE
+  local ns="$1"
+  local svc="$2"
+  local local_port="$3"
+  local remote_port="$4"
+  log "Starting keepalive port-forward for svc/$svc in ns $ns -> localhost:$local_port:$remote_port"
+  (
+    # Disable errexit so non-zero kubectl exits don't kill the loop
+    set +e
+    PF_PID=""
+    trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+    while true; do
+      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$ns" port-forward svc/"$svc" ${local_port}:${remote_port} 2>/dev/null &
+      PF_PID=$!
+      wait $PF_PID
+      sleep 2
+    done
+  ) &
+  local pid=$!
+  [ -n "$PF_FILE" ] && mkdir -p "$(dirname "$PF_FILE")" 2>/dev/null || true
+  echo $pid >> "$PF_FILE" 2>/dev/null || true
+  echo $pid
+}
+
 apply_kustomize() {
   # Usage: apply_kustomize path
   local path="$1"
@@ -1753,8 +1781,10 @@ log 'Port-forward controller and keycloak for tests'
 rm -f "$PF_FILE" || true
 
 # Start Keycloak port-forward for tests (was started earlier but may have been killed)
+# Use keepalive variant: kubectl port-forward can die due to idle timeouts, pod restarts,
+# or network issues. The while-true wrapper auto-restarts it.
 log "Starting Keycloak port-forward on port: $KEYCLOAK_FORWARD_PORT"
-start_port_forward "$DEV_NS" "breakglass-keycloak" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT:-8443} >/dev/null 2>&1 || true
+start_keepalive_port_forward "$DEV_NS" "breakglass-keycloak" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT:-8443} >/dev/null 2>&1 || true
 sleep 1
 
 # CONTROLLER_FORWARD_PORT was allocated earlier; just log it
@@ -1762,10 +1792,11 @@ log "Starting controller port-forward on port: $CONTROLLER_FORWARD_PORT"
 
 # Expose controller API
 # Use the discovered breakglass service name/namespace (BG_SVC_NAME/BG_SVC_NS) when available
+# Use keepalive variant so the port-forward auto-restarts if it drops during long test runs.
 if [ -n "${BG_SVC_NAME:-}" ] && [ -n "${BG_SVC_NS:-}" ]; then
-  start_port_forward "$BG_SVC_NS" "$BG_SVC_NAME" ${CONTROLLER_FORWARD_PORT} 8080 >/dev/null 2>&1 || true
+  start_keepalive_port_forward "$BG_SVC_NS" "$BG_SVC_NAME" ${CONTROLLER_FORWARD_PORT} 8080 >/dev/null 2>&1 || true
 else
-  start_port_forward "$DEV_NS" "breakglass" ${CONTROLLER_FORWARD_PORT} 8080 >/dev/null 2>&1 || true
+  start_keepalive_port_forward "$DEV_NS" "breakglass" ${CONTROLLER_FORWARD_PORT} 8080 >/dev/null 2>&1 || true
 fi
 for i in {1..40}; do
   c=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${CONTROLLER_FORWARD_PORT}/api/config" || true)
@@ -1790,9 +1821,9 @@ fi
 METRICS_FORWARD_PORT=${METRICS_FORWARD_PORT:-8181}
 log "Starting controller metrics port-forward on port: $METRICS_FORWARD_PORT"
 if [ -n "${BG_SVC_NAME:-}" ] && [ -n "${BG_SVC_NS:-}" ]; then
-  start_port_forward "$BG_SVC_NS" "$BG_SVC_NAME" ${METRICS_FORWARD_PORT} 8081 >/dev/null 2>&1 || true
+  start_keepalive_port_forward "$BG_SVC_NS" "$BG_SVC_NAME" ${METRICS_FORWARD_PORT} 8081 >/dev/null 2>&1 || true
 else
-  start_port_forward "$DEV_NS" "breakglass" ${METRICS_FORWARD_PORT} 8081 >/dev/null 2>&1 || true
+  start_keepalive_port_forward "$DEV_NS" "breakglass" ${METRICS_FORWARD_PORT} 8081 >/dev/null 2>&1 || true
 fi
 # Verify metrics endpoint is accessible
 sleep 2
@@ -1805,7 +1836,7 @@ fi
 # Start audit webhook receiver port-forward (for audit webhook tests)
 AUDIT_WEBHOOK_RECEIVER_PORT=8090
 log "Starting audit webhook receiver port-forward on port: $AUDIT_WEBHOOK_RECEIVER_PORT"
-start_port_forward "$DEV_NS" "audit-webhook-receiver" ${AUDIT_WEBHOOK_RECEIVER_PORT} 80 >/dev/null 2>&1 || true
+start_keepalive_port_forward "$DEV_NS" "audit-webhook-receiver" ${AUDIT_WEBHOOK_RECEIVER_PORT} 80 >/dev/null 2>&1 || true
 sleep 2
 if curl -s "http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}/health" >/dev/null 2>&1; then
   log "Audit webhook receiver ready at http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}"
@@ -1976,7 +2007,7 @@ log 'Port-forward MailHog UI'
 MH_SVC_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc --all-namespaces -l app=mailhog -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 MH_SVC_NS=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc --all-namespaces -l app=mailhog -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true)
 if [ -n "$MH_SVC_NAME" ] && [ -n "$MH_SVC_NS" ]; then
-  start_port_forward "$MH_SVC_NS" "$MH_SVC_NAME" ${MAILHOG_UI_PORT} 8025 >/dev/null 2>&1 || true
+  start_keepalive_port_forward "$MH_SVC_NS" "$MH_SVC_NAME" ${MAILHOG_UI_PORT} 8025 >/dev/null 2>&1 || true
   log "MailHog UI available at http://localhost:${MAILHOG_UI_PORT} (svc: $MH_SVC_NAME ns: $MH_SVC_NS)"
 else
   log 'MailHog service not found for port-forward; skipping'
@@ -1986,7 +2017,7 @@ log 'Port-forward Kafka'
 KF_SVC_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc --all-namespaces -l app=kafka -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 KF_SVC_NS=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc --all-namespaces -l app=kafka -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true)
 if [ -n "$KF_SVC_NAME" ] && [ -n "$KF_SVC_NS" ]; then
-  start_port_forward "$KF_SVC_NS" "$KF_SVC_NAME" 9094 9094 >/dev/null 2>&1 || true
+  start_keepalive_port_forward "$KF_SVC_NS" "$KF_SVC_NAME" 9094 9094 >/dev/null 2>&1 || true
   log "Kafka available at localhost:9094 (svc: $KF_SVC_NAME ns: $KF_SVC_NS)"
 else
   log 'Kafka service not found for port-forward; skipping'

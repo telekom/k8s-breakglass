@@ -655,7 +655,7 @@ jobs:
   single-cluster-e2e:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
@@ -797,10 +797,89 @@ jobs:
         run: |
           echo "=== Setting up port-forwards for E2E tests ==="
           
-          # Start port-forward for Kafka (port 9094) - needed for audit tests
-          echo "Starting Kafka port-forward..."
-          kubectl -n breakglass-system port-forward svc/breakglass-kafka 9094:9094 > /tmp/kafka-pf.log 2>&1 &
-          echo $! > /tmp/kafka-pf.pid
+          # Kill keepalive wrapper processes started by kind-setup-single.sh
+          # The setup script records wrapper PIDs in e2e/port-forward-pids
+          PF_FILE="e2e/port-forward-pids"
+          if [ -f "$PF_FILE" ]; then
+            echo "Terminating existing port-forward wrappers from PID file..."
+            while IFS= read -r pf_pid; do
+              if [ -n "$pf_pid" ]; then
+                kill "$pf_pid" 2>/dev/null || true
+              fi
+            done < "$PF_FILE"
+            rm -f "$PF_FILE"
+          fi
+          # Also kill any orphaned port-forward processes not tracked by the PID file
+          pkill -f "port-forward.*breakglass" 2>/dev/null || true
+          sleep 1
+
+          # Start resilient port-forwards that auto-restart on failure.
+          # kubectl port-forward can die due to idle timeouts, pod restarts, or
+          # network issues. The while-true loop ensures it restarts automatically.
+
+          # Keycloak port-forward (critical for OIDC authentication in all tests)
+          echo "Starting Keycloak keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Keycloak keepalive PID: $!"
+
+          # API / controller port-forward
+          echo "Starting API keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] API port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "API keepalive PID: $!"
+
+          # Metrics port-forward
+          echo "Starting Metrics keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8181:8081 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] Metrics port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Metrics keepalive PID: $!"
+
+          # Kafka port-forward (port 9094) - needed for audit tests
+          echo "Starting Kafka keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-kafka 9094:9094 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] Kafka port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Kafka keepalive PID: $!"
           
           # Wait for Kafka to be accessible
           for i in {1..30}; do
@@ -813,13 +892,23 @@ jobs:
           
           if ! nc -z localhost 9094 2>/dev/null; then
             echo "Warning: Kafka not accessible on port 9094 (audit tests may fail)"
-            cat /tmp/kafka-pf.log || true
           fi
           
-          # Start port-forward for audit webhook receiver (port 8090)
-          echo "Starting audit webhook receiver port-forward..."
-          kubectl -n breakglass-system port-forward svc/breakglass-audit-webhook-receiver 8090:80 > /tmp/audit-webhook-pf.log 2>&1 &
-          echo $! > /tmp/audit-webhook-pf.pid
+          # Audit webhook receiver port-forward (port 8090)
+          echo "Starting audit webhook receiver keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-audit-webhook-receiver 8090:80 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] Audit webhook receiver port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Audit webhook receiver keepalive PID: $!"
           
           # Wait for audit webhook receiver to be accessible
           for i in {1..30}; do
@@ -832,8 +921,54 @@ jobs:
           
           if ! curl -sf "http://localhost:8090/health" > /dev/null 2>&1; then
             echo "Warning: Audit webhook receiver not accessible (tests may fail)"
-            cat /tmp/audit-webhook-pf.log || true
           fi
+
+          # MailHog port-forward (port 8025) - needed for notification e2e tests
+          echo "Starting MailHog keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-mailhog 8025:8025 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] MailHog port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "MailHog keepalive PID: $!"
+
+          # Wait for MailHog to be accessible
+          for i in {1..30}; do
+            if curl -sf "http://localhost:8025/api/v2/messages" > /dev/null 2>&1; then
+              echo "✓ MailHog port-forward ready"
+              break
+            fi
+            sleep 1
+          done
+
+          if ! curl -sf "http://localhost:8025/api/v2/messages" > /dev/null 2>&1; then
+            echo "Warning: MailHog not accessible on port 8025 (notification tests may fail)"
+          fi
+
+          # Wait for Keycloak to be reachable
+          for i in {1..30}; do
+            if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+              echo "✓ Keycloak reachable at localhost:8443"
+              break
+            fi
+            sleep 1
+          done
+
+          # Wait for API to be reachable
+          for i in {1..30}; do
+            if curl -sf http://localhost:8080/api/config > /dev/null 2>&1; then
+              echo "✓ API reachable at localhost:8080"
+              break
+            fi
+            sleep 1
+          done
           
           # Export env var
           echo "AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL=http://localhost:8090" >> $GITHUB_ENV
@@ -1195,21 +1330,49 @@ jobs:
         run: |
           echo "=== Ensuring port-forwards are alive for OIDC tests ==="
 
-          # Kill any stale Keycloak port-forward processes
+          # Kill any stale Keycloak port-forward processes AND their keepalive wrappers.
+          # kind-setup-single.sh may have started a keepalive loop that would compete
+          # with ours if not fully stopped. Match both the kubectl process and the
+          # parent shell loop.
           pkill -f "port-forward.*keycloak.*8443" 2>/dev/null || true
+          pkill -f "port-forward.*breakglass-keycloak" 2>/dev/null || true
+          sleep 2
+
+          # Also kill any API port-forward from setup to restart fresh with keepalive
+          pkill -f "port-forward.*breakglass.*8080" 2>/dev/null || true
           sleep 1
 
           # Start a resilient Keycloak port-forward that auto-restarts on failure.
           # kubectl port-forward can die due to idle timeouts, pod restarts, or
           # network issues. The while loop ensures it restarts automatically.
           (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
             while true; do
-              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null
+              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
               echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
               sleep 2
             done
           ) &
           echo "Keycloak port-forward keepalive started (PID: $!)"
+
+          # Start API port-forward with keepalive for OIDC test API calls
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] API port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "API port-forward keepalive started (PID: $!)"
 
           # Wait for Keycloak to be reachable
           for i in {1..30}; do
@@ -1225,6 +1388,15 @@ jobs:
             kubectl get pods -n breakglass-system -l app=keycloak 2>&1 || true
             exit 1
           fi
+
+          # Wait for API to be reachable
+          for i in {1..20}; do
+            if curl -s http://localhost:8080/api/config > /dev/null 2>&1; then
+              echo "✓ API reachable at localhost:8080"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Run OIDC Comprehensive E2E tests
         run: |
@@ -1412,33 +1584,95 @@ jobs:
           echo "UI E2E setup failed. Check the ui-e2e-setup-failure-logs artifact for details."
           exit 1
 
-      - name: Setup port-forward for MailHog
+      - name: Setup resilient port-forwards for UI E2E tests
         run: |
-          echo "=== Setting up MailHog port-forward ==="
+          echo "=== Setting up resilient port-forwards for UI E2E tests ==="
 
-          # Make MailHog URL available to subsequent steps (Playwright uses this).
+          # Kill any stale port-forward processes from setup script
+          pkill -f "port-forward.*breakglass" 2>/dev/null || true
+          sleep 1
+
+          # Start resilient port-forwards that auto-restart on failure.
+          # kubectl port-forward can die due to idle timeouts, pod restarts, or
+          # network issues. The while-true loop ensures it restarts automatically.
+
+          # Keycloak port-forward (critical for OIDC authentication)
+          echo "Starting Keycloak keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Keycloak keepalive PID: $!"
+
+          # API / controller port-forward
+          echo "Starting API keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] API port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "API keepalive PID: $!"
+
+          # MailHog port-forward
+          echo "Starting MailHog keepalive port-forward..."
           echo "MAILHOG_URL=http://127.0.0.1:8025" >> "$GITHUB_ENV"
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl -n breakglass-system port-forward svc/breakglass-mailhog 8025:8025 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] MailHog port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "MailHog keepalive PID: $!"
 
-          # Start port-forward for MailHog UI/API.
-          kubectl -n breakglass-system port-forward svc/breakglass-mailhog 8025:8025 > /tmp/mailhog-portforward.log 2>&1 &
-          MAILHOG_PF_PID=$!
-          echo "$MAILHOG_PF_PID" > /tmp/mailhog-portforward-pid.txt
-          echo "MailHog port-forward PID: $MAILHOG_PF_PID"
+          # Wait for all services to be accessible
+          echo "Waiting for services..."
 
-          # Wait for MailHog API to become reachable.
           for i in {1..30}; do
-            if curl -sf "http://127.0.0.1:8025/api/v2/messages" > /dev/null 2>&1; then
-              echo "✓ MailHog port-forward ready after ${i}s"
-              exit 0
+            if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+              echo "✓ Keycloak reachable at localhost:8443"
+              break
             fi
             sleep 1
           done
 
-          echo "ERROR: MailHog port-forward did not become ready"
-          tail -50 /tmp/mailhog-portforward.log || true
-          kubectl get svc -n breakglass-system | grep -i mailhog || true
-          kubectl get pods -n breakglass-system | grep -i mailhog || true
-          exit 1
+          for i in {1..30}; do
+            if curl -sf http://localhost:8080 > /dev/null 2>&1; then
+              echo "✓ API/UI reachable at localhost:8080"
+              break
+            fi
+            sleep 1
+          done
+
+          for i in {1..30}; do
+            if curl -sf "http://127.0.0.1:8025/api/v2/messages" > /dev/null 2>&1; then
+              echo "✓ MailHog reachable at localhost:8025"
+              break
+            fi
+            sleep 1
+          done
+
+          echo "=== All port-forwards started with keepalive ==="
 
       - name: Source E2E environment and start frontend
         run: |
@@ -2192,9 +2426,20 @@ jobs:
           echo "Using API port: $API_PORT"
           echo "api_port=$API_PORT" >> $GITHUB_OUTPUT
           
-          # Start port-forward for hub API
-          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$API_PORT:8080" &
-          echo $! > /tmp/api-pf.pid
+          # Start keepalive port-forward for hub API
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$API_PORT:8080" 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] API port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "API keepalive PID: $!"
           
           # Wait for port-forward
           for i in {1..30}; do
@@ -2209,11 +2454,22 @@ jobs:
           # E2E_HUB_API_URL is required by TestSpokeHubAuthorizationSuite and TestMultiIDPAuthorizationSuite
           echo "E2E_HUB_API_URL=http://localhost:$API_PORT" >> $GITHUB_ENV
           
-          # Start port-forward for metrics endpoint (used by cleanup task verification tests)
+          # Start keepalive port-forward for metrics endpoint (used by cleanup task verification tests)
           METRICS_PORT=8181
-          echo "Starting metrics port-forward on port: $METRICS_PORT"
-          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$METRICS_PORT:8081" &
-          echo $! > /tmp/metrics-pf.pid
+          echo "Starting metrics keepalive port-forward on port: $METRICS_PORT"
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$METRICS_PORT:8081" 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] Metrics port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Metrics keepalive PID: $!"
           
           # Wait for metrics port-forward
           for i in {1..15}; do
@@ -2226,10 +2482,21 @@ jobs:
           
           echo "BREAKGLASS_METRICS_URL=http://localhost:$METRICS_PORT/metrics" >> $GITHUB_ENV
           
-          # Start port-forward for audit webhook receiver (port 8090)
-          echo "Starting audit webhook receiver port-forward..."
-          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-audit-webhook-receiver 8090:80 > /tmp/audit-webhook-pf.log 2>&1 &
-          echo $! > /tmp/audit-webhook-pf.pid
+          # Start keepalive port-forward for audit webhook receiver (port 8090)
+          echo "Starting audit webhook receiver keepalive port-forward..."
+          (
+            set +e
+            PF_PID=""
+            trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-audit-webhook-receiver 8090:80 2>/dev/null &
+              PF_PID=$!
+              wait $PF_PID
+              echo "[keepalive] Audit webhook receiver port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) &
+          echo "Audit webhook receiver keepalive PID: $!"
           
           # Wait for audit webhook receiver to be accessible
           for i in {1..30}; do
@@ -2242,7 +2509,6 @@ jobs:
           
           if ! curl -sf "http://localhost:8090/health" > /dev/null 2>&1; then
             echo "Warning: Audit webhook receiver not accessible (tests may fail)"
-            cat /tmp/audit-webhook-pf.log || true
           fi
           
           echo "AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL=http://localhost:8090" >> $GITHUB_ENV
@@ -2254,7 +2520,7 @@ jobs:
           # - TestHubSpokeSuite (hub_spoke_test.go)
           # - TestSpokeHubAuthorizationSuite (spoke_hub_authorization_test.go)
           # - TestMultiIDPAuthorizationSuite (multi_idp_authorization_test.go)
-          go test -v -tags=multicluster ./e2e/api/... -timeout 30m \
+          go test -v -tags=multicluster ./e2e/api/... -timeout 45m \
             2>&1 | tee e2e-multi-results.txt
         env:
           E2E_TEST: "true"

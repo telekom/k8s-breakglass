@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **E2E: retry on informer cache lag during session creation**: `CreateSession` and `CreateDebugSession` API helpers now retry on transient 403 ("no escalation found", "user not authorized for requested group") and 400 ("template not found") errors caused by informer cache propagation delay after creating escalation or template resources
+- **E2E: fix CreateSessionAndWaitForPending race condition**: Always poll the API to confirm the controller has reconciled the session status, rather than trusting the create response which may not reflect the persisted status subresource
+- **CI: increase Single-Cluster E2E job timeout from 45 to 60 minutes**: API E2E tests alone take ~30 minutes; the 45-minute job timeout was consistently hit before CLI E2E tests could complete
+- **CI: increase Multi-Cluster E2E test timeout from 30m to 45m**: The 280-test suite occasionally exceeded the 30-minute Go test timeout
+- **E2E: port-forward keepalive for CI stability**: All long-lived E2E port-forwards used during test execution (Keycloak, API, MailHog, Metrics, Kafka, audit webhook receiver) now use `while true` restart loops to auto-recover from idle timeouts, pod restarts, and network drops. Fixes flaky Single-Cluster E2E, OIDC E2E, and UI E2E tests caused by Keycloak port-forward dying mid-run
+- **E2E: added missing MailHog port-forward in CI workflow**: The CI workflow's "Setup port-forwards for E2E tests" step killed all port-forwards from `kind-setup-single.sh` but did not restart the MailHog port-forward, causing all notification e2e tests to fail with `connection refused` on port 8025
+- **E2E: increased OIDC token retry window**: Bumped token request retries from 5 to 8 attempts with capped 10s backoff (~60s total window) to tolerate port-forward reconnection delays
+
 ### Changed
 
 - **Webhook SAR metrics: removed high-cardinality `group` label** ([#527](https://github.com/telekom/k8s-breakglass/issues/527)): Removed unbounded `group` label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` metrics to prevent time-series explosion in Prometheus
