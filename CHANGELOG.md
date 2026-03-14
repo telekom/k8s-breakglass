@@ -11,23 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.
 
-### Fixed
-
-- **E2E: retry on informer cache lag during session creation**: `CreateSession` and `CreateDebugSession` API helpers now retry on transient 403 ("no escalation found", "user not authorized for requested group") and 400 ("template not found") errors caused by informer cache propagation delay after creating escalation or template resources
-- **E2E: fix CreateSessionAndWaitForPending race condition**: Always poll the API to confirm the controller has reconciled the session status, rather than trusting the create response which may not reflect the persisted status subresource
-- **CI: increase Single-Cluster E2E job timeout from 45 to 60 minutes**: API E2E tests alone take ~30 minutes; the 45-minute job timeout was consistently hit before CLI E2E tests could complete
-- **CI: increase Multi-Cluster E2E test timeout from 30m to 45m**: The 280-test suite occasionally exceeded the 30-minute Go test timeout
-- **E2E: port-forward keepalive for CI stability**: All long-lived E2E port-forwards used during test execution (Keycloak, API, MailHog, Metrics, Kafka, audit webhook receiver) now use `while true` restart loops to auto-recover from idle timeouts, pod restarts, and network drops. Fixes flaky Single-Cluster E2E, OIDC E2E, and UI E2E tests caused by Keycloak port-forward dying mid-run
-- **E2E: added missing MailHog port-forward in CI workflow**: The CI workflow's "Setup port-forwards for E2E tests" step killed all port-forwards from `kind-setup-single.sh` but did not restart the MailHog port-forward, causing all notification e2e tests to fail with `connection refused` on port 8025
-- **E2E: increased OIDC token retry window**: Bumped token request retries from 5 to 8 attempts with capped 10s backoff (~60s total window) to tolerate port-forward reconnection delays
-- **E2E: increased GetToken retry window to 12 attempts**: Extended from 8 to 12 attempts (~120s total window) to tolerate Keycloak pod recovery during extended outages in CI
-- **E2E: added retry with exponential backoff to offline token requests**: `ObtainOfflineRefreshTokenWithRetry` now uses exponential backoff (matching `GetToken`) and callers increased from 3 to 8 attempts to survive port-forward restarts
-- **E2E: added retry to RequireKeycloakReachable pre-check**: The Keycloak reachability pre-check now retries 5 times with backoff instead of failing immediately on first port-forward drop
-- **E2E: added retry to ObtainClientCredentialsToken**: Client credentials token requests now retry 8 times with exponential backoff to tolerate Keycloak transient unavailability
-- **CI: increase API E2E and OIDC E2E Go test timeouts from 30m to 45m**: Keycloak token retry overhead during port-forward drops can consume 90+ seconds per incident, causing test suite timeouts at 30 minutes
-
-### Changed
-
 - **Webhook SAR metrics: removed high-cardinality `group` label** ([#527](https://github.com/telekom/k8s-breakglass/issues/527)): Removed unbounded `group` label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` metrics to prevent time-series explosion in Prometheus
 - **JWT and JWKS metrics label renamed from `issuer` to `identity_provider`** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Prometheus metrics `breakglass_jwt_validation_*` and `breakglass_jwks_cache_{hits,misses}_total` now use the `identity_provider` label (resolved IDP name) instead of `issuer` (raw URL) to prevent unbounded cardinality from attacker-controlled issuer claims. Dashboards/alerts referencing the old `issuer` label on these metrics must be updated.
 
@@ -68,6 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **JWKS auth: reuse HTTP client** ([#529](https://github.com/telekom/k8s-breakglass/issues/529)): Replaced per-request HTTP client creation in OIDC discovery with a shared `defaultHTTPClient` on `AuthHandler` for connection pooling and reduced allocations
 - **Debug session metrics docs labels** ([#537](https://github.com/telekom/k8s-breakglass/issues/537)): Fixed incorrect label definitions for 10 of 13 debug session metrics in `docs/metrics.md` to match `pkg/metrics/metrics.go`
 - **ParseDuration bounds checking** ([#525](https://github.com/telekom/k8s-breakglass/issues/525)): Added maximum 365-day limit to `ParseDuration` to prevent integer overflow from extremely large day values (e.g., `999999999d`)
+- **E2E: retry on informer cache lag during session creation**: `CreateSession` and `CreateDebugSession` API helpers now retry on transient 403 ("no escalation found", "user not authorized for requested group") and 400 ("template not found") errors caused by informer cache propagation delay after creating escalation or template resources
+- **E2E: fix CreateSessionAndWaitForPending race condition**: Always poll the API to confirm the controller has reconciled the session status, rather than trusting the create response which may not reflect the persisted status subresource
+- **CI: increase Single-Cluster E2E job timeout from 45 to 60 minutes**: API E2E tests alone take ~30 minutes; the 45-minute job timeout was consistently hit before CLI E2E tests could complete
+- **CI: increase Multi-Cluster E2E test timeout from 30m to 45m**: The 280-test suite occasionally exceeded the 30-minute Go test timeout
+- **E2E: port-forward keepalive for CI stability**: All long-lived E2E port-forwards now use `while true` restart loops to auto-recover from idle timeouts, pod restarts, and network drops
+- **E2E: added missing MailHog port-forward in CI workflow**: The CI workflow's port-forward setup step killed all port-forwards from `kind-setup-single.sh` but did not restart the MailHog port-forward, causing notification e2e tests to fail with `connection refused` on port 8025
+- **E2E: increased OIDC token retry window**: Bumped token request retries from 5 to 8 attempts with capped 10s backoff (~60s total window) to tolerate port-forward reconnection delays
+- **E2E: increased GetToken retry window to 12 attempts**: Extended from 8 to 12 attempts (~120s total window) to tolerate Keycloak pod recovery during extended outages in CI
+- **E2E: added retry with exponential backoff to offline token requests**: `ObtainOfflineRefreshTokenWithRetry` now uses exponential backoff and callers increased from 3 to 8 attempts to survive port-forward restarts
+- **E2E: added retry to RequireKeycloakReachable pre-check**: The Keycloak reachability pre-check now retries 5 times with backoff instead of failing immediately on first port-forward drop
+- **E2E: added retry to ObtainClientCredentialsToken**: Client credentials token requests now retry 8 times with exponential backoff to tolerate Keycloak transient unavailability
+- **CI: increase API E2E and OIDC E2E Go test timeouts from 30m to 45m**: Keycloak token retry overhead during port-forward drops can consume 90+ seconds per incident, causing test suite timeouts at 30 minutes
 
 ### Removed
 
