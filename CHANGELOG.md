@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.
+
 ### Fixed
 
 - **E2E: retry on informer cache lag during session creation**: `CreateSession` and `CreateDebugSession` API helpers now retry on transient 403 ("no escalation found", "user not authorized for requested group") and 400 ("template not found") errors caused by informer cache propagation delay after creating escalation or template resources
