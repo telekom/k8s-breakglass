@@ -124,6 +124,7 @@ func Login(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) {
 	errCh := make(chan error, 1)
 
 	server := &http.Server{
+		ReadHeaderTimeout: 10 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/callback" {
 				http.NotFound(w, r)
@@ -194,11 +195,11 @@ func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", url) //nolint:gosec // G204: opening browser with OIDC callback URL is by design
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //nolint:gosec // G204: opening browser with OIDC callback URL is by design
 	default:
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", url) //nolint:gosec // G204: opening browser with OIDC callback URL is by design
 	}
 	if cmd == nil {
 		return errors.New("no browser command available")
