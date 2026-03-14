@@ -426,7 +426,7 @@ func (l *IdentityProviderLoader) GetIDPNameByIssuer(ctx context.Context, issuer 
 // MarshalIdentityProviderToJSON marshals an IdentityProviderConfig to JSON
 // for API responses
 func MarshalIdentityProviderToJSON(config *IdentityProviderConfig) (string, error) {
-	data, err := json.Marshal(config)
+	data, err := json.Marshal(config) //nolint:gosec // G117: ClientSecret is intentionally included for internal API transport
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal IdentityProvider config: %w", err)
 	}

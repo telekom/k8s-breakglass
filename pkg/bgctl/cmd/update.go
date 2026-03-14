@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,9 @@ import (
 
 const (
 	defaultRepoAPI = "https://api.github.com/repos/telekom/k8s-breakglass/releases/latest"
+
+	// maxBinarySize is the maximum allowed size for extracted binaries (500 MB).
+	maxBinarySize = 500 << 20
 )
 
 type githubRelease struct {
@@ -159,7 +163,11 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 }
 
 func fetchLatestRelease() (*githubRelease, error) {
-	resp, err := http.Get(defaultRepoAPI)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, defaultRepoAPI, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +187,11 @@ func fetchLatestRelease() (*githubRelease, error) {
 
 func fetchReleaseByTag(tag string) (*githubRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", strings.TrimPrefix(tag, "v"))
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +228,11 @@ func findAssetURL(assets []githubAsset, name string) string {
 }
 
 func downloadFile(url, path string) error {
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -303,7 +319,11 @@ func verifyChecksumIfAvailable(assets []githubAsset, name, filePath string) erro
 	if url == "" {
 		return nil
 	}
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -381,11 +401,11 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 		}
 		if safeName == "bgctl" {
 			outPath := filepath.Join(destDir, "bgctl")
-			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
 			if err != nil {
 				return "", err
 			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
+			if _, err := io.Copy(outFile, io.LimitReader(tarReader, maxBinarySize)); err != nil {
 				_ = outFile.Close()
 				return "", err
 			}
@@ -444,11 +464,11 @@ func extractZipEntry(file *zip.File, destDir, safeName string) (string, error) {
 		_ = rc.Close()
 	}()
 	outPath := filepath.Join(destDir, safeName)
-	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(outFile, rc); err != nil {
+	if _, err := io.Copy(outFile, io.LimitReader(rc, maxBinarySize)); err != nil {
 		_ = outFile.Close()
 		return "", err
 	}
@@ -476,7 +496,7 @@ func copyFile(src, dst string) error {
 	defer func() {
 		_ = input.Close()
 	}()
-	output, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	output, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
 	if err != nil {
 		return err
 	}
