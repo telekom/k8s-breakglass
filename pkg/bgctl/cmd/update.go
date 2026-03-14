@@ -405,7 +405,7 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if _, err := io.Copy(outFile, io.LimitReader(tarReader, maxBinarySize)); err != nil {
+			if err := limitedCopy(outFile, tarReader, maxBinarySize); err != nil {
 				_ = outFile.Close()
 				return "", err
 			}
@@ -468,7 +468,7 @@ func extractZipEntry(file *zip.File, destDir, safeName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(outFile, io.LimitReader(rc, maxBinarySize)); err != nil {
+	if err := limitedCopy(outFile, rc, maxBinarySize); err != nil {
 		_ = outFile.Close()
 		return "", err
 	}
@@ -485,6 +485,23 @@ func replaceBinary(target, source string) error {
 		_ = os.Rename(backup, target)
 		return err
 	}
+	return nil
+}
+
+// limitedCopy copies up to maxBytes from src to dst and returns an error if
+// src contains more data than the limit, preventing silently truncated binaries.
+func limitedCopy(dst io.Writer, src io.Reader, maxBytes int64) error {
+	n, err := io.Copy(dst, io.LimitReader(src, maxBytes))
+	if err != nil {
+		return err
+	}
+	// Probe for one more byte: if readable, the entry exceeds the limit.
+	var probe [1]byte
+	extra, _ := src.Read(probe[:])
+	if extra > 0 {
+		return fmt.Errorf("archive entry exceeds maximum allowed size of %d bytes", maxBytes)
+	}
+	_ = n // used only for limit accounting
 	return nil
 }
 
