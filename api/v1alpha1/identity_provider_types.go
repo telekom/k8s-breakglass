@@ -76,6 +76,18 @@ type OIDCConfig struct {
 	// +kubebuilder:validation:Pattern=`^\S+$`
 	ClientID string `json:"clientID"`
 
+	// ExpectedAudience is the expected JWT audience (aud) claim value.
+	// When set, the API server validates that incoming JWTs contain this value
+	// in their aud claim. This prevents cross-service token confusion from other
+	// OIDC clients at the same identity provider.
+	// Requires a matching audience protocol mapper in the identity provider
+	// that adds this value to the aud claim in issued tokens.
+	// If empty, audience validation is skipped.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^\S+$`
+	ExpectedAudience string `json:"expectedAudience,omitempty"`
+
 	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`

@@ -147,6 +147,42 @@ The API validates JWTs using an **explicit allowlist of signing algorithms** (RS
 
 To reduce accidental credential exposure, the API middleware **strips the Authorization header** after extracting token data, so downstream logs or error handlers do not emit bearer tokens.
 
+### Issuer Validation (SEC-003)
+
+Before routing a JWT to a JWKS endpoint, the middleware validates the `iss` claim extracted from the unverified token:
+
+- Must be a well-formed HTTPS URL (non-HTTPS schemes like `http://`, `file://`, or `javascript:` are rejected)
+- Must not exceed 512 characters
+- Must have a non-empty host component
+- Must not include query strings, URL fragments, or userinfo (for example, `https://idp.example.com?x=1`, `https://idp.example.com/#foo`, and `https://user@idp.example.com` are all rejected)
+
+This prevents an attacker from using a crafted issuer to trigger SSRF-like JWKS fetches to arbitrary endpoints.
+
+### JWKS Fetch Rate Limiting (SEC-004)
+
+The system enforces a per-issuer cooldown (`10s` minimum interval) on the initial JWKS client load. This reduces repeated startup or misconfiguration-related fetches for the same issuer and limits tight retry loops against the OIDC provider.
+
+Subsequent JWKS refreshes (including those triggered by unknown `kid` values) are handled by the underlying JWKS client library and are not subject to this additional cooldown. You should still configure network-level and IdP-side protections (for example, rate limits) for JWKS endpoints.
+
+These protections are in addition to the existing LRU cache for JWKS key sets.
+
+### Audience Validation (SEC-005)
+
+When an `IdentityProvider` CRD has the `expectedAudience` field configured, the middleware validates the JWT `aud` claim against that value. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+spec:
+  oidc:
+    clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"  # optional: enables JWT aud validation
+```
+
+This requires a matching audience protocol mapper in your identity provider (e.g., Keycloak) that adds the expected value to the `aud` claim in issued tokens.
+
+If `expectedAudience` is empty (default), audience validation is skipped for backwards compatibility.
+
 ### Token Storage in the Browser
 
 The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`.
