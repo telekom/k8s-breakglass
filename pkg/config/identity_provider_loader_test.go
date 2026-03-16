@@ -579,10 +579,20 @@ func TestIdentityProviderLoader_CrossNamespaceSecrets(t *testing.T) {
 
 func TestMarshalIdentityProviderToJSON(t *testing.T) {
 	original := &IdentityProviderConfig{
-		Name:      "test-idp",
-		Authority: "https://issuer.example.com",
-		Issuer:    "https://issuer.example.com",
-		ClientID:  "client-123",
+		Name:         "test-idp",
+		Authority:    "https://issuer.example.com",
+		Issuer:       "https://issuer.example.com",
+		ClientID:     "client-123",
+		Type:         "OIDC",
+		ClientSecret: "top-secret",
+		Keycloak: &KeycloakRuntimeConfig{
+			BaseURL:             "https://keycloak.example.com",
+			Realm:               "master",
+			ClientID:            "svc-client",
+			ClientSecret:        "nested-secret",
+			ServiceAccountToken: "nested-token",
+			CacheTTL:            "10m",
+		},
 	}
 
 	jsonStr, err := MarshalIdentityProviderToJSON(original)
@@ -590,13 +600,30 @@ func TestMarshalIdentityProviderToJSON(t *testing.T) {
 		t.Fatalf("MarshalIdentityProviderToJSON() error = %v", err)
 	}
 
-	var decoded IdentityProviderConfig
+	var decoded map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &decoded); err != nil {
 		t.Fatalf("failed to unmarshal json output: %v", err)
 	}
 
-	if decoded.Name != original.Name || decoded.ClientID != original.ClientID || decoded.Authority != original.Authority {
+	if decoded["Name"] != original.Name || decoded["ClientID"] != original.ClientID || decoded["Authority"] != original.Authority {
 		t.Fatalf("decoded config mismatch: %+v", decoded)
+	}
+
+	if _, exists := decoded["ClientSecret"]; exists {
+		t.Fatalf("client secret must be omitted from marshaled output: %+v", decoded)
+	}
+
+	if keycloakRaw, ok := decoded["Keycloak"]; ok {
+		keycloak, ok := keycloakRaw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("unexpected keycloak JSON shape: %+v", keycloakRaw)
+		}
+		if _, exists := keycloak["ClientSecret"]; exists {
+			t.Fatalf("keycloak client secret must be omitted from marshaled output: %+v", keycloak)
+		}
+		if _, exists := keycloak["ServiceAccountToken"]; exists {
+			t.Fatalf("keycloak service account token must be omitted from marshaled output: %+v", keycloak)
+		}
 	}
 }
 
@@ -1085,7 +1112,7 @@ func TestLoadIdentityProviderByIssuer_TrailingSlashNormalization(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	idp := breakglassv1alpha1.IdentityProvider{
-		ObjectMeta: metav1.ObjectMeta{Name: "slash-idp", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "slash-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Issuer: "https://auth.example.com/",
 			OIDC: breakglassv1alpha1.OIDCConfig{
@@ -1140,7 +1167,7 @@ func TestLoadIdentityProviderByIssuer_AuthorityFallbackNormalization(t *testing.
 
 	// IDP without explicit issuer, only authority set
 	idp := breakglassv1alpha1.IdentityProvider{
-		ObjectMeta: metav1.ObjectMeta{Name: "authority-idp", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "authority-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority: "https://auth.example.com/realms/test/",

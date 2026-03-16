@@ -423,10 +423,66 @@ func (l *IdentityProviderLoader) GetIDPNameByIssuer(ctx context.Context, issuer 
 	return config.Name, nil
 }
 
-// MarshalIdentityProviderToJSON marshals an IdentityProviderConfig to JSON
-// for API responses
+type identityProviderJSON struct {
+	Name                 string
+	Issuer               string
+	Type                 string
+	Authority            string
+	ClientID             string
+	ExpectedAudience     string
+	CertificateAuthority string
+	InsecureSkipVerify   bool
+	Keycloak             *keycloakRuntimeConfigJSON
+	RawConfig            interface{}
+}
+
+type keycloakRuntimeConfigJSON struct {
+	BaseURL              string
+	Realm                string
+	ClientID             string
+	CacheTTL             string
+	RequestTimeout       string
+	InsecureSkipVerify   bool
+	CertificateAuthority string
+}
+
+func sanitizeIdentityProviderConfig(config *IdentityProviderConfig) *identityProviderJSON {
+	if config == nil {
+		return nil
+	}
+
+	out := &identityProviderJSON{
+		Name:                 config.Name,
+		Issuer:               config.Issuer,
+		Type:                 config.Type,
+		Authority:            config.Authority,
+		ClientID:             config.ClientID,
+		ExpectedAudience:     config.ExpectedAudience,
+		CertificateAuthority: config.CertificateAuthority,
+		InsecureSkipVerify:   config.InsecureSkipVerify,
+		RawConfig:            config.RawConfig,
+	}
+
+	if config.Keycloak != nil {
+		out.Keycloak = &keycloakRuntimeConfigJSON{
+			BaseURL:              config.Keycloak.BaseURL,
+			Realm:                config.Keycloak.Realm,
+			ClientID:             config.Keycloak.ClientID,
+			CacheTTL:             config.Keycloak.CacheTTL,
+			RequestTimeout:       config.Keycloak.RequestTimeout,
+			InsecureSkipVerify:   config.Keycloak.InsecureSkipVerify,
+			CertificateAuthority: config.Keycloak.CertificateAuthority,
+		}
+	}
+
+	return out
+}
+
+// MarshalIdentityProviderToJSON marshals a sanitized IdentityProviderConfig to JSON.
+// Sensitive runtime secrets (for example client secrets or service account tokens)
+// are intentionally excluded from the output.
 func MarshalIdentityProviderToJSON(config *IdentityProviderConfig) (string, error) {
-	data, err := json.Marshal(config) //nolint:gosec // G117: ClientSecret is intentionally included for internal API transport
+	data, err := json.Marshal(sanitizeIdentityProviderConfig(config))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal IdentityProvider config: %w", err)
 	}
