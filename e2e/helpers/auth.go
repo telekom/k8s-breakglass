@@ -566,7 +566,6 @@ func (p *OIDCTokenProvider) ObtainClientCredentialsToken(t *testing.T, ctx conte
 
 		resp, err := httpClient.Do(req)
 		if err == nil {
-			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode == http.StatusOK {
 				var tokenResp struct {
 					AccessToken string `json:"access_token"`
@@ -574,6 +573,7 @@ func (p *OIDCTokenProvider) ObtainClientCredentialsToken(t *testing.T, ctx conte
 					ExpiresIn   int    `json:"expires_in"`
 				}
 				err = json.NewDecoder(resp.Body).Decode(&tokenResp)
+				_ = resp.Body.Close()
 				require.NoError(t, err, "Failed to decode client_credentials token response")
 				require.NotEmpty(t, tokenResp.AccessToken, "No access_token in client_credentials response")
 				if attempt > 1 {
@@ -581,6 +581,7 @@ func (p *OIDCTokenProvider) ObtainClientCredentialsToken(t *testing.T, ctx conte
 				}
 				return tokenResp.AccessToken
 			}
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("client_credentials token request failed with status %d", resp.StatusCode)
 		} else {
 			lastErr = fmt.Errorf("client_credentials token request failed: %w", err)
