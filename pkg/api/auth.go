@@ -336,6 +336,9 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	if idpCfg.Authority == "" {
 		return nil, fmt.Errorf("IDP %s has no authority configured", idpCfg.Name)
 	}
+	if !isValidIssuerURL(idpCfg.Authority) {
+		return nil, fmt.Errorf("IDP %s has invalid authority URL", idpCfg.Name)
+	}
 
 	// For Keycloak IDPs, use the Keycloak-specific JWKS endpoint
 	// This avoids relying on .well-known discovery which may not be available at the realm URL

@@ -721,6 +721,36 @@ func TestGetJWKSForIssuer_AudienceRefreshFailureBackoff(t *testing.T) {
 	assert.True(t, secondAttempt.Equal(firstAttempt), "consecutive failed refreshes should be backoff-throttled")
 }
 
+func TestGetJWKSForIssuer_InvalidAuthorityRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://auth.example.com",
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "http://insecure.example.com",
+				ClientID:  "test-client",
+			},
+		},
+	}
+	idp.Name = "invalid-authority-idp"
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
+	auth := &AuthHandler{
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		log:         zaptest.NewLogger(t).Sugar(),
+		idpLoader:   config.NewIdentityProviderLoader(fakeClient),
+	}
+
+	_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), "https://auth.example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid authority URL")
+}
+
 func TestAuthErrorMessageForJWKSLoad(t *testing.T) {
 	tests := []struct {
 		name string
