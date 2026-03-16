@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Auth and bgctl hardening follow-ups** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Multi-IDP auth now returns accurate client messages for unknown-issuer vs transient/rate-limited JWKS failures, and `bgctl update` now propagates non-EOF probe-read errors during size-limited archive extraction instead of silently ignoring them
 - **Docs: wrong file reference** ([#530](https://github.com/telekom/k8s-breakglass/issues/530)): Fixed `.github/copilot-instructions.md` referencing non-existent `pkg/policy/evaluator.go` → `pkg/policy/deny.go`
 - **Docs: unimplemented exit codes** ([#542](https://github.com/telekom/k8s-breakglass/issues/542)): Removed documented exit codes 2-8 from `docs/cli.md` that were never implemented in `bgctl`
 - **Frontend: stable v-for key in BreakglassSessionReview** ([#535](https://github.com/telekom/k8s-breakglass/issues/535)): Use `metadata.name` as the primary `v-for` key with `bg.name` as fallback, removing the array-index-based fallback that caused incorrect component reuse during filtering

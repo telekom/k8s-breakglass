@@ -491,17 +491,19 @@ func replaceBinary(target, source string) error {
 // limitedCopy copies up to maxBytes from src to dst and returns an error if
 // src contains more data than the limit, preventing silently truncated binaries.
 func limitedCopy(dst io.Writer, src io.Reader, maxBytes int64) error {
-	n, err := io.Copy(dst, io.LimitReader(src, maxBytes))
+	_, err := io.Copy(dst, io.LimitReader(src, maxBytes))
 	if err != nil {
 		return err
 	}
 	// Probe for one more byte: if readable, the entry exceeds the limit.
 	var probe [1]byte
-	extra, _ := src.Read(probe[:])
+	extra, probeErr := src.Read(probe[:])
+	if probeErr != nil && !errors.Is(probeErr, io.EOF) {
+		return probeErr
+	}
 	if extra > 0 {
 		return fmt.Errorf("archive entry exceeds maximum allowed size of %d bytes", maxBytes)
 	}
-	_ = n // used only for limit accounting
 	return nil
 }
 

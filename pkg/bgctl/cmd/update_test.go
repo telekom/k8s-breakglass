@@ -284,11 +284,31 @@ func TestLimitedCopyAllowsExactSize(t *testing.T) {
 	assert.Equal(t, int(limit), dst.Len())
 }
 
-func TestExtractTarGzRejectsOversized(t *testing.T) {
-	// Temporarily lower maxBinarySize by using a small archive with a known
-	// large entry.  Since maxBinarySize is a const, we test via limitedCopy
-	// directly (above) and here confirm the wired-up extractTarGz path
-	// actually returns an error for legit archives.
+type errAfterDataReader struct {
+	data []byte
+	err  error
+	pos  int
+}
+
+func (r *errAfterDataReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, r.err
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func TestLimitedCopyReturnsProbeReadError(t *testing.T) {
+	limit := int64(4)
+	src := &errAfterDataReader{data: []byte("test"), err: io.ErrUnexpectedEOF}
+
+	var dst bytes.Buffer
+	err := limitedCopy(&dst, src, limit)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
+func TestExtractTarGzAllowsValidArchive(t *testing.T) {
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "test.tar.gz")
 	require.NoError(t, writeTarGz(archivePath, map[string]string{
@@ -301,7 +321,7 @@ func TestExtractTarGzRejectsOversized(t *testing.T) {
 	assert.Contains(t, result, "bgctl")
 }
 
-func TestExtractZipRejectsOversized(t *testing.T) {
+func TestExtractZipAllowsValidArchive(t *testing.T) {
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "test.zip")
 	require.NoError(t, writeZip(archivePath, map[string]string{

@@ -57,6 +57,11 @@ var allowedJWTAlgs = []string{
 	jwt.SigningMethodES512.Alg(),
 }
 
+var (
+	errUnknownIdentityProvider = errors.New("invalid or unknown identity provider")
+	errJWKSFetchRateLimited    = errors.New("jwks fetch rate limited")
+)
+
 // jwksCacheEntry holds the JWKS and its position in the LRU list
 type jwksCacheEntry struct {
 	issuer              string
@@ -252,7 +257,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 			elapsed := time.Since(t)
 			if elapsed < jwksFetchMinInterval {
 				retryAfter := jwksFetchMinInterval - elapsed
-				return nil, fmt.Errorf("jwks fetch rate limited; retry after %s", retryAfter.Truncate(time.Millisecond))
+				return nil, fmt.Errorf("%w: retry after %s", errJWKSFetchRateLimited, retryAfter.Truncate(time.Millisecond))
 			}
 		}
 	}
@@ -262,7 +267,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	if err != nil {
 		a.log.Warnw("failed to load IDP config for issuer", "issuer", issuer, "error", err)
 		// Don't expose the issuer in error message to prevent reconnaissance attacks
-		return nil, fmt.Errorf("invalid or unknown identity provider")
+		return nil, errUnknownIdentityProvider
 	}
 
 	// Create JWKS override options for keyfunc/v3
@@ -422,6 +427,17 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	return &jwksFetchResult{jwks: k, audience: idpCfg.ExpectedAudience, idpName: idpCfg.Name}, nil
 }
 
+func authErrorMessageForJWKSLoad(err error) string {
+	switch {
+	case errors.Is(err, errUnknownIdentityProvider):
+		return "token issuer is not configured for this service"
+	case errors.Is(err, errJWKSFetchRateLimited):
+		return "temporarily unable to verify token; please retry shortly"
+	default:
+		return "unable to verify token"
+	}
+}
+
 func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	if c.Request.Method == http.MethodOptions {
 		return true
@@ -492,14 +508,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
 			metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
 
-			// Try to provide helpful error message with IDP suggestions.
-			// Do not echo the raw issuer back to the client to avoid reconnaissance leaks.
-			idpName, idpLookupErr := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
-			errorMsg := "unable to verify token"
-			if idpLookupErr == nil && idpName != "" {
-				errorMsg = fmt.Sprintf("token issuer is not configured. Please use the '%s' identity provider to log in.", idpName)
-			}
-			RespondUnauthorizedWithMessage(c, errorMsg)
+			RespondUnauthorizedWithMessage(c, authErrorMessageForJWKSLoad(err))
 			c.Abort()
 			return false
 		}

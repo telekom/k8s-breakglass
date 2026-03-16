@@ -10,6 +10,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -670,6 +672,46 @@ func TestJWKSFetchRateLimiting(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "rate limited",
 		"issuer should not be rate-limited after cooldown expires")
+}
+
+func TestAuthErrorMessageForJWKSLoad(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "unknown identity provider",
+			err:  errUnknownIdentityProvider,
+			want: "token issuer is not configured for this service",
+		},
+		{
+			name: "unknown identity provider wrapped",
+			err:  fmt.Errorf("wrapped: %w", errUnknownIdentityProvider),
+			want: "token issuer is not configured for this service",
+		},
+		{
+			name: "jwks rate limited",
+			err:  errJWKSFetchRateLimited,
+			want: "temporarily unable to verify token; please retry shortly",
+		},
+		{
+			name: "jwks rate limited wrapped",
+			err:  fmt.Errorf("wrapped: %w", errJWKSFetchRateLimited),
+			want: "temporarily unable to verify token; please retry shortly",
+		},
+		{
+			name: "generic error",
+			err:  errors.New("boom"),
+			want: "unable to verify token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, authErrorMessageForJWKSLoad(tt.err))
+		})
+	}
 }
 
 // --- SEC-005: Audience claim validation ---
