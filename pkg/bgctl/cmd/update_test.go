@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -64,7 +65,7 @@ func TestDownloadFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "download.bin")
 
-	err := downloadFile(server.URL, path)
+	err := downloadFile(context.Background(), server.URL, path)
 	require.NoError(t, err)
 
 	content, err := os.ReadFile(path)
@@ -81,9 +82,18 @@ func TestDownloadFileErrorStatus(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "download.bin")
 
-	err := downloadFile(server.URL, path)
+	err := downloadFile(context.Background(), server.URL, path)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "download failed")
+}
+
+func TestDownloadFileHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := downloadFile(ctx, "https://example.com/archive.tar.gz", filepath.Join(t.TempDir(), "download.bin"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func TestVerifyChecksumIfAvailable(t *testing.T) {
@@ -100,7 +110,7 @@ func TestVerifyChecksumIfAvailable(t *testing.T) {
 	defer server.Close()
 
 	assets := []githubAsset{{Name: "bgctl.bin.sha256", URL: server.URL}}
-	err := verifyChecksumIfAvailable(assets, "bgctl.bin", filePath)
+	err := verifyChecksumIfAvailable(context.Background(), assets, "bgctl.bin", filePath)
 	require.NoError(t, err)
 }
 
@@ -115,7 +125,7 @@ func TestVerifyChecksumIfAvailableMismatch(t *testing.T) {
 	defer server.Close()
 
 	assets := []githubAsset{{Name: "bgctl.bin.sha256", URL: server.URL}}
-	err := verifyChecksumIfAvailable(assets, "bgctl.bin", filePath)
+	err := verifyChecksumIfAvailable(context.Background(), assets, "bgctl.bin", filePath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "checksum mismatch")
 }
@@ -130,7 +140,7 @@ func TestVerifyChecksumIfAvailableEmptyFile(t *testing.T) {
 	defer server.Close()
 
 	assets := []githubAsset{{Name: "bgctl.bin.sha256", URL: server.URL}}
-	err := verifyChecksumIfAvailable(assets, "bgctl.bin", filePath)
+	err := verifyChecksumIfAvailable(context.Background(), assets, "bgctl.bin", filePath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty checksum")
 }
@@ -140,7 +150,7 @@ func TestVerifyChecksumIfAvailableMissingAsset(t *testing.T) {
 	require.NoError(t, os.WriteFile(filePath, []byte("hello"), 0o644))
 
 	assets := []githubAsset{}
-	err := verifyChecksumIfAvailable(assets, "bgctl.bin", filePath)
+	err := verifyChecksumIfAvailable(context.Background(), assets, "bgctl.bin", filePath)
 	require.NoError(t, err)
 }
 

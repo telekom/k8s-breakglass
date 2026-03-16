@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/telekom/k8s-breakglass/pkg/version"
@@ -26,7 +27,11 @@ const (
 
 	// maxBinarySize is the maximum allowed size for extracted binaries (500 MB).
 	maxBinarySize = 500 << 20
+
+	defaultUpdateHTTPTimeout = 30 * time.Second
 )
+
+var updateHTTPClient = &http.Client{Timeout: defaultUpdateHTTPTimeout}
 
 type githubRelease struct {
 	TagName string        `json:"tag_name"`
@@ -62,7 +67,7 @@ func newUpdateCheckCommand() *cobra.Command {
 		Use:   "check",
 		Short: "Check for updates",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			release, err := fetchLatestRelease()
+			release, err := fetchLatestRelease(commandContext(cmd))
 			if err != nil {
 				return err
 			}
@@ -104,6 +109,8 @@ func newUpdateRollbackCommand() *cobra.Command {
 }
 
 func runUpdate(cmd *cobra.Command, versionTag string) error {
+	ctx := commandContext(cmd)
+
 	if strings.EqualFold(os.Getenv("BGCTL_DISABLE_UPDATE"), "true") {
 		return fmt.Errorf("update disabled by BGCTL_DISABLE_UPDATE")
 	}
@@ -113,9 +120,9 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	var release *githubRelease
 	var err error
 	if versionTag == "" {
-		release, err = fetchLatestRelease()
+		release, err = fetchLatestRelease(ctx)
 	} else {
-		release, err = fetchReleaseByTag(versionTag)
+		release, err = fetchReleaseByTag(ctx, versionTag)
 	}
 	if err != nil {
 		return err
@@ -143,11 +150,11 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	}()
 
 	archivePath := filepath.Join(tmpDir, assetName)
-	if err := downloadFile(assetURL, archivePath); err != nil {
+	if err := downloadFile(ctx, assetURL, archivePath); err != nil {
 		return err
 	}
 
-	if err := verifyChecksumIfAvailable(release.Assets, assetName, archivePath); err != nil {
+	if err := verifyChecksumIfAvailable(ctx, release.Assets, assetName, archivePath); err != nil {
 		return err
 	}
 
@@ -162,12 +169,19 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	return replaceBinary(exe, extracted)
 }
 
-func fetchLatestRelease() (*githubRelease, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, defaultRepoAPI, nil)
+func commandContext(cmd *cobra.Command) context.Context {
+	if cmd != nil && cmd.Context() != nil {
+		return cmd.Context()
+	}
+	return context.Background()
+}
+
+func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, defaultRepoAPI, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -185,13 +199,13 @@ func fetchLatestRelease() (*githubRelease, error) {
 	return &release, nil
 }
 
-func fetchReleaseByTag(tag string) (*githubRelease, error) {
+func fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", strings.TrimPrefix(tag, "v"))
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -227,12 +241,12 @@ func findAssetURL(assets []githubAsset, name string) string {
 	return ""
 }
 
-func downloadFile(url, path string) error {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+func downloadFile(ctx context.Context, url, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -313,17 +327,17 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func verifyChecksumIfAvailable(assets []githubAsset, name, filePath string) error {
+func verifyChecksumIfAvailable(ctx context.Context, assets []githubAsset, name, filePath string) error {
 	checksumName := name + ".sha256"
 	url := findAssetURL(assets, checksumName)
 	if url == "" {
 		return nil
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -407,6 +421,7 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 			}
 			if err := limitedCopy(outFile, tarReader, maxBinarySize); err != nil {
 				_ = outFile.Close()
+				_ = os.Remove(outPath)
 				return "", err
 			}
 			_ = outFile.Close()
@@ -470,6 +485,7 @@ func extractZipEntry(file *zip.File, destDir, safeName string) (string, error) {
 	}
 	if err := limitedCopy(outFile, rc, maxBinarySize); err != nil {
 		_ = outFile.Close()
+		_ = os.Remove(outPath)
 		return "", err
 	}
 	_ = outFile.Close()
