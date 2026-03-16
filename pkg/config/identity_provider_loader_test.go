@@ -1138,6 +1138,8 @@ func TestLoadIdentityProviderByIssuer_TrailingSlashNormalization(t *testing.T) {
 		{name: "exact match with trailing slash", issuer: "https://auth.example.com/", wantErr: false},
 		{name: "match without trailing slash", issuer: "https://auth.example.com", wantErr: false},
 		{name: "match with multiple trailing slashes", issuer: "https://auth.example.com//", wantErr: false},
+		{name: "normalized empty issuer", issuer: "/", wantErr: true},
+		{name: "normalized empty issuer with multiple slashes", issuer: "////", wantErr: true},
 		{name: "different host", issuer: "https://other.example.com", wantErr: true},
 	}
 

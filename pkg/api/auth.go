@@ -185,6 +185,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 		// Move to front of LRU list (mark as recently used)
 		a.jwksLRUList.MoveToFront(elem)
 		entry := elem.Value.(*jwksCacheEntry)
+		cachedElem := elem
 		// Snapshot mutable fields under the lock to avoid a data race:
 		// another goroutine could write these fields concurrently.
 		cachedJWKS := entry.jwks
@@ -205,24 +206,36 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 				now := time.Now()
 
 				a.jwksMutex.Lock()
-				entry.audienceAttemptedAt = now
-				a.jwksMutex.Unlock()
+				defer a.jwksMutex.Unlock()
+
+				// Re-check the cache entry under the lock so we don't update a
+				// stale/evicted pointer captured before unlocking.
+				currentElem, stillCached := a.jwksCache[issuer]
+				if !stillCached || currentElem != cachedElem {
+					return nil, nil
+				}
+				currentEntry := currentElem.Value.(*jwksCacheEntry)
+				currentEntry.audienceAttemptedAt = now
 
 				if err != nil {
 					return nil, err
 				}
 
-				a.jwksMutex.Lock()
-				entry.expectedAudience = idpCfg.ExpectedAudience
-				entry.idpName = idpCfg.Name
-				entry.audienceRefreshedAt = now
-				a.jwksMutex.Unlock()
+				currentEntry.expectedAudience = idpCfg.ExpectedAudience
+				currentEntry.idpName = idpCfg.Name
+				currentEntry.audienceRefreshedAt = now
 				return nil, nil
 			})
 			if refreshErr == nil {
 				a.jwksMutex.Lock()
-				refreshedAudience := entry.expectedAudience
-				refreshedIDPName := entry.idpName
+				currentElem, stillCached := a.jwksCache[issuer]
+				if !stillCached || currentElem != cachedElem {
+					a.jwksMutex.Unlock()
+					return cachedJWKS, cachedAudience, cachedIDPName, true, nil
+				}
+				currentEntry := currentElem.Value.(*jwksCacheEntry)
+				refreshedAudience := currentEntry.expectedAudience
+				refreshedIDPName := currentEntry.idpName
 				a.jwksMutex.Unlock()
 				return cachedJWKS, refreshedAudience, refreshedIDPName, true, nil
 			}

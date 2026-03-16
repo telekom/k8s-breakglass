@@ -342,6 +342,9 @@ func (l *IdentityProviderLoader) LoadIdentityProviderByIssuer(ctx context.Contex
 	// "https://auth.example.com/" match the same IDP, consistent with how
 	// the auth layer canonicalizes the JWT iss claim.
 	issuerNorm := strings.TrimRight(issuer, "/")
+	if issuerNorm == "" {
+		return nil, fmt.Errorf("issuer cannot be empty after normalization")
+	}
 
 	for i := range idpList.Items {
 		idp := &idpList.Items[i]
