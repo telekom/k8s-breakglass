@@ -674,6 +674,53 @@ func TestJWKSFetchRateLimiting(t *testing.T) {
 		"issuer should not be rate-limited after cooldown expires")
 }
 
+func TestGetJWKSForIssuer_AudienceRefreshFailureBackoff(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	loader := config.NewIdentityProviderLoader(fake.NewClientBuilder().WithScheme(scheme).Build())
+
+	issuer := "https://auth.example.com"
+	auth := &AuthHandler{
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		log:         zaptest.NewLogger(t).Sugar(),
+		idpLoader:   loader,
+	}
+
+	entry := &jwksCacheEntry{
+		issuer:              issuer,
+		idpName:             "cached-idp",
+		expectedAudience:    "cached-aud",
+		audienceRefreshedAt: time.Now().Add(-audienceRefreshInterval - time.Second),
+	}
+	elem := auth.jwksLRUList.PushFront(entry)
+	auth.jwksCache[issuer] = elem
+
+	_, audience, idpName, cacheHit, err := auth.getJWKSForIssuer(t.Context(), issuer)
+	require.NoError(t, err)
+	assert.True(t, cacheHit)
+	assert.Equal(t, "cached-aud", audience)
+	assert.Equal(t, "cached-idp", idpName)
+
+	auth.jwksMutex.RLock()
+	firstAttempt := entry.audienceAttemptedAt
+	auth.jwksMutex.RUnlock()
+	require.False(t, firstAttempt.IsZero(), "first failed refresh should record attempt time")
+
+	_, audience, idpName, cacheHit, err = auth.getJWKSForIssuer(t.Context(), issuer)
+	require.NoError(t, err)
+	assert.True(t, cacheHit)
+	assert.Equal(t, "cached-aud", audience)
+	assert.Equal(t, "cached-idp", idpName)
+
+	auth.jwksMutex.RLock()
+	secondAttempt := entry.audienceAttemptedAt
+	auth.jwksMutex.RUnlock()
+	assert.True(t, secondAttempt.Equal(firstAttempt), "consecutive failed refreshes should be backoff-throttled")
+}
+
 func TestAuthErrorMessageForJWKSLoad(t *testing.T) {
 	tests := []struct {
 		name string

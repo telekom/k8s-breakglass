@@ -68,6 +68,7 @@ type jwksCacheEntry struct {
 	idpName             string // resolved IDP name, cached to avoid redundant K8s API calls
 	expectedAudience    string // from IDP config; when non-empty, JWT aud claim is validated
 	audienceRefreshedAt time.Time
+	audienceAttemptedAt time.Time
 	jwks                keyfunc.Keyfunc
 	cancel              context.CancelFunc // stops the background refresh goroutine
 }
@@ -76,6 +77,10 @@ type jwksCacheEntry struct {
 // the live IDP config on cache hits. This avoids a K8s API call on every request
 // while still picking up config changes within a reasonable window.
 const audienceRefreshInterval = 30 * time.Second
+
+// audienceRefreshFailureBackoff prevents repeated refresh attempts on every
+// request when the refresh operation is currently failing.
+const audienceRefreshFailureBackoff = 5 * time.Second
 
 type AuthHandler struct {
 	// Multi-IDP support: LRU cache for JWKS by issuer URL
@@ -186,22 +191,31 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 		cachedAudience := entry.expectedAudience
 		cachedIDPName := entry.idpName
 		lastRefresh := entry.audienceRefreshedAt
+		lastAttempt := entry.audienceAttemptedAt
 		a.jwksMutex.Unlock()
 
 		// Refresh expectedAudience from the live IDP config periodically so
 		// changes take effect without waiting for JWKS cache eviction or a restart.
 		// Use singleflight to avoid thundering herd when many requests arrive
 		// just after the refresh interval elapses for the same issuer.
-		if time.Since(lastRefresh) > audienceRefreshInterval {
+		if time.Since(lastRefresh) > audienceRefreshInterval &&
+			(lastAttempt.IsZero() || time.Since(lastAttempt) > audienceRefreshFailureBackoff) {
 			_, refreshErr, _ := a.jwksFlight.Do("audience:"+issuer, func() (interface{}, error) {
 				idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
+				now := time.Now()
+
+				a.jwksMutex.Lock()
+				entry.audienceAttemptedAt = now
+				a.jwksMutex.Unlock()
+
 				if err != nil {
 					return nil, err
 				}
+
 				a.jwksMutex.Lock()
 				entry.expectedAudience = idpCfg.ExpectedAudience
 				entry.idpName = idpCfg.Name
-				entry.audienceRefreshedAt = time.Now()
+				entry.audienceRefreshedAt = now
 				a.jwksMutex.Unlock()
 				return nil, nil
 			})
@@ -419,7 +433,8 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 	}
 
 	// Add new entry at front (most recently used)
-	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: time.Now(), jwks: k, cancel: entryCancel}
+	now := time.Now()
+	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: now, audienceAttemptedAt: now, jwks: k, cancel: entryCancel}
 	elem := a.jwksLRUList.PushFront(entry)
 	a.jwksCache[issuer] = elem
 
