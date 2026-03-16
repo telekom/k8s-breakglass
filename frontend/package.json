@@ -33,7 +33,7 @@
     "axios": "^1.13.6",
     "humanize-duration": "^3.33.2",
     "jose": "^6.2.1",
-    "oidc-client-ts": "^3.4.1",
+    "oidc-client-ts": "^3.5.0",
     "pinia": "^3.0.4",
     "vue": "^3.5.30",
     "vue-router": "^5.0.3"
