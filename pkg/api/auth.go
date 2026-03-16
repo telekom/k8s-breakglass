@@ -573,7 +573,11 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// the resolved provider name instead of an empty string.
 	idpLabel := selectedIDP
 	if idpLabel == "" {
-		idpLabel = "unknown"
+		if mode == "single-idp" {
+			idpLabel = "single-idp"
+		} else {
+			idpLabel = "unknown"
+		}
 	}
 	metrics.JWTValidationRequests.WithLabelValues(idpLabel, mode).Inc()
 
