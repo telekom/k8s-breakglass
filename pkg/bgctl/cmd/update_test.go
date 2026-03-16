@@ -21,6 +21,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestAssetFileName_CurrentPlatform(t *testing.T) {
 	name := assetFileName()
 	if runtime.GOOS == "windows" {
@@ -94,6 +100,26 @@ func TestDownloadFileHonorsCanceledContext(t *testing.T) {
 	err := downloadFile(ctx, "https://example.com/archive.tar.gz", filepath.Join(t.TempDir(), "download.bin"))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestFetchReleaseByTagEscapesPathSegment(t *testing.T) {
+	oldClient := updateHTTPClient
+	t.Cleanup(func() { updateHTTPClient = oldClient })
+
+	var escapedPath string
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		escapedPath = req.URL.EscapedPath()
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v1.0.0","assets":[]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	_, err := fetchReleaseByTag(context.Background(), "v1.0.0/../x")
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(escapedPath, "/releases/tags/1.0.0%2F..%2Fx"), "unexpected escaped path: %s", escapedPath)
 }
 
 func TestVerifyChecksumIfAvailable(t *testing.T) {

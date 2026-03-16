@@ -436,7 +436,6 @@ type identityProviderJSON struct {
 	CertificateAuthority string
 	InsecureSkipVerify   bool
 	Keycloak             *keycloakRuntimeConfigJSON
-	RawConfig            interface{}
 }
 
 type keycloakRuntimeConfigJSON struct {
@@ -463,7 +462,6 @@ func sanitizeIdentityProviderConfig(config *IdentityProviderConfig) *identityPro
 		ExpectedAudience:     config.ExpectedAudience,
 		CertificateAuthority: config.CertificateAuthority,
 		InsecureSkipVerify:   config.InsecureSkipVerify,
-		RawConfig:            config.RawConfig,
 	}
 
 	if config.Keycloak != nil {

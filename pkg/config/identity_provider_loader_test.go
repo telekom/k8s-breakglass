@@ -585,6 +585,12 @@ func TestMarshalIdentityProviderToJSON(t *testing.T) {
 		ClientID:     "client-123",
 		Type:         "OIDC",
 		ClientSecret: "top-secret",
+		RawConfig: map[string]interface{}{
+			"clientSecret": "raw-secret",
+			"nested": map[string]interface{}{
+				"serviceAccountToken": "raw-token",
+			},
+		},
 		Keycloak: &KeycloakRuntimeConfig{
 			BaseURL:             "https://keycloak.example.com",
 			Realm:               "master",
@@ -611,6 +617,9 @@ func TestMarshalIdentityProviderToJSON(t *testing.T) {
 
 	if _, exists := decoded["ClientSecret"]; exists {
 		t.Fatalf("client secret must be omitted from marshaled output: %+v", decoded)
+	}
+	if _, exists := decoded["RawConfig"]; exists {
+		t.Fatalf("raw config must be omitted from marshaled output: %+v", decoded)
 	}
 
 	if keycloakRaw, ok := decoded["Keycloak"]; ok {

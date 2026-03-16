@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -200,8 +201,8 @@ func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
 }
 
 func fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", strings.TrimPrefix(tag, "v"))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	releaseURL := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", url.PathEscape(strings.TrimPrefix(tag, "v")))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
 	if err != nil {
 		return nil, err
 	}
