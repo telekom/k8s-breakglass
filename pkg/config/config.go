@@ -108,6 +108,11 @@ type IdentityProviderConfig struct {
 	// ClientID for OIDC and Keycloak
 	ClientID string
 
+	// ExpectedAudience is the expected JWT audience claim value.
+	// When set, the auth middleware validates the aud claim against this value.
+	// When empty, audience validation is skipped.
+	ExpectedAudience string
+
 	// ClientSecret for Keycloak (loaded from secret reference)
 	ClientSecret string
 

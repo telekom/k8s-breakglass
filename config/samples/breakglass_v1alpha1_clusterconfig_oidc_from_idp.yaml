@@ -15,6 +15,9 @@ spec:
   oidc:
     authority: https://keycloak.example.com/realms/kubernetes
     clientID: breakglass-ui
+    # Optional: Enable JWT audience validation. Requires a matching audience
+    # protocol mapper in Keycloak that adds this value to the "aud" claim.
+    # expectedAudience: breakglass-ui
   
   # Keycloak configuration - provides service account for cluster auth
   keycloak:

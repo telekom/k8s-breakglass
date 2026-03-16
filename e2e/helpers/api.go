@@ -190,7 +190,9 @@ func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req Session
 						attempt+1, maxRetries, req.User, req.Group)
 				}
 				lastErr = err
-				time.Sleep(2 * time.Second)
+				if !sleepOrCancel(ctx, 2*time.Second) {
+					return nil, ctx.Err()
+				}
 				continue
 			}
 		}
@@ -216,6 +218,9 @@ func isEscalationNotFound(err error) bool {
 		return false
 	}
 	msg := err.Error()
+	if !strings.Contains(msg, "status=403") {
+		return false
+	}
 	return strings.Contains(msg, "no escalation found") ||
 		strings.Contains(msg, "user not authorized for requested group")
 }
@@ -226,7 +231,23 @@ func isTemplateNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "not found") && strings.Contains(err.Error(), "status=400")
+	msg := err.Error()
+	return strings.Contains(msg, "status=400") &&
+		strings.Contains(msg, "template") &&
+		strings.Contains(msg, "not found")
+}
+
+// sleepOrCancel waits for the given duration or returns false immediately
+// when the context is canceled, so retry loops abort promptly on test timeout.
+func sleepOrCancel(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // doCreateSession performs the actual session creation request
@@ -665,7 +686,9 @@ func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req De
 				}
 
 				// Brief pause for API server cache invalidation
-				time.Sleep(100 * time.Millisecond)
+				if !sleepOrCancel(ctx, 100*time.Millisecond) {
+					return nil, ctx.Err()
+				}
 				lastErr = err
 				continue
 			}
@@ -677,7 +700,9 @@ func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req De
 						attempt+1, maxRetries, req.Cluster)
 				}
 				lastErr = err
-				time.Sleep(2 * time.Second)
+				if !sleepOrCancel(ctx, 2*time.Second) {
+					return nil, ctx.Err()
+				}
 				continue
 			}
 
@@ -688,7 +713,9 @@ func (c *APIClient) CreateDebugSession(ctx context.Context, t *testing.T, req De
 						attempt+1, maxRetries, req.TemplateRef)
 				}
 				lastErr = err
-				time.Sleep(2 * time.Second)
+				if !sleepOrCancel(ctx, 2*time.Second) {
+					return nil, ctx.Err()
+				}
 				continue
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -578,10 +579,26 @@ func TestIdentityProviderLoader_CrossNamespaceSecrets(t *testing.T) {
 
 func TestMarshalIdentityProviderToJSON(t *testing.T) {
 	original := &IdentityProviderConfig{
-		Name:      "test-idp",
-		Authority: "https://issuer.example.com",
-		Issuer:    "https://issuer.example.com",
-		ClientID:  "client-123",
+		Name:         "test-idp",
+		Authority:    "https://issuer.example.com",
+		Issuer:       "https://issuer.example.com",
+		ClientID:     "client-123",
+		Type:         "OIDC",
+		ClientSecret: "top-secret",
+		RawConfig: map[string]interface{}{
+			"clientSecret": "raw-secret",
+			"nested": map[string]interface{}{
+				"serviceAccountToken": "raw-token",
+			},
+		},
+		Keycloak: &KeycloakRuntimeConfig{
+			BaseURL:             "https://keycloak.example.com",
+			Realm:               "master",
+			ClientID:            "svc-client",
+			ClientSecret:        "nested-secret",
+			ServiceAccountToken: "nested-token",
+			CacheTTL:            "10m",
+		},
 	}
 
 	jsonStr, err := MarshalIdentityProviderToJSON(original)
@@ -589,13 +606,33 @@ func TestMarshalIdentityProviderToJSON(t *testing.T) {
 		t.Fatalf("MarshalIdentityProviderToJSON() error = %v", err)
 	}
 
-	var decoded IdentityProviderConfig
+	var decoded map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &decoded); err != nil {
 		t.Fatalf("failed to unmarshal json output: %v", err)
 	}
 
-	if decoded.Name != original.Name || decoded.ClientID != original.ClientID || decoded.Authority != original.Authority {
+	if decoded["Name"] != original.Name || decoded["ClientID"] != original.ClientID || decoded["Authority"] != original.Authority {
 		t.Fatalf("decoded config mismatch: %+v", decoded)
+	}
+
+	if _, exists := decoded["ClientSecret"]; exists {
+		t.Fatalf("client secret must be omitted from marshaled output: %+v", decoded)
+	}
+	if _, exists := decoded["RawConfig"]; exists {
+		t.Fatalf("raw config must be omitted from marshaled output: %+v", decoded)
+	}
+
+	if keycloakRaw, ok := decoded["Keycloak"]; ok {
+		keycloak, ok := keycloakRaw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("unexpected keycloak JSON shape: %+v", keycloakRaw)
+		}
+		if _, exists := keycloak["ClientSecret"]; exists {
+			t.Fatalf("keycloak client secret must be omitted from marshaled output: %+v", keycloak)
+		}
+		if _, exists := keycloak["ServiceAccountToken"]; exists {
+			t.Fatalf("keycloak service account token must be omitted from marshaled output: %+v", keycloak)
+		}
 	}
 }
 
@@ -1075,5 +1112,114 @@ func TestLoadAllIdentityProviders_MetricsRecorder(t *testing.T) {
 
 	if !metricsRecorded {
 		t.Error("Expected metrics to be recorded for conversion failure")
+	}
+}
+
+func TestLoadIdentityProviderByIssuer_TrailingSlashNormalization(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	idp := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "slash-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://auth.example.com/",
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com/realms/test",
+				ClientID:  "test-client",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&idp).
+		Build()
+
+	loader := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar())
+
+	tests := []struct {
+		name    string
+		issuer  string
+		wantErr bool
+	}{
+		{name: "exact match with trailing slash", issuer: "https://auth.example.com/", wantErr: false},
+		{name: "match without trailing slash", issuer: "https://auth.example.com", wantErr: false},
+		{name: "match with multiple trailing slashes", issuer: "https://auth.example.com//", wantErr: false},
+		{name: "normalized empty issuer", issuer: "/", wantErr: true},
+		{name: "normalized empty issuer with multiple slashes", issuer: "////", wantErr: true},
+		{name: "different host", issuer: "https://other.example.com", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := loader.LoadIdentityProviderByIssuer(context.Background(), tt.issuer)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for issuer %q, got nil", tt.issuer)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for issuer %q: %v", tt.issuer, err)
+				}
+				if cfg != nil && cfg.Name != "slash-idp" {
+					t.Errorf("expected IDP name 'slash-idp', got %q", cfg.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadIdentityProviderByIssuer_AuthorityFallbackNormalization(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	// IDP without explicit issuer, only authority set
+	idp := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "authority-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com/realms/test/",
+				ClientID:  "test-client",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&idp).
+		Build()
+
+	loader := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar())
+
+	tests := []struct {
+		name    string
+		issuer  string
+		wantErr bool
+	}{
+		{name: "authority match with trailing slash", issuer: "https://auth.example.com/realms/test/", wantErr: false},
+		{name: "authority match without trailing slash", issuer: "https://auth.example.com/realms/test", wantErr: false},
+		{name: "no match", issuer: "https://other.example.com/realms/test", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := loader.LoadIdentityProviderByIssuer(context.Background(), tt.issuer)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for issuer %q, got nil", tt.issuer)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for issuer %q: %v", tt.issuer, err)
+				}
+				if cfg != nil && cfg.Name != "authority-idp" {
+					t.Errorf("expected IDP name 'authority-idp', got %q", cfg.Name)
+				}
+			}
+		})
 	}
 }

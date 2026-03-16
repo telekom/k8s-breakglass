@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,10 +12,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/telekom/k8s-breakglass/pkg/version"
@@ -22,6 +25,17 @@ import (
 
 const (
 	defaultRepoAPI = "https://api.github.com/repos/telekom/k8s-breakglass/releases/latest"
+
+	// maxBinarySize is the maximum allowed size for extracted binaries (500 MB).
+	maxBinarySize = 500 << 20
+
+	defaultUpdateAPIHTTPTimeout      = 30 * time.Second
+	defaultUpdateDownloadHTTPTimeout = 5 * time.Minute
+)
+
+var (
+	updateHTTPClient         = &http.Client{Timeout: defaultUpdateAPIHTTPTimeout}
+	updateDownloadHTTPClient = &http.Client{Timeout: defaultUpdateDownloadHTTPTimeout}
 )
 
 type githubRelease struct {
@@ -58,7 +72,7 @@ func newUpdateCheckCommand() *cobra.Command {
 		Use:   "check",
 		Short: "Check for updates",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			release, err := fetchLatestRelease()
+			release, err := fetchLatestRelease(commandContext(cmd))
 			if err != nil {
 				return err
 			}
@@ -100,6 +114,8 @@ func newUpdateRollbackCommand() *cobra.Command {
 }
 
 func runUpdate(cmd *cobra.Command, versionTag string) error {
+	ctx := commandContext(cmd)
+
 	if strings.EqualFold(os.Getenv("BGCTL_DISABLE_UPDATE"), "true") {
 		return fmt.Errorf("update disabled by BGCTL_DISABLE_UPDATE")
 	}
@@ -109,9 +125,9 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	var release *githubRelease
 	var err error
 	if versionTag == "" {
-		release, err = fetchLatestRelease()
+		release, err = fetchLatestRelease(ctx)
 	} else {
-		release, err = fetchReleaseByTag(versionTag)
+		release, err = fetchReleaseByTag(ctx, versionTag)
 	}
 	if err != nil {
 		return err
@@ -139,11 +155,11 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	}()
 
 	archivePath := filepath.Join(tmpDir, assetName)
-	if err := downloadFile(assetURL, archivePath); err != nil {
+	if err := downloadFile(ctx, assetURL, archivePath); err != nil {
 		return err
 	}
 
-	if err := verifyChecksumIfAvailable(release.Assets, assetName, archivePath); err != nil {
+	if err := verifyChecksumIfAvailable(ctx, release.Assets, assetName, archivePath); err != nil {
 		return err
 	}
 
@@ -158,8 +174,19 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	return replaceBinary(exe, extracted)
 }
 
-func fetchLatestRelease() (*githubRelease, error) {
-	resp, err := http.Get(defaultRepoAPI)
+func commandContext(cmd *cobra.Command) context.Context {
+	if cmd != nil && cmd.Context() != nil {
+		return cmd.Context()
+	}
+	return context.Background()
+}
+
+func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, defaultRepoAPI, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -177,9 +204,13 @@ func fetchLatestRelease() (*githubRelease, error) {
 	return &release, nil
 }
 
-func fetchReleaseByTag(tag string) (*githubRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", strings.TrimPrefix(tag, "v"))
-	resp, err := http.Get(url)
+func fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) {
+	releaseURL := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", url.PathEscape(strings.TrimPrefix(tag, "v")))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -215,8 +246,12 @@ func findAssetURL(assets []githubAsset, name string) string {
 	return ""
 }
 
-func downloadFile(url, path string) error {
-	resp, err := http.Get(url)
+func downloadFile(ctx context.Context, url, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := updateDownloadHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -297,13 +332,17 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func verifyChecksumIfAvailable(assets []githubAsset, name, filePath string) error {
+func verifyChecksumIfAvailable(ctx context.Context, assets []githubAsset, name, filePath string) error {
 	checksumName := name + ".sha256"
 	url := findAssetURL(assets, checksumName)
 	if url == "" {
 		return nil
 	}
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -381,12 +420,13 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 		}
 		if safeName == "bgctl" {
 			outPath := filepath.Join(destDir, "bgctl")
-			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
 			if err != nil {
 				return "", err
 			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
+			if err := limitedCopy(outFile, tarReader, maxBinarySize); err != nil {
 				_ = outFile.Close()
+				_ = os.Remove(outPath)
 				return "", err
 			}
 			_ = outFile.Close()
@@ -444,12 +484,13 @@ func extractZipEntry(file *zip.File, destDir, safeName string) (string, error) {
 		_ = rc.Close()
 	}()
 	outPath := filepath.Join(destDir, safeName)
-	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(outFile, rc); err != nil {
+	if err := limitedCopy(outFile, rc, maxBinarySize); err != nil {
 		_ = outFile.Close()
+		_ = os.Remove(outPath)
 		return "", err
 	}
 	_ = outFile.Close()
@@ -468,6 +509,25 @@ func replaceBinary(target, source string) error {
 	return nil
 }
 
+// limitedCopy copies up to maxBytes from src to dst and returns an error if
+// src contains more data than the limit, preventing silently truncated binaries.
+func limitedCopy(dst io.Writer, src io.Reader, maxBytes int64) error {
+	_, err := io.Copy(dst, io.LimitReader(src, maxBytes))
+	if err != nil {
+		return err
+	}
+	// Probe for one more byte: if readable, the entry exceeds the limit.
+	var probe [1]byte
+	extra, probeErr := src.Read(probe[:])
+	if probeErr != nil && !errors.Is(probeErr, io.EOF) {
+		return probeErr
+	}
+	if extra > 0 {
+		return fmt.Errorf("archive entry exceeds maximum allowed size of %d bytes", maxBytes)
+	}
+	return nil
+}
+
 func copyFile(src, dst string) error {
 	input, err := os.Open(src)
 	if err != nil {
@@ -476,7 +536,7 @@ func copyFile(src, dst string) error {
 	defer func() {
 		_ = input.Close()
 	}()
-	output, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	output, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
 	if err != nil {
 		return err
 	}

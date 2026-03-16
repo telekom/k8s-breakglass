@@ -161,6 +161,7 @@ func (l *IdentityProviderLoader) convertToRuntimeConfig(ctx context.Context, idp
 		Type:                 "OIDC",
 		Authority:            idp.Spec.OIDC.Authority,
 		ClientID:             idp.Spec.OIDC.ClientID,
+		ExpectedAudience:     idp.Spec.OIDC.ExpectedAudience,
 		CertificateAuthority: idp.Spec.OIDC.CertificateAuthority,
 		InsecureSkipVerify:   idp.Spec.OIDC.InsecureSkipVerify,
 	}
@@ -337,23 +338,29 @@ func (l *IdentityProviderLoader) LoadIdentityProviderByIssuer(ctx context.Contex
 		return nil, fmt.Errorf("failed to list IdentityProvider resources: %w", err)
 	}
 
+	// Normalize trailing slashes so that "https://auth.example.com" and
+	// "https://auth.example.com/" match the same IDP, consistent with how
+	// the auth layer canonicalizes the JWT iss claim.
+	issuerNorm := strings.TrimRight(issuer, "/")
+	if issuerNorm == "" {
+		return nil, fmt.Errorf("issuer cannot be empty after normalization")
+	}
+
 	for i := range idpList.Items {
 		idp := &idpList.Items[i]
-		if !idp.Spec.Disabled && idp.Spec.Issuer == issuer {
+		if !idp.Spec.Disabled && strings.TrimRight(idp.Spec.Issuer, "/") == issuerNorm {
 			l.logger.Debugw("Found IdentityProvider by issuer", "name", idp.Name, "issuer", issuer)
 			return l.convertToRuntimeConfig(ctx, idp)
 		}
 	}
 
-	// Fallback: if no exact issuer match, try matching by authority
+	// Fallback: if no issuer match, try matching by authority
 	// This handles cases where Spec.Issuer is not set or doesn't match JWT iss claim exactly
 	// Many OIDC providers (including Keycloak) use the realm URL as both authority and issuer
-	l.logger.Debugw("No exact issuer match found, trying authority fallback", "issuer", issuer)
+	l.logger.Debugw("No issuer match found, trying authority fallback", "issuer", issuer)
 	for i := range idpList.Items {
 		idp := &idpList.Items[i]
-		// Normalize both URLs for comparison (trim trailing slashes)
 		authority := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
-		issuerNorm := strings.TrimRight(issuer, "/")
 
 		if !idp.Spec.Disabled && authority == issuerNorm {
 			l.logger.Debugw("Found IdentityProvider by authority fallback", "name", idp.Name, "authority", authority, "issuer", issuer)
@@ -419,10 +426,64 @@ func (l *IdentityProviderLoader) GetIDPNameByIssuer(ctx context.Context, issuer 
 	return config.Name, nil
 }
 
-// MarshalIdentityProviderToJSON marshals an IdentityProviderConfig to JSON
-// for API responses
+type identityProviderJSON struct {
+	Name                 string
+	Issuer               string
+	Type                 string
+	Authority            string
+	ClientID             string
+	ExpectedAudience     string
+	CertificateAuthority string
+	InsecureSkipVerify   bool
+	Keycloak             *keycloakRuntimeConfigJSON
+}
+
+type keycloakRuntimeConfigJSON struct {
+	BaseURL              string
+	Realm                string
+	ClientID             string
+	CacheTTL             string
+	RequestTimeout       string
+	InsecureSkipVerify   bool
+	CertificateAuthority string
+}
+
+func sanitizeIdentityProviderConfig(config *IdentityProviderConfig) *identityProviderJSON {
+	if config == nil {
+		return nil
+	}
+
+	out := &identityProviderJSON{
+		Name:                 config.Name,
+		Issuer:               config.Issuer,
+		Type:                 config.Type,
+		Authority:            config.Authority,
+		ClientID:             config.ClientID,
+		ExpectedAudience:     config.ExpectedAudience,
+		CertificateAuthority: config.CertificateAuthority,
+		InsecureSkipVerify:   config.InsecureSkipVerify,
+	}
+
+	if config.Keycloak != nil {
+		out.Keycloak = &keycloakRuntimeConfigJSON{
+			BaseURL:              config.Keycloak.BaseURL,
+			Realm:                config.Keycloak.Realm,
+			ClientID:             config.Keycloak.ClientID,
+			CacheTTL:             config.Keycloak.CacheTTL,
+			RequestTimeout:       config.Keycloak.RequestTimeout,
+			InsecureSkipVerify:   config.Keycloak.InsecureSkipVerify,
+			CertificateAuthority: config.Keycloak.CertificateAuthority,
+		}
+	}
+
+	return out
+}
+
+// MarshalIdentityProviderToJSON marshals a sanitized IdentityProviderConfig to JSON.
+// Sensitive runtime secrets (for example client secrets or service account tokens)
+// are intentionally excluded from the output.
 func MarshalIdentityProviderToJSON(config *IdentityProviderConfig) (string, error) {
-	data, err := json.Marshal(config)
+	data, err := json.Marshal(sanitizeIdentityProviderConfig(config))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal IdentityProvider config: %w", err)
 	}
