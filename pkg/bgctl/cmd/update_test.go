@@ -102,6 +102,40 @@ func TestDownloadFileHonorsCanceledContext(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+func TestDownloadFileUsesDedicatedDownloadClient(t *testing.T) {
+	oldAPIClient := updateHTTPClient
+	oldDownloadClient := updateDownloadHTTPClient
+	t.Cleanup(func() {
+		updateHTTPClient = oldAPIClient
+		updateDownloadHTTPClient = oldDownloadClient
+	})
+
+	apiCalls := 0
+	downloadCalls := 0
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		apiCalls++
+		body := io.NopCloser(strings.NewReader("unexpected api client call"))
+		return &http.Response{StatusCode: http.StatusInternalServerError, Body: body, Header: make(http.Header)}, nil
+	})}
+
+	updateDownloadHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		downloadCalls++
+		body := io.NopCloser(strings.NewReader("payload"))
+		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
+	})}
+
+	path := filepath.Join(t.TempDir(), "download.bin")
+	err := downloadFile(context.Background(), "https://example.com/archive.tar.gz", path)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "payload", string(content))
+	assert.Equal(t, 0, apiCalls, "metadata client must not be used for binary download")
+	assert.Equal(t, 1, downloadCalls, "download client should be used exactly once")
+}
+
 func TestFetchReleaseByTagEscapesPathSegment(t *testing.T) {
 	oldClient := updateHTTPClient
 	t.Cleanup(func() { updateHTTPClient = oldClient })

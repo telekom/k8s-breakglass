@@ -29,10 +29,14 @@ const (
 	// maxBinarySize is the maximum allowed size for extracted binaries (500 MB).
 	maxBinarySize = 500 << 20
 
-	defaultUpdateHTTPTimeout = 30 * time.Second
+	defaultUpdateAPIHTTPTimeout      = 30 * time.Second
+	defaultUpdateDownloadHTTPTimeout = 5 * time.Minute
 )
 
-var updateHTTPClient = &http.Client{Timeout: defaultUpdateHTTPTimeout}
+var (
+	updateHTTPClient         = &http.Client{Timeout: defaultUpdateAPIHTTPTimeout}
+	updateDownloadHTTPClient = &http.Client{Timeout: defaultUpdateDownloadHTTPTimeout}
+)
 
 type githubRelease struct {
 	TagName string        `json:"tag_name"`
@@ -247,7 +251,7 @@ func downloadFile(ctx context.Context, url, path string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := updateHTTPClient.Do(req)
+	resp, err := updateDownloadHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
