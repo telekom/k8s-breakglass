@@ -58,7 +58,7 @@
     "eslint": "^10.0.3",
     "eslint-plugin-vue": "^10.8.0",
     "express": "^5.2.1",
-    "jsdom": "^28.1.0",
+    "jsdom": "^29.0.0",
     "playwright": "^1.58.2",
     "prettier": "^3.8.1",
     "terser": "^5.46.0",
