@@ -34,6 +34,18 @@ helm install my-escalation ./charts/escalation-config \
   --set cluster.tenant=production
 ```
 
+### Installation from GHCR Helm OCI (release artifacts)
+
+```bash
+helm install my-escalation \
+  oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config \
+  --version <chart-version> \
+  -f values.yaml
+```
+
+`<chart-version>` is the chart `version` from `charts/escalation-config/Chart.yaml`.
+It is versioned independently from the container image tag.
+
 ## Configuration
 
 ### Cluster Configuration

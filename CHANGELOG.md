@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.
+- **Release workflow: publish escalation Helm chart**: Tag-based releases now package `charts/escalation-config`, publish it to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config`), and attach the chart `.tgz` to the GitHub Release assets.
 
 - **Webhook SAR metrics: removed high-cardinality `group` label** ([#527](https://github.com/telekom/k8s-breakglass/issues/527)): Removed unbounded `group` label from `breakglass_webhook_session_sar_{allowed,denied,errors}_total` metrics to prevent time-series explosion in Prometheus
 - **JWT and JWKS metrics label renamed from `issuer` to `identity_provider`** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Prometheus metrics `breakglass_jwt_validation_*` and `breakglass_jwks_cache_{hits,misses}_total` now use the `identity_provider` label (resolved IDP name) instead of `issuer` (raw URL) to prevent unbounded cardinality from attacker-controlled issuer claims. Dashboards/alerts referencing the old `issuer` label on these metrics must be updated.

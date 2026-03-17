@@ -19,7 +19,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Build release manifests and bgctl CLI binaries
+  # Build release manifests, Helm chart package, and bgctl CLI binaries
   # ---------------------------------------------------------------------------
   prepare:
     permissions:
@@ -32,6 +32,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v4.0.4
       - name: Generate manifests
         run: |
           make manifests
@@ -68,6 +72,23 @@ jobs:
             manifests-base.yaml
             manifests-debug.yaml
             manifests-crds.yaml
+      - name: Package escalation Helm chart
+        run: |
+          set -euo pipefail
+
+          # Keep chart version from Chart.yaml; stamp appVersion with the release tag.
+          mkdir -p chart-dist
+          helm package charts/escalation-config \
+            --destination chart-dist \
+            --app-version "${{ github.ref_name }}"
+
+          echo "Packaged chart artifacts:"
+          ls -la chart-dist
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: release-chart
+          path: chart-dist/escalation-config-*.tgz
       - name: Build bgctl release assets
         run: |
           set -e
@@ -432,12 +453,61 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
+  # Publish escalation-config Helm chart to GHCR OCI
+  # ---------------------------------------------------------------------------
+  publish-chart:
+    needs: [prepare]
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download chart artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-chart
+          path: chart-dist
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v4.0.4
+      - name: Login to GHCR for Helm OCI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
+            --username "${{ github.actor }}" \
+            --password-stdin
+      - name: Publish escalation-config chart
+        env:
+          CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
+        run: |
+          set -euo pipefail
+
+          CHART_PACKAGE="$(ls chart-dist/escalation-config-*.tgz | head -n1)"
+          CHART_VERSION="$(helm show chart "${CHART_PACKAGE}" | awk '/^version:/ {print $2}')"
+
+          if [ -z "${CHART_VERSION}" ]; then
+            echo "Failed to determine chart version from ${CHART_PACKAGE}" >&2
+            exit 1
+          fi
+
+          echo "Preparing to publish escalation-config:${CHART_VERSION} to ${CHART_REPO}"
+
+          # Idempotent behavior for reruns: skip if this chart version already exists.
+          if helm show chart "${CHART_REPO}/escalation-config" --version "${CHART_VERSION}" >/dev/null 2>&1; then
+            echo "Chart escalation-config:${CHART_VERSION} already present in GHCR; skipping push."
+            exit 0
+          fi
+
+          helm push "${CHART_PACKAGE}" "${CHART_REPO}"
+          echo "Published ${CHART_PACKAGE} to ${CHART_REPO}"
+
+  # ---------------------------------------------------------------------------
   # Create GitHub Release with manifests, bgctl binaries, and SBOM
   # ---------------------------------------------------------------------------
   release:
     # NOTE: Does not depend on `artifactory` intentionally — Artifactory is a
     # best-effort mirror and should not block GitHub Release creation.
-    needs: [prepare, assemble]
+    needs: [prepare, assemble, publish-chart]
     permissions:
       contents: write
       packages: read
@@ -453,6 +523,11 @@ jobs:
         with:
           name: bgctl-dist
           path: dist
+      - name: Download chart artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-chart
+          path: chart-dist
       - name: Create GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
         with:
@@ -461,6 +536,7 @@ jobs:
             manifests-base.yaml
             manifests-debug.yaml
             manifests-crds.yaml
+            chart-dist/escalation-config-*.tgz
             dist/bgctl_*.tar.gz
             dist/bgctl_*.zip
             dist/bgctl_*.sha256
