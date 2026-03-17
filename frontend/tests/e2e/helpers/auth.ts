@@ -220,6 +220,20 @@ export const TEST_USERS: TestUsers = {
 export class AuthHelper {
   constructor(private page: Page) {}
 
+  private static readonly AUTH_STATE_TIMEOUT = 30_000;
+  private static readonly AUTH_STATE_POLL_INTERVAL = 500;
+
+  private async waitForAuthenticatedState(timeoutMs = AuthHelper.AUTH_STATE_TIMEOUT): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await this.isAuthenticated()) {
+        return true;
+      }
+      await this.page.waitForTimeout(AuthHelper.AUTH_STATE_POLL_INTERVAL);
+    }
+    return false;
+  }
+
   /**
    * Check if user is already authenticated by looking for authenticated UI elements.
    * Returns true if authenticated elements are visible, false otherwise.
@@ -314,9 +328,27 @@ export class AuthHelper {
       }
     }
 
-    // Wait for Keycloak login page — use generous timeout because Keycloak's
-    // JVM can be slow in CI (cold-start on kind cluster runners).
-    await this.page.waitForURL(/.*keycloak.*|.*auth.*/, { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
+    // Some CI runs have an existing SSO session where the login redirect can bounce
+    // through Keycloak and return to the app very quickly. Handle both explicit
+    // Keycloak login and immediate authenticated return paths.
+    let onKeycloak = this.page.url().includes("keycloak") || this.page.url().includes("/auth/");
+    if (!onKeycloak) {
+      const deadline = Date.now() + AuthHelper.KEYCLOAK_TIMEOUT;
+      while (Date.now() < deadline) {
+        const currentUrl = this.page.url();
+        if (currentUrl.includes("keycloak") || currentUrl.includes("/auth/")) {
+          onKeycloak = true;
+          break;
+        }
+        if (await this.isAuthenticated()) {
+          return;
+        }
+        await this.page.waitForTimeout(AuthHelper.AUTH_STATE_POLL_INTERVAL);
+      }
+      if (!onKeycloak) {
+        throw new Error(`Timed out waiting for Keycloak or authenticated app state. Current URL: ${this.page.url()}`);
+      }
+    }
 
     // Fill login form
     await this.page.fill("#username", user.username);
@@ -325,30 +357,14 @@ export class AuthHelper {
 
     // Wait for redirect back to app (use regex to match any localhost port)
     await this.page.waitForURL(/localhost:\d+/, { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
+    await this.page.waitForLoadState("networkidle", { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
 
-    // Verify logged in state - wait for authenticated content to appear
-    // The profile menu (data-testid="user-menu") may not be accessible in CI due to
-    // Telekom Scale web component Shadow DOM rendering. Instead, verify authentication
-    // by checking that the main authenticated content is visible.
-    // Try multiple selectors in order of preference:
-    // 1. User menu (ideal) - works when Scale components render correctly
-    // 2. Escalation list (fallback) - shows when authenticated
-    // 3. "Request access" heading (final fallback) - in authenticated view
-    const authVerificationSelectors = [
-      '[data-testid="user-menu"]',
-      '[data-testid="escalation-list"]',
-      'h1:has-text("Request access")',
-    ];
-
-    let verified = false;
-    for (const selector of authVerificationSelectors) {
-      try {
-        await this.page.locator(selector).waitFor({ state: "visible", timeout: 5000 });
-        verified = true;
-        break;
-      } catch {
-        // Try next selector
-      }
+    let verified = await this.waitForAuthenticatedState();
+    if (!verified) {
+      // One extra recovery attempt helps when SPA hydration is delayed in CI.
+      await this.page.goto("/");
+      await this.page.waitForLoadState("networkidle", { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
+      verified = await this.waitForAuthenticatedState();
     }
 
     if (!verified) {
