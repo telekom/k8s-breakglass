@@ -16,3 +16,13 @@ func TestUnknownOutputFormatError_WithoutSupportedFormats(t *testing.T) {
 	err := unknownOutputFormatError("xml")
 	assert.EqualError(t, err, "unknown output format: xml")
 }
+
+func TestValidateOutputFormat_Valid(t *testing.T) {
+	err := validateOutputFormat(output.FormatJSON, output.FormatJSON, output.FormatYAML)
+	assert.NoError(t, err)
+}
+
+func TestValidateOutputFormat_Invalid(t *testing.T) {
+	err := validateOutputFormat("xml", output.FormatJSON, output.FormatYAML)
+	assert.EqualError(t, err, "unknown output format: xml (choose from: json, yaml)")
+}

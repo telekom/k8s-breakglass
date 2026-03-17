@@ -219,7 +219,7 @@ func newDebugSessionGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -299,7 +299,7 @@ Use --set to provide values for template extraDeployVariables:
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&templateRef, "template", "", "Debug session template name")
@@ -339,7 +339,7 @@ func newDebugSessionJoinCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "participant", "Role: participant|viewer")
@@ -366,7 +366,7 @@ func newDebugSessionLeaveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -395,7 +395,7 @@ func newDebugSessionRenewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&extendBy, "extend-by", "", "Extend duration by (e.g. 30m)")
@@ -423,7 +423,7 @@ func newDebugSessionTerminateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -452,7 +452,7 @@ func newDebugSessionApproveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Approval reason")
@@ -482,7 +482,7 @@ func newDebugSessionRejectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Rejection reason")
@@ -564,7 +564,7 @@ func newDebugTemplateGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), template)
+			return writeRuntimeObject(rt, template, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	return cmd
@@ -743,7 +743,7 @@ func newDebugPodTemplateGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), template)
+			return writeRuntimeObject(rt, template, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	return cmd
@@ -794,7 +794,7 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), resp)
+			return writeRuntimeObject(rt, resp, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Target namespace")
@@ -837,7 +837,7 @@ func newDebugKubectlCopyPodCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), resp)
+			return writeRuntimeObject(rt, resp, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Target namespace")
@@ -871,7 +871,7 @@ func newDebugKubectlNodeDebugCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), resp)
+			return writeRuntimeObject(rt, resp, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "Target node name")

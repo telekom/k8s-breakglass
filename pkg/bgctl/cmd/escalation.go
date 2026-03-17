@@ -70,7 +70,7 @@ func newEscalationGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), esc)
+			return writeRuntimeObject(rt, esc, output.FormatJSON, output.FormatYAML)
 		},
 	}
 }
