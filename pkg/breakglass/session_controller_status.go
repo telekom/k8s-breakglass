@@ -693,7 +693,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	})
 
 	totalCount := 0
-	paged := make([]breakglassv1alpha1.BreakglassSession, 0, limit)
+	paged := make([]breakglassv1alpha1.BreakglassSession, 0)
 	for _, ses := range sessions {
 		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers)
 		var isApprover bool
