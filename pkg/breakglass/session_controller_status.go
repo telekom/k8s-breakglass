@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -674,7 +675,25 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 	}
 
-	filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
+	// Ensure deterministic ordering before applying offset-based pagination.
+	// controller-runtime cache listing does not guarantee result order.
+	sort.SliceStable(sessions, func(i, j int) bool {
+		left := sessions[i]
+		right := sessions[j]
+
+		leftTime := left.CreationTimestamp.Time
+		rightTime := right.CreationTimestamp.Time
+		if !leftTime.Equal(rightTime) {
+			return leftTime.Before(rightTime)
+		}
+		if left.Namespace != right.Namespace {
+			return left.Namespace < right.Namespace
+		}
+		return left.Name < right.Name
+	})
+
+	totalCount := 0
+	paged := make([]breakglassv1alpha1.BreakglassSession, 0, limit)
 	for _, ses := range sessions {
 		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers)
 		var isApprover bool
@@ -720,23 +739,21 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			continue
 		}
 
-		filtered = append(filtered, ses)
+		if totalCount >= offset && len(paged) < limit {
+			paged = append(paged, ses)
+		}
+		totalCount++
 	}
-	totalCount := len(filtered)
-	if offset > totalCount {
-		offset = totalCount
+	effectiveOffset := offset
+	if effectiveOffset > totalCount {
+		effectiveOffset = totalCount
 	}
-	end := offset + limit
-	if end > totalCount {
-		end = totalCount
-	}
-	paged := filtered[offset:end]
 
 	// Enrich sessions with approvalReason from matching escalations
 	enriched := wc.enrichSessionsWithApprovalReason(ctx, paged, reqLog)
 
 	c.Header("X-Pagination-Limit", fmt.Sprintf("%d", limit))
-	c.Header("X-Pagination-Offset", fmt.Sprintf("%d", offset))
+	c.Header("X-Pagination-Offset", fmt.Sprintf("%d", effectiveOffset))
 	c.Header("X-Pagination-Total", fmt.Sprintf("%d", totalCount))
 	c.Header("X-Pagination-Returned", fmt.Sprintf("%d", len(enriched)))
 
@@ -744,7 +761,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		"count", len(enriched),
 		"total", totalCount,
 		"limit", limit,
-		"offset", offset)
+		"offset", effectiveOffset)
 	c.JSON(http.StatusOK, enriched)
 }
 

@@ -2845,9 +2845,10 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 func TestFilterBreakglassSessionsPagination(t *testing.T) {
 	viewer := "viewer@example.com"
-	makeSession := func(name string) *breakglassv1alpha1.BreakglassSession {
+	base := time.Now().UTC().Truncate(time.Second)
+	makeSession := func(name string, createdAt time.Time) *breakglassv1alpha1.BreakglassSession {
 		return &breakglassv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
+			ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(createdAt)},
 			Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "multi", User: viewer, GrantedGroup: "g"},
 			Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
 		}
@@ -2857,7 +2858,11 @@ func TestFilterBreakglassSessionsPagination(t *testing.T) {
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	cli := builder.WithObjects(makeSession("page-1"), makeSession("page-2"), makeSession("page-3")).Build()
+	cli := builder.WithObjects(
+		makeSession("page-3", base.Add(2*time.Minute)),
+		makeSession("page-1", base),
+		makeSession("page-2", base.Add(time.Minute)),
+	).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -2890,6 +2895,8 @@ func TestFilterBreakglassSessionsPagination(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	assert.Len(t, sessions, 2)
+	assert.Equal(t, "page-2", sessions[0].Name)
+	assert.Equal(t, "page-3", sessions[1].Name)
 	assert.Equal(t, "2", res.Header.Get("X-Pagination-Limit"))
 	assert.Equal(t, "1", res.Header.Get("X-Pagination-Offset"))
 	assert.Equal(t, "3", res.Header.Get("X-Pagination-Total"))

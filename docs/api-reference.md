@@ -176,6 +176,8 @@ Authorization: Bearer <token>
 
 If `limit` or `offset` are invalid (`limit <= 0`, `offset < 0`, or non-integer), the API returns `400 Bad Request`.
 
+Pagination is applied after deterministic server-side ordering by `metadata.creationTimestamp`, then by `metadata.namespace` and `metadata.name`.
+
 **Pagination headers:**
 
 - `X-Pagination-Limit` — effective limit applied by the server
