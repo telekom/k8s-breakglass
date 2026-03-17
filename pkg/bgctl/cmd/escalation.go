@@ -46,7 +46,7 @@ func newEscalationListCommand() *cobra.Command {
 				output.WriteEscalationTable(rt.Writer(), escs)
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unknownOutputFormatError(format, output.FormatTable, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
@@ -102,7 +102,7 @@ func newEscalationListClustersCommand() *cobra.Command {
 				}
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unknownOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}

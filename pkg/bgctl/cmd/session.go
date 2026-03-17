@@ -120,7 +120,7 @@ func newSessionWatchCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval (Go duration, e.g. 2s, 1m)")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster")
 	cmd.Flags().StringVar(&user, "user", "", "Filter by user")
 	cmd.Flags().StringVar(&group, "group", "", "Filter by group")
@@ -196,7 +196,7 @@ func newSessionListCommand() *cobra.Command {
 				}
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unknownOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
