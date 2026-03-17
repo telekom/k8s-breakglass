@@ -33,17 +33,23 @@ This document defines the release requirements for k8s-breakglass. It is intende
    - An SPDX-JSON SBOM attestation is attached to each signed image via `cosign attest`.
    - Cosign signatures and attestations are mirrored to Artifactory on a best-effort basis via `cosign copy`.
 
+7. **Helm chart publication**
+   - `charts/escalation-config` is packaged during release preparation.
+   - The packaged chart is pushed to GHCR as a Helm OCI artifact at `oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config`.
+   - The chart `.tgz` is attached to the GitHub Release assets.
+
 ## Multi-Architecture Builds
 
 Release images are built as multi-arch manifests supporting both `linux/amd64` and `linux/arm64` platforms. Each architecture is built natively on a dedicated runner (no QEMU emulation), then assembled into a single multi-arch manifest list.
 
 **Build pipeline:**
 
-1. **Prepare** — generates Kustomize manifests, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
+1. **Prepare** — generates Kustomize manifests, packages `charts/escalation-config`, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
 3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version (and `latest` for tag pushes). Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
 4. **Artifactory** — mirrors the multi-arch image and cosign artifacts (signatures + attestations) to the internal Artifactory OCI registry (best-effort).
-5. **Release** — creates a GitHub Release with manifests, `bgctl` binaries, checksums, and SBOM (SPDX-JSON format via Syft).
+5. **Publish chart** — pushes `escalation-config` chart to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
+6. **Release** — creates a GitHub Release with manifests, Helm chart package, `bgctl` binaries, checksums, and SBOM (SPDX-JSON format via Syft).
 
 > **Note:** Buildx layer caching (`cache-from`/`cache-to`) is intentionally omitted in
 > release builds to ensure clean, reproducible images without layer reuse from prior
@@ -54,6 +60,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Verify CI success on the release commit.
 - Ensure the changelog is up to date.
 - Generate artifacts via the release workflow.
+- Verify chart publication in GHCR (`oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config`).
 - Publish checksums and update release notes.
 - Verify provenance attestation was pushed to the registry.
 - Verify SBOM is attached to the GitHub Release.
@@ -67,6 +74,11 @@ Consumers should be able to:
 - Verify provenance attestation via `gh attestation verify` or the GitHub attestation API.
 - Verify SBOM contents match the release image.
 - Verify Cosign signature: `cosign verify ghcr.io/telekom/k8s-breakglass@<digest> --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'`
+- Verify Helm chart availability:
+   ```bash
+   helm show chart oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config \
+      --version <chart-version>
+   ```
 - Verify SBOM attestation:
   ```bash
   cosign verify-attestation ghcr.io/telekom/k8s-breakglass@<digest> \
