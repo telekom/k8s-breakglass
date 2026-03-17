@@ -705,6 +705,11 @@ func dropK8sInternalFieldsSessionList(list []breakglassv1alpha1.BreakglassSessio
 
 type sessionStatePredicate func(breakglassv1alpha1.BreakglassSession) bool
 
+const (
+	defaultSessionListLimit = 100
+	maxSessionListLimit     = 500
+)
+
 func ParseBoolQuery(value string, defaultVal bool) bool {
 	if value == "" {
 		return defaultVal
@@ -714,6 +719,33 @@ func ParseBoolQuery(value string, defaultVal bool) bool {
 		return defaultVal
 	}
 	return parsed
+}
+
+func ParseSessionListPagination(limitValue, offsetValue string) (int, int, error) {
+	limit := defaultSessionListLimit
+	offset := 0
+
+	if limitValue != "" {
+		parsedLimit, err := strconv.Atoi(limitValue)
+		if err != nil || parsedLimit <= 0 {
+			return 0, 0, fmt.Errorf("invalid limit query parameter: must be a positive integer")
+		}
+		limit = parsedLimit
+	}
+
+	if offsetValue != "" {
+		parsedOffset, err := strconv.Atoi(offsetValue)
+		if err != nil || parsedOffset < 0 {
+			return 0, 0, fmt.Errorf("invalid offset query parameter: must be a non-negative integer")
+		}
+		offset = parsedOffset
+	}
+
+	if limit > maxSessionListLimit {
+		limit = maxSessionListLimit
+	}
+
+	return limit, offset, nil
 }
 
 func normalizeStateFilters(c *gin.Context) []string {

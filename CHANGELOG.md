@@ -77,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session list pagination in REST API** ([#528](https://github.com/telekom/k8s-breakglass/issues/528)): `GET /api/breakglassSessions` now supports `limit` and `offset` query parameters (default `limit=100`, max `500`) and returns pagination metadata headers (`X-Pagination-Limit`, `X-Pagination-Offset`, `X-Pagination-Total`, `X-Pagination-Returned`)
 - **Helm chart `values.schema.json`** ([#473](https://github.com/telekom/k8s-breakglass/issues/473) OPS-004): Added JSON Schema validation for the escalation-config Helm chart values, enabling IDE autocompletion and `helm lint` validation
 - **Cache-Control headers for frontend assets** ([#473](https://github.com/telekom/k8s-breakglass/issues/473) OPS-006): `/assets/` paths now return `Cache-Control: public, max-age=31536000, immutable` for Vite-hashed static files
 - **OTel init failure metric and `--otel-required` flag** ([#473](https://github.com/telekom/k8s-breakglass/issues/473) OPS-007): New `breakglass_telemetry_init_failed` gauge is set to 1 when OpenTelemetry initialization fails; new `--otel-required` flag makes this failure fatal instead of degrading gracefully

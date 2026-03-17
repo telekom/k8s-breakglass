@@ -570,6 +570,70 @@ func TestParseBoolQuery(t *testing.T) {
 	}
 }
 
+func TestParseSessionListPagination(t *testing.T) {
+	tests := []struct {
+		name        string
+		limitValue  string
+		offsetValue string
+		wantLimit   int
+		wantOffset  int
+		wantErr     bool
+	}{
+		{
+			name:        "defaults when query params are empty",
+			limitValue:  "",
+			offsetValue: "",
+			wantLimit:   defaultSessionListLimit,
+			wantOffset:  0,
+		},
+		{
+			name:        "valid limit and offset",
+			limitValue:  "25",
+			offsetValue: "5",
+			wantLimit:   25,
+			wantOffset:  5,
+		},
+		{
+			name:        "limit is capped by max",
+			limitValue:  "9999",
+			offsetValue: "0",
+			wantLimit:   maxSessionListLimit,
+			wantOffset:  0,
+		},
+		{
+			name:        "invalid limit returns error",
+			limitValue:  "abc",
+			offsetValue: "0",
+			wantErr:     true,
+		},
+		{
+			name:        "zero limit returns error",
+			limitValue:  "0",
+			offsetValue: "0",
+			wantErr:     true,
+		},
+		{
+			name:        "negative offset returns error",
+			limitValue:  "10",
+			offsetValue: "-1",
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			limit, offset, err := ParseSessionListPagination(tt.limitValue, tt.offsetValue)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantLimit, limit)
+			assert.Equal(t, tt.wantOffset, offset)
+		})
+	}
+}
+
 // TestAddIfNotPresent tests the addIfNotPresent function
 func TestAddIfNotPresent(t *testing.T) {
 	tests := []struct {

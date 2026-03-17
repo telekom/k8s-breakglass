@@ -2843,6 +2843,121 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 	assertStates(t, "/breakglassSessions?state=pending,approved&mine=true", []string{"multi-pending", "multi-approved"})
 }
 
+func TestFilterBreakglassSessionsPagination(t *testing.T) {
+	viewer := "viewer@example.com"
+	makeSession := func(name string) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "multi", User: viewer, GrantedGroup: "g"},
+			Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(makeSession("page-1"), makeSession("page-2"), makeSession("page-3")).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", viewer)
+		c.Set("username", "viewer")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true&approver=false&limit=2&offset=1", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+
+	var sessions []breakglassv1alpha1.BreakglassSession
+	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	assert.Len(t, sessions, 2)
+	assert.Equal(t, "2", res.Header.Get("X-Pagination-Limit"))
+	assert.Equal(t, "1", res.Header.Get("X-Pagination-Offset"))
+	assert.Equal(t, "3", res.Header.Get("X-Pagination-Total"))
+	assert.Equal(t, "2", res.Header.Get("X-Pagination-Returned"))
+
+	reqPastEnd, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true&approver=false&limit=2&offset=10", nil)
+	wPastEnd := httptest.NewRecorder()
+	engine.ServeHTTP(wPastEnd, reqPastEnd)
+	resPastEnd := wPastEnd.Result()
+	if resPastEnd.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for offset past end, got %d", resPastEnd.StatusCode)
+	}
+
+	var sessionsPastEnd []breakglassv1alpha1.BreakglassSession
+	if err := json.NewDecoder(resPastEnd.Body).Decode(&sessionsPastEnd); err != nil {
+		t.Fatalf("failed to decode response for offset past end: %v", err)
+	}
+	assert.Len(t, sessionsPastEnd, 0)
+	assert.Equal(t, "3", resPastEnd.Header.Get("X-Pagination-Offset"))
+	assert.Equal(t, "3", resPastEnd.Header.Get("X-Pagination-Total"))
+	assert.Equal(t, "0", resPastEnd.Header.Get("X-Pagination-Returned"))
+}
+
+func TestFilterBreakglassSessionsPaginationInvalidLimit(t *testing.T) {
+	viewer := "viewer@example.com"
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(&breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "page-invalid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "multi", User: viewer, GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", viewer)
+		c.Set("username", "viewer")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true&approver=false&limit=abc", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 BadRequest, got %d", res.StatusCode)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	assert.Contains(t, string(body), "invalid limit query parameter")
+}
+
 func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 	approver := "approver@example.com"
 	sessApproved := &breakglassv1alpha1.BreakglassSession{

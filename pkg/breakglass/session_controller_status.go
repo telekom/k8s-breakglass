@@ -648,6 +648,11 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	activeOnly := ParseBoolQuery(c.Query("activeOnly"), false)
 	stateFilters := normalizeStateFilters(c)
 	statePredicates := buildStateFilterPredicates(stateFilters)
+	limit, offset, err := ParseSessionListPagination(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return
+	}
 
 	var userEmail string
 	if includeMine || includeApprovedByMe {
@@ -717,11 +722,29 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 
 		filtered = append(filtered, ses)
 	}
+	totalCount := len(filtered)
+	if offset > totalCount {
+		offset = totalCount
+	}
+	end := offset + limit
+	if end > totalCount {
+		end = totalCount
+	}
+	paged := filtered[offset:end]
 
 	// Enrich sessions with approvalReason from matching escalations
-	enriched := wc.enrichSessionsWithApprovalReason(ctx, filtered, reqLog)
+	enriched := wc.enrichSessionsWithApprovalReason(ctx, paged, reqLog)
 
-	reqLog.Infow("Returning filtered breakglass sessions", "count", len(enriched))
+	c.Header("X-Pagination-Limit", fmt.Sprintf("%d", limit))
+	c.Header("X-Pagination-Offset", fmt.Sprintf("%d", offset))
+	c.Header("X-Pagination-Total", fmt.Sprintf("%d", totalCount))
+	c.Header("X-Pagination-Returned", fmt.Sprintf("%d", len(enriched)))
+
+	reqLog.Infow("Returning filtered breakglass sessions",
+		"count", len(enriched),
+		"total", totalCount,
+		"limit", limit,
+		"offset", offset)
 	c.JSON(http.StatusOK, enriched)
 }
 

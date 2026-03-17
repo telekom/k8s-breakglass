@@ -153,7 +153,7 @@ The API provides endpoints for managing breakglass sessions.
 Query sessions with server-side filtering.
 
 ```http
-GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>
+GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>&limit=<n>&offset=<n>
 Authorization: Bearer <token>
 ```
 
@@ -171,6 +171,17 @@ Authorization: Bearer <token>
 | `approvedByMe` | boolean | Sessions the user has already approved |
 | `activeOnly` | boolean | Only return active (currently running) sessions |
 | `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`. |
+| `limit` | integer | Maximum number of sessions to return. Default: `100`, max: `500`. |
+| `offset` | integer | Number of sessions to skip before returning results. Default: `0`. |
+
+If `limit` or `offset` are invalid (`limit <= 0`, `offset < 0`, or non-integer), the API returns `400 Bad Request`.
+
+**Pagination headers:**
+
+- `X-Pagination-Limit` — effective limit applied by the server
+- `X-Pagination-Offset` — effective offset used by the server
+- `X-Pagination-Total` — total number of sessions after filters, before pagination
+- `X-Pagination-Returned` — number of sessions returned in this page
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:
 
@@ -219,6 +230,10 @@ curl -H "Authorization: Bearer <token>" \
 # Sessions you have approved that are still active or timed out
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/breakglassSessions?approvedByMe=true&state=approved,timeout"
+
+# Paginated result set (page size 50, starting at offset 100)
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglassSessions?mine=true&limit=50&offset=100"
 ```
 
 ### Request Session
