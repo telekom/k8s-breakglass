@@ -646,7 +646,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Give time for audit events to be generated
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Check for Kubernetes events in the namespace
 	eventList := &eventsv1.EventList{}
@@ -748,7 +748,7 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 		require.NoError(t, err, "Failed to create AuditConfig with webhook sink")
 
 		// Give the controller time to pick up the new AuditConfig
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		t.Logf("Created AuditConfig with webhook sink: %s", auditConfig.Name)
 	})
 
@@ -788,7 +788,7 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Wait for audit events to be delivered
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		t.Logf("Created and approved session: %s", session.Name)
 	})
 

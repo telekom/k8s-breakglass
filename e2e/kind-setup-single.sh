@@ -1153,7 +1153,13 @@ if ! wait_for_deploy_by_label keycloak 120; then log 'Keycloak deployment not re
 assign_keycloak_service_account_roles || log "Warning: Failed to assign service account roles (group sync may not work)"
 
 if ! wait_for_deploy_by_label mailhog 120; then log 'Mailhog deployment not ready'; debug_cluster_state; exit 1; fi
-if ! wait_for_deploy_by_label kafka 120; then log 'Kafka deployment not ready (continuing anyway)'; fi
+if ! wait_for_deploy_by_label kafka 300; then
+  log 'Kafka deployment not ready after 300s — retrying once...'
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n breakglass-system rollout restart deployment -l app=kafka 2>/dev/null || true
+  if ! wait_for_deploy_by_label kafka 120; then
+    log 'ERROR: Kafka deployment still not ready. OIDC tests may fail.'
+  fi
+fi
 
 # Wait for Kafka broker to be fully ready (deployment ready != broker ready due to initialDelaySeconds)
 log 'Waiting for Kafka broker to be fully ready...'
