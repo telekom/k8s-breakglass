@@ -469,8 +469,7 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	}
 	t.Logf("✓ Expired %d session(s)", expiredCount)
 
-	// Brief wait for controller to process status update
-	// Note: Webhook cache TTL is 0s in e2e, so no cache delay
+	// Brief wait for controller cache to propagate the status update
 	time.Sleep(helpers.CachePropagationDelay)
 
 	// Should now be denied

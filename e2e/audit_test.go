@@ -174,8 +174,8 @@ func TestAuditLogging(t *testing.T) {
 	// 1. Receive the config reload signal
 	// 2. Build and start the Kafka producer
 	// 3. Establish connection to Kafka broker
-	t.Log("Waiting additional 5s for audit service to connect to Kafka...")
-	time.Sleep(helpers.CachePropagationDelay)
+	t.Log("Waiting 5s for audit service infrastructure readiness (Kafka producer startup)...")
+	time.Sleep(5 * time.Second)
 
 	// 1. Create a Breakglass Session
 	// Use unique name to avoid collisions and for filtering audit logs

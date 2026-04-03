@@ -19,8 +19,10 @@ package helpers
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -356,13 +358,23 @@ func CancelSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient
 var CachePropagationDelay = getCachePropagationDelay()
 
 func getCachePropagationDelay() time.Duration {
-	if s := os.Getenv("E2E_CACHE_PROPAGATION_DELAY"); s != "" {
+	if s := strings.TrimSpace(os.Getenv("E2E_CACHE_PROPAGATION_DELAY")); s != "" {
 		if ms, err := strconv.Atoi(s); err == nil {
-			return time.Duration(ms) * time.Millisecond
-		}
-		if d, err := time.ParseDuration(s); err == nil {
+			d := time.Duration(ms) * time.Millisecond
+			if d <= 0 {
+				log.Printf("WARNING: E2E_CACHE_PROPAGATION_DELAY=%q parsed as non-positive duration (%v); using default 2s", s, d)
+				return 2 * time.Second
+			}
 			return d
 		}
+		if d, err := time.ParseDuration(s); err == nil {
+			if d <= 0 {
+				log.Printf("WARNING: E2E_CACHE_PROPAGATION_DELAY=%q is a non-positive duration; using default 2s", s)
+				return 2 * time.Second
+			}
+			return d
+		}
+		log.Printf("WARNING: E2E_CACHE_PROPAGATION_DELAY=%q is not a valid integer (ms) or duration string; using default 2s", s)
 	}
 	return 2 * time.Second
 }

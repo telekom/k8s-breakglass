@@ -95,7 +95,8 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 	// The shell test creates sessions with ~9 approvers, generating many notification
 	// emails that queue up. This gives the mail queue time to drain and prevents
 	// transient timeouts when the server is under load.
-	time.Sleep(helpers.CachePropagationDelay)
+	// NOTE: This is a mail-queue drain wait, NOT cache propagation — do not replace with CachePropagationDelay.
+	time.Sleep(5 * time.Second)
 
 	ctx := context.Background()
 	mcConfig := helpers.GetMultiClusterConfig()

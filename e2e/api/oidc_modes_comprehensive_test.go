@@ -68,7 +68,7 @@ func waitForClusterConfigReconciled(t *testing.T, ctx context.Context, cli clien
 		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cc); err == nil && len(cc.Status.Conditions) > 0 {
 			return &cc
 		}
-		time.Sleep(helpers.CachePropagationDelay)
+		time.Sleep(2 * time.Second)
 	}
 	// Final attempt — log and fail
 	if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cc); err != nil {
@@ -91,7 +91,7 @@ func getClusterConfigWithRetry(t *testing.T, ctx context.Context, cli client.Cli
 			return cc
 		}
 		t.Logf("transient error fetching ClusterConfig %s/%s (attempt %d/3): %v", namespace, name, attempt, lastErr)
-		time.Sleep(helpers.CachePropagationDelay)
+		time.Sleep(2 * time.Second)
 	}
 	require.NoError(t, lastErr, "failed to fetch ClusterConfig %s/%s after retries", namespace, name)
 	return cc
@@ -111,7 +111,7 @@ func waitForClusterConfigNotReady(t *testing.T, ctx context.Context, cli client.
 			}
 			return &cc
 		}
-		time.Sleep(helpers.CachePropagationDelay)
+		time.Sleep(2 * time.Second)
 	}
 	logClusterConfigConditions(t, &cc)
 	t.Fatalf("timed out waiting for ClusterConfig %s/%s to become not-ready", namespace, name)

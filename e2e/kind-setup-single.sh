@@ -1157,7 +1157,9 @@ if ! wait_for_deploy_by_label kafka 300; then
   log 'Kafka deployment not ready after 300s — retrying once...'
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n breakglass-system rollout restart deployment -l app=kafka 2>/dev/null || true
   if ! wait_for_deploy_by_label kafka 120; then
-    log 'ERROR: Kafka deployment still not ready. OIDC tests may fail.'
+    log 'ERROR: Kafka deployment still not ready after retry. Exiting.'
+    debug_cluster_state
+    exit 1
   fi
 fi
 
@@ -1175,7 +1177,8 @@ if [ -n "$KAFKA_POD" ]; then
       break
     fi
     if [ $i -eq 60 ]; then
-      log "Warning: Kafka broker not responding after 60 attempts (continuing anyway)"
+      log "ERROR: Kafka broker not responding after 60 attempts. Exiting."
+      exit 1
     fi
     sleep 2
   done
