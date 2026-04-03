@@ -177,7 +177,7 @@ func TestMailProviderStatusHealth(t *testing.T) {
 		err := cli.Create(ctx, provider)
 		require.NoError(t, err, "Failed to create unreachable MailProvider")
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var fetched breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)

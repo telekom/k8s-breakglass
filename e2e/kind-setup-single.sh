@@ -1153,7 +1153,15 @@ if ! wait_for_deploy_by_label keycloak 120; then log 'Keycloak deployment not re
 assign_keycloak_service_account_roles || log "Warning: Failed to assign service account roles (group sync may not work)"
 
 if ! wait_for_deploy_by_label mailhog 120; then log 'Mailhog deployment not ready'; debug_cluster_state; exit 1; fi
-if ! wait_for_deploy_by_label kafka 120; then log 'Kafka deployment not ready (continuing anyway)'; fi
+if ! wait_for_deploy_by_label kafka 300; then
+  log 'Kafka deployment not ready after 300s — retrying once...'
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n breakglass-system rollout restart deployment -l app=kafka 2>/dev/null || true
+  if ! wait_for_deploy_by_label kafka 120; then
+    log 'ERROR: Kafka deployment still not ready after retry. Exiting.'
+    debug_cluster_state
+    exit 1
+  fi
+fi
 
 # Wait for Kafka broker to be fully ready (deployment ready != broker ready due to initialDelaySeconds)
 log 'Waiting for Kafka broker to be fully ready...'
@@ -1161,15 +1169,17 @@ KAFKA_POD=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-system 
 KAFKA_READY=false
 if [ -n "$KAFKA_POD" ]; then
   for i in {1..60}; do
-    # Check if Kafka broker is responding by listing topics (requires broker to be fully initialized)
+    # Check if Kafka broker is responding (requires broker to be fully initialized)
+    # NOTE: /opt/kafka/bin/ is NOT on PATH in the apache/kafka image, so we must use the full path
     if KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n breakglass-system "$KAFKA_POD" -- \
-        kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1; then
+        /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1; then
       log "Kafka broker ready (attempt $i)"
       KAFKA_READY=true
       break
     fi
     if [ $i -eq 60 ]; then
-      log "Warning: Kafka broker not responding after 60 attempts (continuing anyway)"
+      log "ERROR: Kafka broker not responding after 60 attempts. Exiting."
+      exit 1
     fi
     sleep 2
   done
@@ -1182,13 +1192,12 @@ if [ "$KAFKA_READY" = true ] && [ -n "$KAFKA_POD" ]; then
   log 'Pre-creating Kafka audit topic...'
   # Create the audit topic with appropriate settings (3 partitions, replication factor 1 for single-node)
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n breakglass-system "$KAFKA_POD" -- \
-    kafka-topics.sh --bootstrap-server localhost:9092 --create --topic breakglass-audit-events \
+    /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic breakglass-audit-events \
     --partitions 3 --replication-factor 1 --if-not-exists 2>/dev/null && \
     log 'Kafka topic breakglass-audit-events created' || \
     log 'Kafka topic creation skipped (may already exist or Kafka not ready)'
-  # Also create the functional test topic used by e2e tests
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n breakglass-system "$KAFKA_POD" -- \
-    kafka-topics.sh --bootstrap-server localhost:9092 --create --topic breakglass-audit-functional-test \
+    /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic breakglass-audit-functional-test \
     --partitions 1 --replication-factor 1 --if-not-exists 2>/dev/null && \
     log 'Kafka topic breakglass-audit-functional-test created' || \
     log 'Kafka functional test topic creation skipped'

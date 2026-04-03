@@ -124,7 +124,7 @@ func TestControllerReconcileIdempotency(t *testing.T) {
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("MultipleGetsReturnSameState", func(t *testing.T) {
 		var esc1, esc2 breakglassv1alpha1.BreakglassEscalation
@@ -148,7 +148,7 @@ func TestControllerReconcileIdempotency(t *testing.T) {
 
 		t.Logf("IDEMPOTENT-002: Resource version before no-op: %s", originalRV)
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &esc)
 		require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestControllerFinalizerBehavior(t *testing.T) {
 		err = cli.Delete(ctx, escalation)
 		require.NoError(t, err)
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var deleted breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &deleted)

@@ -733,7 +733,7 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 
 	// Wait for the controller's cache to sync after creating templates.
 	// The API uses a cached client which may not immediately reflect newly created objects.
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("ListSessionTemplates", func(t *testing.T) {
 		// Use Eventually pattern to wait for cache to sync
@@ -1193,7 +1193,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 
 		// Verify session is terminated
 		if status == http.StatusOK || status == http.StatusNoContent {
-			time.Sleep(time.Second)
+			time.Sleep(helpers.CachePropagationDelay)
 			var updated breakglassv1alpha1.DebugSession
 			err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &updated)
 			if err == nil {
@@ -1281,7 +1281,7 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 
 	// Clean up any existing template
 	_ = cli.Delete(ctx, template)
-	time.Sleep(time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	err := cli.Create(ctx, template)
 	require.NoError(t, err, "Failed to create test template")
@@ -1346,7 +1346,7 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 
 	// Clean up any existing binding
 	_ = cli.Delete(ctx, binding)
-	time.Sleep(time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	err = cli.Create(ctx, binding)
 	require.NoError(t, err, "Failed to create test binding")
@@ -1589,7 +1589,7 @@ func TestDebugSessionAPITemplateAvailability(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("AvailableTemplateVisible", func(t *testing.T) {
 		var templates []DebugSessionTemplateAPIResponse
@@ -1790,7 +1790,7 @@ func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("TemplateWithMatchingClusterSelectorVisible", func(t *testing.T) {
 		// Skip if test cluster doesn't have the required e2e-test label
@@ -2054,7 +2054,7 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 	approverClient := NewDebugSessionAPIClient(approverToken)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("ApproveSession", func(t *testing.T) {
 		// Create a session that requires approval
@@ -2087,7 +2087,7 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status, "Approver should be able to approve: %v", err)
 
 		// Verify session is now active or pending (depending on controller timing)
-		time.Sleep(time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		updatedSession, err := requesterClient.GetDebugSession(ctx, t, session.Name)
 		require.NoError(t, err)
 		assert.True(t, updatedSession.Status.State == breakglassv1alpha1.DebugSessionStateActive ||
@@ -2122,7 +2122,7 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status, "Approver should be able to reject: %v", err)
 
 		// Verify session is terminated
-		time.Sleep(time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		updatedSession, err := requesterClient.GetDebugSession(ctx, t, session.Name)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State,
@@ -2222,7 +2222,7 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("RenewActiveSession", func(t *testing.T) {
 		// Create a session
@@ -2258,7 +2258,7 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status)
 
 		// Verify expiry time was extended
-		time.Sleep(time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		renewedSession, err := apiClient.GetDebugSession(ctx, t, session.Name)
 		require.NoError(t, err)
 		require.NotNil(t, renewedSession.Status.ExpiresAt)
@@ -2383,7 +2383,7 @@ func TestDebugSessionAPIGetTemplateAndPodTemplate(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("GetSessionTemplate", func(t *testing.T) {
 		var tmpl *DebugSessionTemplateAPIResponse
@@ -2723,7 +2723,7 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Create a debug session
 	req := DebugSessionCreateRequest{
@@ -2928,7 +2928,7 @@ func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Create a normal debug session (not kubectl-debug mode)
 	session, createStatus, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -3070,7 +3070,7 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 	approverClient := NewDebugSessionAPIClient(approverToken)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Create a debug session
 	session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -3147,7 +3147,7 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 		require.True(t, terminateStatus == http.StatusOK || terminateStatus == http.StatusNoContent)
 
 		// Wait a bit for termination to complete
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Try to join terminated session
 		status, err := approverClient.JoinDebugSession(ctx, t, terminatedSession.Name, "viewer")
@@ -3245,7 +3245,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 	approverClient := NewDebugSessionAPIClient(approverToken)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("NonOwnerCannotRenew", func(t *testing.T) {
 		// Create a session
@@ -3313,7 +3313,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		cleanup.Add(approvalBinding)
 		require.NoError(t, cli.Create(ctx, approvalBinding))
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Create session that will be pending approval
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -3362,7 +3362,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		terminateStatus, _ := requesterClient.TerminateDebugSession(ctx, t, session.Name)
 		require.True(t, terminateStatus == http.StatusOK || terminateStatus == http.StatusNoContent)
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Try to renew terminated session
 		status, err := requesterClient.RenewDebugSession(ctx, t, session.Name, "30m")
@@ -3519,7 +3519,7 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Create a session for filtering tests
 	session, _, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -3728,7 +3728,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 	apiClient := NewDebugSessionAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("CreateWithInvitedParticipants", func(t *testing.T) {
 		req := DebugSessionCreateRequest{
@@ -3952,7 +3952,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 	approverClient := NewDebugSessionAPIClient(approverToken)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("RequesterCannotApproveOwnSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -4192,7 +4192,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, binding))
 
 		// Wait for binding to be discoverable
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Session creation should succeed via binding
 		session, status, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -4248,7 +4248,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, binding))
 
 		// Wait for binding to be discoverable
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Session creation should succeed
 		session, status, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -4286,7 +4286,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, template))
 
 		// Wait a moment
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Session creation should fail - no binding grants access
 		_, status, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -4336,7 +4336,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, binding))
 
 		// Wait for binding to be discoverable
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Session creation should fail - binding is for different cluster
 		_, status, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -4386,7 +4386,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, binding))
 
 		// Wait for binding to be discoverable
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Session creation should fail - binding is disabled
 		_, status, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -4470,7 +4470,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, validBinding))
 
 		// Wait for bindings to be discoverable
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Session creation should succeed - one valid binding exists
 		session, status, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
@@ -4531,7 +4531,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, binding))
 
 		// Wait for binding to be discoverable
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Session creation should succeed via templateSelector
 		session, status, err := apiClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{

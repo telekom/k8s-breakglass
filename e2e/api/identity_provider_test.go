@@ -255,7 +255,7 @@ func TestIdentityProviderInvalidIssuer(t *testing.T) {
 		require.NoError(t, err, "IDP should be created even with invalid issuer")
 
 		// Wait and check for error condition in status
-		time.Sleep(5 * time.Second) // Give controller time to reconcile
+		time.Sleep(helpers.CachePropagationDelay) // Give controller time to reconcile
 
 		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)

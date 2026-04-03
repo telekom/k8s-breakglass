@@ -193,7 +193,7 @@ func TestEscalationAPIList(t *testing.T) {
 	apiClient := NewEscalationAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("ListAllEscalations", func(t *testing.T) {
 		escalations, status, err := apiClient.ListEscalations(ctx, t)
@@ -315,7 +315,7 @@ func TestEscalationAPIEscalationProperties(t *testing.T) {
 	apiClient := NewEscalationAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("EscalationHasAllProperties", func(t *testing.T) {
 		escalations, _, err := apiClient.ListEscalations(ctx, t)
@@ -377,7 +377,7 @@ func TestEscalationAPIActiveStatus(t *testing.T) {
 	apiClient := NewEscalationAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("EscalationIsListed", func(t *testing.T) {
 		// Escalations should be listed when created
@@ -462,7 +462,7 @@ func TestEscalationAPICombinedFilters(t *testing.T) {
 	apiClient := NewEscalationAPIClient(token)
 
 	// Wait for cache sync
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("MultipleEscalationsReturned", func(t *testing.T) {
 		// API returns all escalations accessible to user's groups
