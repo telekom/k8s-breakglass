@@ -218,7 +218,7 @@ func (s *MultiIDPAuthorizationSuite) TestContractorDeniedOnEmployeeOnlyCluster()
 	t.Logf("Note: Session created: %s - checking if it gets rejected by controller", session.Name)
 
 	// Wait for processing
-	time.Sleep(5 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	var fetched breakglassv1alpha1.BreakglassSession
 	fetchErr := s.hubClient.Get(s.ctx, client.ObjectKey{

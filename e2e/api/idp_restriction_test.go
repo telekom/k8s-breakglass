@@ -258,7 +258,7 @@ func TestIdentityProviderStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait briefly for controller to process
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)

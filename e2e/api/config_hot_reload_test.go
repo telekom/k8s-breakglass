@@ -63,7 +63,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		cleanup.Add(idp)
 		require.NoError(t, cli.Create(ctx, idp), "Failed to create test IdentityProvider")
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var initial breakglassv1alpha1.IdentityProvider
 		err := cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &initial)
@@ -80,7 +80,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to update IdentityProvider")
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var updated breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &updated)
@@ -113,7 +113,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		cleanup.Add(idp)
 		require.NoError(t, cli.Create(ctx, idp), "Failed to create test IdentityProvider")
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var initial breakglassv1alpha1.IdentityProvider
 		err := cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &initial)
@@ -128,7 +128,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to disable IdentityProvider")
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var updated breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idpName, Namespace: namespace}, &updated)
@@ -192,7 +192,7 @@ users:
 		cleanup.Add(cc)
 		require.NoError(t, cli.Create(ctx, cc), "Failed to create ClusterConfig")
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var initial breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &initial)
@@ -208,7 +208,7 @@ users:
 		})
 		require.NoError(t, err, "Failed to update ClusterConfig")
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var updated breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &updated)
@@ -260,7 +260,7 @@ users:
 		cleanup.Add(cc)
 		require.NoError(t, cli.Create(ctx, cc), "Failed to create ClusterConfig")
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var initial breakglassv1alpha1.ClusterConfig
 		err := cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &initial)
@@ -290,7 +290,7 @@ users:
 		secret.Data["value"] = []byte(updatedKubeconfig)
 		require.NoError(t, cli.Update(ctx, secret), "Failed to update kubeconfig secret")
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var updated breakglassv1alpha1.ClusterConfig
 		err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &updated)
@@ -353,7 +353,7 @@ func TestMailProviderHotReload(t *testing.T) {
 		cleanup.Add(mp)
 		require.NoError(t, cli.Create(ctx, mp), "Failed to create MailProvider")
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var initial breakglassv1alpha1.MailProvider
 		err := cli.Get(ctx, types.NamespacedName{Name: mpName, Namespace: namespace}, &initial)
@@ -369,7 +369,7 @@ func TestMailProviderHotReload(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to update MailProvider")
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var updated breakglassv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: mpName, Namespace: namespace}, &updated)

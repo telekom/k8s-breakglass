@@ -19,6 +19,10 @@ package helpers
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -350,7 +354,30 @@ func CancelSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient
 
 // CachePropagationDelay is the time to wait for controller cache propagation.
 // This is a safer alternative to bare time.Sleep() calls.
-const CachePropagationDelay = 2 * time.Second
+// Override with E2E_CACHE_PROPAGATION_DELAY (e.g. "500ms", "1s", "2s").
+var CachePropagationDelay = getCachePropagationDelay()
+
+func getCachePropagationDelay() time.Duration {
+	if s := strings.TrimSpace(os.Getenv("E2E_CACHE_PROPAGATION_DELAY")); s != "" {
+		if ms, err := strconv.Atoi(s); err == nil {
+			d := time.Duration(ms) * time.Millisecond
+			if d <= 0 {
+				log.Printf("WARNING: E2E_CACHE_PROPAGATION_DELAY=%q parsed as non-positive duration (%v); using default 2s", s, d)
+				return 2 * time.Second
+			}
+			return d
+		}
+		if d, err := time.ParseDuration(s); err == nil {
+			if d <= 0 {
+				log.Printf("WARNING: E2E_CACHE_PROPAGATION_DELAY=%q is a non-positive duration; using default 2s", s)
+				return 2 * time.Second
+			}
+			return d
+		}
+		log.Printf("WARNING: E2E_CACHE_PROPAGATION_DELAY=%q is not a valid integer (ms) or duration string; using default 2s", s)
+	}
+	return 2 * time.Second
+}
 
 // WaitForCachePropagation waits for controller cache to propagate changes.
 // Use this instead of bare time.Sleep() when waiting for cache updates.

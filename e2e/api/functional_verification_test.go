@@ -135,7 +135,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 			breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Give time for audit events to be generated and delivered
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Verify Kubernetes events were created (secondary verification)
 		eventList := &eventsv1.EventList{}

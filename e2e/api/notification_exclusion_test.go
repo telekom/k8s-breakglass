@@ -100,7 +100,7 @@ func TestMailProviderCRUD(t *testing.T) {
 				}, 10*time.Second, 200*time.Millisecond, "Waiting for MailProvider update to propagate")
 
 				// Additional delay to ensure webhook cache sync (informer resync period)
-				time.Sleep(2 * time.Second)
+				time.Sleep(helpers.CachePropagationDelay)
 
 				break
 			}

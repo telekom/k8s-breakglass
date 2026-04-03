@@ -101,7 +101,7 @@ func TestAuditLogging(t *testing.T) {
 		defer stopPF()
 
 		// Wait for port-forward to be ready
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 	}
 
 	// Validate Kafka is actually responding at the protocol level
@@ -154,7 +154,7 @@ func TestAuditLogging(t *testing.T) {
 	t.Logf("Connected to Kafka with consumer group, will read from all partitions")
 
 	// Give Kafka reader a moment to connect and join the consumer group
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// CRITICAL: Wait for AuditConfig to be Ready BEFORE creating sessions.
 	// The AuditConfig is applied during e2e setup, but the reconciler needs time to:
@@ -174,7 +174,7 @@ func TestAuditLogging(t *testing.T) {
 	// 1. Receive the config reload signal
 	// 2. Build and start the Kafka producer
 	// 3. Establish connection to Kafka broker
-	t.Log("Waiting additional 5s for audit service to connect to Kafka...")
+	t.Log("Waiting 5s for audit service infrastructure readiness (Kafka producer startup)...")
 	time.Sleep(5 * time.Second)
 
 	// 1. Create a Breakglass Session
@@ -200,7 +200,7 @@ func TestAuditLogging(t *testing.T) {
 		}
 		// Wait a moment for deletion to propagate
 		if len(existingSessions.Items) > 0 {
-			time.Sleep(1 * time.Second)
+			time.Sleep(helpers.CachePropagationDelay)
 		}
 	}
 

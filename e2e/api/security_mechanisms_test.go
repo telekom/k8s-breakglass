@@ -277,7 +277,7 @@ func TestSecurityApprovalRequired(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for escalation reconciliation
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Create a session that will be pending approval
 		session, err := apiClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -385,7 +385,7 @@ func TestSecurityUnreachableClusterDenied(t *testing.T) {
 		require.NoError(t, err, "Failed to create escalation for unreachable cluster")
 
 		// Wait for ClusterConfig to be processed
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Try to create a session for the unreachable cluster
 		// This should fail because the cluster cannot be reached for verification
@@ -447,7 +447,7 @@ func TestSecurityUnauthorizedGroupDenied(t *testing.T) {
 		require.NoError(t, err, "Failed to create restricted escalation")
 
 		// Wait for reconciliation
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Try to create a session for this escalation - should be denied
 		_, err = apiClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -508,7 +508,7 @@ func TestSecurityGroupSyncSecretRequired(t *testing.T) {
 		require.NoError(t, err, "Failed to create IDP with missing secret")
 
 		// Wait for reconciliation and check status
-		time.Sleep(5 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		var fetched breakglassv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
@@ -557,7 +557,7 @@ func TestSecurityDenyPolicyEnforcement(t *testing.T) {
 		require.NoError(t, err, "Failed to create deny policy")
 
 		// Wait for policy to be applied
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Now try SAR for secrets - should be denied by policy
 		apiURL := helpers.GetAPIBaseURL()
@@ -645,7 +645,7 @@ func TestSecuritySessionCannotSelfApprove(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Create a session as the requester
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -729,7 +729,7 @@ func TestSecurityMultipleDenyPoliciesEnforced(t *testing.T) {
 		require.NoError(t, err, "Failed to create namespaces deny policy")
 
 		// Wait for policies to be processed
-		time.Sleep(3 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Verify all policies are created
 		var fetchedPolicies breakglassv1alpha1.DenyPolicyList
@@ -773,7 +773,7 @@ func TestSecurityMultipleDenyPoliciesEnforced(t *testing.T) {
 		err = cli.Create(ctx, policyPermissive)
 		require.NoError(t, err)
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		t.Logf("SEC-014: Overlapping policies created - strict (precedence=5) should take priority")
 	})
 }
@@ -1157,7 +1157,7 @@ func TestSecuritySessionRejectionWorkflow(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Create a session
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -1224,7 +1224,7 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Create a session
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -1268,7 +1268,7 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,

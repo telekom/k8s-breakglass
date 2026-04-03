@@ -379,7 +379,7 @@ func TestBreakglassSessionAPICreateAndGet(t *testing.T) {
 	require.NoError(t, cli.Create(ctx, escalation), "Failed to create escalation")
 
 	// Wait for escalation to settle
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Get auth tokens
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
@@ -482,7 +482,7 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 	require.NoError(t, cli.Create(ctx, escalation), "Failed to create escalation")
 
 	// Wait for escalation to settle
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Get auth tokens
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
@@ -520,7 +520,7 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status, "Approver should be able to approve: %v", err)
 
 		// Verify session is now approved (active)
-		time.Sleep(time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		updatedSession, _, err := requesterClient.GetSession(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updatedSession.Status.State,
@@ -538,7 +538,7 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 			Build()
 		cleanup.Add(rejectEscalation)
 		require.NoError(t, cli.Create(ctx, rejectEscalation), "Failed to create reject escalation")
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Create another session using the reject escalation's group
 		req := BreakglassSessionRequest{
@@ -565,7 +565,7 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status, "Approver should be able to reject: %v", err)
 
 		// Verify session is now rejected/expired
-		time.Sleep(time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 		updatedSession, _, err := requesterClient.GetSession(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 		assert.True(t, updatedSession.Status.State == breakglassv1alpha1.SessionStateRejected ||
@@ -608,7 +608,7 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 	require.NoError(t, cli.Create(ctx, escalation), "Failed to create escalation")
 
 	// Wait for escalation to settle
-	time.Sleep(2 * time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	// Get auth tokens
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
