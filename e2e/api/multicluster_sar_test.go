@@ -135,7 +135,7 @@ func TestCrossClusterSARAuthorization(t *testing.T) {
 	require.NoError(t, err, "Failed to create escalation for multi-cluster SAR test")
 
 	// Give the escalation time to be indexed
-	time.Sleep(time.Second)
+	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("SARForActiveSession", func(t *testing.T) {
 		// Create session via API using the escalation's group

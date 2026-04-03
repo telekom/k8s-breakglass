@@ -512,7 +512,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for session to be in pending state
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		// Approve as approver
 		buf := &bytes.Buffer{}
@@ -1682,7 +1682,7 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
 		// Wait for pending state
-		time.Sleep(2 * time.Second)
+		time.Sleep(helpers.CachePropagationDelay)
 
 		output, err := runWithToken(approverToken, "session", "list", "--state", "pending", "-o", "json")
 		require.NoError(t, err, "Approver should list pending sessions")
