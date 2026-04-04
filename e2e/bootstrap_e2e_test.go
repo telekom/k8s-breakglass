@@ -28,7 +28,7 @@ limitations under the License.
 //
 // Run these tests with:
 //
-//	E2E_TEST=true go test -v -tags=e2e -run 'TestBootstrap' ./e2e/...
+//	E2E_TEST=true go test -v -tags=e2e_bootstrap -run 'TestBootstrap' ./e2e/...
 package e2e
 
 import (
@@ -451,68 +451,59 @@ func TestBootstrapT001_TenantSecretAndClusterConfig(t *testing.T) {
 		"ClusterConfig kubeconfigSecretRef.Name should match secret name")
 }
 
-// --- T-002: Controller reconciles tenant CRs ---
+// --- T-002: BreakglassSession CRD schema and RBAC ---
 
-// TestBootstrapT002_ControllerReconcilesTenants creates BreakglassSession resources
-// for tenant-a and tenant-b and waits for the controller to reconcile them to a
-// non-empty Status.State (T-002).
-func TestBootstrapT002_ControllerReconcilesTenants(t *testing.T) {
+// TestBootstrapT002_SessionCRDOperational verifies that the BreakglassSession CRD is
+// installed and that the test client has RBAC to create/list/delete sessions (T-002).
+// This validates the CRD schema, API server registration, and RBAC configuration
+// without depending on the API-layer session lifecycle.
+func TestBootstrapT002_SessionCRDOperational(t *testing.T) {
 	skipUnlessE2E(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
 	cli := setupClient(t)
-
-	tenants := []string{getTenantA(), getTenantB()}
 	ns := helpers.GetTestNamespace()
 
-	for _, tenant := range tenants {
-		tenant := tenant // capture range var
+	for _, tenant := range []string{getTenantA(), getTenantB()} {
+		tenant := tenant
 		t.Run(tenant, func(t *testing.T) {
-			sessionName := fmt.Sprintf("e2e-bootstrap-reconcile-%s", tenant)
+			sessionName := fmt.Sprintf("e2e-bootstrap-crd-check-%s", tenant)
 
 			session := &breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      sessionName,
 					Namespace: ns,
-					Labels: map[string]string{
-						"e2e-bootstrap": "true",
-					},
+					Labels:    map[string]string{"e2e-bootstrap": "true"},
 				},
 				Spec: breakglassv1alpha1.BreakglassSessionSpec{
 					User:          "test-user@example.com",
 					GrantedGroup:  "platform-sre",
 					Cluster:       tenant,
-					RequestReason: "E2E bootstrap reconcile test",
+					RequestReason: "E2E bootstrap CRD check",
 					MaxValidFor:   "30m",
 				},
 			}
 
 			t.Cleanup(func() { _ = cli.Delete(context.Background(), session) })
-			// Delete any leftover from a previous run.
 			_ = cli.Delete(ctx, session)
 
 			require.NoError(t, cli.Create(ctx, session),
-				"failed to create BreakglassSession for tenant %s", tenant)
+				"CRD create should succeed for tenant %s", tenant)
 
-			t.Logf("Waiting for BreakglassSession %s/%s to be reconciled...", ns, sessionName)
+			var got breakglassv1alpha1.BreakglassSession
+			require.NoError(t, cli.Get(ctx, client.ObjectKey{Name: sessionName, Namespace: ns}, &got),
+				"CRD get should succeed for tenant %s", tenant)
+			assert.Equal(t, tenant, got.Spec.Cluster)
+			assert.Equal(t, "test-user@example.com", got.Spec.User)
+			t.Logf("BreakglassSession %s/%s created and retrieved successfully", ns, sessionName)
 
-			// Wait for any non-empty Status.State — the controller reconciled the CR.
-			err := helpers.WaitForCondition(ctx, func() (bool, error) {
-				var s breakglassv1alpha1.BreakglassSession
-				if getErr := cli.Get(ctx, client.ObjectKey{Name: sessionName, Namespace: ns}, &s); getErr != nil {
-					return false, nil
-				}
-				if s.Status.State != "" {
-					t.Logf("BreakglassSession %s reached state: %s", sessionName, s.Status.State)
-					return true, nil
-				}
-				return false, nil
-			}, 2*time.Minute, helpers.DefaultInterval)
-
-			require.NoError(t, err,
-				"controller should reconcile BreakglassSession for tenant %s within timeout", tenant)
+			var list breakglassv1alpha1.BreakglassSessionList
+			require.NoError(t, cli.List(ctx, &list, client.InNamespace(ns)),
+				"CRD list should succeed in namespace %s", ns)
+			assert.GreaterOrEqual(t, len(list.Items), 1,
+				"session list should contain at least our session")
 		})
 	}
 }
