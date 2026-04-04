@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build e2e
+//go:build e2e_bootstrap
 
 /*
 Copyright 2026.

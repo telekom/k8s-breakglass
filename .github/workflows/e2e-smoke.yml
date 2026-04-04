@@ -73,7 +73,7 @@ jobs:
       - name: Run E2E bootstrap smoke tests (C-001, C-002, K-001, K-002, W-001, W-002, T-001, T-002)
         run: >
           E2E_TEST=true
-          go test -v -tags=e2e -timeout=20m
+          go test -v -tags=e2e_bootstrap -timeout=20m
           -run 'TestBootstrap'
           ./e2e/...
         env:
