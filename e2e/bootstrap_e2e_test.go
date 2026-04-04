@@ -33,12 +33,14 @@ package e2e
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -66,19 +68,20 @@ func getBootstrapTdir() string {
 	if v := os.Getenv("TDIR"); v != "" {
 		return v
 	}
-	// Conventional location: e2e/kind-setup-single-tdir relative to repo root.
-	// __file__ is e2e/bootstrap_e2e_test.go, so repo root is one level up.
-	repoRoot := filepath.Join(filepath.Dir(mustAbs(".")), "..")
-	return filepath.Join(repoRoot, "e2e", "kind-setup-single-tdir")
-}
-
-// mustAbs returns the absolute path of the given path, panicking on error.
-func mustAbs(p string) string {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		panic(fmt.Errorf("failed to get absolute path: %w", err))
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		for _, candidate := range []string{
+			"e2e/kind-setup-single-tdir",
+			"kind-setup-single-tdir",
+		} {
+			if _, err := os.Stat(candidate); err == nil {
+				abs, _ := filepath.Abs(candidate)
+				return abs
+			}
+		}
+		return "e2e/kind-setup-single-tdir"
 	}
-	return abs
+	return filepath.Join(filepath.Dir(thisFile), "kind-setup-single-tdir")
 }
 
 // getTenantA returns the name of tenant-a from TENANT_A env or the default.
@@ -243,7 +246,12 @@ func TestBootstrapK002_JWKSReachable(t *testing.T) {
 			return false, nil
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := (&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // e2e test with self-signed cert
+			},
+			Timeout: 10 * time.Second,
+		}).Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("JWKS request failed: %w", err)
 			return false, nil
@@ -344,7 +352,7 @@ func TestBootstrapW002_WebhookKubeconfigPath(t *testing.T) {
 
 	content := string(data)
 	tenantA := getTenantA()
-	expectedPath := fmt.Sprintf("/breakglass/webhook/authorize/%s", tenantA)
+	expectedPath := fmt.Sprintf("/api/breakglass/webhook/authorize/%s", tenantA)
 
 	t.Logf("Checking webhook kubeconfig %s for path %s", webhookKcfg, expectedPath)
 	assert.Contains(t, content, expectedPath,
@@ -409,7 +417,8 @@ func TestBootstrapT001_TenantSecretAndClusterConfig(t *testing.T) {
 	// Create (or ignore already-exists) the ClusterConfig.
 	cc := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: clusterConfigName,
+			Name:      clusterConfigName,
+			Namespace: ns,
 			Labels: map[string]string{
 				"e2e-bootstrap": "true",
 			},
@@ -433,7 +442,7 @@ func TestBootstrapT001_TenantSecretAndClusterConfig(t *testing.T) {
 	// Verify the ClusterConfig exists with the expected kubeconfigSecretRef.
 	var gotCC breakglassv1alpha1.ClusterConfig
 	require.NoError(t,
-		cli.Get(ctx, client.ObjectKey{Name: clusterConfigName}, &gotCC),
+		cli.Get(ctx, client.ObjectKey{Namespace: ns, Name: clusterConfigName}, &gotCC),
 		"ClusterConfig %s should exist", clusterConfigName,
 	)
 	require.NotNil(t, gotCC.Spec.KubeconfigSecretRef,
@@ -444,9 +453,8 @@ func TestBootstrapT001_TenantSecretAndClusterConfig(t *testing.T) {
 
 // --- T-002: Controller reconciles tenant CRs ---
 
-// TestBootstrapT002_ControllerReconcilesTenants creates minimal ClusterConfig resources
-// for tenant-a and tenant-b (if not already present) and then creates a
-// BreakglassSession for each, waiting for the controller to reconcile them to a
+// TestBootstrapT002_ControllerReconcilesTenants creates BreakglassSession resources
+// for tenant-a and tenant-b and waits for the controller to reconcile them to a
 // non-empty Status.State (T-002).
 func TestBootstrapT002_ControllerReconcilesTenants(t *testing.T) {
 	skipUnlessE2E(t)

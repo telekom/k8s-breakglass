@@ -56,6 +56,19 @@ jobs:
         env:
           KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
           IMAGE: breakglass:e2e
+          SKIP_PROXY: "true"
+          SKIP_BUILD: "true"
+
+      - name: Export e2e environment
+        run: |
+          ENV_FILE="${{ github.workspace }}/e2e/kind-setup-single-tdir/e2e-env.sh"
+          if [ -f "$ENV_FILE" ]; then
+            # Source and export all vars to GITHUB_ENV
+            set -a
+            source "$ENV_FILE"
+            set +a
+            env | grep -E '^(KEYCLOAK_|BREAKGLASS_|WEBHOOK_|TDIR|TENANT_|API_PORT|METRICS_PORT)' >> "$GITHUB_ENV" || true
+          fi
 
       - name: Run E2E bootstrap smoke tests (C-001, C-002, K-001, K-002, W-001, W-002, T-001, T-002)
         run: >
