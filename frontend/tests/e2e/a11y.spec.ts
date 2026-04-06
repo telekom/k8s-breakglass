@@ -40,7 +40,10 @@ const PAGES_TO_AUDIT = [
   { path: "/requests/mine", name: "My Pending Requests" },
 ];
 
-/** Error pages (tested with mock auth like all other pages). */
+/**
+ * Error pages — require mock authentication like all other pages because
+ * App.vue only renders RouterView when authenticated.
+ */
 const ERROR_PAGES_TO_AUDIT = [
   { path: "/session", name: "Session Error (missing name)" },
   { path: "/session/test-session", name: "Session Error (incomplete URL)" },
@@ -341,7 +344,7 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
 
       // ── Error pages ──────────────────────────────────────────────
       for (const errorPage of ERROR_PAGES_TO_AUDIT) {
-        test(`${errorPage.name} (${errorPage.path}) has no critical/serious a11y violations`, async ({ page }) => {
+        test(`${errorPage.name} (${errorPage.path}) has no critical/serious a11y violations [${mode.name}]`, async ({ page }) => {
           await mode.setup(page);
 
           await performMockLogin(page);
@@ -358,7 +361,7 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
 
       // ── Modal dialogs ────────────────────────────────────────────
       for (const modal of MODALS_TO_AUDIT) {
-        test(`${modal.name} modal has no critical/serious a11y violations`, async ({ page }) => {
+        test(`${modal.name} modal has no critical/serious a11y violations [${mode.name}]`, async ({ page }) => {
           await mode.setup(page);
 
           await performMockLogin(page);

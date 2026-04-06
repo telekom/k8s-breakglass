@@ -383,7 +383,7 @@ watch(
 </script>
 
 <template>
-  <main>
+  <div>
     <a class="skip-link" href="#main">Skip to content</a>
     <scale-telekom-app-shell>
       <scale-telekom-header
@@ -414,7 +414,6 @@ watch(
               type="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
               :aria-label="highContrast ? 'Disable high contrast mode' : 'Enable high contrast mode'"
-              :aria-pressed="highContrast"
               @click="toggleHighContrast"
             >
               <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
@@ -467,7 +466,7 @@ watch(
         </scale-telekom-nav-list>
       </scale-telekom-header>
 
-      <div id="main" class="app-container">
+      <main id="main" class="app-container">
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
@@ -484,13 +483,13 @@ watch(
         <ErrorBoundary v-if="authenticated" title="Page failed to render">
           <RouterView />
         </ErrorBoundary>
-      </div>
+      </main>
 
       <ErrorToasts />
       <AutoLogoutWarning />
       <DebugPanel v-if="showDebugPanel" />
     </scale-telekom-app-shell>
-  </main>
+  </div>
 </template>
 
 <style>

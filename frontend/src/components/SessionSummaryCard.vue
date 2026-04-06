@@ -165,7 +165,13 @@ const cardClasses = computed(() => ({
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
-  padding: var(--space-sm) 0;
+  padding: var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+:root[data-high-contrast="true"] .session-summary-card__chips {
+  border-color: var(--telekom-color-ui-border-standard);
 }
 
 /* Ensure long tag content doesn't overflow */

@@ -702,7 +702,7 @@ function handleTemplateChange(ev: Event) {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--telekom-color-ui-border-standard);
+  background: var(--telekom-color-text-and-icon-additional);
   color: var(--telekom-color-text-and-icon-inverted);
   font-weight: 600;
   font-size: 0.875rem;

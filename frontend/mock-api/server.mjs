@@ -301,7 +301,7 @@ app.get("/api/reviews", (_req, res) => {
 // Cancel session (BreakglassSessionService.cancelSession)
 app.post("/api/breakglassSessions/:name/cancel", (req, res) => {
   const name = req.params.name;
-  const updated = updateSessionState(name, "Withdrawn", { reason: req.body?.reason || "Cancelled" });
+  const updated = updateSessionState(name, "Dropped", { reason: req.body?.reason || "Cancelled" });
   if (!updated) {
     return res.status(404).json({ message: `session ${name} not found` });
   }

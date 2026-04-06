@@ -333,6 +333,20 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Accessibility tests (axe-core WCAG 2.1 AA + AAA)
         run: npm run test:a11y
+      - name: Upload a11y Playwright report
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: playwright-a11y-report
+          path: frontend/playwright-report-a11y/
+          retention-days: 7
+      - name: Upload a11y test results
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: failure()
+        with:
+          name: playwright-a11y-results
+          path: frontend/test-results-a11y/
+          retention-days: 7
       - name: Upload frontend coverage
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         if: always()
