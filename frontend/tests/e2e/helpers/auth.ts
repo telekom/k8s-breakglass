@@ -387,11 +387,19 @@ export class AuthHelper {
       if (await this.isAuthenticated()) {
         return;
       }
-      // Wait for Keycloak URL to appear
+      // Wait for Keycloak URL to appear. The regex mirrors isKeycloakUrl():
+      // – hostname contains "keycloak", OR
+      // – pathname is exactly /auth (no sub-path such as /auth/callback), OR
+      // – pathname ends with /protocol/openid-connect/auth
+      // App-owned routes like /auth/callback and /auth/silent-renew are
+      // NOT matched because they have a sub-path after /auth.
       try {
-        await this.page.waitForURL(/.*(?:keycloak|\/auth[/?#]|openid-connect\/auth).*/, {
-          timeout: AuthHelper.KEYCLOAK_TIMEOUT,
-        });
+        await this.page.waitForURL(
+          /(?:\/\/[^/]*keycloak|\/auth(?:[?#]|$)|\/protocol\/openid-connect\/auth)/,
+          {
+            timeout: AuthHelper.KEYCLOAK_TIMEOUT,
+          },
+        );
       } catch {
         // If we didn't reach Keycloak, check if we're authenticated (SSO bounce)
         if (await this.isAuthenticated()) {

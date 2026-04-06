@@ -110,7 +110,7 @@ func newDebugSessionListCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster")
-	cmd.Flags().StringVar(&state, "state", "", "Filter by state (e.g. Active, Pending)")
+	cmd.Flags().StringVar(&state, "state", "", "Filter by state, comma-separated for multiple (e.g. Active,Pending)")
 	cmd.Flags().StringVar(&user, "user", "", "Filter by requesting user")
 	cmd.Flags().BoolVar(&mine, "mine", false, "Only sessions requested by current user")
 	cmd.Flags().IntVar(&page, "page", 1, "Page number")
@@ -200,7 +200,7 @@ func newDebugSessionWatchCommand() *cobra.Command {
 	}
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval (Go duration, e.g. 2s, 1m)")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster")
-	cmd.Flags().StringVar(&state, "state", "", "Filter by state (e.g. Active, Pending)")
+	cmd.Flags().StringVar(&state, "state", "", "Filter by state, comma-separated for multiple (e.g. Active,Pending)")
 	cmd.Flags().StringVar(&user, "user", "", "Filter by requesting user")
 	cmd.Flags().BoolVar(&mine, "mine", false, "Only sessions requested by current user")
 	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session JSON on change")
