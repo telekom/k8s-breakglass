@@ -86,3 +86,28 @@ spec:
 This keeps UI branding and outgoing email sender names consistent while allowing fine-grained overrides per mail provider.
 
 For complete MailProvider configuration options, see [Mail Provider documentation](./mail-provider.md).
+
+## High Contrast Mode
+
+The frontend includes a user-facing High Contrast toggle for enhanced readability, available in the header navigation.
+
+**Enabling:**
+- **UI toggle**: Click the eye icon in the header navigation bar
+- **HTML attribute**: Set `data-high-contrast="true"` on the `<html>` element
+- The setting is persisted to `localStorage`
+
+**Modes:**
+- **Light** (default)
+- **Dark** (`prefers-color-scheme: dark` or `data-theme="dark"`)
+- **High Contrast Light** (`data-high-contrast="true"`)
+- **High Contrast Dark** (`data-high-contrast="true"` + `data-theme="dark"`)
+
+**Contrast targets:**
+- All text and UI elements target WCAG AAA (7:1 contrast ratio)
+- Telekom Magenta (#e20074) is intentionally kept at AA (4.68:1) to preserve brand identity
+- See `frontend/SCALE_DEVIATIONS.md` for the complete list of contrast deviations and rationale
+
+**CI Testing:**
+- Automated axe-core accessibility tests run in CI across all four theme modes
+- Config: `frontend/playwright.a11y.config.ts`
+- Tests: `frontend/tests/e2e/a11y.spec.ts`

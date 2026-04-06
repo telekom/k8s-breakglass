@@ -60,9 +60,16 @@ function handleClick(event: Event) {
     :variant="variant"
     :size="size"
     :disabled="isDisabled"
+    :aria-busy="loading ? 'true' : undefined"
     @click="handleClick"
   >
-    <scale-loading-spinner v-if="loading" variant="white" size="small" class="action-button__spinner" />
+    <scale-loading-spinner
+      v-if="loading"
+      variant="white"
+      size="small"
+      class="action-button__spinner"
+      aria-label="Loading"
+    />
     <span v-else-if="icon" class="action-button__icon" aria-hidden="true">{{ icon }}</span>
     <span class="action-button__label">{{ displayLabel }}</span>
   </scale-button>
@@ -70,14 +77,21 @@ function handleClick(event: Event) {
 
 <style scoped>
 .action-button {
-  min-width: 6rem;
-  --radius: 999px;
+  min-width: 8rem;
+  --radius: var(--radius-pill);
+}
+
+@media (max-width: 640px) {
+  .action-button {
+    width: 100%;
+    min-width: unset;
+  }
 }
 
 /* Ensure pill shape for all button variants including danger */
 .action-button::part(button),
 .action-button::part(base) {
-  border-radius: 999px !important;
+  border-radius: var(--radius-pill) !important;
 }
 
 .action-button--loading {

@@ -382,7 +382,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="session-browser" data-testid="session-browser">
+  <div class="session-browser" data-testid="session-browser">
     <section class="filters-card" data-testid="filters-section">
       <header>
         <h2>Session Browser</h2>
@@ -598,13 +598,13 @@ onMounted(() => {
       @confirm="confirmWithdraw"
       @cancel="cancelWithdraw"
     />
-  </main>
+  </div>
 </template>
 
 <style scoped>
 .session-browser {
   display: grid;
-  grid-template-columns: minmax(320px, 380px) 1fr;
+  grid-template-columns: minmax(280px, 380px) 1fr;
   gap: var(--space-xl);
   align-items: flex-start;
   color: var(--telekom-color-text-and-icon-standard);
@@ -679,6 +679,28 @@ header p {
   margin-bottom: var(--space-md);
 }
 
+/* Style top-level filter checkboxes as pills for visual consistency with state pills */
+.filters-grid :deep(scale-checkbox) {
+  border: 1px solid var(--session-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2xs) var(--space-sm);
+  background: var(--surface-card-subtle);
+  color: var(--telekom-color-text-and-icon-standard);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.filters-grid :deep(scale-checkbox:hover) {
+  border-color: var(--accent-telekom);
+  background: var(--surface-elevated);
+}
+
+.filters-grid :deep(scale-checkbox::part(label)),
+.filters-grid :deep(scale-checkbox::part(base)) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
 .filter-flag {
   display: flex;
   align-items: center;
@@ -688,7 +710,7 @@ header p {
 }
 
 .filter-flag.disabled {
-  opacity: 0.5;
+  color: var(--telekom-color-text-and-icon-disabled);
 }
 
 .state-chooser {
@@ -709,16 +731,39 @@ header p {
   margin-top: var(--space-xs);
 }
 
+/* Style state filter checkboxes as pills with background and border */
+.state-options :deep(scale-checkbox) {
+  border: 1px solid var(--session-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2xs) var(--space-sm);
+  background: var(--surface-card-subtle);
+  color: var(--telekom-color-text-and-icon-standard);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+/* Override Scale's internal label colour to prevent magenta-on-magenta */
+.state-options :deep(scale-checkbox::part(label)),
+.state-options :deep(scale-checkbox::part(base)) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
+.state-options :deep(scale-checkbox:hover) {
+  border-color: var(--accent-telekom);
+  background: var(--surface-elevated);
+}
+
 .state-pill {
   border: 1px solid var(--session-border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: var(--space-2xs) var(--space-sm);
   display: inline-flex;
   gap: var(--space-2xs);
   align-items: center;
   font-size: 0.9rem;
-  background: var(--session-tag-bg);
-  color: var(--session-tag-text);
+  background: var(--surface-card-subtle);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .text-filters {
@@ -783,12 +828,14 @@ header p {
 .session-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-xs);
-  margin: var(--space-xs) 0 var(--space-2xs);
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 var(--space-xs);
 }
 
-.session-actions > * {
-  min-width: 120px;
+/* min-width delegated to scale-button / ActionButton defaults for consistency */
+
+.session-actions :deep(scale-button) {
+  min-width: 8rem;
 }
 
 .session-card {

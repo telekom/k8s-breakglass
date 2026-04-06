@@ -479,7 +479,7 @@ function handleTemplateChange(ev: Event) {
 </script>
 
 <template>
-  <main class="ui-page debug-session-create" data-testid="debug-session-create">
+  <div class="ui-page debug-session-create" data-testid="debug-session-create">
     <PageHeader
       title="Create Debug Session"
       :subtitle="
@@ -659,7 +659,7 @@ function handleTemplateChange(ev: Event) {
         </scale-button>
       </div>
     </div>
-  </main>
+  </div>
 </template>
 
 <style scoped>
@@ -684,15 +684,15 @@ function handleTemplateChange(ev: Event) {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  opacity: 0.5;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .step.active {
-  opacity: 1;
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .step.completed {
-  opacity: 0.8;
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .step-number {

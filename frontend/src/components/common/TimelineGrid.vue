@@ -132,7 +132,7 @@ function formatValue(value: string | Date | number | null | undefined): string {
   border: 1px solid var(--tone-chip-info-border);
   border-left: 3px solid var(--telekom-color-functional-informational-standard);
   padding: 0.5rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   margin: -0.5rem;
 }
 

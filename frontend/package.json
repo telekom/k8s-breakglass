@@ -21,6 +21,7 @@
     "test:ui": "vitest --ui",
     "test:screenshots": "playwright test",
     "test:screenshots:update": "playwright test --update-snapshots",
+    "test:a11y": "playwright test --config=playwright.a11y.config.ts",
     "test:e2e": "playwright test --config=playwright.e2e.config.ts",
     "test:e2e:ui": "playwright test --config=playwright.e2e.config.ts --ui",
     "test:e2e:debug": "playwright test --config=playwright.e2e.config.ts --debug",
@@ -39,6 +40,7 @@
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
     "@playwright/test": "^1.58.2",
     "@rollup/plugin-dynamic-import-vars": "^2.1.5",
     "@tsconfig/node22": "^22.0.5",
@@ -57,6 +59,7 @@
     "cross-env": "^10.1.0",
     "eslint": "^10.1.0",
     "eslint-plugin-vue": "^10.8.0",
+    "eslint-plugin-vuejs-accessibility": "^2.5.0",
     "express": "^5.2.1",
     "jsdom": "^29.0.1",
     "playwright": "^1.58.2",

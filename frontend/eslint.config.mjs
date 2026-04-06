@@ -1,4 +1,5 @@
 import pluginVue from "eslint-plugin-vue";
+import vuejsAccessibility from "eslint-plugin-vuejs-accessibility";
 import eslintPluginPrettierRecommended from "eslint-plugin-prettier/recommended";
 import { defineConfigWithVueTs, vueTsConfigs } from "@vue/eslint-config-typescript";
 
@@ -36,12 +37,18 @@ export default defineConfigWithVueTs(
   },
   pluginVue.configs["flat/recommended"],
   vueTsConfigs.recommended,
+  ...vuejsAccessibility.configs["flat/recommended"],
   {
     rules: {
       "vue/attribute-hyphenation": "off",
       "vue/v-on-event-hyphenation": "off",
       "vue/no-deprecated-slot-attribute": "off",
       "no-console": ["error", { allow: ["warn", "error"] }],
+      "vuejs-accessibility/label-has-for": "off",
+      "vuejs-accessibility/form-control-has-label": "off",
+      // radiogroup containers delegate focus to child role="radio" elements
+      // via roving tabindex — the container itself must NOT be focusable.
+      "vuejs-accessibility/interactive-supports-focus": "off",
     },
   },
   {

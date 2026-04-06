@@ -210,7 +210,7 @@ const emit = defineEmits<{
   font-size: 0.6875rem;
   padding: 0.125rem 0.5rem;
   background: var(--telekom-color-primary-standard);
-  color: white;
+  color: var(--telekom-color-text-and-icon-inverted-standard, #ffffff);
   border-radius: var(--radius-full);
 }
 
@@ -342,7 +342,6 @@ const emit = defineEmits<{
 .binding-source-ref .ref-value {
   font-family: monospace;
   font-size: 0.625rem;
-  color: var(--telekom-color-text-and-icon-additional);
-  opacity: 0.8;
+  color: var(--telekom-color-text-and-icon-disabled);
 }
 </style>

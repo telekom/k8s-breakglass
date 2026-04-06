@@ -100,11 +100,11 @@ describe("BreakglassSessionCard", () => {
       expect(statusTag.text()).toBe("Approved");
     });
 
-    it("displays user and IDP chips", () => {
+    it("displays user in subtitle and IDP chip", () => {
       const wrapper = mountCard();
-      const html = wrapper.html();
-      expect(html).toContain("alice@example.com");
-      expect(html).toContain("Keycloak");
+      const summaryCard = wrapper.findComponent({ name: "SessionSummaryCard" });
+      expect(summaryCard.props("subtitle")).toBe("alice@example.com");
+      expect(wrapper.html()).toContain("Keycloak");
     });
 
     it("displays session name chip", () => {

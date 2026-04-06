@@ -4,7 +4,7 @@ import { test, expect, Page } from "@playwright/test";
  * UI Screenshot Tests for Breakglass Frontend
  *
  * These tests navigate to each page of the application and capture screenshots
- * in both light and dark mode for visual regression testing and PR review.
+ * in light, dark, and high-contrast mode for visual regression testing and PR review.
  *
  * The app runs with VITE_USE_MOCK_AUTH=true, which uses mock authentication.
  */
@@ -65,14 +65,27 @@ async function navigateTo(page: Page, path: string) {
   await page.waitForLoadState("networkidle");
 }
 
-// Helper to set theme (light or dark) using Playwright's color scheme emulation
+/** Theme mode type for screenshot tests. */
+type ThemeMode = "light" | "dark" | "high-contrast";
+
+// Helper to set theme (light, dark, or high-contrast) using Playwright's color scheme emulation
 // This triggers the app's prefers-color-scheme media query handling
-async function setTheme(page: Page, theme: "light" | "dark") {
-  await page.emulateMedia({ colorScheme: theme });
-  // Also set the attribute directly to ensure immediate effect
-  await page.evaluate((t) => {
-    document.documentElement.setAttribute("data-theme", t);
-  }, theme);
+async function setTheme(page: Page, theme: ThemeMode) {
+  if (theme === "high-contrast") {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.evaluate(() => {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-mode", "light");
+      document.documentElement.setAttribute("data-high-contrast", "true");
+    });
+  } else {
+    await page.emulateMedia({ colorScheme: theme });
+    await page.evaluate((t) => {
+      document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.setAttribute("data-mode", t);
+      document.documentElement.removeAttribute("data-high-contrast");
+    }, theme);
+  }
   await page.waitForTimeout(200);
 }
 
@@ -88,12 +101,12 @@ const pages = [
   { name: "not-found", path: "/nonexistent-page", title: "404 Not Found" },
 ];
 
-// Generate tests for each page in both themes
+// Generate tests for each page in all theme modes
 for (const pageInfo of pages) {
-  for (const theme of ["light", "dark"] as const) {
+  for (const theme of ["light", "dark", "high-contrast"] as const) {
     test(`${pageInfo.title} - ${theme} mode`, async ({ page }) => {
       // Set color scheme BEFORE loading page so app initializes with correct theme
-      await page.emulateMedia({ colorScheme: theme });
+      await page.emulateMedia({ colorScheme: theme === "high-contrast" ? "light" : theme });
       await page.setViewportSize({ width: 1280, height: 720 });
       await performMockLogin(page);
 
@@ -121,10 +134,10 @@ const responsiveTests = [
 ];
 
 for (const responsive of responsiveTests) {
-  for (const theme of ["light", "dark"] as const) {
+  for (const theme of ["light", "dark", "high-contrast"] as const) {
     test(`Responsive: ${responsive.name} - ${theme} mode`, async ({ page }) => {
       // Set color scheme BEFORE loading page so app initializes with correct theme
-      await page.emulateMedia({ colorScheme: theme });
+      await page.emulateMedia({ colorScheme: theme === "high-contrast" ? "light" : theme });
       await performMockLogin(page);
       await page.setViewportSize({ width: responsive.width, height: responsive.height });
 

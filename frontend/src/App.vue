@@ -35,8 +35,39 @@ let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
 let desktopBreakpointQuery: MediaQueryList | null = null;
 let desktopBreakpointHandler: ((event: MediaQueryListEvent) => void) | null = null;
 
+const highContrast = ref(getInitialHighContrast());
+
+function getInitialHighContrast(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem("breakglass-high-contrast") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function applyHighContrast(value: boolean) {
+  if (typeof document !== "undefined") {
+    if (value) {
+      document.documentElement.setAttribute("data-high-contrast", "true");
+    } else {
+      document.documentElement.removeAttribute("data-high-contrast");
+    }
+  }
+}
+
+function toggleHighContrast() {
+  highContrast.value = !highContrast.value;
+  try {
+    localStorage.setItem("breakglass-high-contrast", String(highContrast.value));
+  } catch {
+    // Ignore storage errors (private mode, blocked storage, sandboxed iframes)
+  }
+}
+
 if (typeof document !== "undefined") {
   applyTheme(theme.value);
+  applyHighContrast(highContrast.value);
 }
 
 function getInitialTheme(): "light" | "dark" {
@@ -49,11 +80,16 @@ function getInitialTheme(): "light" | "dark" {
 function applyTheme(value: "light" | "dark") {
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", value);
+    // Scale Design System uses data-mode for internal token resolution (e.g.
+    // --telekom-color-functional-*-subtle). Keep it in sync so that Scale
+    // component shadow-DOM styles resolve to the correct dark-mode palette.
+    document.documentElement.setAttribute("data-mode", value);
   }
 }
 
 onMounted(() => {
   applyTheme(theme.value);
+  applyHighContrast(highContrast.value);
   if (typeof window === "undefined") return;
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
@@ -81,6 +117,10 @@ onBeforeUnmount(() => {
 
 watch(theme, (value) => {
   applyTheme(value);
+});
+
+watch(highContrast, (value) => {
+  applyHighContrast(value);
 });
 
 // Branding provided by backend; fallback to a neutral placeholder string if
@@ -354,12 +394,13 @@ watch(
         :logo-title="brandingTitle"
         :logo-href="homeHref"
       >
-        <scale-telekom-nav-list v-if="authenticated" slot="main-nav" variant="main-nav">
+        <scale-telekom-nav-list v-if="authenticated" slot="main-nav" variant="main-nav" aria-label="Main navigation">
           <scale-telekom-nav-item
             v-for="item in primaryNavItems"
             :key="item.id"
             variant="main-nav"
             :active="activeNavId === item.id"
+            :aria-current="activeNavId === item.id ? 'page' : undefined"
           >
             <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
               {{ item.label }}
@@ -368,6 +409,18 @@ watch(
         </scale-telekom-nav-list>
 
         <scale-telekom-nav-list slot="functions" variant="functions" alignment="right" class="header-functions">
+          <scale-telekom-nav-item class="hc-toggle-nav-item">
+            <button
+              type="button"
+              :class="['hc-toggle-button', { 'hc-active': highContrast }]"
+              :aria-label="highContrast ? 'Disable high contrast mode' : 'Enable high contrast mode'"
+              :aria-pressed="highContrast"
+              @click="toggleHighContrast"
+            >
+              <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
+            </button>
+          </scale-telekom-nav-item>
+
           <scale-telekom-nav-item class="profile-nav-item">
             <scale-telekom-profile-menu
               v-if="authenticated"
@@ -401,6 +454,7 @@ watch(
                     v-for="item in primaryNavItems"
                     :key="`mobile-${item.id}`"
                     :active="activeNavId === item.id"
+                    :aria-current="activeNavId === item.id ? 'page' : undefined"
                   >
                     <a :href="navHref(item)" @click="handleMobileNavItemClick($event, item)">
                       {{ item.label }}
@@ -444,6 +498,41 @@ watch(
 </style>
 
 <style scoped>
+scale-telekom-header::part(app-name-text) {
+  font-size: 1.17rem;
+}
+
+.hc-toggle-nav-item {
+  display: flex;
+  align-items: center;
+}
+
+.hc-toggle-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--telekom-radius-standard, 0.5rem);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--telekom-color-text-and-icon-standard);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.hc-toggle-button:hover {
+  background-color: var(--surface-card-subtle);
+}
+
+.hc-toggle-button.hc-active {
+  background-color: var(--telekom-color-functional-informational-subtle, #d3d7f9);
+  border-color: var(--telekom-color-functional-informational-standard, #2238df);
+  color: var(--telekom-color-functional-informational-standard, #2238df);
+}
+
 .center {
   text-align: center;
 }

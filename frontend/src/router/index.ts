@@ -101,17 +101,58 @@ router.beforeEach((to, from, next) => {
   next();
 });
 
+/** Handle id for the post-navigation focus timer so rapid navigations cancel the previous one. */
+let focusTimerId: ReturnType<typeof setTimeout> | null = null;
+
 router.afterEach((to, from, failure) => {
+  // Cancel any pending focus move from a previous navigation regardless of outcome
+  if (focusTimerId !== null) {
+    clearTimeout(focusTimerId);
+    focusTimerId = null;
+  }
+
   if (failure) {
     logger.error("Router", "Navigation failed", failure, {
       from: from.path,
       to: to.path,
     });
-  } else if (isDev) {
-    logger.debug("Router", "Navigation completed", {
-      path: to.path,
-      name: to.name,
-    });
+  } else {
+    if (isDev) {
+      logger.debug("Router", "Navigation completed", {
+        path: to.path,
+        name: to.name,
+      });
+    }
+
+    // Move focus to the main heading after navigation for screen readers.
+    // Guarded: skip if the user (or a component) has already placed focus
+    // inside #main so we don't override intentional focus targets.
+    focusTimerId = setTimeout(() => {
+      focusTimerId = null;
+      const mainEl = document.getElementById("main");
+      if (mainEl && mainEl.contains(document.activeElement)) {
+        return; // User or component already focused something inside main
+      }
+      const heading = document.querySelector("#main h1, #main h2") as HTMLElement | null;
+      if (heading) {
+        const previousTabIndex = heading.getAttribute("tabindex");
+        heading.setAttribute("tabindex", "-1");
+        heading.focus({ preventScroll: false });
+        // Restore original tabindex on blur to avoid persistent DOM mutations
+        // while allowing screen readers time to read the element
+        heading.addEventListener(
+          "blur",
+          () => {
+            if (previousTabIndex === null) {
+              heading.removeAttribute("tabindex");
+            } else {
+              heading.setAttribute("tabindex", previousTabIndex);
+            }
+          },
+          { once: true },
+        );
+      }
+    }, 150);
   }
 });
 

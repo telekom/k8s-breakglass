@@ -12,6 +12,7 @@ import { handleAxiosError } from "@/services/logger";
 import { pushError, pushSuccess } from "@/services/toast";
 import type { AxiosLikeError } from "@/model/errors";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
+import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 
 const route = useRoute();
 const user = useUser();
@@ -303,11 +304,8 @@ async function onCancel(bg: SessionCR) {
 </script>
 
 <template>
-  <main v-if="authenticated" class="ui-page review-session-page" data-testid="session-review-page">
-    <div class="page-heading">
-      <h2 class="ui-page-title">Review Session</h2>
-      <p class="ui-page-subtitle">Inspect outstanding sessions and take action when needed.</p>
-    </div>
+  <div v-if="authenticated" class="ui-page review-session-page" data-testid="session-review-page">
+    <PageHeader title="Review Session" subtitle="Inspect outstanding sessions and take action when needed." />
 
     <section class="review-toolbar ui-toolbar" aria-label="Session filters">
       <div class="review-toolbar__field ui-toolbar-field">
@@ -345,11 +343,13 @@ async function onCancel(bg: SessionCR) {
       {{ state.getBreakglassesMsg }}
     </div>
 
-    <div v-if="state.loading" class="loading-state" role="status" aria-live="polite">Loading sessions…</div>
-    <div v-else-if="filteredBreakglasses.length === 0" class="empty-state" role="status" aria-live="polite">
-      <p>No sessions match the current filters.</p>
-      <p class="ui-muted">Try clearing the search or turning off "Active only".</p>
-    </div>
+    <LoadingState v-if="state.loading" message="Loading sessions…" />
+    <EmptyState
+      v-else-if="filteredBreakglasses.length === 0"
+      variant="search"
+      title="No sessions match the current filters."
+      description='Try clearing the search or turning off "Active only".'
+    />
     <div v-else class="masonry-layout">
       <BreakglassSessionCard
         v-for="bg in filteredBreakglasses"
@@ -381,18 +381,12 @@ async function onCancel(bg: SessionCR) {
         @cancel="closeReviewModal"
       />
     </scale-modal>
-  </main>
+  </div>
 </template>
 
 <style scoped>
 .review-session-page {
   gap: var(--space-lg);
-}
-
-.page-heading {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
 }
 
 .review-toolbar {
