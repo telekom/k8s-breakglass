@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,7 +21,7 @@ func (c *Client) DebugSessions() *DebugSessionService {
 
 type DebugSessionListOptions struct {
 	Cluster string
-	State   string
+	State   []string
 	User    string
 	Mine    bool
 }
@@ -103,8 +104,11 @@ func (s *DebugSessionService) List(ctx context.Context, opts DebugSessionListOpt
 	if opts.Cluster != "" {
 		params.Set("cluster", opts.Cluster)
 	}
-	if opts.State != "" {
-		params.Set("state", opts.State)
+	for _, s := range opts.State {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			params.Add("state", s)
+		}
 	}
 	if opts.User != "" {
 		params.Set("user", opts.User)

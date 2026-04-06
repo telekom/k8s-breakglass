@@ -5,6 +5,26 @@
 import { Page } from "@playwright/test";
 
 /**
+ * Matches Keycloak OIDC URL patterns, while excluding the app's own
+ * /auth/callback and /auth/silent-renew redirect routes.
+ * Matches:
+ *   - URLs containing "keycloak" in the hostname
+ *   - Keycloak login path: /auth? /auth# /auth followed by non-callback chars
+ *   - OpenID Connect auth endpoint: openid-connect/auth
+ * Does NOT match:
+ *   - /auth/callback (app redirect handler)
+ *   - /auth/silent-renew (app silent refresh handler)
+ */
+function isKeycloakUrl(url: string): boolean {
+  if (url.includes("keycloak")) return true;
+  if (url.includes("openid-connect/auth")) return true;
+  // Match /auth? /auth# /auth followed by end-of-path — but not /auth/callback or /auth/silent-renew
+  if (/\/auth[?#]/.test(url)) return true;
+  if (/\/auth$/.test(url)) return true;
+  return false;
+}
+
+/**
  * Test user configuration for E2E tests.
  * These users MUST match the Keycloak realm configuration in:
  *   config/dev/resources/breakglass-e2e-realm.json
@@ -220,6 +240,34 @@ export const TEST_USERS: TestUsers = {
 export class AuthHelper {
   constructor(private page: Page) {}
 
+  private static readonly AUTH_STATE_TIMEOUT = 30_000;
+
+  /**
+   * Wait for authenticated state using deterministic Playwright locator waits
+   * instead of a polling loop. This avoids consuming the Playwright test timeout
+   * inside a busy-wait that interacts poorly with CI environments.
+   */
+  private async waitForAuthenticatedState(timeoutMs = AuthHelper.AUTH_STATE_TIMEOUT): Promise<boolean> {
+    const authSelectors = [
+      '[data-testid="user-menu"]',
+      '[data-testid="escalation-list"]',
+      'h1:has-text("Request access")',
+    ];
+
+    // Build a combined locator using .or() so Playwright waits for ANY indicator
+    let combined = this.page.locator(authSelectors[0]);
+    for (let i = 1; i < authSelectors.length; i++) {
+      combined = combined.or(this.page.locator(authSelectors[i]));
+    }
+
+    try {
+      await combined.first().waitFor({ state: "visible", timeout: timeoutMs });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Check if user is already authenticated by looking for authenticated UI elements.
    * Returns true if authenticated elements are visible, false otherwise.
@@ -255,7 +303,7 @@ export class AuthHelper {
   async clickLoginButton(): Promise<boolean> {
     // Check if we're already on Keycloak
     const currentUrl = this.page.url();
-    if (currentUrl.includes("keycloak") || currentUrl.includes("/auth/")) {
+    if (currentUrl.includes("keycloak") || isKeycloakUrl(currentUrl)) {
       return false;
     }
 
@@ -309,14 +357,36 @@ export class AuthHelper {
     if (!clicked) {
       // Check if we're already on Keycloak
       const currentUrl = this.page.url();
-      if (!currentUrl.includes("keycloak") && !currentUrl.includes("/auth/")) {
+      if (!currentUrl.includes("keycloak") && !isKeycloakUrl(currentUrl)) {
         throw new Error(`Login button not found and not on Keycloak. Current URL: ${currentUrl}`);
       }
     }
 
-    // Wait for Keycloak login page — use generous timeout because Keycloak's
-    // JVM can be slow in CI (cold-start on kind cluster runners).
-    await this.page.waitForURL(/.*keycloak.*|.*auth.*/, { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
+    // Wait for Keycloak login page. In CI, the redirect may complete immediately
+    // (existing SSO session) or take time (cold JVM start). Use waitForURL with a
+    // generous timeout instead of a polling loop — polling consumes the Playwright
+    // test timeout and causes flaky failures in CI.
+    const currentUrlAfterClick = this.page.url();
+    const alreadyOnKeycloak = currentUrlAfterClick.includes("keycloak") || isKeycloakUrl(currentUrlAfterClick);
+
+    if (!alreadyOnKeycloak) {
+      // Check if we bounced through Keycloak and are already authenticated
+      if (await this.isAuthenticated()) {
+        return;
+      }
+      // Wait for Keycloak URL to appear
+      try {
+        await this.page.waitForURL(/.*(?:keycloak|\/auth[/?#]|openid-connect\/auth).*/, {
+          timeout: AuthHelper.KEYCLOAK_TIMEOUT,
+        });
+      } catch {
+        // If we didn't reach Keycloak, check if we're authenticated (SSO bounce)
+        if (await this.isAuthenticated()) {
+          return;
+        }
+        throw new Error(`Timed out waiting for Keycloak or authenticated app state. Current URL: ${this.page.url()}`);
+      }
+    }
 
     // Fill login form
     await this.page.fill("#username", user.username);
@@ -325,30 +395,14 @@ export class AuthHelper {
 
     // Wait for redirect back to app (use regex to match any localhost port)
     await this.page.waitForURL(/localhost:\d+/, { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
+    await this.page.waitForLoadState("networkidle", { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
 
-    // Verify logged in state - wait for authenticated content to appear
-    // The profile menu (data-testid="user-menu") may not be accessible in CI due to
-    // Telekom Scale web component Shadow DOM rendering. Instead, verify authentication
-    // by checking that the main authenticated content is visible.
-    // Try multiple selectors in order of preference:
-    // 1. User menu (ideal) - works when Scale components render correctly
-    // 2. Escalation list (fallback) - shows when authenticated
-    // 3. "Request access" heading (final fallback) - in authenticated view
-    const authVerificationSelectors = [
-      '[data-testid="user-menu"]',
-      '[data-testid="escalation-list"]',
-      'h1:has-text("Request access")',
-    ];
-
-    let verified = false;
-    for (const selector of authVerificationSelectors) {
-      try {
-        await this.page.locator(selector).waitFor({ state: "visible", timeout: 5000 });
-        verified = true;
-        break;
-      } catch {
-        // Try next selector
-      }
+    let verified = await this.waitForAuthenticatedState();
+    if (!verified) {
+      // One extra recovery attempt helps when SPA hydration is delayed in CI.
+      await this.page.goto("/");
+      await this.page.waitForLoadState("networkidle", { timeout: AuthHelper.KEYCLOAK_TIMEOUT });
+      verified = await this.waitForAuthenticatedState();
     }
 
     if (!verified) {

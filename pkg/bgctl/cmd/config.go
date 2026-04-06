@@ -392,7 +392,7 @@ func newConfigDeleteContextCommand() *cobra.Command {
 				filtered = append(filtered, ctx)
 			}
 			if !found {
-				return fmt.Errorf("context not found: %s", name)
+				return fmt.Errorf("context not found: %s (run 'bgctl config get-contexts' to list contexts)", name)
 			}
 			rt.cfg.Contexts = filtered
 			if rt.cfg.CurrentContext == name {

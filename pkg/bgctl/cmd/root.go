@@ -103,7 +103,7 @@ func NewRootCommand(cfg Config) *cobra.Command {
 
 	root.PersistentFlags().StringVar(&rt.configPath, "config", rt.configPath, "Path to config file")
 	root.PersistentFlags().StringVarP(&rt.contextOverride, "context", "c", "", "Context name override")
-	root.PersistentFlags().StringVarP(&rt.outputFormat, "output", "o", "", "Output format: table, json, yaml")
+	root.PersistentFlags().StringVarP(&rt.outputFormat, "output", "o", "", "Output format override: table, wide, json, yaml (support depends on command)")
 	root.PersistentFlags().StringVar(&rt.serverOverride, "server", "", "Server override (bypass config)")
 	root.PersistentFlags().StringVar(&rt.tokenOverride, "token", "", "Bearer token override")
 	root.PersistentFlags().StringVar(&rt.tokenStorageOverride, "token-storage", "", "Token storage backend: keychain or file")

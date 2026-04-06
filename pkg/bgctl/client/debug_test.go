@@ -70,6 +70,24 @@ func TestDebugSessionsList(t *testing.T) {
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, result.Sessions[0].State)
 }
 
+func TestDebugSessionsListWithStateFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/debugSessions", r.URL.Path)
+		require.Equal(t, []string{"active", "pending"}, r.URL.Query()["state"])
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(DebugSessionListResponse{Sessions: []DebugSessionSummary{}, Total: 0})
+	}))
+	defer server.Close()
+
+	client, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+
+	_, err = client.DebugSessions().List(context.Background(), DebugSessionListOptions{
+		State: []string{"active", "pending"},
+	})
+	require.NoError(t, err)
+}
+
 func TestDebugSessionsGet(t *testing.T) {
 	debugSession := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
