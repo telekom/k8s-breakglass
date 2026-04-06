@@ -5,23 +5,36 @@
 import { Page } from "@playwright/test";
 
 /**
- * Matches Keycloak OIDC URL patterns, while excluding the app's own
- * /auth/callback and /auth/silent-renew redirect routes.
+ * Matches only Keycloak OIDC login endpoints and explicitly excludes app-owned
+ * auth callback routes such as /auth/callback and /auth/silent-renew.
+ *
  * Matches:
- *   - URLs containing "keycloak" in the hostname
- *   - Keycloak login path: /auth? /auth# /auth followed by non-callback chars
- *   - OpenID Connect auth endpoint: openid-connect/auth
+ *   - URLs containing "keycloak" in the host (any path)
+ *   - Pathname exactly equal to /auth (Keycloak's own login endpoint)
+ *   - Pathname ending with /protocol/openid-connect/auth
+ *
  * Does NOT match:
  *   - /auth/callback (app redirect handler)
  *   - /auth/silent-renew (app silent refresh handler)
+ *   - Any other /auth/* sub-path
  */
 function isKeycloakUrl(url: string): boolean {
-  if (url.includes("keycloak")) return true;
-  if (url.includes("openid-connect/auth")) return true;
-  // Match /auth? /auth# /auth followed by end-of-path — but not /auth/callback or /auth/silent-renew
-  if (/\/auth[?#]/.test(url)) return true;
-  if (/\/auth$/.test(url)) return true;
-  return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+
+  if (pathname === "/auth/callback" || pathname === "/auth/silent-renew") {
+    return false;
+  }
+
+  if (parsed.hostname.includes("keycloak")) return true;
+
+  return pathname === "/auth" || pathname.endsWith("/protocol/openid-connect/auth");
 }
 
 /**
@@ -303,7 +316,7 @@ export class AuthHelper {
   async clickLoginButton(): Promise<boolean> {
     // Check if we're already on Keycloak
     const currentUrl = this.page.url();
-    if (currentUrl.includes("keycloak") || isKeycloakUrl(currentUrl)) {
+    if (isKeycloakUrl(currentUrl)) {
       return false;
     }
 
@@ -357,7 +370,7 @@ export class AuthHelper {
     if (!clicked) {
       // Check if we're already on Keycloak
       const currentUrl = this.page.url();
-      if (!currentUrl.includes("keycloak") && !isKeycloakUrl(currentUrl)) {
+      if (!isKeycloakUrl(currentUrl)) {
         throw new Error(`Login button not found and not on Keycloak. Current URL: ${currentUrl}`);
       }
     }
@@ -367,7 +380,7 @@ export class AuthHelper {
     // generous timeout instead of a polling loop — polling consumes the Playwright
     // test timeout and causes flaky failures in CI.
     const currentUrlAfterClick = this.page.url();
-    const alreadyOnKeycloak = currentUrlAfterClick.includes("keycloak") || isKeycloakUrl(currentUrlAfterClick);
+    const alreadyOnKeycloak = isKeycloakUrl(currentUrlAfterClick);
 
     if (!alreadyOnKeycloak) {
       // Check if we bounced through Keycloak and are already authenticated

@@ -11,13 +11,13 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/output"
 )
 
-func TestUnknownOutputFormatError_WithSupportedFormats(t *testing.T) {
-	err := unknownOutputFormatError("xml", output.FormatTable, output.FormatJSON, output.FormatYAML)
+func TestUnsupportedOutputFormatError_WithSupportedFormats(t *testing.T) {
+	err := unsupportedOutputFormatError("xml", output.FormatTable, output.FormatJSON, output.FormatYAML)
 	assert.EqualError(t, err, "unsupported output format: xml (choose from: table, json, yaml)")
 }
 
-func TestUnknownOutputFormatError_WithoutSupportedFormats(t *testing.T) {
-	err := unknownOutputFormatError("xml")
+func TestUnsupportedOutputFormatError_WithoutSupportedFormats(t *testing.T) {
+	err := unsupportedOutputFormatError("xml")
 	assert.EqualError(t, err, "unsupported output format: xml")
 }
 

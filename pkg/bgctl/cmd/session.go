@@ -196,7 +196,7 @@ func newSessionListCommand() *cobra.Command {
 				}
 				return nil
 			default:
-				return unknownOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}

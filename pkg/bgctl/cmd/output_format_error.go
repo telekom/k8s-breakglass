@@ -17,7 +17,7 @@ func validateOutputFormat(format output.Format, supported ...output.Format) erro
 			return nil
 		}
 	}
-	return unknownOutputFormatError(format, supported...)
+	return unsupportedOutputFormatError(format, supported...)
 }
 
 func writeRuntimeObject(rt *runtimeState, obj any, supported ...output.Format) error {
@@ -28,7 +28,9 @@ func writeRuntimeObject(rt *runtimeState, obj any, supported ...output.Format) e
 	return output.WriteObject(rt.Writer(), format, obj)
 }
 
-func unknownOutputFormatError(format output.Format, supported ...output.Format) error {
+// unsupportedOutputFormatError returns an error indicating that the given
+// format is not supported by the current command, listing the supported choices.
+func unsupportedOutputFormatError(format output.Format, supported ...output.Format) error {
 	if len(supported) == 0 {
 		return fmt.Errorf("unsupported output format: %s", format)
 	}
