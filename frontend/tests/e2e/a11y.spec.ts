@@ -344,7 +344,9 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
 
       // ── Error pages ──────────────────────────────────────────────
       for (const errorPage of ERROR_PAGES_TO_AUDIT) {
-        test(`${errorPage.name} (${errorPage.path}) has no critical/serious a11y violations [${mode.name}]`, async ({ page }) => {
+        test(`${errorPage.name} (${errorPage.path}) has no critical/serious a11y violations [${mode.name}]`, async ({
+          page,
+        }) => {
           await mode.setup(page);
 
           await performMockLogin(page);
