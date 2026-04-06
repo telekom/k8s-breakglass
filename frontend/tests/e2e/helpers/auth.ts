@@ -394,12 +394,9 @@ export class AuthHelper {
       // App-owned routes like /auth/callback and /auth/silent-renew are
       // NOT matched because they have a sub-path after /auth.
       try {
-        await this.page.waitForURL(
-          /(?:\/\/[^/]*keycloak|\/auth(?:[?#]|$)|\/protocol\/openid-connect\/auth)/,
-          {
-            timeout: AuthHelper.KEYCLOAK_TIMEOUT,
-          },
-        );
+        await this.page.waitForURL(/(?:\/\/[^/]*keycloak|\/auth(?:[?#]|$)|\/protocol\/openid-connect\/auth)/, {
+          timeout: AuthHelper.KEYCLOAK_TIMEOUT,
+        });
       } catch {
         // If we didn't reach Keycloak, check if we're authenticated (SSO bounce)
         if (await this.isAuthenticated()) {
