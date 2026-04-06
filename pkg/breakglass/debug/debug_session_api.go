@@ -260,8 +260,9 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 
 	// Get query parameters for filtering
 	cluster := ctx.Query("cluster")
-	// Accept repeated ?state= params (e.g. ?state=active&state=pending) as well as
-	// a legacy single comma-separated value (e.g. ?state=active,pending).
+	// Accept repeated ?state= params (e.g. ?state=Active&state=Pending) as well as
+	// a legacy single comma-separated value (e.g. ?state=Active,Pending).
+	// Comparison is case-insensitive so both "Active" and "active" match.
 	var states []string
 	for _, v := range ctx.QueryArray("state") {
 		for _, s := range strings.Split(v, ",") {
@@ -307,7 +308,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		if len(states) > 0 {
 			matched := false
 			for _, st := range states {
-				if string(s.Status.State) == st {
+				if strings.EqualFold(string(s.Status.State), st) {
 					matched = true
 					break
 				}

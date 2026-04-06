@@ -104,10 +104,10 @@ func (s *DebugSessionService) List(ctx context.Context, opts DebugSessionListOpt
 	if opts.Cluster != "" {
 		params.Set("cluster", opts.Cluster)
 	}
-	for _, state := range opts.State {
-		state = strings.TrimSpace(state)
-		if state != "" {
-			params.Add("state", state)
+	for _, stateVal := range opts.State {
+		stateVal = strings.TrimSpace(stateVal)
+		if stateVal != "" {
+			params.Add("state", stateVal)
 		}
 	}
 	if opts.User != "" {

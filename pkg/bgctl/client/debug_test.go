@@ -73,7 +73,7 @@ func TestDebugSessionsList(t *testing.T) {
 func TestDebugSessionsListWithStateFilter(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/debugSessions", r.URL.Path)
-		require.Equal(t, []string{"active", "pending"}, r.URL.Query()["state"])
+		require.Equal(t, []string{"Active", "Pending"}, r.URL.Query()["state"])
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(DebugSessionListResponse{Sessions: []DebugSessionSummary{}, Total: 0})
 	}))
@@ -83,7 +83,7 @@ func TestDebugSessionsListWithStateFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = client.DebugSessions().List(context.Background(), DebugSessionListOptions{
-		State: []string{"active", "pending"},
+		State: []string{"Active", "Pending"},
 	})
 	require.NoError(t, err)
 }
