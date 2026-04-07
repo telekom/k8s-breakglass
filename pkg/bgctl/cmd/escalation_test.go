@@ -351,5 +351,5 @@ func TestEscalationGetCommand_UnknownFormatError(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown output format")
+	assert.Contains(t, err.Error(), "unsupported output format")
 }
