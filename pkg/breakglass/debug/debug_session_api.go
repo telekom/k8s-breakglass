@@ -817,8 +817,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, response)
 }
 
-// validDebugSessionStates is the canonical set of allowed DebugSession state values.
-// Used to validate the ?state= query parameter in handleListDebugSessions.
+// validDebugSessionStates is the canonical set of allowed DebugSession state values
+// used to validate the ?state= query parameter in handleListDebugSessions.
+//
+// A parallel map (canonicalDebugSessionStates) exists in pkg/bgctl/client for
+// client-side normalisation of user-supplied state strings (lowercase → canonical).
+// The two maps cannot be unified: they live in different packages, serve different
+// purposes (server validation vs. client normalisation), and merging them would
+// introduce a circular import. Both derive from the same breakglassv1alpha1
+// constants, so they remain structurally in sync as new states are added.
 var validDebugSessionStates = map[string]struct{}{
 	string(breakglassv1alpha1.DebugSessionStatePending):         {},
 	string(breakglassv1alpha1.DebugSessionStatePendingApproval): {},
