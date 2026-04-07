@@ -13,12 +13,12 @@ import (
 
 func TestUnsupportedOutputFormatError_WithSupportedFormats(t *testing.T) {
 	err := unsupportedOutputFormatError("xml", output.FormatTable, output.FormatJSON, output.FormatYAML)
-	assert.EqualError(t, err, "unsupported output format: xml (choose from: table, json, yaml)")
+	assert.EqualError(t, err, "unsupported output format: \"xml\" (choose from: table, json, yaml)")
 }
 
 func TestUnsupportedOutputFormatError_WithoutSupportedFormats(t *testing.T) {
 	err := unsupportedOutputFormatError("xml")
-	assert.EqualError(t, err, "unsupported output format: xml")
+	assert.EqualError(t, err, "unsupported output format: \"xml\"")
 }
 
 func TestValidateOutputFormat_Valid(t *testing.T) {
@@ -28,5 +28,5 @@ func TestValidateOutputFormat_Valid(t *testing.T) {
 
 func TestValidateOutputFormat_Invalid(t *testing.T) {
 	err := validateOutputFormat("xml", output.FormatJSON, output.FormatYAML)
-	assert.EqualError(t, err, "unsupported output format: xml (choose from: json, yaml)")
+	assert.EqualError(t, err, "unsupported output format: \"xml\" (choose from: json, yaml)")
 }

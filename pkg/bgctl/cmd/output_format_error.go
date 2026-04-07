@@ -32,7 +32,7 @@ func writeRuntimeObject(rt *runtimeState, obj any, supported ...output.Format) e
 // format is not supported by the current command, listing the supported choices.
 func unsupportedOutputFormatError(format output.Format, supported ...output.Format) error {
 	if len(supported) == 0 {
-		return fmt.Errorf("unsupported output format: %s", format)
+		return fmt.Errorf("unsupported output format: %q", format)
 	}
 
 	choices := make([]string, 0, len(supported))
@@ -40,5 +40,5 @@ func unsupportedOutputFormatError(format output.Format, supported ...output.Form
 		choices = append(choices, string(value))
 	}
 
-	return fmt.Errorf("unsupported output format: %s (choose from: %s)", format, strings.Join(choices, ", "))
+	return fmt.Errorf("unsupported output format: %q (choose from: %s)", format, strings.Join(choices, ", "))
 }

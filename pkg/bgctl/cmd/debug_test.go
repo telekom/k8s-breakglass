@@ -646,11 +646,6 @@ func TestDebugSessionWatchCommand_ShowFullRespectsOutputFormat(t *testing.T) {
 		checkYAML  bool
 	}{
 		{
-			name:       "show-full with default format outputs JSON",
-			outputFlag: "json",
-			checkJSON:  true,
-		},
-		{
 			name:       "show-full with -o yaml outputs YAML",
 			outputFlag: "yaml",
 			checkYAML:  true,

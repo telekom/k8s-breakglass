@@ -177,7 +177,9 @@ func newDebugSessionWatchCommand() *cobra.Command {
 					if prev, ok := seen[key]; !ok || prev != value {
 						seen[key] = value
 						if showFull {
-							_ = output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), s)
+							if err := output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), s); err != nil {
+								return err
+							}
 						} else {
 							_, _ = fmt.Fprintf(rt.Writer(), "%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, s.State)
 						}
@@ -210,7 +212,7 @@ func newDebugSessionWatchCommand() *cobra.Command {
 	cmd.Flags().StringVar(&state, "state", "", "Filter by state, comma-separated for multiple (e.g. Active,Pending)")
 	cmd.Flags().StringVar(&user, "user", "", "Filter by requesting user")
 	cmd.Flags().BoolVar(&mine, "mine", false, "Only sessions requested by current user")
-	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session JSON on change")
+	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session on change (respects -o json|yaml)")
 	return cmd
 }
 

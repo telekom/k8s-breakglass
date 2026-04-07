@@ -817,8 +817,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, response)
 }
 
-// handleJoinDebugSession allows a user to join an existing debug session
-
 // validDebugSessionStates is the canonical set of allowed DebugSession state values.
 // Used to validate the ?state= query parameter in handleListDebugSessions.
 var validDebugSessionStates = map[string]struct{}{
