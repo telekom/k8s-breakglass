@@ -688,6 +688,12 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 
 	// Approve session via API if pending approval - must use approver client
 	if session.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval {
+		// Refresh the approver token right before the API call: WaitForDebugSessionStateAny can
+		// block for up to 60-89 seconds while the session is provisioned, which is long enough
+		// for the OIDC token (typically 5 min TTL) to expire and cause a 401 UNAUTHORIZED.
+		freshTC := helpers.NewTestContext(t, ctx)
+		approverAPI.AuthToken = freshTC.GetApproverToken()
+
 		err = approverAPI.ApproveDebugSession(ctx, t, session.Name, "Approved by E2E test")
 		require.NoError(t, err, "Failed to approve session via API")
 
@@ -780,6 +786,12 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
 
 	// Reject the session via API - must use approver client
+	// Refresh the approver token right before the API call: WaitForDebugSessionStateAny can
+	// block for up to 60-89 seconds while the session is provisioned, which is long enough
+	// for the OIDC token (typically 5 min TTL) to expire and cause a 401 UNAUTHORIZED.
+	freshTC := helpers.NewTestContext(t, ctx)
+	approverAPI.AuthToken = freshTC.GetApproverToken()
+
 	err = approverAPI.RejectDebugSession(ctx, t, session.Name, "Insufficient justification provided")
 	require.NoError(t, err, "Failed to reject session via API")
 
