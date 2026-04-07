@@ -271,6 +271,13 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			}
 		}
 	}
+	// Validate each requested state value against the canonical set.
+	for _, st := range states {
+		if !isValidDebugSessionState(st) {
+			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("invalid state value: '%s'", st))
+			return
+		}
+	}
 	user := ctx.Query("user")
 	mine := ctx.Query("mine") == "true"
 
@@ -811,3 +818,25 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 }
 
 // handleJoinDebugSession allows a user to join an existing debug session
+
+// validDebugSessionStates is the canonical set of allowed DebugSession state values.
+// Used to validate the ?state= query parameter in handleListDebugSessions.
+var validDebugSessionStates = map[string]struct{}{
+	string(breakglassv1alpha1.DebugSessionStatePending):         {},
+	string(breakglassv1alpha1.DebugSessionStatePendingApproval): {},
+	string(breakglassv1alpha1.DebugSessionStateActive):          {},
+	string(breakglassv1alpha1.DebugSessionStateExpired):         {},
+	string(breakglassv1alpha1.DebugSessionStateTerminated):      {},
+	string(breakglassv1alpha1.DebugSessionStateFailed):          {},
+}
+
+// isValidDebugSessionState returns true when val (case-insensitive) matches
+// one of the canonical DebugSessionState values.
+func isValidDebugSessionState(val string) bool {
+	for k := range validDebugSessionStates {
+		if strings.EqualFold(k, val) {
+			return true
+		}
+	}
+	return false
+}

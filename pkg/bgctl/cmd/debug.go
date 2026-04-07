@@ -177,7 +177,7 @@ func newDebugSessionWatchCommand() *cobra.Command {
 					if prev, ok := seen[key]; !ok || prev != value {
 						seen[key] = value
 						if showFull {
-							_ = output.WriteObject(rt.Writer(), output.FormatJSON, s)
+							_ = output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), s)
 						} else {
 							_, _ = fmt.Fprintf(rt.Writer(), "%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, s.State)
 						}
