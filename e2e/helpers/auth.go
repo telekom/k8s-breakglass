@@ -549,9 +549,10 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 }
 
 // waitForKeycloakPortForward waits for Keycloak to be reachable via the discovery endpoint
-// before proceeding. This is a non-fatal pre-check used by GetToken to bridge the ~2s gap
+// before proceeding. This is a non-fatal pre-check used by GetToken,
+// ObtainOfflineRefreshToken, and ObtainOfflineRefreshTokenWithRetry to bridge the ~2s gap
 // when the kubectl port-forward keepalive loop restarts. If still unreachable after the
-// wait window, it logs a warning and returns — GetToken's own retry logic handles the error.
+// wait window, it logs a warning and returns — the caller's own retry logic handles the error.
 //
 // The check is skipped when InitialBackoff > 0 (unit-test mode) because tests use an
 // in-process httptest.Server instead of a real port-forward, and the probe must not
@@ -621,6 +622,9 @@ func (p *OIDCTokenProvider) probeKeycloakOnce(ctx context.Context, client *http.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return false
+	}
+	if p.IssuerHost != "" {
+		req.Host = p.IssuerHost
 	}
 	resp, err := client.Do(req)
 	if err != nil {
