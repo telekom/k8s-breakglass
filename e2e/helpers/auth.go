@@ -167,18 +167,10 @@ retryLoop:
 	return token
 }
 
-// isUnitTestMode reports whether this provider is operating in unit-test mode.
-// Unit tests set InitialBackoff > 0 to use an in-process httptest.Server with
-// fast retry durations, rather than a real Keycloak port-forward. This flag is
-// used to skip probes that would otherwise consume mock HTTP calls.
-func (p *OIDCTokenProvider) isUnitTestMode() bool {
-	return p.InitialBackoff > 0
-}
-
 // initialBackoff returns the initial backoff duration for retry logic.
 // Tests can override InitialBackoff to use shorter durations.
 func (p *OIDCTokenProvider) initialBackoff() time.Duration {
-	if p.isUnitTestMode() {
+	if p.InitialBackoff > 0 {
 		return p.InitialBackoff
 	}
 	return defaultInitialBackoff
@@ -238,15 +230,6 @@ func (p *OIDCTokenProvider) getTokenViaHTTP(ctx context.Context, username, passw
 	// This is needed when port-forwarding to Keycloak but the IdentityProvider expects the in-cluster URL.
 	if p.IssuerHost != "" {
 		req.Host = p.IssuerHost
-	}
-
-	// Flush any stale keep-alive connections in the shared transport before each
-	// attempt. If the port-forward was restarted, connections established before
-	// the restart will return EOF. CloseIdleConnections forces a fresh TCP
-	// handshake on the next request, complementing the waitForKeycloakPortForward
-	// pre-check which uses a separate short-lived client.
-	if tr, ok := httpClient.Transport.(*http.Transport); ok {
-		tr.CloseIdleConnections()
 	}
 
 	resp, err := httpClient.Do(req)
@@ -322,7 +305,6 @@ func (p *OIDCTokenProvider) GetSeniorApproverToken(t *testing.T, ctx context.Con
 // to retrieve an offline refresh token from Keycloak. This token can be stored
 // in a K8s Secret and used by the controller to exchange for access tokens.
 func (p *OIDCTokenProvider) ObtainOfflineRefreshToken(t *testing.T, ctx context.Context, username, password string) string {
-	p.waitForKeycloakPortForward(t, ctx)
 	keycloakHost := p.KeycloakHost
 	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
 		keycloakHost = "https://" + keycloakHost
@@ -481,9 +463,6 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx
 				return "" // unreachable
 			case <-timer.C:
 			}
-			// After backoff, verify Keycloak port-forward has recovered before next attempt.
-			// The keepalive wrapper restarts in ~2s, but we need the new connection to be stable.
-			p.waitForKeycloakPortForward(t, ctx)
 			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
@@ -549,10 +528,9 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 }
 
 // waitForKeycloakPortForward waits for Keycloak to be reachable via the discovery endpoint
-// before proceeding. This is a non-fatal pre-check used by GetToken,
-// ObtainOfflineRefreshToken, and ObtainOfflineRefreshTokenWithRetry to bridge the ~2s gap
+// before proceeding. This is a non-fatal pre-check used by GetToken to bridge the ~2s gap
 // when the kubectl port-forward keepalive loop restarts. If still unreachable after the
-// wait window, it logs a warning and returns — the caller's own retry logic handles the error.
+// wait window, it logs a warning and returns — GetToken's own retry logic handles the error.
 //
 // The check is skipped when InitialBackoff > 0 (unit-test mode) because tests use an
 // in-process httptest.Server instead of a real port-forward, and the probe must not
@@ -560,7 +538,9 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context.Context) {
 	t.Helper()
 
-	if p.isUnitTestMode() {
+	// Skip in unit-test mode: tests set InitialBackoff > 0 and use an in-process
+	// httptest.Server — no port-forward exists, and we must not consume mock HTTP calls.
+	if p.InitialBackoff > 0 {
 		return
 	}
 
@@ -573,13 +553,11 @@ func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
-			DisableKeepAlives: true,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
 			},
 		},
 	}
-	defer client.CloseIdleConnections()
 
 	// Fast path: probe once — zero delay on happy path.
 	if p.probeKeycloakOnce(ctx, client, discoveryURL) {
@@ -587,16 +565,12 @@ func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context
 	}
 
 	// Slow path: port-forward may be restarting — wait up to 8s, polling every 500ms.
-	// Use context.WithTimeout to bound the total wall-clock delay at maxWait regardless
-	// of how long individual probes block (each can take up to the client timeout).
 	const pollInterval = 500 * time.Millisecond
 	const maxWait = 8 * time.Second
 
 	t.Logf("Keycloak not reachable at %s — port-forward may be restarting, waiting up to %v", discoveryURL, maxWait)
 
-	waitCtx, cancel := context.WithTimeout(ctx, maxWait)
-	defer cancel()
-
+	deadline := time.Now().Add(maxWait)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -604,11 +578,12 @@ func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context
 		select {
 		case <-ctx.Done():
 			return
-		case <-waitCtx.Done():
-			t.Logf("warning: Keycloak still not reachable at %s after %v — proceeding anyway; GetToken retry will handle errors", discoveryURL, maxWait)
-			return
 		case <-ticker.C:
-			if p.probeKeycloakOnce(waitCtx, client, discoveryURL) {
+			if p.probeKeycloakOnce(ctx, client, discoveryURL) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Logf("warning: Keycloak still not reachable at %s after %v — proceeding anyway; GetToken retry will handle errors", discoveryURL, maxWait)
 				return
 			}
 		}
@@ -622,9 +597,6 @@ func (p *OIDCTokenProvider) probeKeycloakOnce(ctx context.Context, client *http.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return false
-	}
-	if p.IssuerHost != "" {
-		req.Host = p.IssuerHost
 	}
 	resp, err := client.Do(req)
 	if err != nil {
