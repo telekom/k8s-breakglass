@@ -167,10 +167,18 @@ retryLoop:
 	return token
 }
 
+// isUnitTestMode reports whether this provider is operating in unit-test mode.
+// Unit tests set InitialBackoff > 0 to use an in-process httptest.Server with
+// fast retry durations, rather than a real Keycloak port-forward. This flag is
+// used to skip probes that would otherwise consume mock HTTP calls.
+func (p *OIDCTokenProvider) isUnitTestMode() bool {
+	return p.InitialBackoff > 0
+}
+
 // initialBackoff returns the initial backoff duration for retry logic.
 // Tests can override InitialBackoff to use shorter durations.
 func (p *OIDCTokenProvider) initialBackoff() time.Duration {
-	if p.InitialBackoff > 0 {
+	if p.isUnitTestMode() {
 		return p.InitialBackoff
 	}
 	return defaultInitialBackoff
@@ -551,9 +559,7 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context.Context) {
 	t.Helper()
 
-	// Skip in unit-test mode: tests set InitialBackoff > 0 and use an in-process
-	// httptest.Server — no port-forward exists, and we must not consume mock HTTP calls.
-	if p.InitialBackoff > 0 {
+	if p.isUnitTestMode() {
 		return
 	}
 
