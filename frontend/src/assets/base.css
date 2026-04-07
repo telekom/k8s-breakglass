@@ -29,29 +29,29 @@
    * SEMANTIC SPACING ALIASES
    * Maps Scale spacing tokens to semantic names
    * ============================================ */
-  
+
   /* Component internal spacing */
-  --space-2xs: var(--scl-spacing-2, 0.125rem);   /* 2px - hairline gaps */
-  --space-xs: var(--scl-spacing-4, 0.25rem);    /* 4px - tight internal padding */
-  --space-sm: var(--scl-spacing-8, 0.5rem);     /* 8px - small gaps, chip padding */
-  --space-md: var(--scl-spacing-12, 0.75rem);   /* 12px - default internal gaps */
-  --space-lg: var(--scl-spacing-16, 1rem);      /* 16px - section gaps */
-  --space-xl: var(--scl-spacing-24, 1.5rem);    /* 24px - large gaps, card padding */
-  --space-2xl: var(--scl-spacing-32, 2rem);     /* 32px - section separation */
-  --space-3xl: var(--scl-spacing-48, 3rem);     /* 48px - page-level gaps */
+  --space-2xs: var(--scl-spacing-2, 0.125rem); /* 2px - hairline gaps */
+  --space-xs: var(--scl-spacing-4, 0.25rem); /* 4px - tight internal padding */
+  --space-sm: var(--scl-spacing-8, 0.5rem); /* 8px - small gaps, chip padding */
+  --space-md: var(--scl-spacing-12, 0.75rem); /* 12px - default internal gaps */
+  --space-lg: var(--scl-spacing-16, 1rem); /* 16px - section gaps */
+  --space-xl: var(--scl-spacing-24, 1.5rem); /* 24px - large gaps, card padding */
+  --space-2xl: var(--scl-spacing-32, 2rem); /* 32px - section separation */
+  --space-3xl: var(--scl-spacing-48, 3rem); /* 48px - page-level gaps */
 
   /* Card & Container padding */
   --card-padding: var(--scl-spacing-24, 1.5rem);
   --card-padding-sm: var(--scl-spacing-16, 1rem);
   --card-gap: var(--scl-spacing-16, 1rem);
-  
+
   /* Stack & flow gaps */
   --stack-gap-xs: var(--scl-spacing-4, 0.25rem);
   --stack-gap-sm: var(--scl-spacing-8, 0.5rem);
   --stack-gap-md: var(--scl-spacing-12, 0.75rem);
   --stack-gap-lg: var(--scl-spacing-16, 1rem);
   --stack-gap-xl: var(--scl-spacing-24, 1.5rem);
-  
+
   /* Grid gaps */
   --grid-gap: var(--scl-spacing-16, 1rem);
   --grid-gap-lg: var(--scl-spacing-24, 1.5rem);
@@ -73,7 +73,11 @@
   --surface-card-translucent: color-mix(in srgb, var(--surface-card) 80%, transparent);
   --surface-toolbar: var(--telekom-color-background-surface, #ffffff);
   --border-strong: var(--telekom-color-ui-border-standard);
-  --shadow-card: var(--telekom-shadow-raised-standard, 0px 8px 32px 0px hsla(0, 0%, 0%, 0.1), 0px 4px 8px 0px hsla(0, 0%, 0%, 0.1));
+  --shadow-card: var(
+    --telekom-shadow-raised-standard,
+    0px 8px 32px 0px hsla(0, 0%, 0%, 0.1),
+    0px 4px 8px 0px hsla(0, 0%, 0%, 0.1)
+  );
 
   --focus-outline: var(--telekom-color-functional-focus-standard, #2238df);
 
@@ -124,7 +128,7 @@
  * ============================================ */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  
+
   --telekom-color-text-and-icon-additional: #c0c0c0 !important;
 
   /* Strengthen borders for dark mode — Scale default is rgba(255,255,255,0.4)
@@ -184,25 +188,25 @@
   --telekom-color-text-and-icon-standard: #000000;
   --telekom-color-text-and-icon-additional: #1a1a1a !important;
   --telekom-color-text-and-icon-disabled: #595959;
-  
+
   /* Solid surfaces — no translucency */
   --surface-card-subtle: var(--telekom-color-background-surface-subtle, #efeff0);
   --surface-card-translucent: var(--surface-card);
-  
+
   /* Stronger borders */
   --border-strong: #000000;
   --telekom-color-ui-border-standard: #595959;
-  
+
   /* Enhanced tone chip text — darker for better contrast on subtle backgrounds */
   --tone-chip-info-text: #0d1570;
   --tone-chip-success-text: #003d26;
   --tone-chip-warning-text: #6b3300;
   --tone-chip-danger-text: #8a0700;
   --tone-chip-neutral-text: #000000;
-  
+
   --chip-text: #730040;
   --chip-bg: color-mix(in srgb, #730040 10%, transparent);
-  
+
   /* Stronger focus indicator */
   --focus-outline: #000000;
 }
@@ -212,13 +216,13 @@
   --telekom-color-text-and-icon-standard: #ffffff;
   --telekom-color-text-and-icon-additional: #e0e0e0 !important;
   --telekom-color-text-and-icon-disabled: #a0a0a0;
-  
+
   --surface-card-subtle: var(--telekom-color-background-surface-subtle, #242426);
   --surface-card-translucent: var(--surface-card);
-  
+
   --border-strong: #ffffff;
   --telekom-color-ui-border-standard: #a0a0a0;
-  
+
   /* AAA 7:1 minimum — values are slightly lighter than dark-mode defaults
    * to guarantee enhanced contrast on the same dark tone backgrounds.
    * info #ccd8ff on #131f7b = 9.8:1, success #80f0c0 on #004829 = 7.7:1,
@@ -228,10 +232,10 @@
   --tone-chip-warning-text: #ffd9b3;
   --tone-chip-danger-text: #ffcec7;
   --tone-chip-neutral-text: #ffffff;
-  
+
   --chip-text: #ffa4cc;
   --chip-bg: #4a0030;
-  
+
   --focus-outline: #ffffff;
 }
 
@@ -389,7 +393,8 @@ body {
 
 #app {
   min-height: 100vh;
-  background: radial-gradient(circle at top right, color-mix(in srgb, var(--accent-info) 12%, transparent) 0%, transparent 50%),
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent-info) 12%, transparent) 0%, transparent 50%),
     radial-gradient(circle at 15% 15%, color-mix(in srgb, var(--accent-telekom) 8%, transparent) 0%, transparent 40%),
     var(--surface-primary);
 }
@@ -1019,11 +1024,11 @@ select:focus {
     --surface-toolbar: Canvas;
     --border-strong: CanvasText;
     --shadow-card: none;
-    
+
     --chip-bg: Canvas;
     --chip-border: GrayText;
     --chip-text: ButtonText;
-    
+
     --tone-chip-info-bg: Canvas;
     --tone-chip-info-border: Highlight;
     --tone-chip-info-text: CanvasText;
@@ -1039,16 +1044,16 @@ select:focus {
     --tone-chip-neutral-bg: Canvas;
     --tone-chip-neutral-border: GrayText;
     --tone-chip-neutral-text: CanvasText;
-    
+
     --accent-telekom: LinkText;
     --accent-warning: CanvasText;
     --accent-success: CanvasText;
     --accent-info: Highlight;
     --accent-critical: CanvasText;
-    
+
     --focus-outline: Highlight;
   }
-  
+
   /* Ensure borders are visible in forced colors */
   scale-card,
   .ui-toolbar,
