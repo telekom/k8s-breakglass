@@ -5,7 +5,16 @@ import { useErrors, dismissError } from "@/services/toast";
 const { errors } = useErrors();
 
 const BASE_VERTICAL_OFFSET = 16;
-const STACK_SPACING = 108;
+const STACK_SPACING_DEFAULT = 108;
+const STACK_SPACING_COMPACT = 72;
+const COMPACT_VIEWPORT_HEIGHT = 600;
+
+function stackSpacing(): number {
+  if (typeof window !== "undefined" && window.innerHeight < COMPACT_VIEWPORT_HEIGHT) {
+    return STACK_SPACING_COMPACT;
+  }
+  return STACK_SPACING_DEFAULT;
+}
 
 function headingFor(error: AppError) {
   if (error.type === "success") {
@@ -41,7 +50,7 @@ function handleToastClosed(id: string) {
 }
 
 function verticalOffset(index: number) {
-  return BASE_VERTICAL_OFFSET + index * STACK_SPACING;
+  return BASE_VERTICAL_OFFSET + index * stackSpacing();
 }
 </script>
 

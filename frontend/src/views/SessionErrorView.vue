@@ -35,7 +35,7 @@ const handleViewSessions = () => {
   <div class="session-error-view">
     <div class="error-container">
       <div class="error-icon">
-        <scale-icon-action-circle-close size="64"></scale-icon-action-circle-close>
+        <scale-icon-action-circle-close size="64" decorative></scale-icon-action-circle-close>
       </div>
 
       <h1 class="error-title">Invalid Session Link</h1>
@@ -58,7 +58,7 @@ const handleViewSessions = () => {
 
       <div class="action-buttons">
         <scale-button variant="primary" @click="handleGoHome">
-          <scale-icon-home slot="icon-before"></scale-icon-home>
+          <scale-icon-home slot="icon-before" decorative></scale-icon-home>
           Return to Home
         </scale-button>
         <scale-button variant="secondary" @click="handleViewSessions"> View All Sessions </scale-button>
@@ -73,7 +73,7 @@ const handleViewSessions = () => {
   align-items: center;
   justify-content: center;
   min-height: calc(100vh - 200px);
-  padding: 2rem;
+  padding: var(--space-2xl);
 }
 
 .error-container {
@@ -84,13 +84,13 @@ const handleViewSessions = () => {
 
 .error-icon {
   color: var(--scl-color-danger);
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-xl);
 }
 
 .error-title {
   font-size: 1.75rem;
   font-weight: 600;
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-xl);
   color: var(--scl-color-danger);
 }
 
@@ -99,21 +99,21 @@ const handleViewSessions = () => {
 }
 
 .error-content code {
-  background-color: rgba(0, 0, 0, 0.1);
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
+  background-color: var(--surface-card-subtle, rgba(0, 0, 0, 0.1));
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
   font-family: "Courier New", monospace;
   font-size: 0.9rem;
 }
 
 .action-buttons {
   display: flex;
-  gap: 1rem;
+  gap: var(--space-lg);
   justify-content: center;
-  margin-top: 2rem;
+  margin-top: var(--space-2xl);
 }
 
 .mt-3 {
-  margin-top: 1rem;
+  margin-top: var(--space-lg);
 }
 </style>

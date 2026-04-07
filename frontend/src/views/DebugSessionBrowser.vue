@@ -244,7 +244,7 @@ function onStateToggle(state: string, event: Event) {
 </script>
 
 <template>
-  <main class="ui-page debug-session-browser" data-testid="debug-session-browser">
+  <div class="ui-page debug-session-browser" data-testid="debug-session-browser">
     <PageHeader title="Debug Sessions" subtitle="Browse and manage debug sessions for temporary cluster access." />
 
     <div class="toolbar">
@@ -352,7 +352,7 @@ function onStateToggle(state: string, event: Event) {
         <scale-button variant="primary" @click="confirmRenew">Renew</scale-button>
       </div>
     </scale-modal>
-  </main>
+  </div>
 </template>
 
 <style scoped>

@@ -139,6 +139,83 @@ describe("CountdownTimer", () => {
     });
   });
 
+  describe("screen-reader announcements", () => {
+    it("renders a polite live region", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() + 90_000).toISOString());
+      const liveRegion = w.find('[aria-live="polite"]');
+
+      expect(liveRegion.exists()).toBe(true);
+    });
+
+    it("announces one minute remaining at 60 seconds", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() + 60_000).toISOString());
+
+      expect(w.find(".sr-only").text()).toBe("1 minute remaining");
+    });
+
+    it("announces 30 seconds remaining at 30 seconds", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() + 30_000).toISOString());
+
+      expect(w.find(".sr-only").text()).toBe("30 seconds remaining");
+    });
+
+    it("announces each second from 10 seconds remaining to expiry", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() + 10_000).toISOString());
+      const srOnly = () => w.find(".sr-only");
+
+      expect(srOnly().text()).toBe("10 seconds remaining");
+
+      for (let secondsRemaining = 9; secondsRemaining >= 1; secondsRemaining -= 1) {
+        vi.advanceTimersByTime(1_000);
+        await nextTick();
+        expect(srOnly().text()).toBe(`${secondsRemaining} ${secondsRemaining === 1 ? "second" : "seconds"} remaining`);
+      }
+    });
+
+    it("announces timer expired when the countdown reaches zero", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() + 1_000).toISOString());
+
+      vi.advanceTimersByTime(1_000);
+      await nextTick();
+
+      expect(w.find(".sr-only").text()).toBe("Timer expired");
+    });
+
+    it("announces timer expired when expiresAt changes to a past value", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() + 5 * 60_000).toISOString());
+
+      await w.setProps({ expiresAt: new Date(now.getTime() - 1_000).toISOString() });
+      await nextTick();
+
+      expect(w.find(".sr-only").text()).toBe("Timer expired");
+    });
+
+    it("announces timer expired on mount when expiresAt is already in the past", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() - 5_000).toISOString());
+
+      expect(w.find(".sr-only").text()).toBe("Timer expired");
+    });
+
+    it("clears stale announcement text when expiresAt changes to a new value", async () => {
+      const now = new Date("2030-06-15T12:00:00Z");
+      const w = await mountAt(now, new Date(now.getTime() + 60_000).toISOString());
+
+      expect(w.find(".sr-only").text()).toBe("1 minute remaining");
+
+      await w.setProps({ expiresAt: new Date(now.getTime() + 5 * 60_000).toISOString() });
+      await nextTick();
+
+      expect(w.find(".sr-only").text()).toBe("");
+    });
+  });
+
   describe("lifecycle", () => {
     it("clears interval on unmount", async () => {
       const now = new Date("2030-06-15T12:00:00Z");

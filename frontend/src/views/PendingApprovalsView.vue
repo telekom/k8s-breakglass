@@ -1,10 +1,10 @@
 <template>
-  <main class="ui-page approvals-page" data-testid="pending-approvals-view">
+  <div class="ui-page approvals-page" data-testid="pending-approvals-view">
     <PageHeader
       title="Pending Approvals"
       subtitle="Review and approve access requests from your team members."
       :badge="`${sortedSessions.length} of ${pendingSessions.length}`"
-      badge-variant="info"
+      badge-variant="neutral"
     />
 
     <!-- Filter and Sort Controls -->
@@ -87,20 +87,23 @@
               </template>
               <template v-else>No expiry set</template>
             </small>
-            <span
-              class="tone-chip"
-              :class="`tone-chip--${session.urgency}`"
-              :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
-            >
-              <scale-icon-alert-warning
-                v-if="getUrgencyLabel(session.urgency).icon === 'alert-warning'"
-                size="14"
-                decorative
-              />
-              <scale-icon-content-clock v-else size="14" decorative />
-              {{ getUrgencyLabel(session.urgency).text }}
-            </span>
-            <StatusTag :status="getSessionState(session)" />
+            <div class="timer-panel__separator" role="presentation"></div>
+            <div class="timer-panel__tags">
+              <span
+                class="tone-chip"
+                :class="`tone-chip--${session.urgency}`"
+                :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
+              >
+                <scale-icon-alert-warning
+                  v-if="getUrgencyLabel(session.urgency).icon === 'alert-warning'"
+                  size="14"
+                  decorative
+                />
+                <scale-icon-content-clock v-else size="14" decorative />
+                {{ getUrgencyLabel(session.urgency).text }}
+              </span>
+              <StatusTag :status="getSessionState(session)" />
+            </div>
           </div>
         </template>
 
@@ -109,11 +112,11 @@
             {{ session.metadata.name }}
           </scale-tag>
           <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">
-            <scale-icon-content-calendar size="14" decorative style="margin-right: 4px; vertical-align: middle" />
+            <scale-icon-content-calendar size="14" decorative class="tag-icon" />
             Scheduled
           </scale-tag>
           <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">
-            <scale-icon-action-edit size="14" decorative style="margin-right: 4px; vertical-align: middle" />
+            <scale-icon-action-edit size="14" decorative class="tag-icon" />
             Note required
           </scale-tag>
         </template>
@@ -141,7 +144,10 @@
             <div v-if="session.matchingApproverGroups?.length" class="session-section">
               <div class="session-section__header">
                 <span class="label">Matching approver groups</span>
-                <scale-tag size="small" variant="info">{{ session.matchingApproverGroups.length }} groups</scale-tag>
+                <scale-tag size="small" variant="neutral"
+                  >{{ session.matchingApproverGroups.length }}
+                  {{ session.matchingApproverGroups.length === 1 ? "group" : "groups" }}</scale-tag
+                >
               </div>
               <div class="session-pill-list">
                 <scale-tag
@@ -214,7 +220,7 @@
         @cancel="closeApproveModal"
       />
     </scale-modal>
-  </main>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -518,10 +524,19 @@ onMounted(fetchPendingApprovals);
 }
 
 /* Using global .masonry-layout class from base.css for sessions-list */
+/* Override: approval cards are too content-dense for 3 columns — cap at 2 */
+.masonry-layout {
+  column-count: 2;
+}
+
+@media (max-width: 768px) {
+  .masonry-layout {
+    column-count: 1;
+  }
+}
 
 .approval-card-shell {
   border-left: 5px solid transparent;
-  padding-left: var(--space-2xs);
   transition: border-color 0.2s ease;
 }
 
@@ -577,11 +592,10 @@ onMounted(fetchPendingApprovals);
   background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-lg);
-  padding: var(--space-md) var(--space-lg);
-  min-width: 220px;
+  padding: var(--space-xl) var(--space-xl);
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-md);
 }
 
 .countdown-label {
@@ -600,6 +614,19 @@ onMounted(fetchPendingApprovals);
   font-size: 0.8rem;
 }
 
+.timer-panel__separator {
+  height: 1px;
+  background: var(--telekom-color-ui-border-standard);
+  opacity: 0.5;
+}
+
+.timer-panel__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
 .countdown-value {
   display: flex;
   flex-direction: column;
@@ -611,7 +638,12 @@ onMounted(fetchPendingApprovals);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-/* tone-chip classes are defined globally in base.css */
+/* tone-chip and tone-callout classes are defined globally in base.css */
+
+.tag-icon {
+  margin-right: var(--space-xs);
+  vertical-align: middle;
+}
 
 .mono-tag {
   font-family: var(--telekom-typography-font-family-mono, monospace);
@@ -621,10 +653,11 @@ onMounted(fetchPendingApprovals);
 .approval-footer {
   width: 100%;
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: var(--space-md);
   flex-wrap: wrap;
   align-items: center;
+  padding-top: var(--space-lg);
 }
 
 .action-row {
@@ -633,11 +666,9 @@ onMounted(fetchPendingApprovals);
   flex-wrap: wrap;
 }
 
-.action-row > * {
-  min-width: 150px;
-}
+/* min-width delegated to ActionButton.vue for consistency */
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .timer-panel,
   .approval-footer,
   .action-row {

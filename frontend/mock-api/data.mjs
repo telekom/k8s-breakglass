@@ -1813,6 +1813,11 @@ export function updateSessionState(name, state, opts = {}) {
   if (state === "Withdrawn") {
     session.status.reason = opts.reason || "Withdrawn via mock API";
   }
+  if (state === "Canceled") {
+    session.status.reason = opts.reason || "Canceled via mock API";
+    session.status.reasonEnded = opts.reasonEnded || "canceled";
+    session.status.canceledAt = opts.canceledAt || new Date().toISOString();
+  }
   if (state === "Dropped") {
     session.status.reason = opts.reason || "Session dropped";
   }

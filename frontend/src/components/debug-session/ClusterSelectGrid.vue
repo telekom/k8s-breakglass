@@ -351,12 +351,11 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 .multiple-bindings-indicator .bindings-preview {
   width: 100%;
   font-size: 0.6875rem;
-  color: var(--telekom-color-text-and-icon-standard);
+  color: var(--telekom-color-text-and-icon-additional);
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  opacity: 0.85;
 }
 
 .cluster-extra-info {

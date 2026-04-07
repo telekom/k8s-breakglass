@@ -247,6 +247,9 @@ function handleRenew() {
   border-radius: var(--radius-md);
   overflow: hidden;
   transition: box-shadow 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .debug-session-card:hover {
@@ -293,6 +296,7 @@ function handleRenew() {
 
 .card-body {
   padding: var(--space-md);
+  flex: 1;
 }
 
 .status-message {
@@ -339,7 +343,7 @@ function handleRenew() {
 }
 
 .info-item .value.expires {
-  color: var(--telekom-color-functional-warning-standard);
+  color: var(--tone-chip-warning-text);
   font-weight: 500;
 }
 

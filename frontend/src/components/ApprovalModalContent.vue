@@ -25,7 +25,7 @@
 
     <!-- Activation status badge -->
     <div v-if="session.status?.state === 'WaitingForScheduledTime'" class="modal-pill tone-info">
-      ⏳ Pending activation
+      <span aria-hidden="true">⏳</span> Pending activation
     </div>
 
     <!-- Immediate session timing -->
@@ -56,9 +56,7 @@
     </p>
 
     <div class="modal-actions">
-      <scale-button data-testid="approve-button" :disabled="isApproving" @click="$emit('approve')">
-        Confirm Approve
-      </scale-button>
+      <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
       <scale-button
         data-testid="reject-button"
         variant="danger"
@@ -67,7 +65,9 @@
       >
         Reject
       </scale-button>
-      <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
+      <scale-button data-testid="approve-button" :disabled="isApproving" @click="$emit('approve')">
+        Confirm Approve
+      </scale-button>
     </div>
   </div>
 </template>
@@ -162,12 +162,22 @@ function handleNoteChange(ev: Event) {
   background: var(--tone-chip-info-bg);
   border: 1px solid var(--tone-chip-info-border);
   border-left: 3px solid var(--telekom-color-functional-informational-standard);
+  color: var(--tone-chip-info-text);
+}
+
+.modal-info-block.tone-info p {
+  color: var(--tone-chip-info-text);
 }
 
 .modal-info-block.tone-warn {
   background: var(--tone-chip-warning-bg);
   border: 1px solid var(--tone-chip-warning-border);
   border-left: 3px solid var(--telekom-color-functional-warning-standard);
+  color: var(--tone-chip-warning-text);
+}
+
+.modal-info-block.tone-warn p {
+  color: var(--tone-chip-warning-text);
 }
 
 .modal-pill {
@@ -176,7 +186,7 @@ function handleNoteChange(ev: Event) {
   gap: var(--space-2xs);
   margin-top: var(--space-sm);
   padding: var(--space-xs) var(--space-sm);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-weight: 600;
   text-transform: uppercase;
   font-size: 0.85rem;
@@ -220,31 +230,33 @@ function handleNoteChange(ev: Event) {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-md);
-  justify-content: center;
+  justify-content: flex-end;
   padding: var(--space-lg) 0 var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
 /* Ensure all buttons have pill shape */
 .modal-actions :deep(scale-button) {
-  --radius: 999px;
+  --radius: var(--radius-pill);
 }
 
 .modal-actions :deep(scale-button)::part(button),
 .modal-actions :deep(scale-button)::part(base) {
-  border-radius: 999px !important;
+  border-radius: var(--radius-pill) !important;
 }
 
-.modal-actions > * {
-  min-width: 140px;
+/* min-width delegated to ActionButton or scale-button defaults for consistency */
+
+.modal-actions :deep(scale-button) {
+  min-width: 8rem;
 }
 
 .approval-note-required {
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--tone-chip-danger-text);
   margin: 0;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .modal-actions {
     justify-content: stretch;
     padding: var(--space-md) 0;

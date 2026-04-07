@@ -166,9 +166,9 @@ const filteredBreakglasses = computed(() => {
   return bgs;
 });
 
-async function onRequest(bg: Breakglass, reason?: string, duration?: number, scheduledStartTime?: string) {
+async function onRequest(bg: Breakglass, reason?: string, duration?: number, scheduledStartTime?: string | null) {
   try {
-    await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime);
+    await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime ?? undefined);
     // Success path: created/ok
     pushSuccess(`Requested group '${bg.to}' for cluster '${bg.cluster}': request submitted successfully!`);
     await refresh();
@@ -270,7 +270,7 @@ async function onDrop(bg: Breakglass) {
 </script>
 
 <template>
-  <main class="ui-page breakglass-page">
+  <div class="ui-page breakglass-page">
     <PageHeader
       title="Request access"
       subtitle="Browse the escalations that match your groups. Use search to filter by cluster, requester group, or approver."
@@ -291,7 +291,7 @@ async function onDrop(bg: Breakglass) {
           ></scale-text-field>
         </div>
         <div class="toolbar-refresh">
-          <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
+          <scale-loading-spinner v-if="state.refreshing" aria-label="Refreshing escalations"></scale-loading-spinner>
           <scale-button
             v-else
             data-testid="refresh-escalations-button"
@@ -320,7 +320,7 @@ async function onDrop(bg: Breakglass) {
           :breakglass="bg"
           :time="time"
           @request="
-            (reason: string, duration: number, scheduledStartTime?: string) => {
+            (reason: string, duration: number, scheduledStartTime: string | null) => {
               onRequest(bg, reason, duration, scheduledStartTime);
             }
           "
@@ -343,7 +343,7 @@ async function onDrop(bg: Breakglass) {
       icon="content-lock"
       message="No requestable breakglass groups found for your current identity provider or group membership."
     />
-  </main>
+  </div>
 </template>
 
 <style scoped>
@@ -396,5 +396,26 @@ async function onDrop(bg: Breakglass) {
   width: 100%;
   margin: 0 0 var(--space-lg);
   break-inside: avoid;
+}
+
+@media (max-width: 640px) {
+  .breakglass-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .breakglass-toolbar__field {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .toolbar-refresh {
+    align-self: flex-end;
+  }
+
+  .toolbar-info {
+    margin-left: 0;
+    text-align: center;
+  }
 }
 </style>

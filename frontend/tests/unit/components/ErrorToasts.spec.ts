@@ -199,5 +199,21 @@ describe("ErrorToasts", () => {
       expect(toasts[1]?.attributes("position-vertical")).toBe("124");
       expect(toasts[2]?.attributes("position-vertical")).toBe("232");
     });
+
+    it("uses compact stack spacing when viewport height is below 600px", () => {
+      const originalInnerHeight = window.innerHeight;
+      Object.defineProperty(window, "innerHeight", { value: 400, configurable: true });
+
+      pushError("Error 1");
+      pushError("Error 2");
+
+      const wrapper = mountToasts();
+      const toasts = wrapper.findAll("scale-notification-toast");
+
+      expect(toasts[0]?.attributes("position-vertical")).toBe("16");
+      expect(toasts[1]?.attributes("position-vertical")).toBe("88");
+
+      Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
+    });
   });
 });

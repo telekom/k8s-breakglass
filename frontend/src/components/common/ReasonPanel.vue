@@ -94,8 +94,16 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
   background: var(--telekom-color-functional-success-subtle);
 }
 
+.reason-panel--approval .reason-panel__label {
+  color: var(--tone-chip-success-text);
+}
+
 .reason-panel--rejection {
   border-left: var(--telekom-line-weight-bold, 4px) solid var(--telekom-color-functional-danger-standard);
   background: var(--telekom-color-functional-danger-subtle);
+}
+
+.reason-panel--rejection .reason-panel__label {
+  color: var(--tone-chip-danger-text);
 }
 </style>

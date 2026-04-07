@@ -5,7 +5,7 @@
 # UI Screenshot Testing Workflow
 # 
 # This workflow captures screenshots of all frontend pages using Playwright
-# in both light and dark mode, and uploads them as artifacts on PRs for visual review.
+# in light, dark, and high-contrast mode, and uploads them as artifacts on PRs for visual review.
 
 name: UI Screenshots
 
@@ -89,9 +89,14 @@ jobs:
               .dark-only, .light-only { display: none; }
               body.show-dark .dark-only { display: block; }
               body.show-dark .light-only { display: none; }
+              body.show-dark .high-contrast-only { display: none; }
               body.show-light .light-only { display: block; }
               body.show-light .dark-only { display: none; }
-              body.show-all .dark-only, body.show-all .light-only { display: block; }
+              body.show-light .high-contrast-only { display: none; }
+              body.show-high-contrast .high-contrast-only { display: block; }
+              body.show-high-contrast .light-only { display: none; }
+              body.show-high-contrast .dark-only { display: none; }
+              body.show-all .dark-only, body.show-all .light-only, body.show-all .high-contrast-only { display: block; }
             </style>
           </head>
           <body class="show-all">
@@ -100,6 +105,7 @@ jobs:
               <button onclick="setFilter('all')" class="active" id="btn-all">All</button>
               <button onclick="setFilter('light')" id="btn-light">Light Mode</button>
               <button onclick="setFilter('dark')" id="btn-dark">Dark Mode</button>
+              <button onclick="setFilter('high-contrast')" id="btn-high-contrast">High Contrast</button>
             </div>
             <div class="gallery" id="gallery"></div>
             <script>
@@ -118,6 +124,8 @@ jobs:
               theme="all"
               if [[ "$name" == *"-dark"* ]]; then
                 theme="dark"
+              elif [[ "$name" == *"-high-contrast"* ]]; then
+                theme="high-contrast"
               elif [[ "$name" == *"-light"* ]]; then
                 theme="light"
               fi
@@ -130,7 +138,7 @@ jobs:
               
               screenshots.forEach(s => {
                 const div = document.createElement('div');
-                div.className = 'screenshot ' + (s.theme === 'dark' ? 'dark-only' : s.theme === 'light' ? 'light-only' : '');
+                div.className = 'screenshot ' + (s.theme === 'dark' ? 'dark-only' : s.theme === 'light' ? 'light-only' : s.theme === 'high-contrast' ? 'high-contrast-only' : '');
                 div.innerHTML = `<img src="${s.file}" alt="${s.name}" loading="lazy"><div class="label">${s.name}</div>`;
                 gallery.appendChild(div);
               });
@@ -176,34 +184,36 @@ jobs:
             let screenshotCount = 0;
             let lightCount = 0;
             let darkCount = 0;
+            let highContrastCount = 0;
             
             if (fs.existsSync(galleryDir)) {
               const files = fs.readdirSync(galleryDir).filter(f => f.endsWith('.png'));
               screenshotCount = files.length;
               lightCount = files.filter(f => f.includes('-light')).length;
               darkCount = files.filter(f => f.includes('-dark')).length;
+              highContrastCount = files.filter(f => f.includes('-high-contrast')).length;
             }
             
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             
             let body = `## 📸 UI Screenshots\n\n`;
-            body += `Captured **${screenshotCount}** screenshots (${lightCount} light, ${darkCount} dark mode)\n\n`;
+            body += `Captured **${screenshotCount}** screenshots (${lightCount} light, ${darkCount} dark, ${highContrastCount} high-contrast mode)\n\n`;
             body += `### 📥 Download\n`;
             body += `- [View Screenshots Gallery](${runUrl}) - Download the \`ui-screenshots\` artifact\n`;
             body += `- [View Playwright Report](${runUrl}) - Download the \`playwright-report\` artifact\n\n`;
             body += `### Pages Captured\n`;
-            body += `| Page | Light | Dark |\n`;
-            body += `|------|:-----:|:----:|\n`;
-            body += `| Home | ✅ | ✅ |\n`;
-            body += `| Session Browser | ✅ | ✅ |\n`;
-            body += `| Pending Approvals | ✅ | ✅ |\n`;
-            body += `| My Requests | ✅ | ✅ |\n`;
-            body += `| Session Review | ✅ | ✅ |\n`;
-            body += `| Debug Sessions | ✅ | ✅ |\n`;
-            body += `| Create Debug Session | ✅ | ✅ |\n`;
-            body += `| 404 Not Found | ✅ | ✅ |\n`;
-            body += `| Mobile Views | ✅ | ✅ |\n`;
-            body += `| Tablet Views | ✅ | ✅ |\n\n`;
+            body += `| Page | Light | Dark | High Contrast |\n`;
+            body += `|------|:-----:|:----:|:-------------:|\n`;
+            body += `| Home | ✅ | ✅ | ✅ |\n`;
+            body += `| Session Browser | ✅ | ✅ | ✅ |\n`;
+            body += `| Pending Approvals | ✅ | ✅ | ✅ |\n`;
+            body += `| My Requests | ✅ | ✅ | ✅ |\n`;
+            body += `| Session Review | ✅ | ✅ | ✅ |\n`;
+            body += `| Debug Sessions | ✅ | ✅ | ✅ |\n`;
+            body += `| Create Debug Session | ✅ | ✅ | ✅ |\n`;
+            body += `| 404 Not Found | ✅ | ✅ | ✅ |\n`;
+            body += `| Mobile Views | ✅ | ✅ | ✅ |\n`;
+            body += `| Tablet Views | ✅ | ✅ | ✅ |\n\n`;
             body += `---\n`;
             body += `*Screenshots are generated automatically on each PR that modifies frontend code.*`;
             
@@ -242,6 +252,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           
           count=$(ls screenshot-gallery/*.png 2>/dev/null | wc -l)
-          echo "Generated **$count** screenshots in light and dark mode." >> $GITHUB_STEP_SUMMARY
+          echo "Generated **$count** screenshots in light, dark, and high-contrast mode." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Download the \`ui-screenshots\` artifact to view the screenshot gallery." >> $GITHUB_STEP_SUMMARY

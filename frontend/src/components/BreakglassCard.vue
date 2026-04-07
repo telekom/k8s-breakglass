@@ -13,7 +13,11 @@ import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import type { Breakglass } from "@/model/breakglass";
 
 const props = defineProps<{ breakglass: Breakglass; time: number }>();
-const emit = defineEmits(["request", "drop", "withdraw"]);
+const emit = defineEmits<{
+  request: [reason: string, duration: number, scheduledStartTime: string | null];
+  drop: [];
+  withdraw: [];
+}>();
 
 // Unique id suffix for this card instance to avoid duplicate DOM ids in v-for
 const cardUid = useId();
@@ -271,14 +275,11 @@ type TagVariant = "primary" | "secondary" | "info" | "warning" | "danger" | "suc
 type StatusTone = "neutral" | "info" | "warning" | "danger" | "success" | "muted";
 
 const sessionSubtitle = computed(() => {
-  const clusterLabel = props.breakglass?.cluster;
-  if (!clusterLabel) {
-    return "Applies to all clusters";
+  const maxDur = props.breakglass?.duration;
+  if (maxDur) {
+    return `Up to ${humanizeDurationShort(maxDur * 1000)}`;
   }
-  if (clusterLabel.toLowerCase() === "global") {
-    return "Global escalation";
-  }
-  return `Cluster ${clusterLabel}`;
+  return "Available escalation";
 });
 
 const statusTone = computed<StatusTone>(() => {
@@ -460,7 +461,9 @@ function drop() {
       <div v-if="requesterGroups.length" class="session-section">
         <div class="session-section__header">
           <span class="label">Available via</span>
-          <scale-tag size="small" variant="info">{{ requesterGroups.length }} groups</scale-tag>
+          <scale-tag size="small" variant="neutral"
+            >{{ requesterGroups.length }} {{ requesterGroups.length === 1 ? "group" : "groups" }}</scale-tag
+          >
         </div>
         <div class="session-pill-list">
           <scale-tag v-for="group in visibleRequesterGroups" :key="group" size="small" variant="primary">
@@ -481,7 +484,9 @@ function drop() {
       <div v-if="approvalGroupsList.length" class="session-section">
         <div class="session-section__header">
           <span class="label">Approval groups</span>
-          <scale-tag size="small" variant="info">{{ approvalGroupsList.length }} groups</scale-tag>
+          <scale-tag size="small" variant="neutral"
+            >{{ approvalGroupsList.length }} {{ approvalGroupsList.length === 1 ? "group" : "groups" }}</scale-tag
+          >
         </div>
         <div class="session-pill-list">
           <scale-tag v-for="group in visibleApprovalGroups" :key="group" size="small" variant="primary">
@@ -506,12 +511,12 @@ function drop() {
 
     <template v-if="sessionPending || sessionActive" #timeline>
       <div class="session-timeline">
-        <div v-if="sessionPending" class="timeline-callout tone-chip tone-chip--warning">
+        <div v-if="sessionPending" class="timeline-callout tone-callout tone-callout--warning">
           <span class="eyebrow">Pending request</span>
           <p>{{ timeoutHumanized || "Awaiting approver" }}</p>
           <code v-if="sessionPending.metadata?.name" class="session-id">{{ sessionPending.metadata.name }}</code>
         </div>
-        <div v-if="sessionActive" class="timeline-callout tone-chip tone-chip--success">
+        <div v-if="sessionActive" class="timeline-callout tone-callout tone-callout--success">
           <span class="eyebrow">Active session</span>
           <p>{{ expiryHumanized || "Running" }}</p>
           <code v-if="sessionActive.metadata?.name" class="session-id">{{ sessionActive.metadata.name }}</code>
@@ -702,7 +707,7 @@ function drop() {
   margin: 0;
   font-size: 0.9rem;
   font-weight: 500;
-  color: var(--telekom-color-primary-standard);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .session-section {
@@ -757,6 +762,7 @@ function drop() {
 
 .timeline-callout {
   flex: 1 1 220px;
+  min-width: 0;
   padding: var(--space-md);
   border-radius: var(--radius-lg);
   display: flex;
@@ -770,7 +776,7 @@ function drop() {
 
 .timeline-callout .session-id {
   font-size: 0.8rem;
-  opacity: 0.85;
+  color: inherit;
   word-break: break-all;
   margin-top: var(--space-2xs);
 }
@@ -794,12 +800,12 @@ function drop() {
 .actions-row {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-xs);
+  gap: var(--space-sm);
   justify-content: flex-end;
 }
 
 .breakglass-card__requirement {
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--tone-chip-danger-text);
   font-weight: 600;
 }
 
@@ -817,11 +823,13 @@ function drop() {
 }
 
 .helper.warning {
-  color: var(--telekom-color-functional-warning-standard);
+  color: var(--tone-chip-warning-text);
 }
 
 .helper.error {
-  color: var(--telekom-color-functional-danger-standard);
+  /* AAA contrast: use tone-chip-danger-text (#8a0700 light / #ffc4bd dark) instead of
+     functional-danger-standard (#e82010) which only achieves 4.52:1 on white */
+  color: var(--tone-chip-danger-text);
 }
 
 .hint-box {
@@ -876,12 +884,12 @@ function drop() {
 
 /* Ensure all buttons have pill shape */
 .modal-actions :deep(scale-button) {
-  --radius: 999px;
+  --radius: var(--radius-pill);
 }
 
 .modal-actions :deep(scale-button)::part(button),
 .modal-actions :deep(scale-button)::part(base) {
-  border-radius: 999px !important;
+  border-radius: var(--radius-pill) !important;
 }
 
 :deep(input::placeholder),

@@ -20,7 +20,9 @@ coverage
 # Playwright
 /playwright-report/
 /playwright-report-e2e/
+/playwright-report-a11y/
 /test-results/
+/test-results-a11y/
 /tests/screenshots/__screenshots__/
 
 # Editor directories and files

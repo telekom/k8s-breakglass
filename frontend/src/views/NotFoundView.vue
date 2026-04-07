@@ -41,14 +41,15 @@
 .not-found__cta {
   display: inline-block;
   padding: var(--space-sm) var(--space-lg);
-  border-radius: 999px;
-  background: var(--accent-telekom);
+  border-radius: var(--radius-pill);
+  /* AAA contrast: dark magenta on white gives 9.2:1 ratio */
+  background: var(--cta-bg);
   color: var(--telekom-color-text-and-icon-white-standard, #fff);
   font-weight: 600;
   text-decoration: none;
 }
 
 .not-found__cta:hover {
-  background: var(--telekom-color-primary-hovered);
+  background: var(--cta-bg-hover);
 }
 </style>

@@ -316,7 +316,7 @@ const groupsDisplay = computed(() => {
   position: absolute;
   bottom: 60px;
   right: 0;
-  width: 500px;
+  width: clamp(280px, 40vw, 500px);
   max-height: calc(100vh - 120px);
   display: flex;
   flex-direction: column;

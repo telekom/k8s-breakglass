@@ -463,7 +463,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 </script>
 
 <template>
-  <main class="ui-page debug-session-details" data-testid="debug-session-details">
+  <div class="ui-page debug-session-details" data-testid="debug-session-details">
     <div class="back-link">
       <scale-button variant="secondary" size="small" data-testid="back-to-sessions-button" @click="goBack">
         <scale-icon-navigation-left slot="icon"></scale-icon-navigation-left>
@@ -901,7 +901,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
         <scale-button variant="primary" @click="confirmReject">Reject</scale-button>
       </div>
     </scale-modal>
-  </main>
+  </div>
 </template>
 
 <style scoped>

@@ -54,8 +54,8 @@ function formatValue(value?: string | number | null) {
 
 .meta-grid__row {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) 2fr;
-  gap: var(--space-md);
+  grid-template-columns: minmax(120px, 1fr) 2fr;
+  gap: var(--space-sm) var(--space-md);
   align-items: flex-start;
 }
 
@@ -99,8 +99,9 @@ function formatValue(value?: string | number | null) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.35rem;
-  height: 1.35rem;
+  /* 44px minimum hit target for WCAG 2.5.5 (AAA) */
+  width: 2.75rem;
+  height: 2.75rem;
   border: none;
   border-radius: 50%;
   background: transparent;

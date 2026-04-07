@@ -114,7 +114,7 @@ const displayBadge = computed(() => {
   flex-wrap: wrap;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .page-header__main {
     flex-direction: column;
     align-items: flex-start;
