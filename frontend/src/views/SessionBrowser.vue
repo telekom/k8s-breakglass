@@ -61,6 +61,8 @@ const stateOptions = [
   { value: "active", label: "Active" },
   { value: "expired", label: "Expired" },
   { value: "idleexpired", label: "Idle Expired" },
+  { value: "canceled", label: "Canceled" },
+  { value: "dropped", label: "Dropped" },
 ];
 
 function startedFor(session: SessionCR): string | null {

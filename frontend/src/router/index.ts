@@ -137,7 +137,7 @@ router.afterEach((to, from, failure) => {
       if (heading) {
         const previousTabIndex = heading.getAttribute("tabindex");
         heading.setAttribute("tabindex", "-1");
-        heading.focus({ preventScroll: false });
+        heading.focus({ preventScroll: true });
         // Restore original tabindex on blur to avoid persistent DOM mutations
         // while allowing screen readers time to read the element
         heading.addEventListener(

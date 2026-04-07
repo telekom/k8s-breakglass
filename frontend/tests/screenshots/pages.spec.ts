@@ -66,7 +66,7 @@ async function navigateTo(page: Page, path: string) {
 }
 
 /** Theme mode type for screenshot tests. */
-type ThemeMode = "light" | "dark" | "high-contrast";
+type ThemeMode = "light" | "dark" | "high-contrast" | "high-contrast-dark";
 
 // Helper to set theme (light, dark, or high-contrast) using Playwright's color scheme emulation
 // This triggers the app's prefers-color-scheme media query handling
@@ -76,6 +76,13 @@ async function setTheme(page: Page, theme: ThemeMode) {
     await page.evaluate(() => {
       document.documentElement.setAttribute("data-theme", "light");
       document.documentElement.setAttribute("data-mode", "light");
+      document.documentElement.setAttribute("data-high-contrast", "true");
+    });
+  } else if (theme === "high-contrast-dark") {
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.evaluate(() => {
+      document.documentElement.setAttribute("data-theme", "dark");
+      document.documentElement.setAttribute("data-mode", "dark");
       document.documentElement.setAttribute("data-high-contrast", "true");
     });
   } else {
@@ -103,10 +110,12 @@ const pages = [
 
 // Generate tests for each page in all theme modes
 for (const pageInfo of pages) {
-  for (const theme of ["light", "dark", "high-contrast"] as const) {
+  for (const theme of ["light", "dark", "high-contrast", "high-contrast-dark"] as const) {
     test(`${pageInfo.title} - ${theme} mode`, async ({ page }) => {
       // Set color scheme BEFORE loading page so app initializes with correct theme
-      await page.emulateMedia({ colorScheme: theme === "high-contrast" ? "light" : theme });
+      await page.emulateMedia({
+        colorScheme: theme === "high-contrast" ? "light" : theme === "high-contrast-dark" ? "dark" : theme,
+      });
       await page.setViewportSize({ width: 1280, height: 720 });
       await performMockLogin(page);
 
@@ -134,10 +143,12 @@ const responsiveTests = [
 ];
 
 for (const responsive of responsiveTests) {
-  for (const theme of ["light", "dark", "high-contrast"] as const) {
+  for (const theme of ["light", "dark", "high-contrast", "high-contrast-dark"] as const) {
     test(`Responsive: ${responsive.name} - ${theme} mode`, async ({ page }) => {
       // Set color scheme BEFORE loading page so app initializes with correct theme
-      await page.emulateMedia({ colorScheme: theme === "high-contrast" ? "light" : theme });
+      await page.emulateMedia({
+        colorScheme: theme === "high-contrast" ? "light" : theme === "high-contrast-dark" ? "dark" : theme,
+      });
       await performMockLogin(page);
       await page.setViewportSize({ width: responsive.width, height: responsive.height });
 

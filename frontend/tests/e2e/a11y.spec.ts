@@ -384,4 +384,32 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
       }
     });
   }
+
+  test.describe("High Contrast Toggle", () => {
+    test("High contrast toggle persists and applies data attribute", async ({ page }) => {
+      await page.goto("/");
+      await performMockLogin(page);
+
+      const toggleBtn = page.locator(".hc-toggle-button");
+      await toggleBtn.waitFor({ state: "visible" });
+
+      let isHighContrast = await page.evaluate(() => document.documentElement.getAttribute("data-high-contrast"));
+      expect(isHighContrast).toBeNull();
+
+      await toggleBtn.click();
+      isHighContrast = await page.evaluate(() => document.documentElement.getAttribute("data-high-contrast"));
+      expect(isHighContrast).toBe("true");
+
+      await page.reload();
+      await page.waitForLoadState("networkidle");
+      isHighContrast = await page.evaluate(() => document.documentElement.getAttribute("data-high-contrast"));
+      expect(isHighContrast).toBe("true");
+
+      const toggleBtnAfterReload = page.locator(".hc-toggle-button");
+      await toggleBtnAfterReload.waitFor({ state: "visible" });
+      await toggleBtnAfterReload.click();
+      isHighContrast = await page.evaluate(() => document.documentElement.getAttribute("data-high-contrast"));
+      expect(isHighContrast).toBeNull();
+    });
+  });
 });

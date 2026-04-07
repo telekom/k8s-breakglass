@@ -42,7 +42,8 @@ const emit = defineEmits<{
 
 // Get normalized state for action logic
 const sessionState = computed(() => {
-  const state = props.breakglass.status?.state;
+  const state = props.breakglass.status?.state || props.breakglass.state;
+  if (!state) return "";
   return typeof state === "string" ? state.toLowerCase() : "";
 });
 

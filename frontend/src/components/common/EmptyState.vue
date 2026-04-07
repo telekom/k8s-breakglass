@@ -55,6 +55,8 @@ const scaleIconName = computed(() => {
     :class="{ 'empty-state--compact': compact }"
     :data-variant="variant"
     data-testid="empty-state"
+    aria-live="polite"
+    role="status"
   >
     <div class="empty-state__icon empty-state__icon--scale" aria-hidden="true">
       <scale-icon-communication-inbox
