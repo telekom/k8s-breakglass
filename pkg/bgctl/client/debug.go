@@ -98,6 +98,21 @@ type CreateNodeDebugPodRequest struct {
 	NodeName string `json:"nodeName"`
 }
 
+func validateDebugSessionState(state string) error {
+	valid := map[string]bool{
+		string(breakglassv1alpha1.DebugSessionStatePending):         true,
+		string(breakglassv1alpha1.DebugSessionStatePendingApproval): true,
+		string(breakglassv1alpha1.DebugSessionStateActive):          true,
+		string(breakglassv1alpha1.DebugSessionStateExpired):         true,
+		string(breakglassv1alpha1.DebugSessionStateTerminated):      true,
+		string(breakglassv1alpha1.DebugSessionStateFailed):          true,
+	}
+	if !valid[state] {
+		return fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Expired, Terminated, Failed", state)
+	}
+	return nil
+}
+
 func (s *DebugSessionService) List(ctx context.Context, opts DebugSessionListOptions) (*DebugSessionListResponse, error) {
 	endpoint := "api/debugSessions"
 	params := url.Values{}
@@ -107,6 +122,9 @@ func (s *DebugSessionService) List(ctx context.Context, opts DebugSessionListOpt
 	for _, stateVal := range opts.State {
 		stateVal = strings.TrimSpace(stateVal)
 		if stateVal != "" {
+			if err := validateDebugSessionState(stateVal); err != nil {
+				return nil, err
+			}
 			params.Add("state", stateVal)
 		}
 	}

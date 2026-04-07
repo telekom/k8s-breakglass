@@ -185,6 +185,12 @@ bgctl session watch --mine --show-full
 
 # Watch debug sessions
 bgctl debug session watch --cluster prod-1
+
+# Watch debug sessions filtered by state (Pending, PendingApproval, Active, Expired, Terminated, Failed)
+bgctl debug session watch --state Active --interval 5s
+
+# Watch debug sessions for a specific user and show full JSON on change
+bgctl debug session watch --user alice@example.com --show-full
 ```
 
 ## Configuration Management

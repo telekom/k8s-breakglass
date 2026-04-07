@@ -38,6 +38,6 @@ func WriteObject(w io.Writer, format Format, obj any) error {
 	case FormatWide:
 		return fmt.Errorf("wide format requires a specific formatter")
 	default:
-		return fmt.Errorf("unknown output format: %s", format)
+		return fmt.Errorf("unknown output format: %q", format)
 	}
 }

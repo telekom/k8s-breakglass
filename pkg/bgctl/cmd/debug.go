@@ -131,6 +131,13 @@ func newDebugSessionWatchCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Watch debug session changes",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			rt, err := getRuntime(cmd)
+			if err != nil {
+				return err
+			}
+			return validateOutputFormat(output.Format(rt.OutputFormat()), output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
