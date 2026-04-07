@@ -232,6 +232,15 @@ func (p *OIDCTokenProvider) getTokenViaHTTP(ctx context.Context, username, passw
 		req.Host = p.IssuerHost
 	}
 
+	// Flush any stale keep-alive connections in the shared transport before each
+	// attempt. If the port-forward was restarted, connections established before
+	// the restart will return EOF. CloseIdleConnections forces a fresh TCP
+	// handshake on the next request, complementing the waitForKeycloakPortForward
+	// pre-check which uses a separate short-lived client.
+	if tr, ok := httpClient.Transport.(*http.Transport); ok {
+		tr.CloseIdleConnections()
+	}
+
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to request token: %w", err)
@@ -565,12 +574,16 @@ func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context
 	}
 
 	// Slow path: port-forward may be restarting — wait up to 8s, polling every 500ms.
+	// Use context.WithTimeout to bound the total wall-clock delay at maxWait regardless
+	// of how long individual probes block (each can take up to the client timeout).
 	const pollInterval = 500 * time.Millisecond
 	const maxWait = 8 * time.Second
 
 	t.Logf("Keycloak not reachable at %s — port-forward may be restarting, waiting up to %v", discoveryURL, maxWait)
 
-	deadline := time.Now().Add(maxWait)
+	waitCtx, cancel := context.WithTimeout(ctx, maxWait)
+	defer cancel()
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -578,12 +591,11 @@ func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context
 		select {
 		case <-ctx.Done():
 			return
+		case <-waitCtx.Done():
+			t.Logf("warning: Keycloak still not reachable at %s after %v — proceeding anyway; GetToken retry will handle errors", discoveryURL, maxWait)
+			return
 		case <-ticker.C:
-			if p.probeKeycloakOnce(ctx, client, discoveryURL) {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Logf("warning: Keycloak still not reachable at %s after %v — proceeding anyway; GetToken retry will handle errors", discoveryURL, maxWait)
+			if p.probeKeycloakOnce(waitCtx, client, discoveryURL) {
 				return
 			}
 		}
