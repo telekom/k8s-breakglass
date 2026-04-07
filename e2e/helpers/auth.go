@@ -566,11 +566,13 @@ func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
+			DisableKeepAlives: true,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
 			},
 		},
 	}
+	defer client.CloseIdleConnections()
 
 	// Fast path: probe once — zero delay on happy path.
 	if p.probeKeycloakOnce(ctx, client, discoveryURL) {
