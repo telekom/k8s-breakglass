@@ -68,7 +68,6 @@ const retained = computed(
     props.breakglass.status?.retainedUntil !== undefined &&
     Date.parse(props.breakglass.status.retainedUntil) - props.time > 0,
 );
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _approved = computed(
   () =>
     props.breakglass.status?.expiresAt !== null &&
@@ -131,7 +130,6 @@ const requestedAt = computed(() => {
   return null;
 });
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _approver = computed(() => {
   // Prefer explicit approver field
   if (props.breakglass.status) {

@@ -260,7 +260,6 @@ async function handleJoin() {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _handleLeave() {
   try {
     await debugSessionService.leaveSession(sessionName.value);

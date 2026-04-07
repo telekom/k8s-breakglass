@@ -16,8 +16,7 @@ export type ChipItem = {
   truncate?: boolean;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const props = withDefaults(
+withDefaults(
   defineProps<{
     /** Array of chip items to display */
     items?: ChipItem[];

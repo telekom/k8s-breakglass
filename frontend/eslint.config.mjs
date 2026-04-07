@@ -42,6 +42,13 @@ export default defineConfigWithVueTs(
       "vue/v-on-event-hyphenation": "off",
       "vue/no-deprecated-slot-attribute": "off",
       "no-console": ["error", { allow: ["warn", "error"] }],
+      // Allow variables/functions prefixed with underscore to be unused.
+      // This is the idiomatic TypeScript convention for intentionally-unused
+      // but retained symbols (e.g. placeholder computed values, future-use helpers).
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { varsIgnorePattern: "^_", argsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
     },
   },
   {

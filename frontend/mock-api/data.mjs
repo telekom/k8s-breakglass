@@ -891,7 +891,6 @@ export function renewDebugSession(name, extendBy = "1h") {
   return session;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function listDebugSessionTemplates(_userGroups = []) {
   // In real API, this filters by user's group membership
   // For mock, we return all templates

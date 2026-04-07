@@ -8,7 +8,6 @@ import (
 
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
 	authenticationv1beta1 "k8s.io/api/authentication/v1beta1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -169,16 +168,18 @@ func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
+	// SelfSubjectReview API availability by Kubernetes version:
+	//   v1alpha1 (K8s 1.24, now EOL) — dropped from this fallback chain
+	//   v1beta1  (K8s 1.25–1.27)     — kept as fallback for compatibility
+	//   v1       (K8s 1.28+)         — stable, tried first
 	var res runtime.Object
 	res, err = client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
 
 	if err != nil && k8serrors.IsNotFound(err) {
-		zap.S().Warn("Falling back to Beta API for SelfSubjectReview")
+		// Fallback to v1beta1 for Kubernetes 1.25–1.27 clusters where v1 is not yet available.
+		// v1beta1 SelfSubjectReview was promoted to GA (v1) in Kubernetes 1.28.
+		zap.S().Warn("Falling back to authentication.k8s.io/v1beta1 SelfSubjectReview (cluster predates K8s 1.28)")
 		res, err = client.AuthenticationV1beta1().SelfSubjectReviews().Create(ctx, &authenticationv1beta1.SelfSubjectReview{}, metav1.CreateOptions{})
-		if err != nil && k8serrors.IsNotFound(err) {
-			zap.S().Warn("Falling back to Alpha API for SelfSubjectReview")
-			res, err = client.AuthenticationV1alpha1().SelfSubjectReviews().Create(ctx, &authenticationv1alpha1.SelfSubjectReview{}, metav1.CreateOptions{})
-		}
 	}
 
 	if err != nil {
@@ -234,14 +235,11 @@ func GetUserGroupsWithConfig(ctx context.Context, cug ClusterUserGroup, configPa
 
 func getUserInfo(obj runtime.Object) (authenticationv1.UserInfo, error) {
 	switch val := obj.(type) {
-	case *authenticationv1alpha1.SelfSubjectReview:
-		zap.S().Debug("Parsing user info from v1alpha1.SelfSubjectReview")
+	case *authenticationv1.SelfSubjectReview:
+		zap.S().Debug("Parsing user info from v1.SelfSubjectReview")
 		return val.Status.UserInfo, nil
 	case *authenticationv1beta1.SelfSubjectReview:
 		zap.S().Debug("Parsing user info from v1beta1.SelfSubjectReview")
-		return val.Status.UserInfo, nil
-	case *authenticationv1.SelfSubjectReview:
-		zap.S().Debug("Parsing user info from v1.SelfSubjectReview")
 		return val.Status.UserInfo, nil
 	default:
 		zap.S().Errorw("Unexpected response type for user info extraction", "type", fmt.Sprintf("%T", obj))
