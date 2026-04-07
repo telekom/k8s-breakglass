@@ -37,7 +37,7 @@
     "jose": "^6.2.2",
     "oidc-client-ts": "^3.5.0",
     "pinia": "^3.0.4",
-    "vue": "^3.5.30",
+    "vue": "^3.5.32",
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
@@ -47,7 +47,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/humanize-duration": "^3.27.4",
-    "@vitejs/plugin-legacy": "^8.0.0",
+    "@vitejs/plugin-legacy": "^8.0.1",
     "@vitejs/plugin-vue": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.2",
     "@vue/eslint-config-prettier": "^10.2.0",
@@ -65,7 +65,7 @@
     "prettier": "^3.8.1",
     "terser": "^5.46.1",
     "typescript": "~5.9.3",
-    "vite": "^8.0.2",
+    "vite": "^8.0.5",
     "vitest": "^4.1.2",
     "vue-eslint-parser": "^10.4.0",
     "vue-tsc": "^3.2.6"
