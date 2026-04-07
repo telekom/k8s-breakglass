@@ -314,6 +314,7 @@ func (p *OIDCTokenProvider) GetSeniorApproverToken(t *testing.T, ctx context.Con
 // to retrieve an offline refresh token from Keycloak. This token can be stored
 // in a K8s Secret and used by the controller to exchange for access tokens.
 func (p *OIDCTokenProvider) ObtainOfflineRefreshToken(t *testing.T, ctx context.Context, username, password string) string {
+	p.waitForKeycloakPortForward(t, ctx)
 	keycloakHost := p.KeycloakHost
 	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
 		keycloakHost = "https://" + keycloakHost
@@ -472,6 +473,9 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx
 				return "" // unreachable
 			case <-timer.C:
 			}
+			// After backoff, verify Keycloak port-forward has recovered before next attempt.
+			// The keepalive wrapper restarts in ~2s, but we need the new connection to be stable.
+			p.waitForKeycloakPortForward(t, ctx)
 			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
