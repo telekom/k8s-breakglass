@@ -106,6 +106,7 @@ func E2EOIDCProvider() *OIDCTokenProvider {
 // unavailability (e.g. pod restarts during E2E cluster setup).
 // Non-retryable errors (4xx) fail immediately without retrying.
 func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username, password string) string {
+	p.waitForKeycloakPortForward(t, ctx)
 	// Try using the get-token.sh script first
 	token, err := p.getTokenViaScript(ctx, username, password)
 	if err == nil && token != "" {
@@ -524,6 +525,85 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 		time.Sleep(backoff)
 		backoff *= 2
 	}
+}
+
+// waitForKeycloakPortForward waits for Keycloak to be reachable via the discovery endpoint
+// before proceeding. This is a non-fatal pre-check used by GetToken to bridge the ~2s gap
+// when the kubectl port-forward keepalive loop restarts. If still unreachable after the
+// wait window, it logs a warning and returns — GetToken's own retry logic handles the error.
+//
+// The check is skipped when InitialBackoff > 0 (unit-test mode) because tests use an
+// in-process httptest.Server instead of a real port-forward, and the probe must not
+// consume HTTP calls that the test expects to be handled by getTokenViaHTTP.
+func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	// Skip in unit-test mode: tests set InitialBackoff > 0 and use an in-process
+	// httptest.Server — no port-forward exists, and we must not consume mock HTTP calls.
+	if p.InitialBackoff > 0 {
+		return
+	}
+
+	keycloakHost := p.KeycloakHost
+	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
+		keycloakHost = "https://" + keycloakHost
+	}
+	discoveryURL := fmt.Sprintf("%s/realms/%s/.well-known/openid-configuration", keycloakHost, p.Realm)
+
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
+			},
+		},
+	}
+
+	// Fast path: probe once — zero delay on happy path.
+	if p.probeKeycloakOnce(ctx, client, discoveryURL) {
+		return
+	}
+
+	// Slow path: port-forward may be restarting — wait up to 8s, polling every 500ms.
+	const pollInterval = 500 * time.Millisecond
+	const maxWait = 8 * time.Second
+
+	t.Logf("Keycloak not reachable at %s — port-forward may be restarting, waiting up to %v", discoveryURL, maxWait)
+
+	deadline := time.Now().Add(maxWait)
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if p.probeKeycloakOnce(ctx, client, discoveryURL) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Logf("warning: Keycloak still not reachable at %s after %v — proceeding anyway; GetToken retry will handle errors", discoveryURL, maxWait)
+				return
+			}
+		}
+	}
+}
+
+// probeKeycloakOnce sends a single GET request to the Keycloak discovery URL and returns
+// true if it responds with HTTP 200. Returns false for any error or non-200 status.
+// No logging is done here — the caller handles logging.
+func (p *OIDCTokenProvider) probeKeycloakOnce(ctx context.Context, client *http.Client, discoveryURL string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode == http.StatusOK
 }
 
 // ObtainClientCredentialsToken performs a client_credentials grant to obtain an access
