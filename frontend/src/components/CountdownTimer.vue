@@ -1,6 +1,11 @@
 <template>
-  <span :aria-label="'Time remaining: ' + (remaining > 0 ? formatted : 'Expired')">
-    <span :class="['countdown', { expired: remaining <= 0 }]" :title="fullTime" data-testid="countdown-timer">
+  <span>
+    <span
+      :aria-label="'Time remaining: ' + (remaining > 0 ? formatted : 'Expired')"
+      :class="['countdown', { expired: remaining <= 0 }]"
+      :title="fullTime"
+      data-testid="countdown-timer"
+    >
       <template v-if="remaining > 0">
         {{ formatted }}
       </template>
