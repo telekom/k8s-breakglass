@@ -777,6 +777,22 @@ func TestDebugSessionsList_StateFilter(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDebugSessionsList_StateFilterCaseInsensitive(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/debugSessions", r.URL.Path)
+		assert.Equal(t, "Active", r.URL.Query().Get("state"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(DebugSessionListResponse{Sessions: []DebugSessionSummary{}, Total: 0})
+	}))
+	defer server.Close()
+
+	c, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+
+	_, err = c.DebugSessions().List(context.Background(), DebugSessionListOptions{State: []string{"active"}})
+	require.NoError(t, err)
+}
+
 func TestDebugSessionsList_InvalidStateFilter(t *testing.T) {
 	c, err := New(WithServer("http://localhost:9999"))
 	require.NoError(t, err)
