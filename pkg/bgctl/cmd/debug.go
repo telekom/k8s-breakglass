@@ -71,12 +71,15 @@ func newDebugSessionListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := apiClient.DebugSessions().List(context.Background(), client.DebugSessionListOptions{
+			opts := client.DebugSessionListOptions{
 				Cluster: cluster,
-				State:   state,
 				User:    user,
 				Mine:    mine,
-			})
+			}
+			if state != "" {
+				opts.State = strings.Split(state, ",")
+			}
+			resp, err := apiClient.DebugSessions().List(context.Background(), opts)
 			if err != nil {
 				return err
 			}
@@ -102,12 +105,12 @@ func newDebugSessionListCommand() *cobra.Command {
 				}
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster")
-	cmd.Flags().StringVar(&state, "state", "", "Filter by state")
+	cmd.Flags().StringVar(&state, "state", "", "Filter by state, comma-separated for multiple (e.g. Active,Pending)")
 	cmd.Flags().StringVar(&user, "user", "", "Filter by requesting user")
 	cmd.Flags().BoolVar(&mine, "mine", false, "Only sessions requested by current user")
 	cmd.Flags().IntVar(&page, "page", 1, "Page number")
@@ -128,6 +131,13 @@ func newDebugSessionWatchCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Watch debug session changes",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			rt, err := getRuntime(cmd)
+			if err != nil {
+				return err
+			}
+			return validateOutputFormat(output.Format(rt.OutputFormat()), output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -146,14 +156,18 @@ func newDebugSessionWatchCommand() *cobra.Command {
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 
+			watchOpts := client.DebugSessionListOptions{
+				Cluster: cluster,
+				User:    user,
+				Mine:    mine,
+			}
+			if state != "" {
+				watchOpts.State = strings.Split(state, ",")
+			}
+
 			// Run first iteration immediately
 			runWatch := func() error {
-				resp, err := apiClient.DebugSessions().List(ctx, client.DebugSessionListOptions{
-					Cluster: cluster,
-					State:   state,
-					User:    user,
-					Mine:    mine,
-				})
+				resp, err := apiClient.DebugSessions().List(ctx, watchOpts)
 				if err != nil {
 					return err
 				}
@@ -163,7 +177,9 @@ func newDebugSessionWatchCommand() *cobra.Command {
 					if prev, ok := seen[key]; !ok || prev != value {
 						seen[key] = value
 						if showFull {
-							_ = output.WriteObject(rt.Writer(), output.FormatJSON, s)
+							if err := output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), s); err != nil {
+								return err
+							}
 						} else {
 							_, _ = fmt.Fprintf(rt.Writer(), "%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, s.State)
 						}
@@ -191,12 +207,12 @@ func newDebugSessionWatchCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval (Go duration, e.g. 2s, 1m)")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster")
-	cmd.Flags().StringVar(&state, "state", "", "Filter by state")
+	cmd.Flags().StringVar(&state, "state", "", "Filter by state, comma-separated for multiple (e.g. Active,Pending)")
 	cmd.Flags().StringVar(&user, "user", "", "Filter by requesting user")
 	cmd.Flags().BoolVar(&mine, "mine", false, "Only sessions requested by current user")
-	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session JSON on change")
+	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session on change (respects -o json|yaml)")
 	return cmd
 }
 
@@ -219,7 +235,7 @@ func newDebugSessionGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -299,7 +315,7 @@ Use --set to provide values for template extraDeployVariables:
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&templateRef, "template", "", "Debug session template name")
@@ -339,7 +355,7 @@ func newDebugSessionJoinCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "participant", "Role: participant|viewer")
@@ -366,7 +382,7 @@ func newDebugSessionLeaveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -395,7 +411,7 @@ func newDebugSessionRenewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&extendBy, "extend-by", "", "Extend duration by (e.g. 30m)")
@@ -423,7 +439,7 @@ func newDebugSessionTerminateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -452,7 +468,7 @@ func newDebugSessionApproveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Approval reason")
@@ -482,7 +498,7 @@ func newDebugSessionRejectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), session)
+			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Rejection reason")
@@ -536,7 +552,7 @@ templates without any available clusters.`,
 				}
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
@@ -564,7 +580,7 @@ func newDebugTemplateGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), template)
+			return writeRuntimeObject(rt, template, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	return cmd
@@ -616,7 +632,7 @@ This shows cluster-specific details including:
 				output.WriteTemplateClusterTableWide(rt.Writer(), resp.Clusters)
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
@@ -677,7 +693,7 @@ Use this to determine which --binding value to pass to 'debug session create'.`,
 				output.WriteBindingOptionsTable(rt.Writer(), clusterName, clusterDetail.BindingOptions)
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
@@ -718,7 +734,7 @@ func newDebugPodTemplateListCommand() *cobra.Command {
 				output.WriteDebugPodTemplateTable(rt.Writer(), resp.Templates)
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
@@ -743,7 +759,7 @@ func newDebugPodTemplateGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), template)
+			return writeRuntimeObject(rt, template, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	return cmd
@@ -794,7 +810,7 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), resp)
+			return writeRuntimeObject(rt, resp, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Target namespace")
@@ -837,7 +853,7 @@ func newDebugKubectlCopyPodCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), resp)
+			return writeRuntimeObject(rt, resp, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Target namespace")
@@ -871,7 +887,7 @@ func newDebugKubectlNodeDebugCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), resp)
+			return writeRuntimeObject(rt, resp, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "Target node name")

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package output
 
 import (
@@ -38,6 +42,6 @@ func WriteObject(w io.Writer, format Format, obj any) error {
 	case FormatWide:
 		return fmt.Errorf("wide format requires a specific formatter")
 	default:
-		return fmt.Errorf("unknown output format: %s", format)
+		return fmt.Errorf("unknown output format: %q", format)
 	}
 }

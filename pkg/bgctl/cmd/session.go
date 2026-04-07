@@ -120,7 +120,7 @@ func newSessionWatchCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval (Go duration, e.g. 2s, 1m)")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster")
 	cmd.Flags().StringVar(&user, "user", "", "Filter by user")
 	cmd.Flags().StringVar(&group, "group", "", "Filter by group")
@@ -196,7 +196,7 @@ func newSessionListCommand() *cobra.Command {
 				}
 				return nil
 			default:
-				return fmt.Errorf("unknown output format: %s", format)
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
 		},
 	}
@@ -237,7 +237,7 @@ func newSessionGetCommand() *cobra.Command {
 				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
-			return output.WriteObject(rt.Writer(), format, session)
+			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
 }
@@ -286,7 +286,7 @@ func newSessionRequestCommand() *cobra.Command {
 				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
-			return output.WriteObject(rt.Writer(), format, session)
+			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Target cluster")
@@ -324,7 +324,7 @@ func newSessionApproveCommand() *cobra.Command {
 				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
-			return output.WriteObject(rt.Writer(), format, session)
+			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Approval reason")
@@ -355,7 +355,7 @@ func newSessionRejectCommand() *cobra.Command {
 				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
-			return output.WriteObject(rt.Writer(), format, session)
+			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Rejection reason")
@@ -385,7 +385,7 @@ func newSessionWithdrawCommand() *cobra.Command {
 				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
-			return output.WriteObject(rt.Writer(), format, session)
+			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
 }
@@ -413,7 +413,7 @@ func newSessionDropCommand() *cobra.Command {
 				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
-			return output.WriteObject(rt.Writer(), format, session)
+			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
 }
@@ -441,7 +441,7 @@ func newSessionCancelCommand() *cobra.Command {
 				output.WriteSessionTable(rt.Writer(), []breakglassv1alpha1.BreakglassSession{*session})
 				return nil
 			}
-			return output.WriteObject(rt.Writer(), format, session)
+			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
 }

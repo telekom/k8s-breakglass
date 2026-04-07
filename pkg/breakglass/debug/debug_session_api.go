@@ -260,7 +260,24 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 
 	// Get query parameters for filtering
 	cluster := ctx.Query("cluster")
-	state := ctx.Query("state")
+	// Accept repeated ?state= params (e.g. ?state=Active&state=Pending) as well as
+	// a legacy single comma-separated value (e.g. ?state=Active,Pending).
+	// Comparison is case-insensitive so both "Active" and "active" match.
+	var states []string
+	for _, v := range ctx.QueryArray("state") {
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				states = append(states, s)
+			}
+		}
+	}
+	// Validate each requested state value against the canonical set.
+	for _, st := range states {
+		if !isValidDebugSessionState(st) {
+			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("invalid state value: '%s'", st))
+			return
+		}
+	}
 	user := ctx.Query("user")
 	mine := ctx.Query("mine") == "true"
 
@@ -295,8 +312,17 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			continue
 		}
 		// State filter
-		if state != "" && string(s.Status.State) != state {
-			continue
+		if len(states) > 0 {
+			matched := false
+			for _, st := range states {
+				if strings.EqualFold(string(s.Status.State), st) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 		// User filter
 		if user != "" && s.Spec.RequestedBy != user {
@@ -791,4 +817,24 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, response)
 }
 
-// handleJoinDebugSession allows a user to join an existing debug session
+// validDebugSessionStates is the canonical set of allowed DebugSession state values.
+// Used to validate the ?state= query parameter in handleListDebugSessions.
+var validDebugSessionStates = map[string]struct{}{
+	string(breakglassv1alpha1.DebugSessionStatePending):         {},
+	string(breakglassv1alpha1.DebugSessionStatePendingApproval): {},
+	string(breakglassv1alpha1.DebugSessionStateActive):          {},
+	string(breakglassv1alpha1.DebugSessionStateExpired):         {},
+	string(breakglassv1alpha1.DebugSessionStateTerminated):      {},
+	string(breakglassv1alpha1.DebugSessionStateFailed):          {},
+}
+
+// isValidDebugSessionState returns true when val (case-insensitive) matches
+// one of the canonical DebugSessionState values.
+func isValidDebugSessionState(val string) bool {
+	for k := range validDebugSessionStates {
+		if strings.EqualFold(k, val) {
+			return true
+		}
+	}
+	return false
+}

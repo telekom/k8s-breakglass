@@ -150,7 +150,7 @@ func TestWriteObject_UnknownFormat(t *testing.T) {
 	buf := &bytes.Buffer{}
 	err := WriteObject(buf, Format("invalid"), struct{}{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown output format: invalid")
+	assert.Contains(t, err.Error(), `unknown output format: "invalid"`)
 }
 
 func TestWriteObject_JSONMarshalError(t *testing.T) {

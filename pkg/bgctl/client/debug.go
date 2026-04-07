@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,7 +21,7 @@ func (c *Client) DebugSessions() *DebugSessionService {
 
 type DebugSessionListOptions struct {
 	Cluster string
-	State   string
+	State   []string
 	User    string
 	Mine    bool
 }
@@ -97,14 +98,38 @@ type CreateNodeDebugPodRequest struct {
 	NodeName string `json:"nodeName"`
 }
 
+var canonicalDebugSessionStates = map[string]string{
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStatePending)):         string(breakglassv1alpha1.DebugSessionStatePending),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStatePendingApproval)): string(breakglassv1alpha1.DebugSessionStatePendingApproval),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateActive)):          string(breakglassv1alpha1.DebugSessionStateActive),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateExpired)):         string(breakglassv1alpha1.DebugSessionStateExpired),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateTerminated)):      string(breakglassv1alpha1.DebugSessionStateTerminated),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateFailed)):          string(breakglassv1alpha1.DebugSessionStateFailed),
+}
+
+func validateDebugSessionState(state string) (string, error) {
+	canonical, ok := canonicalDebugSessionStates[strings.ToLower(state)]
+	if !ok {
+		return "", fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Expired, Terminated, Failed", state)
+	}
+	return canonical, nil
+}
+
 func (s *DebugSessionService) List(ctx context.Context, opts DebugSessionListOptions) (*DebugSessionListResponse, error) {
 	endpoint := "api/debugSessions"
 	params := url.Values{}
 	if opts.Cluster != "" {
 		params.Set("cluster", opts.Cluster)
 	}
-	if opts.State != "" {
-		params.Set("state", opts.State)
+	for _, stateVal := range opts.State {
+		stateVal = strings.TrimSpace(stateVal)
+		if stateVal != "" {
+			canonical, err := validateDebugSessionState(stateVal)
+			if err != nil {
+				return nil, err
+			}
+			params.Add("state", canonical)
+		}
 	}
 	if opts.User != "" {
 		params.Set("user", opts.User)

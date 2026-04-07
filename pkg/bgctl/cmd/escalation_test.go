@@ -224,9 +224,132 @@ func TestEscalationListClustersCommand_TableOutput(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.NoError(t, err)
-	output := buf.String()
-	// Table output should contain cluster names (one per line, no header)
-	assert.Contains(t, output, "cluster-a")
-	assert.Contains(t, output, "cluster-b")
-	assert.Contains(t, output, "cluster-c")
+	outStr := buf.String()
+	assert.Contains(t, outStr, "cluster-a")
+	assert.Contains(t, outStr, "cluster-b")
+	assert.Contains(t, outStr, "cluster-c")
+}
+
+func TestEscalationGetCommand_JSON(t *testing.T) {
+	server := setupMockEscalationServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForEscalation(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"escalation", "get", "test-escalation-1",
+		"-o", "json",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	var result breakglassv1alpha1.BreakglassEscalation
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &result))
+	assert.Equal(t, "test-escalation-1", result.Name)
+	assert.Equal(t, "admin", result.Spec.EscalatedGroup)
+}
+
+func TestEscalationGetCommand_YAML(t *testing.T) {
+	server := setupMockEscalationServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForEscalation(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"escalation", "get", "test-escalation-1",
+		"-o", "yaml",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	outStr := buf.String()
+	assert.Contains(t, outStr, "test-escalation-1")
+	assert.Contains(t, outStr, "escalatedgroup: admin")
+}
+
+func TestEscalationGetCommand_TableCoercedToYAML(t *testing.T) {
+	server := setupMockEscalationServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForEscalation(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"escalation", "get", "test-escalation-1",
+		"-o", "table",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	outStr := buf.String()
+	assert.Contains(t, outStr, "test-escalation-1")
+	assert.Contains(t, outStr, "escalatedgroup: admin")
+}
+
+func TestEscalationGetCommand_WideCoercedToYAML(t *testing.T) {
+	server := setupMockEscalationServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForEscalation(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"escalation", "get", "test-escalation-1",
+		"-o", "wide",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	outStr := buf.String()
+	assert.Contains(t, outStr, "test-escalation-1")
+	assert.Contains(t, outStr, "escalatedgroup: admin")
+}
+
+func TestEscalationGetCommand_UnknownFormatError(t *testing.T) {
+	server := setupMockEscalationServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForEscalation(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"escalation", "get", "test-escalation-1",
+		"-o", "invalid",
+	})
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown output format")
 }

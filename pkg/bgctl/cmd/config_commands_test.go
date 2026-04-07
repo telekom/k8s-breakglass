@@ -204,6 +204,7 @@ func TestConfigDeleteContextNotFound(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context not found")
+	assert.Contains(t, err.Error(), "get-contexts")
 }
 
 func TestConfigDeleteOIDCProviderNotFound(t *testing.T) {
