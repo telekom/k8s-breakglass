@@ -62,5 +62,7 @@ multi-cluster-setup-failure-logs/
 # Frontend
 frontend/vite.log
 frontend/playwright-report/
+frontend/playwright-report-a11y/
 frontend/test-results/
+frontend/test-results-a11y/
 frontend/dist

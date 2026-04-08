@@ -1718,6 +1718,110 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, "session-2", response.Sessions[0].Name)
 	})
 
+	t.Run("filter by multiple states via repeated query params", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active&state=Pending", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 2, response.Total)
+		names := []string{response.Sessions[0].Name, response.Sessions[1].Name}
+		assert.ElementsMatch(t, []string{"session-1", "session-2"}, names)
+	})
+
+	t.Run("filter by multiple states via comma-separated value", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active,Pending", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 2, response.Total)
+		names := []string{response.Sessions[0].Name, response.Sessions[1].Name}
+		assert.ElementsMatch(t, []string{"session-1", "session-2"}, names)
+	})
+
+	t.Run("filter by state case-insensitive", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=pending", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+		assert.Equal(t, "session-2", response.Sessions[0].Name)
+	})
+
+	t.Run("filter by invalid state returns 400", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=InvalidState", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+	})
+
 	t.Run("filter by user", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -4853,4 +4957,93 @@ func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
 			assert.Equal(t, tt.wantResult, result)
 		})
 	}
+}
+
+// TestHandleListDebugSessions_StateValidation tests that invalid state values
+// return HTTP 400 instead of silently returning empty results.
+func TestHandleListDebugSessions_StateValidation(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	sessions := []breakglassv1alpha1.DebugSession{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "breakglass"},
+			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "t", RequestedBy: "alice"},
+			Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+		},
+	}
+
+	buildRouter := func() *gin.Engine {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0]).
+			WithStatusSubresource(&sessions[0]).
+			Build()
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		require.NoError(t, ctrl.Register(rg))
+		return router
+	}
+
+	t.Run("invalid state returns 400", func(t *testing.T) {
+		router := buildRouter()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=INVALID_VALUE", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "invalid state value")
+		assert.Contains(t, resp["error"], "INVALID_VALUE")
+	})
+
+	t.Run("combo valid+invalid state returns 400", func(t *testing.T) {
+		router := buildRouter()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active&state=BOGUS", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "BOGUS")
+	})
+
+	t.Run("valid state returns 200", func(t *testing.T) {
+		router := buildRouter()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response DebugSessionListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		assert.Equal(t, 1, response.Total)
+	})
+
+	t.Run("empty state param returns 200 with all sessions", func(t *testing.T) {
+		router := buildRouter()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response DebugSessionListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		assert.Equal(t, 1, response.Total)
+	})
+
+	t.Run("case-insensitive valid state returns 200", func(t *testing.T) {
+		router := buildRouter()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=active", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response DebugSessionListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		assert.Equal(t, 1, response.Total)
+	})
 }

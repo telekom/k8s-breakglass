@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -615,4 +616,102 @@ func TestDebugSessionCreateCommand_SetFlagInvalidFormat(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid --set format")
+}
+
+// TestDebugSessionWatchCommand_ShowFullRespectsOutputFormat verifies that
+// --show-full respects the -o flag instead of hardcoding JSON output.
+func TestDebugSessionWatchCommand_ShowFullRespectsOutputFormat(t *testing.T) {
+	now := time.Now()
+	startsAt := metav1.NewTime(now)
+	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
+
+	session := client.DebugSessionSummary{
+		Name:        "watch-session-1",
+		TemplateRef: "template-1",
+		Cluster:     "cluster-a",
+		RequestedBy: "user@example.com",
+		State:       breakglassv1alpha1.DebugSessionStateActive,
+		StartsAt:    &startsAt,
+		ExpiresAt:   &expiresAt,
+	}
+	resp := client.DebugSessionListResponse{
+		Sessions: []client.DebugSessionSummary{session},
+		Total:    1,
+	}
+
+	tests := []struct {
+		name       string
+		outputFlag string
+		checkJSON  bool
+		checkYAML  bool
+	}{
+		{
+			name:       "show-full with -o yaml outputs YAML",
+			outputFlag: "yaml",
+			checkYAML:  true,
+		},
+		{
+			name:       "show-full with -o json outputs JSON",
+			outputFlag: "json",
+			checkJSON:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requestCount := 0
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/debugSessions" {
+					requestCount++
+					if requestCount == 1 {
+						// First request: return session so watch loop emits output
+						w.Header().Set("Content-Type", "application/json")
+						_ = json.NewEncoder(w).Encode(resp)
+						return
+					}
+				}
+				// Subsequent requests fail → watch loop returns error and command exits
+				http.Error(w, "server stopping", http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+
+			configPath := writeTestConfigForDebug(t, server.URL)
+			buf := &bytes.Buffer{}
+			rootCmd := NewRootCommand(Config{
+				ConfigPath:   configPath,
+				OutputWriter: buf,
+			})
+
+			rootCmd.SetArgs([]string{
+				"--server", server.URL,
+				"--token", "test-token",
+				"debug", "session", "watch",
+				"--show-full",
+				"--interval", "1ms",
+				"-o", tt.outputFlag,
+			})
+			// The command will error when the second request fails — that is expected.
+			_ = rootCmd.Execute()
+
+			out := buf.String()
+			// The first poll should have produced output with the session.
+			require.NotEmpty(t, out, "expected output from first poll")
+			assert.Contains(t, out, "watch-session-1")
+
+			if tt.checkJSON {
+				// JSON output starts with '{' or contains '"name"'
+				assert.True(t,
+					strings.Contains(out, `"name"`) || strings.Contains(out, "watch-session-1"),
+					"expected JSON format output, got: %s", out)
+				assert.NotContains(t, out, "name: watch-session-1", "should not be YAML format")
+			}
+			if tt.checkYAML {
+				// YAML output uses 'key: value' format
+				assert.Contains(t, out, "name: watch-session-1",
+					"expected YAML format output, got: %s", out)
+				assert.NotContains(t, out, `"name": "watch-session-1"`, "should not be JSON format")
+			}
+		})
+	}
 }
