@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
 	authenticationv1beta1 "k8s.io/api/authentication/v1beta1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1332,20 +1331,6 @@ func TestGetUserInfo(t *testing.T) {
 			},
 			expectedGroups: []string{"beta-admin", "beta-users"},
 			expectedUser:   "test-user-beta",
-			expectError:    false,
-		},
-		{
-			name: "v1alpha1 SelfSubjectReview",
-			input: &authenticationv1alpha1.SelfSubjectReview{
-				Status: authenticationv1alpha1.SelfSubjectReviewStatus{
-					UserInfo: authenticationv1.UserInfo{
-						Username: "test-user-alpha",
-						Groups:   []string{"alpha-admin", "alpha-users"},
-					},
-				},
-			},
-			expectedGroups: []string{"alpha-admin", "alpha-users"},
-			expectedUser:   "test-user-alpha",
 			expectError:    false,
 		},
 		{

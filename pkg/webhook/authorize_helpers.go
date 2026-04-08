@@ -29,7 +29,7 @@ type authorizeState struct {
 	// Immutable inputs
 	startTime   time.Time
 	clusterName string
-	ctx         context.Context //nolint:containedctx // scoped to a single request; passed to helpers
+	ctx         context.Context //nolint:containedctx // request-scoped context: authorizeState is created per HTTP request and passed to private helpers; storing ctx here avoids threading it through every helper signature while keeping it out of global state
 	reqLog      *zap.SugaredLogger
 	phases      *SARPhaseTracker
 

@@ -527,19 +527,14 @@ func IsTransientError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	// net.Error — only treat as transient when it's a timeout or temporary condition.
+	// net.Error — only treat as transient when it's a timeout.
 	// Other net.Error values (e.g., DNS resolution failures for invalid hosts) are
 	// configuration issues that should not trip the breaker.
+	// Note: net.Error.Temporary() was deprecated in Go 1.18 with no direct replacement;
+	// concrete error types (net.OpError, url.Error) are handled below via errors.As.
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		if netErr.Timeout() {
-			return true
-		}
-		// Check deprecated Temporary() as a fallback for legacy error types.
-		type temporaryError interface {
-			Temporary() bool
-		}
-		if te, ok := netErr.(temporaryError); ok && te.Temporary() { //nolint:staticcheck // Temporary() is deprecated but still useful for legacy types
 			return true
 		}
 	}
