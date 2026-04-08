@@ -122,10 +122,10 @@ jobs:
               filename=$(basename "$file")
               name="${filename%.png}"
               theme="all"
-              if [[ "$name" == *"-dark"* ]]; then
-                theme="dark"
-              elif [[ "$name" == *"-high-contrast"* ]]; then
+              if [[ "$name" == *"-high-contrast"* ]]; then
                 theme="high-contrast"
+              elif [[ "$name" == *"-dark"* ]]; then
+                theme="dark"
               elif [[ "$name" == *"-light"* ]]; then
                 theme="light"
               fi
@@ -189,9 +189,9 @@ jobs:
             if (fs.existsSync(galleryDir)) {
               const files = fs.readdirSync(galleryDir).filter(f => f.endsWith('.png'));
               screenshotCount = files.length;
-              lightCount = files.filter(f => f.includes('-light')).length;
-              darkCount = files.filter(f => f.includes('-dark')).length;
               highContrastCount = files.filter(f => f.includes('-high-contrast')).length;
+              darkCount = files.filter(f => f.includes('-dark') && !f.includes('-high-contrast')).length;
+              lightCount = files.filter(f => f.includes('-light') && !f.includes('-high-contrast')).length;
             }
             
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
