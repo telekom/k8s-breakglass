@@ -106,6 +106,7 @@ func E2EOIDCProvider() *OIDCTokenProvider {
 // unavailability (e.g. pod restarts during E2E cluster setup).
 // Non-retryable errors (4xx) fail immediately without retrying.
 func (p *OIDCTokenProvider) GetToken(t *testing.T, ctx context.Context, username, password string) string {
+	p.waitForKeycloakPortForward(t, ctx)
 	// Try using the get-token.sh script first
 	token, err := p.getTokenViaScript(ctx, username, password)
 	if err == nil && token != "" {
@@ -166,10 +167,18 @@ retryLoop:
 	return token
 }
 
+// isUnitTestMode reports whether this provider is operating in unit-test mode.
+// Unit tests set InitialBackoff > 0 to use an in-process httptest.Server with
+// fast retry durations, rather than a real Keycloak port-forward. This flag is
+// used to skip probes that would otherwise consume mock HTTP calls.
+func (p *OIDCTokenProvider) isUnitTestMode() bool {
+	return p.InitialBackoff > 0
+}
+
 // initialBackoff returns the initial backoff duration for retry logic.
 // Tests can override InitialBackoff to use shorter durations.
 func (p *OIDCTokenProvider) initialBackoff() time.Duration {
-	if p.InitialBackoff > 0 {
+	if p.isUnitTestMode() {
 		return p.InitialBackoff
 	}
 	return defaultInitialBackoff
@@ -229,6 +238,15 @@ func (p *OIDCTokenProvider) getTokenViaHTTP(ctx context.Context, username, passw
 	// This is needed when port-forwarding to Keycloak but the IdentityProvider expects the in-cluster URL.
 	if p.IssuerHost != "" {
 		req.Host = p.IssuerHost
+	}
+
+	// Flush any stale keep-alive connections in the shared transport before each
+	// attempt. If the port-forward was restarted, connections established before
+	// the restart will return EOF. CloseIdleConnections forces a fresh TCP
+	// handshake on the next request, complementing the waitForKeycloakPortForward
+	// pre-check which uses a separate short-lived client.
+	if tr, ok := httpClient.Transport.(*http.Transport); ok {
+		tr.CloseIdleConnections()
 	}
 
 	resp, err := httpClient.Do(req)
@@ -304,6 +322,7 @@ func (p *OIDCTokenProvider) GetSeniorApproverToken(t *testing.T, ctx context.Con
 // to retrieve an offline refresh token from Keycloak. This token can be stored
 // in a K8s Secret and used by the controller to exchange for access tokens.
 func (p *OIDCTokenProvider) ObtainOfflineRefreshToken(t *testing.T, ctx context.Context, username, password string) string {
+	p.waitForKeycloakPortForward(t, ctx)
 	keycloakHost := p.KeycloakHost
 	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
 		keycloakHost = "https://" + keycloakHost
@@ -462,6 +481,9 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshTokenWithRetry(t *testing.T, ctx
 				return "" // unreachable
 			case <-timer.C:
 			}
+			// After backoff, verify Keycloak port-forward has recovered before next attempt.
+			// The keepalive wrapper restarts in ~2s, but we need the new connection to be stable.
+			p.waitForKeycloakPortForward(t, ctx)
 			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
@@ -524,6 +546,92 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 		time.Sleep(backoff)
 		backoff *= 2
 	}
+}
+
+// waitForKeycloakPortForward waits for Keycloak to be reachable via the discovery endpoint
+// before proceeding. This is a non-fatal pre-check used by GetToken,
+// ObtainOfflineRefreshToken, and ObtainOfflineRefreshTokenWithRetry to bridge the ~2s gap
+// when the kubectl port-forward keepalive loop restarts. If still unreachable after the
+// wait window, it logs a warning and returns — the caller's own retry logic handles the error.
+//
+// The check is skipped when InitialBackoff > 0 (unit-test mode) because tests use an
+// in-process httptest.Server instead of a real port-forward, and the probe must not
+// consume HTTP calls that the test expects to be handled by getTokenViaHTTP.
+func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	if p.isUnitTestMode() {
+		return
+	}
+
+	keycloakHost := p.KeycloakHost
+	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
+		keycloakHost = "https://" + keycloakHost
+	}
+	discoveryURL := fmt.Sprintf("%s/realms/%s/.well-known/openid-configuration", keycloakHost, p.Realm)
+
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
+			},
+		},
+	}
+	defer client.CloseIdleConnections()
+
+	// Fast path: probe once — zero delay on happy path.
+	if p.probeKeycloakOnce(ctx, client, discoveryURL) {
+		return
+	}
+
+	// Slow path: port-forward may be restarting — wait up to 8s, polling every 500ms.
+	// Use context.WithTimeout to bound the total wall-clock delay at maxWait regardless
+	// of how long individual probes block (each can take up to the client timeout).
+	const pollInterval = 500 * time.Millisecond
+	const maxWait = 8 * time.Second
+
+	t.Logf("Keycloak not reachable at %s — port-forward may be restarting, waiting up to %v", discoveryURL, maxWait)
+
+	waitCtx, cancel := context.WithTimeout(ctx, maxWait)
+	defer cancel()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-waitCtx.Done():
+			t.Logf("warning: Keycloak still not reachable at %s after %v — proceeding anyway; GetToken retry will handle errors", discoveryURL, maxWait)
+			return
+		case <-ticker.C:
+			if p.probeKeycloakOnce(waitCtx, client, discoveryURL) {
+				return
+			}
+		}
+	}
+}
+
+// probeKeycloakOnce sends a single GET request to the Keycloak discovery URL and returns
+// true if it responds with HTTP 200. Returns false for any error or non-200 status.
+// No logging is done here — the caller handles logging.
+func (p *OIDCTokenProvider) probeKeycloakOnce(ctx context.Context, client *http.Client, discoveryURL string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	if err != nil {
+		return false
+	}
+	if p.IssuerHost != "" {
+		req.Host = p.IssuerHost
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode == http.StatusOK
 }
 
 // ObtainClientCredentialsToken performs a client_credentials grant to obtain an access
