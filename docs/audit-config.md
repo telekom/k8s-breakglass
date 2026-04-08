@@ -311,6 +311,17 @@ spec:
       - policy.violation
 ```
 
+> **Sensitive event guarantee:** The following event types are **never sampled**
+> regardless of the `rate` setting: session request/approve/deny/reject/expire/
+> revoke/withdraw/drop, access denial, secret CRUD, auth failure, debug session
+> create/start/terminate/fail/expire/approval-timeout, cluster role binding
+> create/delete, resource impersonation, policy bypass/violation, and pod
+> security deny/warning/override. When the async queue is full, sensitive events
+> fall back to a synchronous write (up to `WriteTimeout`) instead of being
+> dropped. The metric `breakglass_audit_sensitive_events_sync_written_total`
+> tracks how often this fallback occurs — a sustained non-zero value indicates
+> the queue should be enlarged.
+
 ## Queue Configuration
 
 Tune the async queue for your throughput:

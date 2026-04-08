@@ -1150,6 +1150,170 @@ func TestManager_ShouldSample(t *testing.T) {
 	})
 }
 
+func TestManager_SensitiveEventsNeverSampled(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	var mu sync.Mutex
+	received := map[EventType]int{}
+
+	sink := &testSink{
+		name: "test",
+		writeFunc: func(event *Event) {
+			mu.Lock()
+			received[event.Type]++
+			mu.Unlock()
+		},
+	}
+
+	manager := NewManager(sink, ManagerConfig{
+		QueueSize:            1000,
+		WorkerCount:          1,
+		SampleRate:           0.01,
+		HighVolumeEventTypes: []EventType{EventResourceGet, EventSessionRequested},
+	}, logger)
+
+	sensitiveTypes := []EventType{
+		EventSessionRequested, EventSessionApproved, EventSessionDenied,
+		EventSessionRejected, EventSessionExpired,
+		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
+		EventAccessDenied, EventAccessDeniedPolicy,
+		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
+		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
+		EventDebugSessionCreated, EventDebugSessionStarted,
+		EventDebugSessionTerminated, EventDebugSessionFailed,
+		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
+		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
+		EventResourceImpersonate, EventPolicyBypassed,
+		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride,
+	}
+
+	const eventsPerType = 50
+	for _, evtType := range sensitiveTypes {
+		for i := 0; i < eventsPerType; i++ {
+			manager.Emit(context.Background(), &Event{Type: evtType})
+		}
+	}
+
+	time.Sleep(200 * time.Millisecond) //nolint:mnd // drain async queue before closing
+	_ = manager.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, evtType := range sensitiveTypes {
+		assert.Equal(t, eventsPerType, received[evtType],
+			"sensitive event %s must never be sampled", evtType)
+	}
+}
+
+func TestManager_SensitiveEventsNotDroppedOnQueueFull(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	var mu sync.Mutex
+	var sensitiveReceived int
+	blockWorker := make(chan struct{})
+
+	sink := &testSink{
+		name: "blocking",
+		writeFunc: func(event *Event) {
+			if IsSensitiveEvent(event.Type) {
+				mu.Lock()
+				sensitiveReceived++
+				mu.Unlock()
+				return
+			}
+			// Non-sensitive events block the worker so the queue stays full.
+			<-blockWorker
+		},
+	}
+
+	manager := NewManager(sink, ManagerConfig{
+		QueueSize:    1,
+		WorkerCount:  1,
+		DropOnFull:   true,
+		WriteTimeout: 5 * time.Second,
+	}, logger)
+
+	// Given: one event occupies the worker (blocked), one fills the queue slot.
+	manager.Emit(context.Background(), &Event{Type: EventResourceGet})
+	time.Sleep(20 * time.Millisecond)
+	manager.Emit(context.Background(), &Event{Type: EventResourceList})
+
+	// When: sensitive events are emitted against a full queue.
+	const sensitiveCount = 5
+	for i := 0; i < sensitiveCount; i++ {
+		manager.Emit(context.Background(), &Event{
+			Type: EventSessionRevoked,
+			ID:   fmt.Sprintf("sensitive-%d", i),
+		})
+	}
+
+	// Then: all sensitive events are written synchronously (not dropped).
+	assert.Equal(t, int64(sensitiveCount), manager.sensitiveEventsSyncWritten.Load(),
+		"sensitiveEventsSyncWritten counter must match")
+
+	mu.Lock()
+	assert.Equal(t, sensitiveCount, sensitiveReceived,
+		"all sensitive events must be written even when queue is full")
+	mu.Unlock()
+
+	close(blockWorker)
+	_ = manager.Close()
+}
+
+func TestManager_SensitiveEventSyncFallbackWriteError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	blockWorker := make(chan struct{})
+
+	writeErr := fmt.Errorf("simulated sink failure")
+	sink := &errableSink{
+		name: "failing",
+		writeFn: func(event *Event) error {
+			if IsSensitiveEvent(event.Type) {
+				return writeErr
+			}
+			<-blockWorker
+			return nil
+		},
+	}
+
+	manager := NewManager(sink, ManagerConfig{
+		QueueSize:    1,
+		WorkerCount:  1,
+		DropOnFull:   true,
+		WriteTimeout: 5 * time.Second,
+	}, logger)
+
+	// Given: queue is full (one event blocks worker, one fills queue slot).
+	manager.Emit(context.Background(), &Event{Type: EventResourceGet})
+	time.Sleep(20 * time.Millisecond) //nolint:mnd // let worker pick up blocking event
+	manager.Emit(context.Background(), &Event{Type: EventResourceList})
+
+	// When: a sensitive event is emitted and the sync fallback write fails.
+	manager.Emit(context.Background(), &Event{
+		Type: EventSessionRevoked,
+		ID:   "fail-test",
+	})
+
+	// Then: sensitiveEventsSyncWritten is NOT incremented on failure.
+	assert.Equal(t, int64(0), manager.sensitiveEventsSyncWritten.Load(),
+		"sensitiveEventsSyncWritten must not increment on write failure")
+
+	close(blockWorker)
+	_ = manager.Close()
+}
+
+type errableSink struct {
+	name    string
+	writeFn func(event *Event) error
+}
+
+func (s *errableSink) Write(_ context.Context, event *Event) error {
+	return s.writeFn(event)
+}
+
+func (s *errableSink) Close() error { return nil }
+func (s *errableSink) Name() string { return s.name }
+
 // ================================
 // Batch Processing Tests
 // ================================
