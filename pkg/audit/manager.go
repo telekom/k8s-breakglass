@@ -39,9 +39,10 @@ type Manager struct {
 	stopStats  chan struct{} // Signal to stop stats reporter
 
 	// Metrics for monitoring
-	queuedEvents    atomic.Int64
-	droppedEvents   atomic.Int64
-	processedEvents atomic.Int64
+	queuedEvents               atomic.Int64
+	droppedEvents              atomic.Int64
+	processedEvents            atomic.Int64
+	sensitiveEventsSyncWritten atomic.Int64
 
 	// Configuration
 	config ManagerConfig
@@ -179,8 +180,9 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	return m
 }
 
-// Emit sends an audit event asynchronously (non-blocking).
-// This method NEVER blocks - if the queue is full, the event is dropped.
+// Emit sends an audit event asynchronously (non-blocking for non-sensitive events).
+// Sensitive events (IsSensitiveEvent) fall back to a synchronous write when the
+// queue is full, which may block up to WriteTimeout.
 func (m *Manager) Emit(ctx context.Context, event *Event) {
 	if m.closed.Load() {
 		return
@@ -212,7 +214,26 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
 	default:
-		// Queue is full - drop event (non-blocking)
+		// Queue is full — sensitive events fall back to synchronous write
+		// instead of being dropped, honouring the "never drop" contract.
+		if IsSensitiveEvent(event.Type) {
+			writeCtx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
+			defer cancel()
+
+			if err := m.sink.Write(writeCtx, event); err != nil {
+				m.logger.Error("failed sync-write of sensitive audit event",
+					zap.String("event_type", string(event.Type)),
+					zap.String("event_id", event.ID),
+					zap.Error(err))
+				metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
+			} else {
+				m.sensitiveEventsSyncWritten.Add(1)
+				metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(m.sink.Name()).Inc()
+			}
+
+			return
+		}
+
 		m.droppedEvents.Add(1)
 		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
 		if !m.config.DropOnFull {
@@ -246,6 +267,11 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 
 // shouldSample returns true if the event should be sampled (dropped).
 func (m *Manager) shouldSample(eventType EventType) bool {
+	// Sensitive events are never sampled — they must always be captured.
+	if IsSensitiveEvent(eventType) {
+		return false
+	}
+
 	if m.config.SampleRate >= 1.0 {
 		return false
 	}
