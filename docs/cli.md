@@ -190,7 +190,7 @@ bgctl debug session watch --cluster prod-1
 bgctl debug session watch --state Active --interval 5s
 
 # Watch debug sessions for a specific user and show full JSON on change
-bgctl debug session watch --user alice@example.com --show-full
+bgctl debug session watch --user alice@example.com --show-full -o json
 ```
 
 ## Configuration Management

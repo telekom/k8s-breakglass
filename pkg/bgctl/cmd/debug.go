@@ -136,7 +136,16 @@ func newDebugSessionWatchCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return validateOutputFormat(output.Format(rt.OutputFormat()), output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
+			if err := validateOutputFormat(output.Format(rt.OutputFormat()), output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML); err != nil {
+				return err
+			}
+			if showFull {
+				f := output.Format(rt.OutputFormat())
+				if f == output.FormatTable || f == output.FormatWide {
+					return fmt.Errorf("--show-full requires a structured output format: use -o json or -o yaml")
+				}
+			}
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
