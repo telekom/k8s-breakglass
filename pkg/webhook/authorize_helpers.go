@@ -221,7 +221,7 @@ func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeS
 		return false
 	}
 	s.phases.EndPhase(PhaseSessions) // End sessions phase
-	s.reqLog.With("groups", s.groups, "sessions", len(s.sessions),
+	s.reqLog.With("groupCount", len(s.groups), "sessions", len(s.sessions),
 		"tenant", s.tenant, "idpMismatches", len(s.idpMismatches)).
 		Debug("Retrieved user groups for cluster")
 	return true
@@ -378,7 +378,7 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 				s.reqLog.Infow("Request denied by session-scoped DenyPolicy",
 					"policy", pol,
 					"session", sess.Name,
-					"sessionGroup", sess.Spec.GrantedGroup,
+					"sessionGroupHint", system.RedactGroupName(sess.Spec.GrantedGroup),
 					"verb", act.Verb,
 					"apiGroup", act.APIGroup,
 					"resource", act.Resource,
@@ -453,7 +453,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 	var rbacErr error
 	// Log input to RBAC check for easier debugging
 	s.reqLog.Debugw("Invoking RBAC canDoFn",
-		"groups", s.groups, "resourceAttributes", s.sar.Spec.ResourceAttributes,
+		"groupCount", len(s.groups), "resourceAttributes", s.sar.Spec.ResourceAttributes,
 		"cluster", s.clusterName)
 
 	if wc.ccProvider != nil {
@@ -501,7 +501,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 		s.reqLog.Info("User authorized through regular RBAC permissions")
 		s.allowed = true
 		s.allowSource = "rbac"
-		s.allowDetail = fmt.Sprintf("groups=%v", s.groups)
+		s.allowDetail = fmt.Sprintf("groupCount=%d", len(s.groups))
 		// Emit allowed decision metric for action
 		if s.sar.Spec.ResourceAttributes != nil {
 			ra := s.sar.Spec.ResourceAttributes
@@ -530,7 +530,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 			s.sessionSARSkipErr = err
 		} else if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(
 			s.ctx, rc, s.sessions, s.sar, s.clusterName, s.reqLog); allowedSession {
-			s.reqLog.With("grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated).
+			s.reqLog.With("sessionGroupHint", system.RedactGroupName(grp), "session", sesName, "impersonationGroupHint", system.RedactGroupName(impersonated)).
 				Debug("Authorized via breakglass session group on target cluster")
 			s.allowed = true
 			s.allowSource = "session"
@@ -538,7 +538,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 			// Emit a single correlated info log showing the final accepted impersonated group for observability
 			s.reqLog.Infow("Final accepted impersonated group",
 				"username", username, "cluster", s.clusterName,
-				"grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
+				"sessionGroupHint", system.RedactGroupName(grp), "session", sesName, "impersonationGroupHint", system.RedactGroupName(impersonated))
 
 			// Record session activity for idle timeout detection and usage analytics (#314)
 			wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)
@@ -571,12 +571,12 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 		c.Status(http.StatusInternalServerError)
 		return false
 	}
-	s.reqLog.With("activeUserGroups", activeUserGroups).Debug("Retrieved user groups from active sessions")
+	s.reqLog.With("activeUserGroupCount", len(activeUserGroups)).Debug("Retrieved user groups from active sessions")
 
 	// Add basic user groups that all authenticated users should have
 	allUserGroups := append(activeUserGroups, "system:authenticated")
 	uniqueGroups := dedupeStrings(allUserGroups)
-	s.reqLog.With("allUserGroups", uniqueGroups).Debug("Final user groups including basic authenticated groups")
+	s.reqLog.With("allUserGroupCount", len(uniqueGroups)).Debug("Final user groups including basic authenticated groups")
 
 	// Check for group-based escalations
 	var escalErr error

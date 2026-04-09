@@ -191,7 +191,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 	if v, ok := k.cache.get(group); ok {
 		if log != nil {
-			log.Debugw("Keycloak cache hit for group", "group", group, "membersCount", len(v), "members", v)
+			log.Debugw("Keycloak cache hit for group", "group", group, "membersCount", len(v))
 		}
 		return v, nil
 	}
@@ -290,29 +290,16 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 	if log != nil {
 		log.Debugw("Direct members fetch completed", "group", group, "directMemberCount", len(members))
-		for i, m := range members {
-			log.Debugw("Direct group member",
-				"index", i,
-				"userID", m.ID,
-				"username", m.Username,
-				"email", m.Email)
-		}
 	}
 
 	// Collect member identifiers
 	out := make([]string, 0, len(members))
-	for i, m := range members {
+	for _, m := range members {
 		identifier := ""
 		if m.Email != nil && *m.Email != "" {
 			identifier = *m.Email
-			if log != nil {
-				log.Debugw("Added direct member by email", "group", group, "index", i, "email", identifier)
-			}
 		} else if m.Username != nil && *m.Username != "" {
 			identifier = *m.Username
-			if log != nil {
-				log.Debugw("Added direct member by username", "group", group, "index", i, "username", identifier)
-			}
 		}
 		if identifier != "" {
 			out = append(out, identifier)
@@ -380,18 +367,12 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 				log.Debugw("Subgroup members fetch completed", "subgroupID", *sg.ID, "memberCount", len(sgMembers))
 			}
 
-			for sgmIdx, m := range sgMembers {
+			for _, m := range sgMembers {
 				identifier := ""
 				if m.Email != nil && *m.Email != "" {
 					identifier = *m.Email
-					if log != nil {
-						log.Debugw("Added subgroup member by email", "group", group, "subgroupID", *sg.ID, "memberIndex", sgmIdx, "email", identifier)
-					}
 				} else if m.Username != nil && *m.Username != "" {
 					identifier = *m.Username
-					if log != nil {
-						log.Debugw("Added subgroup member by username", "group", group, "subgroupID", *sg.ID, "memberIndex", sgmIdx, "username", identifier)
-					}
 				}
 				if identifier != "" {
 					out = append(out, identifier)
@@ -406,7 +387,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 	out = normalizeMembers(out)
 	if log != nil {
-		log.Infow("Keycloak group member resolution completed successfully", "group", group, "finalResolvedCount", len(out), "members", out)
+		log.Infow("Keycloak group member resolution completed successfully", "group", group, "finalResolvedCount", len(out))
 	}
 
 	// 5. Cache and return results
@@ -557,9 +538,9 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 						log.Errorw("Failed resolving group members from resolver", "group", g, "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
 						continue
 					}
-					log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members), "members", members)
+					log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members))
 					norm = normalizeMembers(members)
-					log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm), "normalizedMembers", norm)
+					log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm))
 				} else {
 					log.Warnw("No group member resolver configured; skipping group resolution", "group", g, "escalation", esc.Name)
 					continue
