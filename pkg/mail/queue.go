@@ -98,7 +98,7 @@ func (q *Queue) Enqueue(id string, receivers []string, subject, body string) err
 		q.log.Errorw("Cannot enqueue email: empty receivers list",
 			"id", id,
 			"subjectLength", len(subject),
-			"stackTrace", fmt.Sprintf("%+v", receivers))
+			"recipientCount", len(receivers))
 		metrics.MailQueueDropped.WithLabelValues(q.sender.GetHost()).Inc()
 		return fmt.Errorf("cannot enqueue email with no receivers")
 	}
@@ -270,7 +270,7 @@ func (q *Queue) processItem(item *QueueItem) {
 			"id", item.ID,
 			"attempts", item.Attempt,
 			"error", err,
-			"receivers", item.Receivers,
+			"recipientCount", len(item.Receivers),
 			"subjectLength", len(item.Subject))
 		metrics.MailFailed.WithLabelValues(q.sender.GetHost()).Inc()
 	}
