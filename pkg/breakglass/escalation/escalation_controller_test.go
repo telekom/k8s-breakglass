@@ -150,12 +150,18 @@ func TestHandleGetEscalationsDoesNotLogRawTokenGroups(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	ctx, engine := gin.CreateTestContext(w)
-	ctx.Set("groups", []string{"sensitive-admin-role", "internal-sre-team"})
-	ctx.Request, _ = http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
+	_, engine := gin.CreateTestContext(w)
+
+	testGroups := []string{"sensitive-admin-role", "internal-sre-team"}
+	engine.Use(func(c *gin.Context) {
+		c.Set("groups", testGroups)
+		c.Next()
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
 
 	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
-	engine.ServeHTTP(w, ctx.Request)
+	engine.ServeHTTP(w, req)
 
 	for _, entry := range recorded.All() {
 		fields := entry.ContextMap()
@@ -165,5 +171,17 @@ func TestHandleGetEscalationsDoesNotLogRawTokenGroups(t *testing.T) {
 		_, hasMatchingGroup := fields["matchingGroup"]
 		require.False(t, hasMatchingGroup,
 			"matchingGroup field must not appear in log entry %q", entry.Message)
+		_, hasUserGroups := fields["userGroups"]
+		require.False(t, hasUserGroups,
+			"userGroups raw list field must not appear in log entry %q", entry.Message)
 	}
+
+	groupCountSeen := false
+	for _, entry := range recorded.All() {
+		if cnt, ok := entry.ContextMap()["groupCount"]; ok {
+			assert.EqualValues(t, len(testGroups), cnt, "groupCount should equal injected group count")
+			groupCountSeen = true
+		}
+	}
+	assert.True(t, groupCountSeen, "expected at least one log entry with groupCount field")
 }
