@@ -159,7 +159,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
 					reqLog.Debugw("Using deduplicated members from multi-IDP status",
-						"escalation", esc.Name, "group", g, "memberCount", len(members))
+						"escalation", esc.Name, "groupHint", system.RedactGroupName(g), "memberCount", len(members))
 				}
 			}
 

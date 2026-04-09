@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 )
 
 const (
@@ -181,7 +182,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
 		if log != nil {
 			log.Errorw("Keycloak resolver has incomplete configuration; cannot resolve groups",
-				"group", group,
+				"groupHint", system.RedactGroupName(group),
 				"baseURL", k.cfg.BaseURL,
 				"realm", k.cfg.Realm,
 				"clientID", k.cfg.ClientID)
@@ -203,7 +204,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	token, err := k.getToken(ctx)
 	if err != nil {
 		if log != nil {
-			log.Errorw("Failed to get Keycloak token", "group", group, "error", err)
+			log.Errorw("Failed to get Keycloak token", "groupHint", system.RedactGroupName(group), "error", err)
 		}
 		return nil, err
 	}
@@ -239,7 +240,12 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 				log.Debugw("Group search result",
 					"index", i,
 					"groupID", g.ID,
-					"groupNameHint", func() string { if g.Name == nil { return "" }; return system.RedactGroupName(*g.Name) }(),
+					"groupNameHint", func() string {
+						if g.Name == nil {
+							return ""
+						}
+						return system.RedactGroupName(*g.Name)
+					}(),
 					"hasSubgroups", g.SubGroups != nil && len(*g.SubGroups) > 0)
 			}
 		}
@@ -279,7 +285,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if err != nil {
 		if log != nil {
 			log.Errorw("Keycloak members fetch failed",
-				"group", group,
+				"groupHint", system.RedactGroupName(group),
 				"groupID", *groupID,
 				"error", err,
 				"errorType", fmt.Sprintf("%T", err),
@@ -308,7 +314,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 
 	// 3. Get group detail to retrieve subgroups
 	if log != nil {
-		log.Debugw("Starting subgroups fetch step", "group", group, "groupID", *groupID, "currentMemberCount", len(out))
+		log.Debugw("Starting subgroups fetch step", "groupHint", system.RedactGroupName(group), "groupID", *groupID, "currentMemberCount", len(out))
 		log.Debugw("GetGroup API call details",
 			"baseURL", k.cfg.BaseURL,
 			"realm", k.cfg.Realm,
@@ -336,7 +342,12 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 				continue
 			}
 			if log != nil {
-				log.Debugw("Processing subgroup", "groupHint", system.RedactGroupName(group), "parentGroupID", *groupID, "subgroupIndex", sgIdx, "subgroupID", *sg.ID, "subgroupNameHint", func() string { if sg.Name == nil { return "" }; return system.RedactGroupName(*sg.Name) }())
+				log.Debugw("Processing subgroup", "groupHint", system.RedactGroupName(group), "parentGroupID", *groupID, "subgroupIndex", sgIdx, "subgroupID", *sg.ID, "subgroupNameHint", func() string {
+					if sg.Name == nil {
+						return ""
+					}
+					return system.RedactGroupName(*sg.Name)
+				}())
 			}
 
 			// Fetch members of each subgroup
@@ -529,7 +540,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			log.Debugw("Using legacy single resolver mode", "escalation", esc.Name)
 
 			for _, g := range groups {
-				log.Debugw("Resolving group for escalation", "escalation", esc.Name, "group", g, "resolverType", fmt.Sprintf("%T", u.Resolver))
+				log.Debugw("Resolving group for escalation", "escalation", esc.Name, "groupHint", system.RedactGroupName(g), "resolverType", fmt.Sprintf("%T", u.Resolver))
 				var norm []string
 				if u.Resolver != nil {
 					log.Debugw("Calling group member resolver", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "resolverType", fmt.Sprintf("%T", u.Resolver))
@@ -538,15 +549,15 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 						log.Errorw("Failed resolving group members from resolver", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
 						continue
 					}
-					log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members))
+					log.Debugw("Group member resolver returned members", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "rawMemberCount", len(members))
 					norm = normalizeMembers(members)
-					log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm))
+					log.Infow("Resolved approver group members (normalized)", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm))
 				} else {
-					log.Warnw("No group member resolver configured; skipping group resolution", "group", g, "escalation", esc.Name)
+					log.Warnw("No group member resolver configured; skipping group resolution", "groupHint", system.RedactGroupName(g), "escalation", esc.Name)
 					continue
 				}
 				if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
-					log.Debugw("Group members changed; marking for update", "group", g, "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
+					log.Debugw("Group members changed; marking for update", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
 					updated.Status.ApproverGroupMembers[g] = norm
 					changed = true
 				}
@@ -615,7 +626,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 			if u.Resolver != nil {
 				members, err := u.Resolver.Members(ctx, g)
 				if err != nil {
-					log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "group", g, "error", err)
+					log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "groupHint", system.RedactGroupName(g), "error", err)
 					continue
 				}
 				groupMembers[g] = normalizeMembers(members)
@@ -677,7 +688,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 			members, err := resolver.Members(ctx, g)
 			if err != nil {
 				errorMsg := fmt.Sprintf("IDP %s: timeout/error fetching group %s: %v", idpName, g, err)
-				log.Warnw("Failed to resolve group members from IDP", "escalation", escalation.Name, "idp", idpName, "group", g, "error", err)
+				log.Warnw("Failed to resolve group members from IDP", "escalation", escalation.Name, "idp", idpName, "groupHint", system.RedactGroupName(g), "error", err)
 				syncErrors = append(syncErrors, errorMsg)
 				idpSuccess = false
 
