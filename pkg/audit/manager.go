@@ -31,12 +31,13 @@ import (
 // Manager coordinates audit event creation and distribution.
 // Designed for EXTREMELY granular audit trails with non-blocking operation.
 type Manager struct {
-	sink       Sink
-	asyncQueue chan *Event
-	logger     *zap.Logger
-	wg         sync.WaitGroup
-	closed     atomic.Bool
-	stopStats  chan struct{} // Signal to stop stats reporter
+	sink        Sink
+	directSinks []Sink // underlying sinks for true synchronous fallback writes
+	asyncQueue  chan *Event
+	logger      *zap.Logger
+	wg          sync.WaitGroup
+	closed      atomic.Bool
+	stopStats   chan struct{} // Signal to stop stats reporter
 
 	// Metrics for monitoring
 	queuedEvents               atomic.Int64
@@ -102,6 +103,11 @@ type ManagerConfig struct {
 	// Set to 0 to disable periodic stats logging.
 	// Default: 30s
 	StatsInterval time.Duration
+
+	// DirectSinks are the underlying raw sinks used for true synchronous
+	// writes during sensitive-event fallback, bypassing QueuedSink layers.
+	// If empty, the fallback uses the queued sink (best-effort, non-blocking).
+	DirectSinks []Sink
 }
 
 // DefaultManagerConfig returns default configuration for high-throughput.
@@ -143,11 +149,12 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	}
 
 	m := &Manager{
-		sink:       sink,
-		asyncQueue: make(chan *Event, cfg.QueueSize),
-		logger:     logger.Named("audit-manager"),
-		config:     cfg,
-		stopStats:  make(chan struct{}),
+		sink:        sink,
+		directSinks: cfg.DirectSinks,
+		asyncQueue:  make(chan *Event, cfg.QueueSize),
+		logger:      logger.Named("audit-manager"),
+		config:      cfg,
+		stopStats:   make(chan struct{}),
 	}
 
 	// Check if sink supports batch writes
@@ -220,13 +227,16 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 			writeCtx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
 			defer cancel()
 
-			if err := m.sink.Write(writeCtx, event); err != nil {
+			writeErr := m.syncWriteDirect(writeCtx, event)
+			if writeErr != nil {
 				m.logger.Error("failed sync-write of sensitive audit event",
 					zap.String("event_type", string(event.Type)),
 					zap.String("event_id", event.ID),
-					zap.Error(err))
+					zap.Error(writeErr))
 				metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
 			} else {
+				m.processedEvents.Add(1)
+				metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
 				m.sensitiveEventsSyncWritten.Add(1)
 				metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(m.sink.Name()).Inc()
 			}
@@ -242,6 +252,21 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 				zap.String("event_id", event.ID))
 		}
 	}
+}
+
+// syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.
+// If no direct sinks are configured, it falls back to the queued sink.
+func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
+	if len(m.directSinks) == 0 {
+		return m.sink.Write(ctx, event)
+	}
+	var lastErr error
+	for _, s := range m.directSinks {
+		if err := s.Write(ctx, event); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 // EmitSync sends an audit event synchronously.

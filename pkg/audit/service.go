@@ -175,6 +175,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 		DropOnFull:   dropOnFull,
 		SampleRate:   sampleRate,
 		WriteTimeout: 5 * time.Second,
+		DirectSinks:  allSinks,
 	}
 
 	s.manager = NewManager(isolatedMultiSink, managerCfg, s.logger)

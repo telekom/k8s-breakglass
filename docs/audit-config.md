@@ -317,10 +317,12 @@ spec:
 > create/start/terminate/fail/expire/approval-timeout, cluster role binding
 > create/delete, resource impersonation, policy bypass/violation, and pod
 > security deny/warning/override. When the async queue is full, sensitive events
-> fall back to a synchronous write (up to `WriteTimeout`) instead of being
-> dropped. The metric `breakglass_audit_sensitive_events_sync_written_total`
-> tracks how often this fallback occurs — a sustained non-zero value indicates
-> the queue should be enlarged.
+> fall back to a **direct synchronous write** to each underlying sink (bypassing
+> per-sink queue buffers), blocking up to `WriteTimeout`. This ensures sensitive
+> events reach the sink even under queue pressure. The metric
+> `breakglass_audit_sensitive_events_sync_written_total` tracks how often this
+> fallback occurs — a sustained non-zero value indicates the queue should be
+> enlarged.
 
 ## Queue Configuration
 
