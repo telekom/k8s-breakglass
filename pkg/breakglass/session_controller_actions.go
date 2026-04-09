@@ -494,8 +494,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Warnw("Failed to enqueue session request email via mail service",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"recipients", approvers,
-				"subject", subject,
+				"subjectLength", len(subject),
 				"error", err)
 			return err
 		}
@@ -512,8 +511,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Warnw("Failed to enqueue session request email (will not retry)",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"recipients", approvers,
-				"subject", subject,
+				"subjectLength", len(subject),
 				"error", err)
 			// Don't fall back to synchronous send - if queue is configured but failing,
 			// synchronous send would likely fail too. Just log and continue.
@@ -534,8 +532,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Errorw("failed to send request email",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"recipients", approvers,
-				"subject", subject,
+				"subjectLength", len(subject),
 				"error", err)
 			return err
 		}
@@ -550,8 +547,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 	wc.log.Warnw("No mail provider configured - email notification skipped",
 		"session", bs.Name,
 		"recipientCount", len(approvers),
-		"recipients", approvers,
-		"subject", subject)
+		"subjectLength", len(subject))
 	return nil
 }
 
@@ -695,9 +691,8 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 				continue
 			}
 			log.Infow("Successfully resolved excluded group members",
-				"group", group,
-				"memberCount", len(members),
-				"members", members)
+				"groupHint", system.RedactGroupName(group),
+				"memberCount", len(members))
 			resolvedGroupsCount++
 			totalMembersCount += len(members)
 			for _, member := range members {
@@ -795,9 +790,8 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 				continue
 			}
 			log.Infow("Successfully resolved hidden group members",
-				"group", group,
-				"memberCount", len(members),
-				"members", members)
+				"groupHint", system.RedactGroupName(group),
+				"memberCount", len(members))
 			resolvedGroupsCount++
 			totalMembersCount += len(members)
 			for _, member := range members {
