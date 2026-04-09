@@ -103,7 +103,7 @@ func (wc *WebhookController) parseSARRequest(c *gin.Context) (*authorizeState, b
 	s.reqLog.Debug("Received SubjectAccessReview")
 	s.reqLog.Infow("Processing authorization",
 		"username", s.sar.Spec.User,
-		"groupsRequested", s.sar.Spec.Groups)
+		"groupsRequestedCount", len(s.sar.Spec.Groups))
 	return s, true
 }
 
@@ -636,7 +636,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	} else {
 		s.reqLog.Debugw("No escalation paths for user", "username", username)
 	}
-	s.reqLog.With("escalations", s.escals).Debug("Available escalation paths for user")
+	s.reqLog.With("escalationCount", len(s.escals)).Debug("Available escalation paths for user")
 	return true
 }
 
