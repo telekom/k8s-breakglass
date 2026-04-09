@@ -89,7 +89,7 @@ func (wc *BreakglassSessionController) resolveUserGroups(
 	var userGroups []string
 	if raw, exists := c.Get("groups"); exists { // trace raw token groups before any normalization
 		if arr, ok := raw.([]string); ok {
-			reqLog.With("rawTokenGroups", arr, "rawTokenGroupCount", len(arr)).Debug("Extracted raw token groups from JWT claims")
+			reqLog.With("rawTokenGroupCount", len(arr)).Debug("Extracted raw token groups from JWT claims")
 		}
 	}
 	if tg, exists := c.Get("groups"); exists {
@@ -131,10 +131,15 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	// The UID stripping is only for API response serialization, not for internal processing.
 	if len(escalations) == 0 {
 		// Provide extra debug information in logs to help e2e diagnosis when no escalations are found
-		rawGroups, _ := c.Get("groups")
+		rawGroupCount := 0
+		if rawGroups, exists := c.Get("groups"); exists {
+			if arr, ok := rawGroups.([]string); ok {
+				rawGroupCount = len(arr)
+			}
+		}
 		reqLog.Warnw("No escalation groups found for user",
 			"user", cug.Username, "requestedGroup", cug.GroupName,
-			"cluster", cug.Clustername, "resolvedUserGroups", userGroups, "rawTokenGroups", rawGroups)
+			"cluster", cug.Clustername, "resolvedUserGroupCount", len(userGroups), "rawTokenGroupCount", rawGroupCount)
 		// Also log any escalations that exist for the cluster for visibility
 		if escList, listErr := wc.escalationManager.GetClusterBreakglassEscalations(ctx, cug.Clustername); listErr == nil {
 			names := make([]string, 0, len(escList))

@@ -1,15 +1,23 @@
 package escalation
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 func TestBreakglassEscalationController_BasePath(t *testing.T) {
@@ -106,4 +114,53 @@ func TestDropK8sInternalFieldsEscalationStripsMetadataAndStatus(t *testing.T) {
 	}
 	assert.Nil(t, esc.Status.ApproverGroupMembers)
 	assert.Nil(t, esc.Status.IDPGroupMemberships)
+}
+
+type stubIdentityProvider struct {
+	email string
+	err   error
+}
+
+func (s *stubIdentityProvider) GetEmail(_ *gin.Context) (string, error) {
+	return s.email, s.err
+}
+func (s *stubIdentityProvider) GetUsername(_ *gin.Context) string { return "" }
+func (s *stubIdentityProvider) GetIdentity(_ *gin.Context) string { return s.email }
+func (s *stubIdentityProvider) GetUserIdentifier(_ *gin.Context, _ breakglassv1alpha1.UserIdentifierClaimType) (string, error) {
+	return s.email, s.err
+}
+
+func TestHandleGetEscalationsDoesNotLogRawTokenGroups(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	core, recorded := observer.New(zap.DebugLevel)
+	obsLogger := zap.New(core).Sugar()
+
+	fakeClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	em := &EscalationManager{Client: fakeClient}
+
+	ec := &BreakglassEscalationController{
+		manager:          em,
+		log:              obsLogger,
+		identityProvider: &stubIdentityProvider{email: "alice@example.com"},
+		getUserGroupsFn: func(_ context.Context, _ breakglass.ClusterUserGroup) ([]string, error) {
+			return []string{}, nil
+		},
+		configPath: "/nonexistent/config.yaml",
+	}
+
+	w := httptest.NewRecorder()
+	ctx, engine := gin.CreateTestContext(w)
+	ctx.Set("groups", []string{"sensitive-admin-role", "internal-sre-team"})
+	ctx.Request, _ = http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
+
+	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+	engine.ServeHTTP(w, ctx.Request)
+
+	for _, entry := range recorded.All() {
+		fields := entry.ContextMap()
+		_, hasRawTokenGroups := fields["rawTokenGroups"]
+		require.False(t, hasRawTokenGroups,
+			"rawTokenGroups field must not appear in log entry %q", entry.Message)
+	}
 }

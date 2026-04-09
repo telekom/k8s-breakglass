@@ -605,8 +605,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 		log.Debugw("Sending email for approver",
 			"session", bs.Name,
 			"approver", approver,
-			"groupCount", len(groups),
-			"groups", groups)
+			"groupCount", len(groups))
 
 		// Send email with ALL groups this approver belongs to
 		if err := wc.sendOnRequestEmail(bs, requestEmail, requestUsername, []string{approver}, groups, matchedEscalation); err != nil {
@@ -614,7 +613,6 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 				"session", bs.Name,
 				"approver", approver,
 				"groupCount", len(groups),
-				"groups", groups,
 				"error", err)
 			// Continue with other approvers even if one fails
 		}

@@ -32,7 +32,7 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 		ef.Log.Errorw("Failed to get user groups for escalation filtering", "error", err)
 		return nil, fmt.Errorf("failed to get user groups: %w", err)
 	}
-	ef.Log.Debugw("Retrieved user groups for escalation filtering", "userGroups", userGroups)
+	ef.Log.Debugw("Retrieved user groups for escalation filtering", "userGroupCount", len(userGroups))
 	// Load config to determine OIDC prefixes for normalization
 	var oidcPrefixes []string
 	if cfg, errCfg := config.Load(); errCfg != nil {
@@ -43,7 +43,7 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 		copy(originalGroups, userGroups)
 		// Normalize user groups (strip prefixes if configured)
 		userGroups = breakglass.StripOIDCPrefixes(userGroups, oidcPrefixes)
-		ef.Log.Debugw("Normalized user groups with OIDC prefixes", "originalUserGroups", originalGroups, "normalizedUserGroups", userGroups, "oidcPrefixes", oidcPrefixes)
+		ef.Log.Debugw("Normalized user groups with OIDC prefixes", "originalUserGroupCount", len(originalGroups), "normalizedUserGroupCount", len(userGroups), "oidcPrefixCount", len(oidcPrefixes))
 	}
 
 	groups := make(map[string]any, len(userGroups))
@@ -71,9 +71,8 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 			"escalation", esc.Name,
 			"clusterEligible", clusterEligible,
 			"groupEligible", groupEligible,
-			"requiredGroups", esc.Spec.Allowed.Groups,
-			"normalizedRequiredGroups", normalizedAllowedGroups,
-			"userGroups", userGroups)
+			"requiredGroupCount", len(esc.Spec.Allowed.Groups),
+			"userGroupCount", len(userGroups))
 
 		if clusterEligible && groupEligible {
 			ef.Log.Debugw("Escalation is possible for user", "escalation", esc.Name)
@@ -102,7 +101,7 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 		ef.Log.Errorw("Failed to get user rbac cluster groups for session filtering", "error", err)
 		return nil, fmt.Errorf("failed to get user rbac cluster groups: %w", err)
 	}
-	ef.Log.Debugw("Retrieved user groups for session filtering", "userGroups", userGroups)
+	ef.Log.Debugw("Retrieved user groups for session filtering", "userGroupCount", len(userGroups))
 
 	userCluserGroups := map[string]any{}
 	for _, g := range userGroups {
@@ -128,12 +127,12 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 				sessionApprovable = true
 				break
 			} else if intersects(userCluserGroups, esc.Spec.Approvers.Groups) {
-				ef.Log.Debugw("Session approvable by user group", "session", ses.Name, "escalation", esc.Name, "userGroups", userGroups, "approverGroups", esc.Spec.Approvers.Groups)
+				ef.Log.Debugw("Session approvable by user group", "session", ses.Name, "escalation", esc.Name, "userGroupCount", len(userGroups), "approverGroupCount", len(esc.Spec.Approvers.Groups))
 				displayable = append(displayable, ses)
 				sessionApprovable = true
 				break
 			} else {
-				ef.Log.Debugw("Session not approvable by user for this escalation", "session", ses.Name, "escalation", esc.Name, "userGroups", userGroups, "approverGroups", esc.Spec.Approvers.Groups)
+				ef.Log.Debugw("Session not approvable by user for this escalation", "session", ses.Name, "escalation", esc.Name, "userGroupCount", len(userGroups), "approverGroupCount", len(esc.Spec.Approvers.Groups))
 			}
 		}
 
