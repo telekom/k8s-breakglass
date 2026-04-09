@@ -501,7 +501,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 		s.reqLog.Info("User authorized through regular RBAC permissions")
 		s.allowed = true
 		s.allowSource = "rbac"
-		s.allowDetail = fmt.Sprintf("groups=%v", s.groups)
+		s.allowDetail = fmt.Sprintf("groupCount=%d", len(s.groups))
 		// Emit allowed decision metric for action
 		if s.sar.Spec.ResourceAttributes != nil {
 			ra := s.sar.Spec.ResourceAttributes
@@ -534,7 +534,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 				Debug("Authorized via breakglass session group on target cluster")
 			s.allowed = true
 			s.allowSource = "session"
-			s.allowDetail = fmt.Sprintf("group=%s session=%s impersonated=%s", grp, sesName, impersonated)
+			s.allowDetail = fmt.Sprintf("session=%s sessionGroupHint=%s impersonationGroupHint=%s", sesName, system.RedactGroupName(grp), system.RedactGroupName(impersonated))
 			// Emit a single correlated info log showing the final accepted impersonated group for observability
 			s.reqLog.Infow("Final accepted impersonated group",
 				"username", username, "cluster", s.clusterName,
@@ -663,7 +663,7 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 			// Collect session names and granted groups for the diagnostic message
 			sessInfo := make([]string, 0, len(s.sessions))
 			for _, sess := range s.sessions {
-				sessInfo = append(sessInfo, sess.Name+"("+sess.Spec.GrantedGroup+")")
+				sessInfo = append(sessInfo, sess.Name+"("+system.RedactGroupName(sess.Spec.GrantedGroup)+")")
 			}
 			diag := fmt.Sprintf(
 				"Note: %d active breakglass session(s) found: %v. "+
@@ -676,7 +676,7 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 				s.reason = s.reason + " " + diag
 			}
 			// Also log this at info so admins see the mismatch between session state and SAR capabilities
-			s.reqLog.With("sessions", sessInfo, "error", s.sessionSARSkipErr.Error()).
+			s.reqLog.With("sessionCount", len(sessInfo), "sessionDetails", sessInfo, "error", s.sessionSARSkipErr.Error()).
 				Info("Active sessions present but unable to validate them against target cluster")
 		}
 	}
@@ -799,7 +799,7 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		if len(s.sessions) > 0 {
 			sessNames := make([]string, len(s.sessions))
 			for i, sess := range s.sessions {
-				sessNames[i] = sess.Name + "(" + sess.Spec.GrantedGroup + ")"
+				sessNames[i] = sess.Name + "(" + system.RedactGroupName(sess.Spec.GrantedGroup) + ")"
 			}
 			denialDetails["sessionDetails"] = sessNames
 		}

@@ -290,7 +290,7 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 					"memberCount", len(members))
 			} else {
 				reqLog.Debugw("No members found in status for group (multi-IDP mode)",
-					"group", group,
+					"groupHint", system.RedactGroupName(group),
 					"escalation", p.Name)
 				continue
 			}
@@ -739,7 +739,7 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 		"approvalsRequired", len(allApprovers),
 		"requestorEmail", authEmail,
 		"requestorUsername", username,
-		"grantedGroup", bs.Spec.GrantedGroup,
+		"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup),
 		"cluster", bs.Spec.Cluster)
 
 	if len(allApprovers) == 0 {
