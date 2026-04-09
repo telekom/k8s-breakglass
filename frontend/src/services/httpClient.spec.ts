@@ -86,9 +86,11 @@ describe("createAuthenticatedApiClient", () => {
     expect(debugSpy).toHaveBeenCalledWith(
       expect.any(String),
       "[HttpClient]",
-      "Authorization header:",
-      "Bearer dev-token",
+      "Authorization header set",
+      "(token length: 9)",
     );
+    const allCalls = debugSpy.mock.calls.flat().join(" ");
+    expect(allCalls).not.toContain("dev-token");
   });
 });
 
