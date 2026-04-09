@@ -199,7 +199,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 
 	// Return the most specific denial reason found, or no-matching-escalation if none found
 	if !foundMatchingEscalation {
-		reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "grantedGroup", session.Spec.GrantedGroup, "approverEmail", email, "approverGroupCount", len(approverGroups))
+		reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "approverEmail", email, "approverGroupCount", len(approverGroups))
 		return ApprovalCheckResult{
 			Allowed: false,
 			Reason:  ApprovalDenialNoMatchingEscalation,
