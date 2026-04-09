@@ -278,7 +278,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	resolution := wc.collectApproversFromEscalations(ctx, escalations, request.GroupName, reqLog)
 
 	if !slices.Contains(resolution.possibleGroups, request.GroupName) {
-		reqLog.Warnw("User not authorized for group", "user", request.Username, "group", request.GroupName)
+		reqLog.Warnw("User not authorized for group", "user", request.Username, "groupHint", system.RedactGroupName(request.GroupName))
 		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return
 	}
@@ -286,7 +286,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		resolution.matchedEscalation.Spec.RequestReason != nil &&
 		resolution.matchedEscalation.Spec.RequestReason.Mandatory {
 		if strings.TrimSpace(request.Reason) == "" {
-			reqLog.Warnw("Missing required request reason", "group", request.GroupName)
+			reqLog.Warnw("Missing required request reason", "groupHint", system.RedactGroupName(request.GroupName))
 			apiresponses.RespondUnprocessableEntity(c, "missing required request reason")
 			return
 		}
@@ -303,7 +303,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		createKey := request.Clustername + "/" + userIdentifier + "/" + request.GroupName
 		if _, loaded := wc.inFlightCreates.LoadOrStore(createKey, true); loaded {
 			reqLog.Infow("Concurrent session creation already in-flight, returning conflict",
-				"cluster", request.Clustername, "user", userIdentifier, "group", request.GroupName)
+				"cluster", request.Clustername, "user", userIdentifier, "groupHint", system.RedactGroupName(request.GroupName))
 			c.JSON(http.StatusConflict, gin.H{"error": "session creation already in progress"})
 			return
 		}
@@ -323,7 +323,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	username := authIdentity.username
 	reqLog.Debugw("Session creation initiated by user",
 		"requestorEmail", authIdentity.email, "requestorUsername", username,
-		"requestedGroup", request.GroupName, "requestedCluster", request.Clustername)
+		"requestedGroupHint", system.RedactGroupName(request.GroupName), "requestedCluster", request.Clustername)
 
 	// Phase 10: Build session spec from escalation and request
 	spec, ok := wc.buildSessionSpec(c, request, userIdentifier,
