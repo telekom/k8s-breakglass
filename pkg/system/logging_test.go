@@ -83,3 +83,23 @@ func TestNamespacedFields(t *testing.T) {
 	require.Equal(t, []interface{}{"name", "obj", "namespace", "ns-1"}, NamespacedFields("obj", "ns-1"))
 	require.Equal(t, []interface{}{"name", "obj"}, NamespacedFields("obj", ""))
 }
+
+
+func TestRedactGroupName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty", input: "", want: ""},
+		{name: "short", input: "admin", want: "adm***"},
+		{name: "long", input: "platform-team", want: "plat***"},
+		{name: "unicode", input: "グループ管理者", want: "グルー***"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, RedactGroupName(tt.input))
+		})
+	}
+}

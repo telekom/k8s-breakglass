@@ -593,7 +593,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		// Try to load session by metadata.name (token is treated as session name)
 		ses, err := wc.sessionManager.GetBreakglassSessionByName(ctx, token)
 		if err != nil {
-			reqLog.Debugw("Token validation: session not found", "tokenLen", len(token), "error", err)
+			reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
 			c.JSON(http.StatusNotFound, struct {
 				Valid bool `json:"valid"`
 			}{Valid: false})
