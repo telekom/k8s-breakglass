@@ -185,7 +185,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				"session", session.Name, "escalation", esc.Name, "user", email, "dedupMemberCount", len(dedupMembers))
 		} else {
 			reqLog.Debugw("Escalation found but user not in approvers (continuing)",
-				"session", session.Name, "escalation", esc.Name, "user", email, "userGroups", approverGroups, "approverUsers", esc.Spec.Approvers.Users, "approverGroups", esc.Spec.Approvers.Groups)
+				"session", session.Name, "escalation", esc.Name, "user", email, "userGroupCount", len(approverGroups), "approverUserCount", len(esc.Spec.Approvers.Users), "approverGroupCount", len(esc.Spec.Approvers.Groups))
 		}
 		// Track not-an-approver as lowest priority denial
 		if mostSpecificDenial.Reason == ApprovalDenialNone {
@@ -199,7 +199,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 
 	// Return the most specific denial reason found, or no-matching-escalation if none found
 	if !foundMatchingEscalation {
-		reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "grantedGroup", session.Spec.GrantedGroup, "approverEmail", email, "approverGroups", approverGroups)
+		reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "grantedGroup", session.Spec.GrantedGroup, "approverEmail", email, "approverGroupCount", len(approverGroups))
 		return ApprovalCheckResult{
 			Allowed: false,
 			Reason:  ApprovalDenialNoMatchingEscalation,
@@ -418,7 +418,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 						groups = StripOIDCPrefixes(groups, cfgLoaded.Kubernetes.OIDCPrefixes)
 					}
 				}
-				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groups", groups)
+				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groupCount", len(groups))
 				return groups, nil
 			}
 			log.Debugw("Falling back to legacy GetUserGroupsWithConfig (kube context)", "cluster", cug.Clustername)

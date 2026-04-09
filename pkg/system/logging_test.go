@@ -51,6 +51,28 @@ func TestEnrichReqLoggerWithAuthAddsFields(t *testing.T) {
 	require.EqualValues(t, 2, infoCtx["groupCount"])
 }
 
+func TestEnrichReqLoggerGroupsNotLeakedInDebugLog(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("groups", []string{"secret-role-admin", "internal-ops"})
+
+	core, recorded := observer.New(zap.DebugLevel)
+	logger := zap.New(core).Sugar()
+	EnrichReqLoggerWithAuth(ctx, logger)
+
+	entries := recorded.All()
+	require.Len(t, entries, 1, "expected exactly one debug log entry for groups")
+
+	debugEntry := entries[0]
+	fields := debugEntry.ContextMap()
+
+	groupsVal, hasGroups := fields["groups"]
+	require.True(t, hasGroups, "groups field must be present in debug log")
+	require.Equal(t, "[REDACTED]", groupsVal, "group values must be redacted, not logged in plaintext")
+
+	_, hasRawGroups := fields["rawTokenGroups"]
+	require.False(t, hasRawGroups, "rawTokenGroups must not appear in log output")
+}
+
 func TestEnrichReqLoggerWithAuthHandlesNil(t *testing.T) {
 	sugar := zap.NewNop().Sugar()
 	require.Same(t, sugar, EnrichReqLoggerWithAuth(nil, sugar))

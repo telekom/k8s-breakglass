@@ -614,7 +614,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			}
 			reqLog.Warnw("ExtraDeployValues validation failed",
 				"templateRef", req.TemplateRef,
-				"userGroups", userGroups,
+				"userGroupCount", len(userGroups),
 				"errors", errMessages,
 			)
 			ctx.JSON(http.StatusBadRequest, gin.H{
