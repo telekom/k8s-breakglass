@@ -496,8 +496,13 @@ func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *fiel
 // Rules:
 // - If session.identityProviderName is not set, authorization passes (single-IDP or manual creation)
 // - Finds all escalations that match the session's cluster and grantedGroup
-// - If any matching escalation has allowedIdentityProviders set, verifies session's IDP is in the list
-// - If all matching escalations have empty allowedIdentityProviders, authorization passes (all IDPs allowed)
+// - Resolves the effective allowed-IDP list per escalation:
+//   - Uses AllowedIdentityProviders if set (legacy unified field)
+//   - Falls back to AllowedIdentityProvidersForRequests if AllowedIdentityProviders is empty (new per-role field)
+//   - The two fields are mutually exclusive per CRD validation, so at most one is set
+//
+// - If any matching escalation's effective list is non-empty, verifies session's IDP is in it
+// - If all matching escalations have empty effective allowed-IDP lists, authorization passes (all IDPs allowed)
 //
 // This prevents users from using escalations that don't allow their IDP and provides
 // defense-in-depth against IDP spoofing attempts.
