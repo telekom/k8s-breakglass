@@ -480,7 +480,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			log.Debugw("Escalation has no approver groups; skipping", "escalation", esc.Name)
 			continue
 		}
-		log.Debugw("Processing escalation with approver groups", "escalation", esc.Name, "groupCount", len(groups), "groups", groups)
+		log.Debugw("Processing escalation with approver groups", "escalation", esc.Name, "groupCount", len(groups))
 
 		updated := esc.DeepCopy()
 		if updated.Status.ApproverGroupMembers == nil {
@@ -582,7 +582,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 						"Failed to update group members: %v", err)
 				}
 			} else {
-				log.Debugw("Updated escalation successfully", "escalation", esc.Name, "groups", groups)
+				log.Debugw("Updated escalation successfully", "escalation", esc.Name, "groupCount", len(groups))
 				// Emit success event with details about what was synced
 				if u.EventRecorder != nil {
 					if len(idpsToUse) > 0 {
@@ -649,7 +649,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 	// Multi-IDP sync: fetch from each IDP for each group
 	for _, idpName := range idpNames {
-		log.Debugw("Fetching group members from IDP", "escalation", escalation.Name, "idp", idpName, "groups", groups)
+		log.Debugw("Fetching group members from IDP", "escalation", escalation.Name, "idp", idpName, "groupCount", len(groups))
 
 		idpConfig, err := u.IDPLoader.LoadIdentityProviderByName(ctx, idpName)
 		if err != nil {

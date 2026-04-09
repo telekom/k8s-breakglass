@@ -147,6 +147,12 @@ The API validates JWTs using an **explicit allowlist of signing algorithms** (RS
 
 To reduce accidental credential exposure, the API middleware **strips the Authorization header** after extracting token data, so downstream logs or error handlers do not emit bearer tokens.
 
+Debug-level log statements redact sensitive data to prevent accidental exposure when verbose logging is enabled:
+
+- JWT group memberships (`rawTokenGroups`) are omitted from all log output; only the count is logged
+- Session approval tokens (the `?token=` query parameter) are logged only as their length (`tokenLen`), not their value
+- OIDC role names from the token claims are logged as `[REDACTED]` in the enriched request logger
+
 ### Issuer Validation (SEC-003)
 
 Before routing a JWT to a JWKS endpoint, the middleware validates the `iss` claim extracted from the unverified token:
