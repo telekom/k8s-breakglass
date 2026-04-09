@@ -83,7 +83,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	var mostSpecificDenial ApprovalCheckResult
 	foundMatchingEscalation := false
 
-	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGrantedGroup", session.Spec.GrantedGroup, "candidateEscalationCount", len(escalations), "approverEmail", email)
+	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGroupHint", system.RedactGroupName(session.Spec.GrantedGroup), "candidateEscalationCount", len(escalations), "approverEmail", email)
 	for _, esc := range escalations {
 		if esc.Spec.EscalatedGroup != session.Spec.GrantedGroup {
 			continue
@@ -173,7 +173,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		} else {
 			for _, g := range approverGroupsToCheck {
 				if slices.Contains(approverGroups, g) {
-					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", g)
+					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "groupHint", system.RedactGroupName(g))
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}
@@ -626,7 +626,7 @@ func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context,
 		Details: map[string]interface{}{
 			"message":      message,
 			"cluster":      session.Spec.Cluster,
-			"grantedGroup": session.Spec.GrantedGroup,
+			"grantedGroup": system.RedactGroupName(session.Spec.GrantedGroup),
 			"state":        string(session.Status.State),
 		},
 	}
@@ -669,7 +669,7 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 			"message":          message,
 			"expirationReason": reason,
 			"cluster":          session.Spec.Cluster,
-			"grantedGroup":     session.Spec.GrantedGroup,
+			"grantedGroup":     system.RedactGroupName(session.Spec.GrantedGroup),
 			"user":             session.Spec.User,
 		},
 	}

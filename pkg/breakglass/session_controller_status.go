@@ -318,7 +318,7 @@ func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Co
 			"spec.grantedGroup": group,
 		},
 	)
-	wc.log.Debugw("Querying for active breakglass session", "user", username, "cluster", clustername, "group", group)
+	wc.log.Debugw("Querying for active breakglass session", "user", username, "cluster", clustername, "groupHint", system.RedactGroupName(group))
 	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
 	if err != nil {
 		wc.log.Error("Failed to list sessions for getActiveBreakglassSession", zap.Error(err))
@@ -335,16 +335,14 @@ func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Co
 	}
 
 	if len(validSessions) == 0 {
-		wc.log.Infow("No active breakglass session found", "user", username, "cluster", clustername, "group", group)
+		wc.log.Infow("No active breakglass session found", "user", username, "cluster", clustername, "groupHint", system.RedactGroupName(group))
 		return breakglassv1alpha1.BreakglassSession{}, ErrSessionNotFound
 	} else if len(validSessions) > 1 {
 		wc.log.Error("There is more than a single active breakglass session; this should not happen",
 			zap.Int("num_sessions", len(validSessions)),
-			zap.String("user_data", fmt.Sprintf("%#v", ClusterUserGroup{
-				Clustername: clustername,
-				Username:    username,
-				GroupName:   group,
-			})))
+			zap.String("cluster", clustername),
+			zap.String("username", username),
+			zap.String("groupHint", system.RedactGroupName(group)))
 	}
 	wc.log.Infow("Returning active breakglass session", "session", validSessions[0].Name)
 	return validSessions[0], nil
@@ -437,15 +435,15 @@ GroupOverrideLoop:
 				// Invalid glob pattern - log warning and skip this override
 				log.Warnw("Invalid glob pattern in IDP group override, skipping",
 					"idp", idpName,
-					"pattern", groupOverride.Group,
+					"patternHint", system.RedactGroupName(groupOverride.Group),
 					"error", err)
 				continue GroupOverrideLoop
 			}
 			if matched {
 				log.Debugw("Matched IDP group override",
 					"idp", idpName,
-					"pattern", groupOverride.Group,
-					"matchedGroup", userGroup,
+					"patternHint", system.RedactGroupName(groupOverride.Group),
+					"matchedGroupHint", system.RedactGroupName(userGroup),
 					"unlimited", groupOverride.Unlimited)
 				if groupOverride.Unlimited {
 					return nil

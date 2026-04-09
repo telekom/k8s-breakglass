@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -112,7 +113,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 		log.Warnw("Duplicate active sessions detected — terminating duplicates",
 			"cluster", key.Cluster,
 			"user", key.User,
-			"grantedGroup", key.Group,
+			"groupHint", system.RedactGroupName(key.Group),
 			"keepSession", sessions[0].Name,
 			"duplicateCount", len(sessions)-1,
 		)
@@ -124,7 +125,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 				log.Infow("Duplicate cleanup interrupted by context cancellation",
 					"cluster", key.Cluster,
 					"user", key.User,
-					"grantedGroup", key.Group,
+					"groupHint", system.RedactGroupName(key.Group),
 				)
 				return
 			default:

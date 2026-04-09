@@ -926,7 +926,7 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			if err != nil {
 				if log != nil {
 					log.With("error", err, "groupHint", system.RedactGroupName(g)).Warn("session SAR error")
-					log.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
+					log.Debugw("Failed SAR create error details", "error", err, "groupHint", system.RedactGroupName(g), "hasResourceAttributes", sar.Spec.ResourceAttributes != nil, "hasNonResourceAttributes", sar.Spec.NonResourceAttributes != nil)
 				}
 				metrics.WebhookSessionSARErrors.WithLabelValues(clusterName).Inc()
 				continue
