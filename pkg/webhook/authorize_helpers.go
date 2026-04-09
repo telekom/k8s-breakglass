@@ -501,7 +501,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 		s.reqLog.Info("User authorized through regular RBAC permissions")
 		s.allowed = true
 		s.allowSource = "rbac"
-		s.allowDetail = fmt.Sprintf("groupCount=%d", len(s.groups))
+		s.allowDetail = fmt.Sprintf("groups=%v", s.groups)
 		// Emit allowed decision metric for action
 		if s.sar.Spec.ResourceAttributes != nil {
 			ra := s.sar.Spec.ResourceAttributes

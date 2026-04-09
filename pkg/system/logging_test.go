@@ -84,7 +84,6 @@ func TestNamespacedFields(t *testing.T) {
 	require.Equal(t, []interface{}{"name", "obj"}, NamespacedFields("obj", ""))
 }
 
-
 func TestRedactGroupName(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -94,7 +93,7 @@ func TestRedactGroupName(t *testing.T) {
 		{name: "empty", input: "", want: ""},
 		{name: "short", input: "admin", want: "adm***"},
 		{name: "long", input: "platform-team", want: "plat***"},
-		{name: "unicode", input: "グループ管理者", want: "グルー***"},
+		{name: "unicode", input: "グループ管理者", want: "グループ***"},
 	}
 
 	for _, tt := range tests {

@@ -147,7 +147,7 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	for _, g := range groups {
 		list := breakglassv1alpha1.BreakglassEscalationList{}
 		if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.group": g}); err == nil {
-			log.Debugw("Index lookup for group returned items", "group", g, "count", len(list.Items))
+			log.Debugw("Index lookup for group returned items", "groupHint", system.RedactGroupName(g), "count", len(list.Items))
 			for _, it := range list.Items {
 				// apply group normalization check to be safe (fake client may ignore MatchingFields)
 				allowed := it.Spec.Allowed.Groups
@@ -329,7 +329,7 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 
 // GetClusterGroupTargetBreakglassEscalation returns escalations for specific cluster, user groups, and target group
 func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
-	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroupCount", len(userGroups), "targetGroup", targetGroup)
+	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroupCount", len(userGroups), "targetGroupHint", system.RedactGroupName(targetGroup))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupTargetBreakglassEscalation").Inc()
 	// Try index-based lookup by escalatedGroup first
 	collected := make([]breakglassv1alpha1.BreakglassEscalation, 0)

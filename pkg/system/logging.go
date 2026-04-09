@@ -42,16 +42,11 @@ func EnrichReqLoggerWithAuth(c *gin.Context, reqLogger *zap.SugaredLogger) *zap.
 	if v, ok := c.Get("groups"); ok {
 		if groups, ok2 := v.([]string); ok2 && len(groups) > 0 {
 			reqLogger = reqLogger.With("groupCount", len(groups))
-			reqLogger.Debugw("Request token groups", "groups", "[REDACTED]")
+			reqLogger.Debugw("Request token groups", "groupCount", len(groups), "groups", "[REDACTED]")
 		}
 	}
 	return reqLogger
 }
-
-// NamespacedFields returns a variadic slice of key/value pairs suitable for passing
-// to SugaredLogger.With or Infow/Errorw calls. If namespace is empty it will only
-// include the "name" key; otherwise it includes both "name" and "namespace".
-
 
 // RedactGroupName returns a short, non-reversible hint for a group name so logs
 // can correlate related events without disclosing the full value.
@@ -70,6 +65,9 @@ func RedactGroupName(name string) string {
 	return string(runes[:prefixLen]) + "***"
 }
 
+// NamespacedFields returns a variadic slice of key/value pairs suitable for passing
+// to SugaredLogger.With or Infow/Errorw calls. If namespace is empty it will only
+// include the "name" key; otherwise it includes both "name" and "namespace".
 func NamespacedFields(name, namespace string) []interface{} {
 	if namespace == "" {
 		return []interface{}{"name", name}
