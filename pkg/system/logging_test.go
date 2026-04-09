@@ -91,9 +91,12 @@ func TestRedactGroupName(t *testing.T) {
 		want  string
 	}{
 		{name: "empty", input: "", want: ""},
-		{name: "short", input: "admin", want: "adm***"},
-		{name: "long", input: "platform-team", want: "plat***"},
-		{name: "unicode", input: "グループ管理者", want: "グループ***"},
+		{name: "one-char", input: "a", want: "***"},
+		{name: "three-chars", input: "ops", want: "***"},
+		{name: "four-chars", input: "sres", want: "***"},
+		{name: "five-chars", input: "admin", want: "adm***"},
+		{name: "long", input: "platform-team", want: "pla***"},
+		{name: "unicode", input: "グループ管理者", want: "グルー***"},
 	}
 
 	for _, tt := range tests {

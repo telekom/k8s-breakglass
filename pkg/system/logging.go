@@ -50,19 +50,19 @@ func EnrichReqLoggerWithAuth(c *gin.Context, reqLogger *zap.SugaredLogger) *zap.
 
 // RedactGroupName returns a short, non-reversible hint for a group name so logs
 // can correlate related events without disclosing the full value.
+// Behaviour:
+//   - 0 runes  → ""
+//   - 1–4 runes → "***"  (fully masked to avoid disclosing short names like "ops", "sre")
+//   - 5+ runes → first 3 chars + "***"
 func RedactGroupName(name string) string {
 	if name == "" {
 		return ""
 	}
 	runes := []rune(name)
-	prefixLen := 3
-	if len(runes) > 6 {
-		prefixLen = 4
+	if len(runes) <= 4 {
+		return "***"
 	}
-	if prefixLen > len(runes) {
-		prefixLen = len(runes)
-	}
-	return string(runes[:prefixLen]) + "***"
+	return string(runes[:3]) + "***"
 }
 
 // NamespacedFields returns a variadic slice of key/value pairs suitable for passing
