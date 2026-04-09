@@ -162,5 +162,8 @@ func TestHandleGetEscalationsDoesNotLogRawTokenGroups(t *testing.T) {
 		_, hasRawTokenGroups := fields["rawTokenGroups"]
 		require.False(t, hasRawTokenGroups,
 			"rawTokenGroups field must not appear in log entry %q", entry.Message)
+		_, hasMatchingGroup := fields["matchingGroup"]
+		require.False(t, hasMatchingGroup,
+			"matchingGroup field must not appear in log entry %q", entry.Message)
 	}
 }

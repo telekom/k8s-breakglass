@@ -183,7 +183,7 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 		}
 		for _, group := range groups {
 			if slices.Contains(allowedGroups, group) {
-				log.Debugw("Escalation matches user group", append(system.NamespacedFields(be.Name, ""), "matchingGroup", group, "allowedGroupCount", len(be.Spec.Allowed.Groups))...)
+				log.Debugw("Escalation matches user group", append(system.NamespacedFields(be.Name, ""), "allowedGroupCount", len(be.Spec.Allowed.Groups))...)
 				return true
 			}
 		}
