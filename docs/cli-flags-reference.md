@@ -737,7 +737,38 @@ When **enabled** (default):
 
 ---
 
-### OpenTelemetry Configuration
+#### `--disable-session-rate-limit`
+
+Disable per-user rate limiting on session creation (`POST /api/breakglassSessions`).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_SESSION_RATE_LIMIT` |
+| **Example** | `--disable-session-rate-limit` |
+
+```bash
+# Disable session rate limiting (for testing only)
+breakglass-controller --disable-session-rate-limit
+
+# Use env variable instead
+BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true breakglass-controller
+```
+
+> **⚠️ Warning:** Do not enable this flag in production. The per-user session creation rate limiter (10 requests/minute, burst 1) protects against session flooding. Disabling it removes that protection.
+
+When **disabled**:
+- Session creation requests are not rate limited per user
+- Intended for E2E tests and development environments
+- The default limiter (10 req/min, burst 1) is replaced with a permissive limiter (1000 req/s, burst 10000)
+
+When **enabled** (default):
+- Per-user rate limit of 10 requests/minute with burst of 1
+- Requests over the limit receive `429 Too Many Requests`
+- Keyed on authenticated user's email identity
+
+---
 
 #### `--otel-required`
 
