@@ -1,3 +1,45 @@
+# ==========================================
+# NetworkPolicy Configuration
+# ==========================================
+# Controls ingress traffic to the breakglass controller pods.
+# When enabled, a default deny-all ingress policy is applied and
+# only the listed ports are explicitly allowed.
+networkPolicy:
+  enabled: false
+  # apiPort is the container port for the HTTP API and frontend. Default: 8080.
+  apiPort: 8080
+  # metricsPort is the container port for Prometheus metrics. Default: 8081.
+  metricsPort: 8081
+  webhookMetricsPort: 8083
+  # webhookPort is the container port for the Kubernetes authorization webhook. Default: 9443.
+  webhookPort: 9443
+  # healthPort is the container port for liveness/readiness probes. Default: 8082.
+  healthPort: 8082
+  # ingressNamespaceSelector restricts the API/frontend port to pods from namespaces
+  # matching the given labels. If empty, ingress is allowed from all namespaces.
+  # Example:
+  #   ingressNamespaceSelector:
+  #     kubernetes.io/metadata.name: ingress-nginx
+  ingressNamespaceSelector: {}
+  # metricsNamespaceSelector restricts the metrics port to pods from namespaces
+  # matching the given labels. If empty, ingress is allowed from all namespaces.
+  # Example:
+  #   metricsNamespaceSelector:
+  #     kubernetes.io/metadata.name: monitoring
+  metricsNamespaceSelector: {}
+  # additionalIngressRules allows appending custom ingress rules beyond the defaults.
+  # Each entry follows the NetworkPolicy ingress rule format.
+  # Example:
+  #   additionalIngressRules:
+  #     - from:
+  #         - podSelector:
+  #             matchLabels:
+  #               app: custom-scraper
+  #       ports:
+  #         - port: 9090
+  #           protocol: TCP
+  additionalIngressRules: []
+
 cluster:
   clusterID: tenant-b-virtual-test
   tenant: tenant-b

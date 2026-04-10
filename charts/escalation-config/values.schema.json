@@ -515,6 +515,68 @@
         }
       }
     },
+    "networkPolicy": {
+      "type": "object",
+      "description": "NetworkPolicy for the breakglass controller pods.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create a NetworkPolicy with default deny-all ingress and explicit allow rules.",
+          "default": false
+        },
+        "apiPort": {
+          "type": "integer",
+          "description": "Container port for the HTTP API and frontend.",
+          "default": 8080,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "metricsPort": {
+          "type": "integer",
+          "description": "Container port for Prometheus metrics.",
+          "default": 8081,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "webhookMetricsPort": {
+          "type": "integer",
+          "description": "Container port for webhook metrics.",
+          "default": 8083,
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "webhookPort": {
+          "type": "integer",
+          "description": "Container port for the Kubernetes authorization webhook.",
+          "default": 9443,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "healthPort": {
+          "type": "integer",
+          "description": "Container port for liveness and readiness probes.",
+          "default": 8082,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "ingressNamespaceSelector": {
+          "type": "object",
+          "description": "Namespace label selector restricting ingress on the API port. Empty allows all namespaces.",
+          "additionalProperties": { "type": "string" }
+        },
+        "metricsNamespaceSelector": {
+          "type": "object",
+          "description": "Namespace label selector restricting ingress on the metrics port. Empty allows all namespaces.",
+          "additionalProperties": { "type": "string" }
+        },
+        "additionalIngressRules": {
+          "type": "array",
+          "description": "Additional custom NetworkPolicy ingress rules appended to the defaults.",
+          "items": { "type": "object" },
+          "default": []
+        }
+      }
+    },
     "denyPolicies": {
       "type": "array",
       "description": "List of DenyPolicy resources to create.",
