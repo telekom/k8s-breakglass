@@ -21,7 +21,7 @@ import (
 func TestCLIListSessions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/breakglassSessions" {
-			_ = json.NewEncoder(w).Encode([]breakglassv1alpha1.BreakglassSession{
+			sessions := []breakglassv1alpha1.BreakglassSession{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "session-1",
@@ -37,7 +37,8 @@ func TestCLIListSessions(t *testing.T) {
 						ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 					},
 				},
-			})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": sessions})
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

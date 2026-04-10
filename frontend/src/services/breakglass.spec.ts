@@ -469,10 +469,18 @@ describe("BreakglassService", () => {
     const now = Date.now();
     mockClient.get
       .mockResolvedValueOnce({
-        data: { items: [{ metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } }] },
+        data: {
+          items: [
+            { metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } },
+          ],
+        },
       })
       .mockResolvedValueOnce({
-        data: { items: [{ metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } }] },
+        data: {
+          items: [
+            { metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } },
+          ],
+        },
       })
       .mockResolvedValueOnce({
         data: {
