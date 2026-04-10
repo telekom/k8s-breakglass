@@ -3,6 +3,7 @@ package escalation
 import (
 	"context"
 	"net/http"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -184,6 +185,9 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 
 	reqLog.Debugw("Returning escalations response (filtered, hidden groups removed)", "responseCount", len(response))
 	cleaned := dropK8sInternalFieldsEscalationList(response)
+	sort.Slice(cleaned, func(i, j int) bool {
+		return cleaned[i].Name < cleaned[j].Name
+	})
 
 	limit, err := utils.ParsePageLimit(c.Query("limit"))
 	if err != nil {

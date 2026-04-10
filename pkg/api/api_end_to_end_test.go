@@ -241,9 +241,15 @@ func (env *apiEndToEndEnv) listSessions(t *testing.T) []breakglassv1alpha1.Break
 	t.Helper()
 	rr := env.doRequest(t, http.MethodGet, sessionsBasePath, nil)
 	require.Equal(t, http.StatusOK, rr.Code)
-	var sessions []breakglassv1alpha1.BreakglassSession
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &sessions))
-	return sessions
+	var envelope struct {
+		Items    []breakglassv1alpha1.BreakglassSession `json:"items"`
+		Metadata struct {
+			Continue string `json:"continue"`
+			Total    int    `json:"total"`
+		} `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &envelope))
+	return envelope.Items
 }
 
 func (env *apiEndToEndEnv) approveSession(t *testing.T, name string) {

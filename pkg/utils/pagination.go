@@ -18,7 +18,7 @@ const (
 )
 
 // ParsePageLimit parses the ?limit query parameter string.
-// Returns DefaultPageSize if the string is empty or invalid.
+// Returns DefaultPageSize if the string is empty.
 // Returns an error if the value is present but not a positive integer or exceeds MaxPageSize.
 func ParsePageLimit(limitStr string) (int, error) {
 	if limitStr == "" {

@@ -50,7 +50,7 @@ Common error codes: `UNAUTHORIZED`, `FORBIDDEN`, `BAD_REQUEST`, `NOT_FOUND`
 
 ## Pagination
 
-All list endpoints support server-side pagination using Kubernetes LIST semantics.
+All list endpoints support server-side pagination using an offset-based continue token. The `continue` token is an opaque, base64-encoded integer offset; it is not compatible with Kubernetes watch semantics and does not reflect resource versions.
 
 ### Query Parameters
 

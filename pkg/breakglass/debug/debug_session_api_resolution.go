@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -479,6 +480,10 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 			Containers:  len(t.Spec.Template.Spec.Containers),
 		})
 	}
+
+	sort.Slice(templates, func(i, j int) bool {
+		return templates[i].Name < templates[j].Name
+	})
 
 	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
 	if lerr != nil {

@@ -36,6 +36,24 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+// pagedBindingResponse mirrors the paginated JSON envelope returned by the
+// cluster binding list endpoints: {"items": [...], "total": N, "continue": "..."}
+type pagedBindingResponse struct {
+	Items    []ClusterBindingResponse `json:"items"`
+	Total    int                      `json:"total"`
+	Continue string                   `json:"continue"`
+}
+
+// decodeBindingPage decodes a paged cluster binding response body and returns items.
+func decodeBindingPage(t *testing.T, body []byte) []ClusterBindingResponse {
+	t.Helper()
+	var paged pagedBindingResponse
+	if err := json.Unmarshal(body, &paged); err != nil {
+		t.Fatalf("Failed to decode paginated binding response: %v", err)
+	}
+	return paged.Items
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
 }
@@ -168,9 +186,7 @@ func TestClusterBindingAPIController_handleListClusterBindings(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 2)
 		// Should be sorted by namespace then name
@@ -195,9 +211,7 @@ func TestClusterBindingAPIController_handleListClusterBindings(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 		assert.Len(t, response, 0)
 	})
 
@@ -218,9 +232,7 @@ func TestClusterBindingAPIController_handleListClusterBindings(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.NotNil(t, response[0].TemplateRef)
 		assert.Equal(t, "template-1", response[0].TemplateRef.Name)
@@ -244,9 +256,7 @@ func TestClusterBindingAPIController_handleListClusterBindings(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Equal(t, map[string]string{"env": "prod"}, response[0].TemplateSelector)
 		assert.Equal(t, map[string]string{"tier": "production"}, response[0].ClusterSelector)
@@ -457,9 +467,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster(t *testing.T) 
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 1)
 		assert.Equal(t, "explicit-binding", response[0].Name)
@@ -485,9 +493,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster(t *testing.T) 
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 1)
 		assert.Equal(t, "selector-binding", response[0].Name)
@@ -551,9 +557,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster(t *testing.T) 
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 		assert.Len(t, response, 0)
 	})
 }
@@ -873,9 +877,7 @@ func TestClusterBindingAPIController_Integration(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 		assert.Len(t, response, 1)
 		assert.Equal(t, "integration-test-binding", response[0].Name)
 	})
@@ -1086,9 +1088,7 @@ func TestClusterBindingAPIController_handleListClusterBindings_HiddenFilter(t *t
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 1)
 		assert.Equal(t, "visible-binding", response[0].Name)
@@ -1112,9 +1112,7 @@ func TestClusterBindingAPIController_handleListClusterBindings_HiddenFilter(t *t
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 2)
 		// Check both bindings are present
@@ -1140,9 +1138,7 @@ func TestClusterBindingAPIController_handleListClusterBindings_HiddenFilter(t *t
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 1)
 		assert.Equal(t, "hidden-binding", response[0].Name)
@@ -1232,9 +1228,7 @@ func TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter(
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 4)
 	})
@@ -1256,9 +1250,7 @@ func TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter(
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		// Only active-binding should be returned
 		assert.Len(t, response, 1)
@@ -1313,9 +1305,7 @@ func TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter(
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		// Only active bindings (including hidden active)
 		assert.Len(t, response, 2)
@@ -1468,9 +1458,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 0)
 	})
@@ -1495,9 +1483,7 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []ClusterBindingResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
+		response := decodeBindingPage(t, w.Body.Bytes())
 
 		assert.Len(t, response, 1)
 		assert.Equal(t, "cluster-a-binding", response[0].Name)

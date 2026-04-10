@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -367,6 +368,20 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			AllowedPodOperations:   s.Status.AllowedPodOperations,
 		})
 	}
+
+	sort.Slice(summaries, func(i, j int) bool {
+		var ti, tj time.Time
+		if summaries[i].StartsAt != nil {
+			ti = summaries[i].StartsAt.Time
+		}
+		if summaries[j].StartsAt != nil {
+			tj = summaries[j].StartsAt.Time
+		}
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return summaries[i].Name < summaries[j].Name
+	})
 
 	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
 	if lerr != nil {
