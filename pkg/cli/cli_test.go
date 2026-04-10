@@ -270,3 +270,26 @@ func TestWebhookConfig_DefaultValues(t *testing.T) {
 	assert.False(t, config.CertGeneration)
 	assert.False(t, config.MetricsSecure)
 }
+
+func TestDisableSessionRateLimit_DefaultIsFalse(t *testing.T) {
+	config := &Config{}
+	assert.False(t, config.DisableSessionRateLimit, "DisableSessionRateLimit should default to false")
+}
+
+func TestDisableSessionRateLimit_EnvVar(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "true")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
+	assert.True(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true should parse as true")
+}
+
+func TestDisableSessionRateLimit_EnvVarFalse(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "false")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", true)
+	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false should parse as false")
+}
+
+func TestDisableSessionRateLimit_EnvVarMissing(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
+	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT unset should default to false")
+}
