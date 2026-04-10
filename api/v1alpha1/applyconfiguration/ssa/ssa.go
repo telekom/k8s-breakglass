@@ -883,6 +883,12 @@ func PodCopyConfigFrom(p *breakglassv1alpha1.PodCopyConfig) *ac.PodCopyConfigApp
 		WithEnabled(p.Enabled).
 		WithTargetNamespace(p.TargetNamespace).
 		WithTTL(p.TTL)
+	if p.AllowedNamespaces != nil {
+		result.WithAllowedNamespaces(NamespaceFilterFrom(p.AllowedNamespaces))
+	}
+	if p.DeniedNamespaces != nil {
+		result.WithDeniedNamespaces(NamespaceFilterFrom(p.DeniedNamespaces))
+	}
 	if len(p.Labels) > 0 {
 		for k, v := range p.Labels {
 			result.WithLabels(map[string]string{k: v})

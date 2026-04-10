@@ -17,6 +17,14 @@ type PodCopyConfigApplyConfiguration struct {
 	Enabled *bool `json:"enabled,omitempty"`
 	// targetNamespace specifies where copied pods are created.
 	TargetNamespace *string `json:"targetNamespace,omitempty"`
+	// allowedNamespaces restricts which namespaces users can copy pods from.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
+	// Empty means all namespaces allowed.
+	AllowedNamespaces *NamespaceFilterApplyConfiguration `json:"allowedNamespaces,omitempty"`
+	// deniedNamespaces blocks pod copies from specific namespaces.
+	// Evaluated after allowedNamespaces.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
+	DeniedNamespaces *NamespaceFilterApplyConfiguration `json:"deniedNamespaces,omitempty"`
 	// labels adds labels to copied pods.
 	Labels map[string]string `json:"labels,omitempty"`
 	// ttl specifies how long copied pods live before auto-deletion.
@@ -42,6 +50,22 @@ func (b *PodCopyConfigApplyConfiguration) WithEnabled(value bool) *PodCopyConfig
 // If called multiple times, the TargetNamespace field is set to the value of the last call.
 func (b *PodCopyConfigApplyConfiguration) WithTargetNamespace(value string) *PodCopyConfigApplyConfiguration {
 	b.TargetNamespace = &value
+	return b
+}
+
+// WithAllowedNamespaces sets the AllowedNamespaces field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AllowedNamespaces field is set to the value of the last call.
+func (b *PodCopyConfigApplyConfiguration) WithAllowedNamespaces(value *NamespaceFilterApplyConfiguration) *PodCopyConfigApplyConfiguration {
+	b.AllowedNamespaces = value
+	return b
+}
+
+// WithDeniedNamespaces sets the DeniedNamespaces field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DeniedNamespaces field is set to the value of the last call.
+func (b *PodCopyConfigApplyConfiguration) WithDeniedNamespaces(value *NamespaceFilterApplyConfiguration) *PodCopyConfigApplyConfiguration {
+	b.DeniedNamespaces = value
 	return b
 }
 

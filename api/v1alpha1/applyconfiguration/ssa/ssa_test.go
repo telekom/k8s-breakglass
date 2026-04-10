@@ -1379,6 +1379,50 @@ func TestPodCopyConfigFrom(t *testing.T) {
 		assert.Equal(t, "debug-copies", *result.TargetNamespace)
 		assert.Equal(t, "4h", *result.TTL)
 	})
+
+	t.Run("preserves AllowedNamespaces", func(t *testing.T) {
+		config := &breakglassv1alpha1.PodCopyConfig{
+			Enabled: true,
+			AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+				Patterns: []string{"production", "staging"},
+			},
+		}
+
+		result := PodCopyConfigFrom(config)
+
+		require.NotNil(t, result)
+		require.NotNil(t, result.AllowedNamespaces)
+		assert.Equal(t, []string{"production", "staging"}, result.AllowedNamespaces.Patterns)
+		assert.Nil(t, result.DeniedNamespaces)
+	})
+
+	t.Run("preserves DeniedNamespaces", func(t *testing.T) {
+		config := &breakglassv1alpha1.PodCopyConfig{
+			Enabled: true,
+			DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+				Patterns: []string{"kube-system", "kube-*"},
+			},
+		}
+
+		result := PodCopyConfigFrom(config)
+
+		require.NotNil(t, result)
+		assert.Nil(t, result.AllowedNamespaces)
+		require.NotNil(t, result.DeniedNamespaces)
+		assert.Equal(t, []string{"kube-system", "kube-*"}, result.DeniedNamespaces.Patterns)
+	})
+
+	t.Run("nil namespace filters produce nil fields", func(t *testing.T) {
+		config := &breakglassv1alpha1.PodCopyConfig{
+			Enabled: true,
+		}
+
+		result := PodCopyConfigFrom(config)
+
+		require.NotNil(t, result)
+		assert.Nil(t, result.AllowedNamespaces)
+		assert.Nil(t, result.DeniedNamespaces)
+	})
 }
 
 // TestAuditSinkStatusFrom tests conversion of AuditSinkStatus.
