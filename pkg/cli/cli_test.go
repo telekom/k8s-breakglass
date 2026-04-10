@@ -2,6 +2,8 @@ package cli
 
 import (
 	"crypto/tls"
+	"flag"
+	"os"
 	"testing"
 	"time"
 
@@ -292,4 +294,62 @@ func TestDisableSessionRateLimit_EnvVarMissing(t *testing.T) {
 	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
 	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
 	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT unset should default to false")
+}
+
+// parseWithArgs resets the global flag.CommandLine, sets os.Args to the provided
+// arguments, and calls Parse(). It restores os.Args and flag.CommandLine on return.
+// This is the only safe way to test Parse() (which calls flag.Parse() on the global
+// flag.CommandLine) without spawning a subprocess.
+func parseWithArgs(t *testing.T, args []string) *Config {
+	t.Helper()
+
+	origArgs := os.Args
+	origFlagCommandLine := flag.CommandLine
+
+	t.Cleanup(func() {
+		os.Args = origArgs
+		flag.CommandLine = origFlagCommandLine
+	})
+
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+
+	os.Args = append([]string{os.Args[0]}, args...)
+
+	return Parse()
+}
+
+func TestParse_DisableSessionRateLimit_Default(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
+
+	cfg := parseWithArgs(t, []string{})
+
+	assert.False(t, cfg.DisableSessionRateLimit,
+		"DisableSessionRateLimit should be false when neither flag nor env var is set")
+}
+
+func TestParse_DisableSessionRateLimit_Flag(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
+
+	cfg := parseWithArgs(t, []string{"--disable-session-rate-limit"})
+
+	assert.True(t, cfg.DisableSessionRateLimit,
+		"DisableSessionRateLimit should be true when --disable-session-rate-limit flag is passed")
+}
+
+func TestParse_DisableSessionRateLimit_EnvVar(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "true")
+
+	cfg := parseWithArgs(t, []string{})
+
+	assert.True(t, cfg.DisableSessionRateLimit,
+		"DisableSessionRateLimit should be true when BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true")
+}
+
+func TestParse_DisableSessionRateLimit_FlagOverridesEnv(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "false")
+
+	cfg := parseWithArgs(t, []string{"--disable-session-rate-limit"})
+
+	assert.True(t, cfg.DisableSessionRateLimit,
+		"CLI flag --disable-session-rate-limit should override BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false")
 }

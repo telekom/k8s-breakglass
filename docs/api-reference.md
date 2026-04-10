@@ -248,7 +248,7 @@ Authorization: Bearer <token>
 
 **Status Code:** `201 Created`
 
-**Rate limiting:** Session creation is rate-limited per authenticated user (10 requests/minute, burst of 1). When the limit is exceeded, the server responds with `429 Too Many Requests` and a `Retry-After` header (integer seconds) indicating when to retry. Unauthenticated requests fall back to per-IP limiting.
+**Rate limiting:** Session creation is rate-limited per authenticated user (10 requests/minute, burst of 1). When the limit is exceeded, the server responds with `429 Too Many Requests` and a `Retry-After` header (integer seconds) indicating when to retry. If the authenticated user's JWT lacks an `email` claim, the limiter falls back to per-IP tracking.
 
 **Response:** Complete `BreakglassSession` resource (as Kubernetes object):
 

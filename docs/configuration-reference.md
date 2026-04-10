@@ -712,7 +712,7 @@ Breakglass implements multi-tier rate limiting to protect against DoS attacks wh
 | Authenticated (with valid JWT) | 50 req/s | 100 | Per user | Public API endpoints with valid JWT |
 | SAR Webhook | 1000 req/s | 5000 | Per IP | SubjectAccessReview from spoke clusters |
 
-> **Note:** Rate limit headers (`X-RateLimit-*`, `Retry-After`) are **not currently emitted** by the server. Clients receive a `429 Too Many Requests` JSON response when rate limited.
+> **Note:** The session-creation-specific rate limiter for `POST /api/breakglassSessions` emits a `Retry-After` header (integer seconds) on `429` responses. Other rate limiters (global per-IP, authenticated per-user middleware) do not emit `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, or `X-RateLimit-Reset` headers. Clients should implement exponential backoff for `429` responses without these headers.
 
 **Operational Guidance - Rate Limiting:**
 
