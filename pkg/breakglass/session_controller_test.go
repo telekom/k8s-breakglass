@@ -6905,6 +6905,15 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 		return []string{"system:authenticated"}, nil
 	}
 
+	permissiveLimiter := ratelimit.New(ratelimit.Config{
+		Rate:            1000,
+		Burst:           10000,
+		CleanupInterval: time.Minute,
+		MaxAge:          5 * time.Minute,
+	})
+	defer permissiveLimiter.Stop()
+	ctrl.WithSessionCreationRateLimiter(permissiveLimiter)
+
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -6989,6 +6998,15 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
+
+	permissiveLimiter := ratelimit.New(ratelimit.Config{
+		Rate:            1000,
+		Burst:           10000,
+		CleanupInterval: time.Minute,
+		MaxAge:          5 * time.Minute,
+	})
+	defer permissiveLimiter.Stop()
+	ctrl.WithSessionCreationRateLimiter(permissiveLimiter)
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))

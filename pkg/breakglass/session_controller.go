@@ -236,7 +236,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	}
 
 	if wc.sessionCreationLimiter != nil {
-		rateLimitKey := authIdentity.email
+		rateLimitKey := strings.ToLower(strings.TrimSpace(authIdentity.email))
 		if rateLimitKey == "" {
 			rateLimitKey = c.ClientIP()
 		}
