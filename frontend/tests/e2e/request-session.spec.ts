@@ -71,7 +71,7 @@ test.describe.serial("Request Session via UI", () => {
     }
 
     // Enter reason
-    const reason = "UI E2E Test: Debugging production issue #12345";
+    const reason = "UI E2E Test - Debugging production issue 12345";
     await fillScaleTextarea(page, '[data-testid="reason-input"]', reason);
 
     // Select duration (if available) - this is a text field, not a dropdown
