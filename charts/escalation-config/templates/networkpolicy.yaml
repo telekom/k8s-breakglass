@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-breakglass
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  podSelector:
+    matchLabels:
+      app: breakglass
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- /* Allow ingress on the HTTP/API + frontend port */}}
+    - ports:
+        - port: {{ .Values.networkPolicy.apiPort }}
+          protocol: TCP
+      {{- if .Values.networkPolicy.ingressNamespaceSelector }}
+      from:
+        - namespaceSelector:
+            matchLabels:
+{{ toYaml .Values.networkPolicy.ingressNamespaceSelector | indent 14 }}
+      {{- end }}
+    {{- /* Allow ingress on the metrics port */}}
+    - ports:
+        - port: {{ .Values.networkPolicy.metricsPort }}
+          protocol: TCP
+      {{- if .Values.networkPolicy.metricsNamespaceSelector }}
+      from:
+        - namespaceSelector:
+            matchLabels:
+{{ toYaml .Values.networkPolicy.metricsNamespaceSelector | indent 14 }}
+      {{- end }}
+    {{- /* Allow ingress on the webhook port */}}
+    - ports:
+        - port: {{ .Values.networkPolicy.webhookPort }}
+          protocol: TCP
+    {{- /* Allow ingress on the health probe port */}}
+    - ports:
+        - port: {{ .Values.networkPolicy.healthPort }}
+          protocol: TCP
+    {{- /* Additional custom ingress rules */}}
+    {{- if .Values.networkPolicy.additionalIngressRules }}
+{{ toYaml .Values.networkPolicy.additionalIngressRules | indent 4 }}
+    {{- end }}
+{{- end }}
