@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -61,6 +62,19 @@ var (
 	errUnknownIdentityProvider = errors.New("invalid or unknown identity provider")
 	errJWKSFetchRateLimited    = errors.New("jwks fetch rate limited")
 )
+
+// jwksFetchRateLimitedError is a typed error that carries the exact duration
+// a caller should wait before retrying. It wraps errJWKSFetchRateLimited so
+// that errors.Is checks continue to work unchanged.
+type jwksFetchRateLimitedError struct {
+	RetryAfter time.Duration
+}
+
+func (e *jwksFetchRateLimitedError) Error() string {
+	return fmt.Sprintf("%s: retry after %s", errJWKSFetchRateLimited, e.RetryAfter.Truncate(time.Millisecond))
+}
+
+func (e *jwksFetchRateLimitedError) Unwrap() error { return errJWKSFetchRateLimited }
 
 // jwksCacheEntry holds the JWKS and its position in the LRU list
 type jwksCacheEntry struct {
@@ -284,7 +298,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 			elapsed := time.Since(t)
 			if elapsed < jwksFetchMinInterval {
 				retryAfter := jwksFetchMinInterval - elapsed
-				return nil, fmt.Errorf("%w: retry after %s", errJWKSFetchRateLimited, retryAfter.Truncate(time.Millisecond))
+				return nil, &jwksFetchRateLimitedError{RetryAfter: retryAfter}
 			}
 		}
 	}
@@ -469,6 +483,18 @@ func authErrorMessageForJWKSLoad(err error) string {
 	}
 }
 
+func retryAfterFromRateLimitedError(err error) string {
+	var rle *jwksFetchRateLimitedError
+	if errors.As(err, &rle) && rle.RetryAfter > 0 {
+		secs := int(math.Ceil(rle.RetryAfter.Seconds()))
+		if secs < 1 {
+			secs = 1
+		}
+		return fmt.Sprintf("%d", secs)
+	}
+	return fmt.Sprintf("%d", int(jwksFetchMinInterval.Seconds()))
+}
+
 func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	if c.Request.Method == http.MethodOptions {
 		return true
@@ -537,9 +563,13 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		if err != nil {
 			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
 			metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
-			metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
-
-			RespondUnauthorizedWithMessage(c, authErrorMessageForJWKSLoad(err))
+			if errors.Is(err, errJWKSFetchRateLimited) {
+				metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_rate_limited").Inc()
+				RespondTooManyRequestsWithRetryAfter(c, retryAfterFromRateLimitedError(err), authErrorMessageForJWKSLoad(err))
+			} else {
+				metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
+				RespondUnauthorizedWithMessage(c, authErrorMessageForJWKSLoad(err))
+			}
 			c.Abort()
 			return false
 		}
