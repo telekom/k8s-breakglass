@@ -475,6 +475,7 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	for _, t := range templateList.Items {
 		templates = append(templates, DebugPodTemplateResponse{
 			Name:        t.Name,
+			Namespace:   t.Namespace,
 			DisplayName: t.Spec.DisplayName,
 			Description: t.Spec.Description,
 			Containers:  len(t.Spec.Template.Spec.Containers),
@@ -482,7 +483,10 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
-		return templates[i].Name < templates[j].Name
+		if templates[i].Name != templates[j].Name {
+			return templates[i].Name < templates[j].Name
+		}
+		return templates[i].Namespace < templates[j].Namespace
 	})
 
 	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))

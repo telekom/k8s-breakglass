@@ -82,6 +82,7 @@ type NamespaceSelectorRequirementResponse struct {
 // DebugPodTemplateResponse represents a pod template in API responses
 type DebugPodTemplateResponse struct {
 	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description,omitempty"`
 	Containers  int    `json:"containers"`

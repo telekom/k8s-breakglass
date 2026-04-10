@@ -716,14 +716,17 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	// Enrich sessions with approvalReason from matching escalations
 	enriched := wc.enrichSessionsWithApprovalReason(ctx, filtered, reqLog)
 
-	// Sort by creation timestamp (newest first), then by name for stable ordering
+	// Sort by creation timestamp (newest first), then by name and namespace for deterministic pagination ordering
 	sort.Slice(enriched, func(i, j int) bool {
 		ti := enriched[i].CreationTimestamp.Time
 		tj := enriched[j].CreationTimestamp.Time
 		if !ti.Equal(tj) {
 			return ti.After(tj)
 		}
-		return enriched[i].Name < enriched[j].Name
+		if enriched[i].Name != enriched[j].Name {
+			return enriched[i].Name < enriched[j].Name
+		}
+		return enriched[i].Namespace < enriched[j].Namespace
 	})
 
 	limit, err := utils.ParsePageLimit(c.Query("limit"))

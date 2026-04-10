@@ -28,6 +28,7 @@ type DebugSessionListOptions struct {
 
 type DebugSessionSummary struct {
 	Name                 string                                   `json:"name"`
+	Namespace            string                                   `json:"namespace"`
 	TemplateRef          string                                   `json:"templateRef"`
 	Cluster              string                                   `json:"cluster"`
 	RequestedBy          string                                   `json:"requestedBy"`
@@ -473,6 +474,7 @@ type DebugPodTemplateService struct {
 // DebugPodTemplateSummary represents a pod template summary from the API
 type DebugPodTemplateSummary struct {
 	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description,omitempty"`
 	Containers  int    `json:"containers"`

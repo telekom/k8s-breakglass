@@ -186,7 +186,10 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	reqLog.Debugw("Returning escalations response (filtered, hidden groups removed)", "responseCount", len(response))
 	cleaned := dropK8sInternalFieldsEscalationList(response)
 	sort.Slice(cleaned, func(i, j int) bool {
-		return cleaned[i].Name < cleaned[j].Name
+		if cleaned[i].Name != cleaned[j].Name {
+			return cleaned[i].Name < cleaned[j].Name
+		}
+		return cleaned[i].Namespace < cleaned[j].Namespace
 	})
 
 	limit, err := utils.ParsePageLimit(c.Query("limit"))

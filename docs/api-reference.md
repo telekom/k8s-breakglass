@@ -74,7 +74,7 @@ Paginated responses include a continuation field alongside the items. When there
 ### Example
 
 ```bash
-# First page (100 items)
+# First page (50 items)
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/debugSessions?limit=50"
 # Response: { "sessions": [...], "total": 320, "continue": "MTAwMA==" }

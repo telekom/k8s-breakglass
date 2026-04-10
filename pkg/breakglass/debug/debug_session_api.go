@@ -236,6 +236,7 @@ type DebugSessionListResponse struct {
 // DebugSessionSummary represents a summarized debug session for list responses
 type DebugSessionSummary struct {
 	Name                   string                                   `json:"name"`
+	Namespace              string                                   `json:"namespace"`
 	TemplateRef            string                                   `json:"templateRef"`
 	Cluster                string                                   `json:"cluster"`
 	RequestedBy            string                                   `json:"requestedBy"`
@@ -354,6 +355,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		}
 		summaries = append(summaries, DebugSessionSummary{
 			Name:                   s.Name,
+			Namespace:              s.Namespace,
 			TemplateRef:            s.Spec.TemplateRef,
 			Cluster:                s.Spec.Cluster,
 			RequestedBy:            s.Spec.RequestedBy,
@@ -380,7 +382,10 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		if !ti.Equal(tj) {
 			return ti.After(tj)
 		}
-		return summaries[i].Name < summaries[j].Name
+		if summaries[i].Name != summaries[j].Name {
+			return summaries[i].Name < summaries[j].Name
+		}
+		return summaries[i].Namespace < summaries[j].Namespace
 	})
 
 	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
