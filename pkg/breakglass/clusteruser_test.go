@@ -106,8 +106,8 @@ func TestBreakglassSessionRequest_SanitizeReason(t *testing.T) {
 		},
 		{
 			name:    "reason with basic punctuation preserved",
-			input:   "Debugging prod issue: server down. Please help!",
-			want:    "Debugging prod issue: server down. Please help!",
+			input:   "Debugging prod issue - server down. Please help!",
+			want:    "Debugging prod issue - server down. Please help!",
 			wantErr: false,
 		},
 	}
@@ -299,7 +299,7 @@ func TestBreakglassSessionRequest_CombinedValidation(t *testing.T) {
 }
 
 // TestSanitizeReasonText tests the standalone SanitizeReasonText function.
-// Verifies allowlist behavior: only alphanumeric, spaces, and .,;:!?'- are permitted.
+// Verifies allowlist behavior: only alphanumeric, spaces, and .,;!?'- are permitted (colon excluded).
 func TestSanitizeReasonText(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -323,8 +323,8 @@ func TestSanitizeReasonText(t *testing.T) {
 		},
 		{
 			name:     "basic punctuation preserved",
-			input:    "Prod is down: needs fix. Please help!",
-			expected: "Prod is down: needs fix. Please help!",
+			input:    "Prod is down - needs fix. Please help!",
+			expected: "Prod is down - needs fix. Please help!",
 		},
 		{
 			name:     "XSS: script tag stripped",
@@ -343,8 +343,13 @@ func TestSanitizeReasonText(t *testing.T) {
 		},
 		{
 			name:     "XSS: javascript protocol stripped",
-			input:    "Click here: javascript:alert(1)",
-			expected: "Click here: javascript:alert1",
+			input:    "Click here javascript alert(1)",
+			expected: "Click here javascript alert1",
+		},
+		{
+			name:     "XSS: javascript colon stripped",
+			input:    "javascript:alert(1)",
+			expected: "javascriptalert1",
 		},
 		{
 			name:     "XSS: onerror event handler stripped",

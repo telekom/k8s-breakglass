@@ -35,26 +35,30 @@ type BreakglassSessionRequest struct {
 
 const MaxReasonLength = 500
 
-// allowedReasonChars is an allowlist pattern that matches characters NOT permitted in reason text.
-// Only alphanumeric characters, spaces, and basic punctuation (.,;:!?'-) are permitted.
+// disallowedReasonChars is an allowlist pattern that matches characters NOT permitted in reason text.
+// Only alphanumeric characters, spaces, and basic punctuation (.,;!?'-) are permitted.
+// The colon (:) is intentionally excluded to prevent javascript: and data: scheme injection.
 // Everything else is stripped to prevent XSS and injection attacks.
-var allowedReasonChars = regexp.MustCompile(`[^a-zA-Z0-9 .,;:!?'\-]`)
+var disallowedReasonChars = regexp.MustCompile(`[^a-zA-Z0-9 .,;!?'\-]`)
 
 // SanitizeReason sanitizes the reason field to prevent injection attacks.
-// Trims whitespace, strips non-allowlisted characters, and enforces maximum length.
+// Returns an error if the raw input (after trimming whitespace) exceeds MaxReasonLength characters,
+// then strips non-allowlisted characters via SanitizeReasonText.
 func (r *BreakglassSessionRequest) SanitizeReason() error {
-	sanitized := SanitizeReasonText(r.Reason)
-	if utf8.RuneCountInString(sanitized) > MaxReasonLength {
+	trimmed := strings.TrimSpace(r.Reason)
+	if utf8.RuneCountInString(trimmed) > MaxReasonLength {
 		return fmt.Errorf("reason must be at most %d characters", MaxReasonLength)
 	}
-	r.Reason = sanitized
+	r.Reason = SanitizeReasonText(r.Reason)
 	return nil
 }
 
 // SanitizeReasonText sanitizes a reason string to prevent injection attacks using an allowlist approach.
-// Only alphanumeric characters, spaces, and basic punctuation (.,;:!?'-) are permitted.
+// Only alphanumeric characters, spaces, and basic punctuation (.,;!?'-) are permitted.
+// The colon (:) is intentionally excluded to prevent javascript: and data: URI scheme injection.
 // All other characters — including HTML tags, script injection markers, Unicode specials,
 // and URL-encoded bypass attempts — are stripped. Leading/trailing whitespace is trimmed.
+// Inputs longer than MaxReasonLength runes are truncated to that limit.
 //
 // This allowlist approach is more robust than a blacklist because it cannot be bypassed
 // via encoding tricks, novel HTML tags, or patterns not yet in the deny list.
@@ -62,9 +66,14 @@ func SanitizeReasonText(reason string) string {
 	// Trim leading/trailing whitespace first
 	reason = strings.TrimSpace(reason)
 	// Strip any character not in the allowlist
-	reason = allowedReasonChars.ReplaceAllString(reason, "")
+	reason = disallowedReasonChars.ReplaceAllString(reason, "")
 	// Re-trim in case stripping left new leading/trailing spaces
 	reason = strings.TrimSpace(reason)
+	// Truncate to MaxReasonLength to enforce a consistent upper bound for all callers
+	if utf8.RuneCountInString(reason) > MaxReasonLength {
+		runes := []rune(reason)
+		reason = string(runes[:MaxReasonLength])
+	}
 	return reason
 }
 
