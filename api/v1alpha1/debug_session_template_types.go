@@ -702,6 +702,18 @@ type PodCopyConfig struct {
 	// +kubebuilder:default="debug-copies"
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
+	// allowedNamespaces restricts which namespaces users can copy pods from.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
+	// Empty means all namespaces allowed.
+	// +optional
+	AllowedNamespaces *NamespaceFilter `json:"allowedNamespaces,omitempty"`
+
+	// deniedNamespaces blocks pod copies from specific namespaces.
+	// Evaluated after allowedNamespaces.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
+	// +optional
+	DeniedNamespaces *NamespaceFilter `json:"deniedNamespaces,omitempty"`
+
 	// labels adds labels to copied pods.
 	// +optional
 	Labels map[string]string `json:"labels,omitempty"`

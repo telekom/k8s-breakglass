@@ -769,6 +769,78 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not exist")
 	})
+
+	t.Run("namespace allowed passes validation", func(t *testing.T) {
+		sessionWithAllowed := testSession.DeepCopy()
+		sessionWithAllowed.Status.ResolvedTemplate.KubectlDebug.PodCopy.AllowedNamespaces = &breakglassv1alpha1.NamespaceFilter{
+			Patterns: []string{"production", "staging"},
+		}
+
+		targetClient2 := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testPod, testNs).
+			Build()
+		handler2 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+			clients: map[string]ctrlclient.Client{"test-cluster": targetClient2},
+		})
+
+		pod, err := handler2.CreatePodCopy(
+			context.Background(),
+			sessionWithAllowed,
+			"production",
+			"app-pod",
+			"",
+			"test-user@example.com",
+		)
+
+		require.NoError(t, err)
+		assert.NotNil(t, pod)
+	})
+
+	t.Run("namespace denied is blocked", func(t *testing.T) {
+		sessionWithDenied := testSession.DeepCopy()
+		sessionWithDenied.Status.ResolvedTemplate.KubectlDebug.PodCopy.DeniedNamespaces = &breakglassv1alpha1.NamespaceFilter{
+			Patterns: []string{"production", "kube-*"},
+		}
+
+		_, err := handler.CreatePodCopy(
+			context.Background(),
+			sessionWithDenied,
+			"production",
+			"app-pod",
+			"",
+			"test-user@example.com",
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "namespace production is not allowed for pod copy")
+	})
+
+	t.Run("no namespace filter configured passes", func(t *testing.T) {
+		sessionNoFilter := testSession.DeepCopy()
+		sessionNoFilter.Status.ResolvedTemplate.KubectlDebug.PodCopy.AllowedNamespaces = nil
+		sessionNoFilter.Status.ResolvedTemplate.KubectlDebug.PodCopy.DeniedNamespaces = nil
+
+		targetClient3 := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testPod, testNs).
+			Build()
+		handler3 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+			clients: map[string]ctrlclient.Client{"test-cluster": targetClient3},
+		})
+
+		pod, err := handler3.CreatePodCopy(
+			context.Background(),
+			sessionNoFilter,
+			"production",
+			"app-pod",
+			"busybox:latest",
+			"test-user@example.com",
+		)
+
+		require.NoError(t, err)
+		assert.NotNil(t, pod)
+	})
 }
 
 func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {

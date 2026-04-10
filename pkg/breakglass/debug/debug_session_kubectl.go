@@ -253,6 +253,11 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		return nil, fmt.Errorf("pod copy is not enabled for this template")
 	}
 
+	// Validate namespace
+	if !h.isNamespaceAllowed(originalNamespace, pc.AllowedNamespaces, pc.DeniedNamespaces) {
+		return nil, fmt.Errorf("namespace %s is not allowed for pod copy", originalNamespace)
+	}
+
 	// Get target cluster client
 	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 	if err != nil {
