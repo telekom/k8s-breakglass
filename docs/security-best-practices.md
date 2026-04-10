@@ -151,7 +151,7 @@ Debug-level log statements redact sensitive data to prevent accidental exposure 
 
 - JWT group memberships (`rawTokenGroups`) are omitted from all log output; only the count is logged
 - Session approval tokens (the `?token=` query parameter) are logged only as their length (`tokenLen`), not their value
-- OIDC role names from the token claims are logged as `[REDACTED]` in the enriched request logger
+- OIDC group names from the token claims are logged as `[REDACTED]` in the enriched request logger
 
 ### Issuer Validation (SEC-003)
 
