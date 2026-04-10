@@ -412,9 +412,10 @@ watch(
           <scale-telekom-nav-item class="hc-toggle-nav-item">
             <button
               type="button"
+              role="switch"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
               :aria-label="highContrast ? 'Disable high contrast mode' : 'Enable high contrast mode'"
-              :aria-pressed="highContrast"
+              :aria-checked="highContrast"
               @click="toggleHighContrast"
             >
               <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
