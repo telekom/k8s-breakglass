@@ -32,6 +32,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -228,6 +229,7 @@ type CreateNodeDebugPodRequest struct {
 type DebugSessionListResponse struct {
 	Sessions []DebugSessionSummary `json:"sessions"`
 	Total    int                   `json:"total"`
+	Continue string                `json:"continue,omitempty"`
 }
 
 // DebugSessionSummary represents a summarized debug session for list responses
@@ -366,9 +368,22 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		})
 	}
 
+	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
+	if lerr != nil {
+		apiresponses.RespondBadRequest(ctx, lerr.Error())
+		return
+	}
+	offset, oerr := utils.ParseContinueToken(ctx.Query("continue"))
+	if oerr != nil {
+		apiresponses.RespondBadRequest(ctx, oerr.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(summaries, limit, offset)
+
 	ctx.JSON(http.StatusOK, DebugSessionListResponse{
-		Sessions: summaries,
+		Sessions: page,
 		Total:    len(summaries),
+		Continue: nextToken,
 	})
 }
 

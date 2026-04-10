@@ -29,6 +29,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -182,7 +183,23 @@ func (c *ClusterBindingAPIController) handleListClusterBindings(ctx *gin.Context
 		return responses[i].Name < responses[j].Name
 	})
 
-	ctx.JSON(http.StatusOK, responses)
+	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
+	if lerr != nil {
+		apiresponses.RespondBadRequest(ctx, lerr.Error())
+		return
+	}
+	offset, oerr := utils.ParseContinueToken(ctx.Query("continue"))
+	if oerr != nil {
+		apiresponses.RespondBadRequest(ctx, oerr.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(responses, limit, offset)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"items":    page,
+		"total":    len(responses),
+		"continue": nextToken,
+	})
 }
 
 // handleGetClusterBinding returns a single cluster binding by namespace and name
@@ -253,7 +270,23 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 		return matchingBindings[i].Name < matchingBindings[j].Name
 	})
 
-	ctx.JSON(http.StatusOK, matchingBindings)
+	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
+	if lerr != nil {
+		apiresponses.RespondBadRequest(ctx, lerr.Error())
+		return
+	}
+	offset, oerr := utils.ParseContinueToken(ctx.Query("continue"))
+	if oerr != nil {
+		apiresponses.RespondBadRequest(ctx, oerr.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(matchingBindings, limit, offset)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"items":    page,
+		"total":    len(matchingBindings),
+		"continue": nextToken,
+	})
 }
 
 // bindingMatchesCluster checks if a binding applies to the given cluster

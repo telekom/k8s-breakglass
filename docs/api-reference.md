@@ -48,6 +48,42 @@ The API uses standard HTTP status codes with the following conventions:
 
 Common error codes: `UNAUTHORIZED`, `FORBIDDEN`, `BAD_REQUEST`, `NOT_FOUND`
 
+## Pagination
+
+All list endpoints support server-side pagination using Kubernetes LIST semantics.
+
+### Query Parameters
+
+| Parameter | Type | Default | Max | Description |
+|-----------|------|---------|-----|-------------|
+| `limit` | integer | `100` | `500` | Maximum number of items to return per page |
+| `continue` | string | — | — | Opaque token returned by a previous response to fetch the next page |
+
+### Response Fields
+
+Paginated responses include a continuation field alongside the items. When there are more items available, the field is non-empty. When the last page has been reached, the field is absent or empty.
+
+- `GET /api/breakglassSessions` → `metadata.continue` (and `metadata.total`)
+- `GET /api/breakglassEscalations` → `metadata.continue` (and `metadata.total`)
+- `GET /api/debugSessions` → top-level `continue` (and `total`)
+- `GET /api/debugSessions/templates` → top-level `continue` (and `total`)
+- `GET /api/debugSessions/podTemplates` → top-level `continue` (and `total`)
+- `GET /api/clusterBindings` → top-level `continue` (and `total`)
+- `GET /api/clusterBindings/forCluster/:cluster` → top-level `continue` (and `total`)
+
+### Example
+
+```bash
+# First page (100 items)
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/debugSessions?limit=50"
+# Response: { "sessions": [...], "total": 320, "continue": "MTAwMA==" }
+
+# Next page using continue token
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/debugSessions?limit=50&continue=MTAwMA=="
+```
+
 ## Identity Provider Configuration
 
 ### Overview
@@ -171,34 +207,42 @@ Authorization: Bearer <token>
 | `approvedByMe` | boolean | Sessions the user has already approved |
 | `activeOnly` | boolean | Only return active (currently running) sessions |
 | `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`. |
+| `limit` | integer | Max items per page (default: 100, max: 500) |
+| `continue` | string | Opaque continuation token from a previous response |
 
-**Response:** Array of `BreakglassSession` resources filtered by query parameters:
+**Response:**
 
 ```json
-[
-  {
-    "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
-    "kind": "BreakglassSession",
-    "metadata": {
-      "name": "session-abc123",
-      "namespace": "breakglass-system",
-      "uid": "...",
-      "creationTimestamp": "2024-01-15T10:30:00Z"
-    },
-    "spec": {
-      "cluster": "prod-cluster-1",
-      "user": "user@example.com",
-      "grantedGroup": "cluster-admin",
-      "requestReason": "Emergency access for incident response"
-    },
-    "status": {
-      "state": "Pending",
-      "expiresAt": null,
-      "approver": "",
-      "approvers": []
+{
+  "items": [
+    {
+      "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
+      "kind": "BreakglassSession",
+      "metadata": {
+        "name": "session-abc123",
+        "namespace": "breakglass-system",
+        "uid": "...",
+        "creationTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "spec": {
+        "cluster": "prod-cluster-1",
+        "user": "user@example.com",
+        "grantedGroup": "cluster-admin",
+        "requestReason": "Emergency access for incident response"
+      },
+      "status": {
+        "state": "Pending",
+        "expiresAt": null,
+        "approver": "",
+        "approvers": []
+      }
     }
+  ],
+  "metadata": {
+    "continue": "MTAwMA==",
+    "total": 320
   }
-]
+}
 ```
 
 **Examples:**

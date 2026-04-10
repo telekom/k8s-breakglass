@@ -715,8 +715,26 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	// Enrich sessions with approvalReason from matching escalations
 	enriched := wc.enrichSessionsWithApprovalReason(ctx, filtered, reqLog)
 
-	reqLog.Infow("Returning filtered breakglass sessions", "count", len(enriched))
-	c.JSON(http.StatusOK, enriched)
+	limit, err := utils.ParsePageLimit(c.Query("limit"))
+	if err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return
+	}
+	offset, err := utils.ParseContinueToken(c.Query("continue"))
+	if err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(enriched, limit, offset)
+
+	reqLog.Infow("Returning filtered breakglass sessions", "count", len(page), "total", len(enriched), "offset", offset, "limit", limit)
+	c.JSON(http.StatusOK, gin.H{
+		"items": page,
+		"metadata": gin.H{
+			"continue": nextToken,
+			"total":    len(enriched),
+		},
+	})
 }
 
 // SessionApprovalMeta contains authorization metadata for a session

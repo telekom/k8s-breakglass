@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 type BreakglassEscalationController struct {
@@ -182,7 +183,27 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	}
 
 	reqLog.Debugw("Returning escalations response (filtered, hidden groups removed)", "responseCount", len(response))
-	c.JSON(http.StatusOK, dropK8sInternalFieldsEscalationList(response))
+	cleaned := dropK8sInternalFieldsEscalationList(response)
+
+	limit, err := utils.ParsePageLimit(c.Query("limit"))
+	if err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return
+	}
+	offset, err := utils.ParseContinueToken(c.Query("continue"))
+	if err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(cleaned, limit, offset)
+
+	c.JSON(http.StatusOK, gin.H{
+		"items": page,
+		"metadata": gin.H{
+			"continue": nextToken,
+			"total":    len(cleaned),
+		},
+	})
 }
 
 func (*BreakglassEscalationController) BasePath() string {

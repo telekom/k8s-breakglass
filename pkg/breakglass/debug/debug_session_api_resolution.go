@@ -480,9 +480,22 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 		})
 	}
 
+	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
+	if lerr != nil {
+		apiresponses.RespondBadRequest(ctx, lerr.Error())
+		return
+	}
+	offset, oerr := utils.ParseContinueToken(ctx.Query("continue"))
+	if oerr != nil {
+		apiresponses.RespondBadRequest(ctx, oerr.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(templates, limit, offset)
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"templates": templates,
+		"templates": page,
 		"total":     len(templates),
+		"continue":  nextToken,
 	})
 }
 
