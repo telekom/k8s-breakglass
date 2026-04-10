@@ -687,7 +687,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 		for _, g := range groups {
 			members, err := resolver.Members(ctx, g)
 			if err != nil {
-				errorMsg := fmt.Sprintf("IDP %s: timeout/error fetching group %s: %v", idpName, g, err)
+				errorMsg := fmt.Sprintf("IDP %s: timeout/error fetching group %s: %v", idpName, system.RedactGroupName(g), err)
 				log.Warnw("Failed to resolve group members from IDP", "escalation", escalation.Name, "idp", idpName, "groupHint", system.RedactGroupName(g), "error", err)
 				syncErrors = append(syncErrors, errorMsg)
 				idpSuccess = false
@@ -698,7 +698,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 					idp.SetName(idpName)
 					u.EventRecorder.Eventf(idp, nil, "Warning", "GroupFetchFailed", "GroupFetchFailed",
 						"Failed to fetch group %s for escalation %s/%s: %v",
-						g, escalation.Namespace, escalation.Name, err)
+						system.RedactGroupName(g), escalation.Namespace, escalation.Name, err)
 				}
 				continue
 			}
