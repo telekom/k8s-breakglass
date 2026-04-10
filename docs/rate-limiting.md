@@ -71,7 +71,7 @@ Applied to public API endpoints that accept optional authentication and to authe
 
 **Identity extraction differs by authentication mode:**
 
-- **Auth-required endpoints** (`Middleware()`): The `email` context key is set directly from the JWT `email` claim. If the `email` claim is missing or empty, the rate limiter falls back to per-IP tracking.
+- **Auth-required endpoints** (`Middleware()`): The `email` context key is set directly from the JWT `email` claim. If the `email` claim is missing or empty, the rate limiter internally uses client IP as the limiter key, but the downstream handler rejects the request (a valid email identity is required for session creation).
 - **Auth-optional endpoints** (`OptionalAuthRateLimitMiddleware`): The middleware uses `tryExtractUserIdentity()`, which prefers the JWT `email` claim and falls back to `sub` (subject) when email is unavailable.
 
 #### Unauthenticated Path

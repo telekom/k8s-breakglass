@@ -722,7 +722,7 @@ Breakglass implements multi-tier rate limiting to protect against DoS attacks wh
 
 3. **IP-based vs User-based limiting:**
    - Unauthenticated requests are limited by source IP
-   - On auth-required endpoints, authenticated requests are limited by the JWT `email` claim; if `email` is missing, the rate limiter falls back to per-IP tracking
+   - On auth-required endpoints, authenticated requests are limited by the JWT `email` claim; if `email` is missing, the rate limiter internally keys by client IP but the handler rejects the request (a valid email identity is required)
    - On auth-optional endpoints (e.g., `/api/config`), the middleware extracts user identity from the JWT `email` claim with fallback to `sub` (subject)
    - Behind proxies, ensure `trustedProxies` is configured correctly for accurate IP detection
 
