@@ -799,27 +799,27 @@ func TestRetryAfterFromRateLimitedError(t *testing.T) {
 	}{
 		{
 			name: "standard rate limited error with seconds duration",
-			err:  fmt.Errorf("%w: retry after 9s", errJWKSFetchRateLimited),
+			err:  &jwksFetchRateLimitedError{RetryAfter: 9 * time.Second},
 			want: "9",
 		},
 		{
 			name: "rate limited with sub-second remainder rounds up to 1",
-			err:  fmt.Errorf("%w: retry after 500ms", errJWKSFetchRateLimited),
+			err:  &jwksFetchRateLimitedError{RetryAfter: 500 * time.Millisecond},
 			want: "1",
 		},
 		{
-			name: "rate limited with mixed duration",
-			err:  fmt.Errorf("%w: retry after 4.999s", errJWKSFetchRateLimited),
-			want: "4",
+			name: "rate limited with fractional seconds rounds up via Ceil",
+			err:  &jwksFetchRateLimitedError{RetryAfter: 4999 * time.Millisecond},
+			want: "5",
 		},
 		{
-			name: "error without retry after segment returns default",
+			name: "error without typed rate limit info returns default from jwksFetchMinInterval",
 			err:  errJWKSFetchRateLimited,
 			want: "10",
 		},
 		{
-			name: "wrapped error preserves retry after",
-			err:  fmt.Errorf("outer: %w", fmt.Errorf("%w: retry after 7s", errJWKSFetchRateLimited)),
+			name: "wrapped typed error preserves retry after",
+			err:  fmt.Errorf("outer: %w", &jwksFetchRateLimitedError{RetryAfter: 7 * time.Second}),
 			want: "7",
 		},
 	}
