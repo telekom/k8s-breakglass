@@ -142,7 +142,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 }
 ```
 
-> **Note:** The server emits a `Retry-After` header (integer seconds) on `429` responses for **session creation** (`POST /api/breakglassSessions`). For all other rate-limited endpoints, no `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, or `X-RateLimit-Reset` headers are emitted. Clients should implement exponential backoff when receiving `429` responses from those endpoints.
+> **Note:** When the **session-creation-specific limiter** triggers for `POST /api/breakglassSessions`, the server emits a `Retry-After` header (integer seconds) on the resulting `429` response. If that same request is rate-limited earlier by the global per-IP limiter or the authenticated per-user middleware limiter, no `Retry-After` header is emitted. For all other rate-limited endpoints, no `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, or `X-RateLimit-Reset` headers are emitted. Clients should implement exponential backoff when receiving `429` responses that do not include those headers.
 
 ## Memory Management
 
