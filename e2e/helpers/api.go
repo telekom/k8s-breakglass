@@ -455,12 +455,15 @@ func (c *APIClient) ListSessions(ctx context.Context) ([]breakglassv1alpha1.Brea
 		return nil, fmt.Errorf("failed to list sessions: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+	// The API returns a paginated envelope: {"items": [...], "metadata": {"continue": "...", "total": N}}
+	var envelope struct {
+		Items []breakglassv1alpha1.BreakglassSession `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		return nil, fmt.Errorf("failed to decode sessions: %w", err)
 	}
 
-	return sessions, nil
+	return envelope.Items, nil
 }
 
 // GetSession gets a specific session via the REST API

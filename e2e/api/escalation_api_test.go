@@ -124,13 +124,15 @@ func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t 
 		return nil, resp.StatusCode, fmt.Errorf("failed to list escalations: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	// API returns array of BreakglassEscalation objects directly
-	var escalations []breakglassv1alpha1.BreakglassEscalation
-	if err := json.Unmarshal(body, &escalations); err != nil {
+	// The API returns a paginated envelope: {"items": [...], "metadata": {"continue": "...", "total": N}}
+	var envelope struct {
+		Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("failed to parse escalations: %w", err)
 	}
 
-	return escalations, resp.StatusCode, nil
+	return envelope.Items, resp.StatusCode, nil
 }
 
 // ListEscalationsForCluster lists all escalations for a specific cluster
