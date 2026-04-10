@@ -422,13 +422,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	// Sanitize reason to prevent injection attacks
 	if req.Reason != "" {
-		sanitized, err := breakglass.SanitizeReasonText(req.Reason)
-		if err != nil {
-			reqLog.Warnw("Failed to sanitize reason, using empty string", "error", err)
-			req.Reason = "" // Use empty string as safe fallback
-		} else {
-			req.Reason = sanitized
-		}
+		req.Reason = breakglass.SanitizeReasonText(req.Reason)
 	}
 
 	// Validate template exists

@@ -92,7 +92,7 @@ func TestUseCasePodShellAccess(t *testing.T) {
 			Cluster: clusterName,
 			User:    helpers.GetTestUserEmail(),
 			Group:   escalation.Spec.EscalatedGroup,
-			Reason:  "INC-12345: Debug pod networking issue",
+			Reason:  "INC-12345 Debug pod networking issue",
 		})
 		require.NoError(t, err, "Failed to create pod exec session via API")
 		require.NotEmpty(t, session.Name, "Session name should be returned")
@@ -259,7 +259,7 @@ func TestUseCaseWorkloadScaling(t *testing.T) {
 			Cluster: clusterName,
 			User:    helpers.GetTestUserEmail(),
 			Group:   escalation.Spec.EscalatedGroup,
-			Reason:  "INC-99999: Scale up due to traffic surge",
+			Reason:  "INC-99999 Scale up due to traffic surge",
 		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
@@ -352,7 +352,7 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 			Cluster: clusterName,
 			User:    helpers.GetTestUserEmail(),
 			Group:   escalation.Spec.EscalatedGroup,
-			Reason:  "INC-88888: Delete stuck terminating pods",
+			Reason:  "INC-88888 Delete stuck terminating pods",
 		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
@@ -421,7 +421,7 @@ func TestUseCaseM2MAutomatedAccess(t *testing.T) {
 			Cluster: clusterName,
 			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
-			Reason:  "CI/CD pipeline run #1234",
+			Reason:  "CI-CD pipeline run 1234",
 		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
@@ -491,7 +491,7 @@ func TestUseCaseBISDebugging(t *testing.T) {
 			Cluster: clusterName,
 			User:    helpers.GetTestUserEmail(),
 			Group:   escalation.Spec.EscalatedGroup,
-			Reason:  "BISWI-567: Investigate data sync issue",
+			Reason:  "BISWI-567 Investigate data sync issue",
 		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)

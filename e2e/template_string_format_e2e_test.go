@@ -119,7 +119,7 @@ spec:
 		TemplateRef:       sessionTemplate.Name,
 		Cluster:           helpers.GetTestClusterName(),
 		RequestedDuration: "30m",
-		Reason:            "E2E test: kind:Pod format",
+		Reason:            "E2E test - kind Pod format",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
 
@@ -217,7 +217,7 @@ spec:
 		TemplateRef:       sessionTemplate.Name,
 		Cluster:           helpers.GetTestClusterName(),
 		RequestedDuration: "30m",
-		Reason:            "E2E test: full Deployment manifest",
+		Reason:            "E2E test - full Deployment manifest",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
 
@@ -376,7 +376,7 @@ spec:
 		TemplateRef:       sessionTemplate.Name,
 		Cluster:           helpers.GetTestClusterName(),
 		RequestedDuration: "30m",
-		Reason:            "E2E test: workload type mismatch",
+		Reason:            "E2E test - workload type mismatch",
 	})
 	if err != nil {
 		// If API rejects it, that's also acceptable
@@ -444,7 +444,7 @@ func TestTemplateStringFormat_E2E_BareSpecBackwardCompatible(t *testing.T) {
 		TemplateRef:       sessionTemplate.Name,
 		Cluster:           helpers.GetTestClusterName(),
 		RequestedDuration: "30m",
-		Reason:            "E2E test: bare PodSpec backward compat",
+		Reason:            "E2E test - bare PodSpec backward compat",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
 
@@ -536,7 +536,7 @@ spec:
 		TemplateRef:       sessionTemplate.Name,
 		Cluster:           helpers.GetTestClusterName(),
 		RequestedDuration: "30m",
-		Reason:            "E2E test: full DaemonSet manifest",
+		Reason:            "E2E test - full DaemonSet manifest",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
 
@@ -652,7 +652,7 @@ spec:
 		TemplateRef:       sessionTemplate.Name,
 		Cluster:           helpers.GetTestClusterName(),
 		RequestedDuration: "30m",
-		Reason:            "E2E test: kind:Pod with overrides",
+		Reason:            "E2E test - kind Pod with overrides",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
 

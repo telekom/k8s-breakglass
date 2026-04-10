@@ -152,7 +152,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 		Cluster: oidcClusterName,
 		User:    sessionUser,
 		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "CC-OIDC-INT-001: Full OIDC integration test",
+		Reason:  "CC-OIDC-INT-001 Full OIDC integration test",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)

@@ -660,7 +660,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Approver logging now uses counts instead of identities to reduce PII exposure
 - Standardized error wrapping to use `fmt.Errorf("...: %w", err)` pattern
 - Centralized frontend duration parsing and reason sanitization utilities for consistent validation
-- Enforced server-side 1024-character limit for session request reasons
+- Enforced server-side 500-character limit for session request reasons (reduced from 1024; applies uniformly to request, approval, and rejection reasons via `SanitizeReasonText`)
 - DebugSession lookups now use indexed field selectors for cluster, state, and participant filters
 - Bumped controller-runtime to v0.23.0 and adopted typed webhooks with `events.k8s.io` RBAC for event recording
 - Switched internal event emission to the `events.k8s.io` recorder API

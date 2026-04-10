@@ -149,7 +149,7 @@ func (s *MultiIDPAuthorizationSuite) TestEmployeeAccessEmployeeOnlyCluster() {
 		Cluster: spokeCluster,
 		User:    helpers.MultiClusterTestUsers.Employee.Email,
 		Group:   "breakglass-employee-access",
-		Reason:  "E2E Test: Employee IDP access verification",
+		Reason:  "E2E Test - Employee IDP access verification",
 	})
 	s.Require().NoError(err, "Employee should be able to create session via API")
 	s.cleanup.Add(session)
@@ -196,7 +196,7 @@ func (s *MultiIDPAuthorizationSuite) TestContractorDeniedOnEmployeeOnlyCluster()
 		Cluster: spokeCluster,
 		User:    helpers.MultiClusterTestUsers.Contractor1.Email,
 		Group:   "breakglass-employee-access", // Employee-only escalation
-		Reason:  "E2E Test: Contractor denied verification",
+		Reason:  "E2E Test - Contractor denied verification",
 	})
 
 	// The session creation might be rejected by webhook or API
@@ -270,7 +270,7 @@ func (s *MultiIDPAuthorizationSuite) TestContractorAccessContractorCluster() {
 		Cluster: spokeCluster,
 		User:    helpers.MultiClusterTestUsers.Contractor1.Email,
 		Group:   "breakglass-contractor-access",
-		Reason:  "E2E Test: Contractor IDP access verification",
+		Reason:  "E2E Test - Contractor IDP access verification",
 	})
 	s.Require().NoError(err, "Contractor should be able to create session for contractor-allowed cluster")
 	s.cleanup.Add(session)
@@ -319,7 +319,7 @@ func (s *MultiIDPAuthorizationSuite) TestIDPMismatchDenied() {
 		Cluster: spokeCluster,
 		User:    helpers.MultiClusterTestUsers.Employee.Email,
 		Group:   "breakglass-employee-access",
-		Reason:  "E2E Test: IDP mismatch verification",
+		Reason:  "E2E Test - IDP mismatch verification",
 	})
 	s.Require().NoError(err)
 	s.cleanup.Add(session)

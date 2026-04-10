@@ -1025,7 +1025,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
 		Namespace:   namespace,
-		Reason:      "Join/Leave test",
+		Reason:      "Join-Leave test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
 	t.Logf("Created debug session via API: %s", session.Name)
@@ -3077,7 +3077,7 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 		TemplateRef:       sessionTemplateName,
 		Cluster:           clusterName,
 		RequestedDuration: "1h",
-		Reason:            "Join/Leave permutation test",
+		Reason:            "Join-Leave permutation test",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, session)

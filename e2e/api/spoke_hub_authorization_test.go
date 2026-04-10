@@ -195,7 +195,7 @@ func (s *SpokeHubAuthorizationSuite) TestUserWithApprovedSessionAllowed() {
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-pods-reader",
-		Reason:  "E2E Test: Complete user journey - investigating pod issues",
+		Reason:  "E2E Test - Complete user journey - investigating pod issues",
 	})
 	s.Require().NoError(err, "Employee should be able to create session via API")
 	s.cleanup.Add(session)
@@ -264,7 +264,7 @@ func (s *SpokeHubAuthorizationSuite) TestSessionClusterScopeEnforced() {
 		Cluster: spokeA,
 		User:    testUser.Email,
 		Group:   "breakglass-pods-admin",
-		Reason:  "E2E Test: Cluster scope verification",
+		Reason:  "E2E Test - Cluster scope verification",
 	})
 	s.Require().NoError(err)
 	s.cleanup.Add(session)
@@ -328,7 +328,7 @@ func (s *SpokeHubAuthorizationSuite) TestDenyPolicyEnforcedOnSpoke() {
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-limited-access",
-		Reason:  "E2E Test: DenyPolicy enforcement verification",
+		Reason:  "E2E Test - DenyPolicy enforcement verification",
 	})
 	s.Require().NoError(err)
 	s.cleanup.Add(session)
@@ -413,7 +413,7 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-read-only",
-		Reason:  "E2E Test: Session expiry verification",
+		Reason:  "E2E Test - Session expiry verification",
 	})
 	s.Require().NoError(err, "Failed to create session via API")
 	s.cleanup.Add(session)
@@ -530,7 +530,7 @@ func (s *SpokeHubAuthorizationSuite) TestMultipleUsersIndependentSessions() {
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-emergency-admin",
-		Reason:  "E2E Test: Multi-user session isolation",
+		Reason:  "E2E Test - Multi-user session isolation",
 	})
 	s.Require().NoError(err)
 	s.cleanup.Add(session)

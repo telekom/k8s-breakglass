@@ -80,40 +80,34 @@ func TestBreakglassSessionRequest_SanitizeReason(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "reason at max length (1024 chars) - accepted",
-			input:   strings.Repeat("a", 1024),
-			want:    strings.Repeat("a", 1024),
+			name:    "reason at max length (500 chars) - accepted",
+			input:   strings.Repeat("a", 500),
+			want:    strings.Repeat("a", 500),
 			wantErr: false,
 		},
 		{
-			name:    "reason exceeding max length (1025 chars) - rejected",
-			input:   strings.Repeat("a", 1025),
+			name:    "reason exceeding max length (501 chars) - rejected",
+			input:   strings.Repeat("a", 501),
 			want:    "",
 			wantErr: true,
 			errMsg:  "at most",
 		},
 		{
-			name:    "HTML entity attempt (stripped as dangerous)",
+			name:    "XSS script tag stripped by allowlist",
 			input:   "<script>alert('xss')</script>",
-			want:    "", // Stripped because <script is dangerous
+			want:    "scriptalert'xss'script",
 			wantErr: false,
 		},
 		{
-			name:    "SQL injection attempt",
+			name:    "SQL injection attempt - safe chars pass through",
 			input:   "'; DROP TABLE sessions; --",
 			want:    "'; DROP TABLE sessions; --",
 			wantErr: false,
 		},
 		{
-			name:    "newlines and special chars",
-			input:   "Line1\nLine2\r\nLine3\tTab",
-			want:    "Line1\nLine2\r\nLine3\tTab", // Internal whitespace preserved
-			wantErr: false,
-		},
-		{
-			name:    "exactly 1024 characters",
-			input:   strings.Repeat("a", 1024),
-			want:    strings.Repeat("a", 1024),
+			name:    "reason with basic punctuation preserved",
+			input:   "Debugging prod issue - server down. Please help!",
+			want:    "Debugging prod issue - server down. Please help!",
 			wantErr: false,
 		},
 	}
@@ -247,14 +241,14 @@ func TestBreakglassSessionRequest_CombinedValidation(t *testing.T) {
 		},
 		{
 			name:            "long reason (rejected), valid duration",
-			reason:          strings.Repeat("a", 2000),
+			reason:          strings.Repeat("a", 501),
 			duration:        1800,
 			maxAllowed:      3600,
 			wantReasonErr:   true,
 			wantDurationErr: false,
 		},
 		{
-			name:            "reason with dangerous pattern (stripped), valid duration",
+			name:            "reason with XSS chars stripped, valid duration",
 			reason:          "Normal text <script>alert('xss')</script> more text",
 			duration:        1800,
 			maxAllowed:      3600,
@@ -271,7 +265,7 @@ func TestBreakglassSessionRequest_CombinedValidation(t *testing.T) {
 		},
 		{
 			name:            "invalid duration, long reason",
-			reason:          strings.Repeat("a", 2000),
+			reason:          strings.Repeat("a", 501),
 			duration:        -100,
 			maxAllowed:      3600,
 			wantReasonErr:   true,
@@ -304,6 +298,8 @@ func TestBreakglassSessionRequest_CombinedValidation(t *testing.T) {
 	}
 }
 
+// TestSanitizeReasonText tests the standalone SanitizeReasonText function.
+// Verifies allowlist behavior: only alphanumeric, spaces, and .,;!?'- are permitted (colon excluded).
 func TestSanitizeReasonText(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -326,145 +322,105 @@ func TestSanitizeReasonText(t *testing.T) {
 			expected: "Need access",
 		},
 		{
-			name:     "text with script tag",
-			input:    "Normal text<script>alert('xss')</script>",
-			expected: "Normal text",
+			name:     "basic punctuation preserved",
+			input:    "Prod is down - needs fix. Please help!",
+			expected: "Prod is down - needs fix. Please help!",
 		},
 		{
-			name:     "text with uppercase script tag",
-			input:    "Normal text<SCRIPT>alert('xss')</SCRIPT>",
-			expected: "Normal text",
+			name:     "XSS: script tag stripped",
+			input:    "<script>alert('xss')</script>",
+			expected: "scriptalert'xss'script",
 		},
 		{
-			name:     "text with mixed case script tag",
+			name:     "XSS: uppercase script tag stripped",
+			input:    "<SCRIPT>alert('xss')</SCRIPT>",
+			expected: "SCRIPTalert'xss'SCRIPT",
+		},
+		{
+			name:     "XSS: mixed case script tag stripped",
 			input:    "Normal text<ScRiPt>alert('xss')</ScRiPt>",
-			expected: "Normal text",
+			expected: "Normal textScRiPtalert'xss'ScRiPt",
 		},
 		{
-			name:     "text with javascript: protocol",
-			input:    "Click here: javascript:alert(1)",
-			expected: "Click here:",
+			name:     "XSS: javascript protocol stripped",
+			input:    "Click here javascript alert(1)",
+			expected: "Click here javascript alert1",
 		},
 		{
-			name:     "text with on event handler",
+			name:     "XSS: javascript colon stripped",
+			input:    "javascript:alert(1)",
+			expected: "javascriptalert1",
+		},
+		{
+			name:     "XSS: onerror event handler stripped",
 			input:    "Image onerror=alert(1)",
-			expected: "Image",
+			expected: "Image onerroralert1",
 		},
 		{
-			name:     "text with onclick",
+			name:     "XSS: onclick stripped",
 			input:    "Button onclick=doEvil()",
-			expected: "Button",
+			expected: "Button onclickdoEvil",
 		},
 		{
-			name:     "text with onload",
-			input:    "Body onload=steal()",
-			expected: "Body",
+			name:     "XSS: img tag stripped",
+			input:    `<img src="x" onerror="alert(1)">`,
+			expected: "img srcx onerroralert1",
 		},
 		{
-			name:     "text with nested patterns",
-			input:    "Clean <script> text",
-			expected: "Clean",
+			name:     "XSS: URL-encoded payload - percent signs stripped",
+			input:    "%3Cscript%3Ealert(1)%3C/script%3E",
+			expected: "3Cscript3Ealert13Cscript3E",
 		},
 		{
-			name:     "text with only whitespace after removal",
-			input:    "  <script>bad",
+			name:     "Unicode special chars stripped",
+			input:    "Hello \u2603 World",
+			expected: "Hello  World",
+		},
+		{
+			name:     "emoji stripped",
+			input:    "Debugging \U0001F525 production",
+			expected: "Debugging  production",
+		},
+		{
+			name:     "null byte stripped",
+			input:    "null\x00byte",
+			expected: "nullbyte",
+		},
+		{
+			name:     "newlines and tabs stripped",
+			input:    "Line1\nLine2\r\nLine3\tTab",
+			expected: "Line1Line2Line3Tab",
+		},
+		{
+			name:     "ampersand and angle brackets stripped",
+			input:    "ampersand & special < > chars",
+			expected: "ampersand  special   chars",
+		},
+		{
+			name:     "hyphen preserved",
+			input:    "long-running incident",
+			expected: "long-running incident",
+		},
+		{
+			name:     "apostrophe preserved",
+			input:    "customer's data",
+			expected: "customer's data",
+		},
+		{
+			name:     "only whitespace",
+			input:    "   \n\t  ",
 			expected: "",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := SanitizeReasonText(tt.input)
-			require.NoError(t, err)
-			require.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestIndexCaseInsensitive(t *testing.T) {
-	tests := []struct {
-		name     string
-		s        string
-		pattern  string
-		expected int
-	}{
 		{
-			name:     "empty pattern returns 0",
-			s:        "hello",
-			pattern:  "",
-			expected: 0,
-		},
-		{
-			name:     "pattern longer than string",
-			s:        "hi",
-			pattern:  "hello",
-			expected: -1,
-		},
-		{
-			name:     "exact match at start",
-			s:        "hello world",
-			pattern:  "hello",
-			expected: 0,
-		},
-		{
-			name:     "match in middle",
-			s:        "say hello world",
-			pattern:  "hello",
-			expected: 4,
-		},
-		{
-			name:     "case insensitive match",
-			s:        "Hello World",
-			pattern:  "hello",
-			expected: 0,
-		},
-		{
-			name:     "case insensitive match uppercase pattern",
-			s:        "hello world",
-			pattern:  "HELLO",
-			expected: 0,
-		},
-		{
-			name:     "mixed case match",
-			s:        "HeLLo World",
-			pattern:  "hElLo",
-			expected: 0,
-		},
-		{
-			name:     "no match",
-			s:        "hello world",
-			pattern:  "foo",
-			expected: -1,
-		},
-		{
-			name:     "script tag lowercase",
-			s:        "text<script>code",
-			pattern:  "<script>",
-			expected: 4,
-		},
-		{
-			name:     "script tag uppercase",
-			s:        "text<SCRIPT>code",
-			pattern:  "<script>",
-			expected: 4,
-		},
-		{
-			name:     "equal length",
-			s:        "hello",
-			pattern:  "HELLO",
-			expected: 0,
-		},
-		{
-			name:     "empty string no match",
-			s:        "",
-			pattern:  "hello",
-			expected: -1,
+			name:     "backslash stripped",
+			input:    "path\\to\\file",
+			expected: "pathtofile",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := indexCaseInsensitive(tt.s, tt.pattern)
+			result := SanitizeReasonText(tt.input)
 			require.Equal(t, tt.expected, result)
 		})
 	}
