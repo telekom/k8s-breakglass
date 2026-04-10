@@ -522,7 +522,7 @@
         "enabled": {
           "type": "boolean",
           "description": "Create a NetworkPolicy with default deny-all ingress and explicit allow rules.",
-          "default": true
+          "default": false
         },
         "apiPort": {
           "type": "integer",
@@ -536,6 +536,13 @@
           "description": "Container port for Prometheus metrics.",
           "default": 8081,
           "minimum": 1,
+          "maximum": 65535
+        },
+        "webhookMetricsPort": {
+          "type": "integer",
+          "description": "Container port for webhook metrics.",
+          "default": 8083,
+          "minimum": 0,
           "maximum": 65535
         },
         "webhookPort": {

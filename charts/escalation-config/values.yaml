@@ -5,12 +5,12 @@
 # When enabled, a default deny-all ingress policy is applied and
 # only the listed ports are explicitly allowed.
 networkPolicy:
-  # enabled controls whether the NetworkPolicy is created. Default: true.
-  enabled: true
+  enabled: false
   # apiPort is the container port for the HTTP API and frontend. Default: 8080.
   apiPort: 8080
   # metricsPort is the container port for Prometheus metrics. Default: 8081.
   metricsPort: 8081
+  webhookMetricsPort: 8083
   # webhookPort is the container port for the Kubernetes authorization webhook. Default: 9443.
   webhookPort: 9443
   # healthPort is the container port for liveness/readiness probes. Default: 8082.
