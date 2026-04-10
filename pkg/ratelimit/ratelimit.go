@@ -76,6 +76,18 @@ func DefaultSARConfig() Config {
 	}
 }
 
+// DefaultSessionCreationConfig returns per-user rate limit config for POST /sessions.
+// 10 requests per minute with burst of 1 to prevent flooding.
+func DefaultSessionCreationConfig() Config {
+	const sessionCreationRatePerSec = float64(10) / 60
+	return Config{
+		Rate:            sessionCreationRatePerSec,
+		Burst:           1,
+		CleanupInterval: 5 * time.Minute,
+		MaxAge:          15 * time.Minute,
+	}
+}
+
 // entry holds rate limiter and last access time for an IP or user
 type entry struct {
 	limiter    *rate.Limiter
@@ -126,6 +138,31 @@ func (rl *IPRateLimiter) Allow(ip string) bool {
 	e.lastAccess = time.Now()
 
 	return e.limiter.Allow()
+}
+
+// AllowWithRetryAfter checks if a request from the given key should be allowed.
+// If denied, it returns the duration to wait before retrying.
+// The key can be any identifier: IP address, user email, etc.
+func (rl *IPRateLimiter) AllowWithRetryAfter(key string) (bool, time.Duration) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	e, exists := rl.entries[key]
+	if !exists {
+		e = &entry{
+			limiter: rate.NewLimiter(rate.Limit(rl.config.Rate), rl.config.Burst),
+		}
+		rl.entries[key] = e
+	}
+	e.lastAccess = time.Now()
+
+	r := e.limiter.Reserve()
+	delay := r.Delay()
+	if delay == 0 {
+		return true, 0
+	}
+	r.Cancel()
+	return false, delay
 }
 
 // Middleware returns a Gin middleware that applies per-IP rate limiting

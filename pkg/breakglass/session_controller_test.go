@@ -19,6 +19,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -7044,4 +7045,73 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 		"exactly one concurrent request should succeed with 201 Created")
 	assert.Equal(t, goroutines-1, conflicted,
 		"remaining concurrent requests should be rejected with 409 Conflict")
+}
+
+func TestHandleRequestBreakglassSession_PerUserRateLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-rl", Namespace: "escns"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "g1",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "user@example.com")
+			c.Set("username", "user@example.com")
+			c.Set("user_id", "user@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	tightLimiter := ratelimit.New(ratelimit.Config{
+		Rate:            0.0001,
+		Burst:           1,
+		CleanupInterval: time.Minute,
+		MaxAge:          5 * time.Minute,
+	})
+	defer tightLimiter.Stop()
+	ctrl.WithSessionCreationRateLimiter(tightLimiter)
+
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	makeRequest := func() *httptest.ResponseRecorder {
+		reqData := BreakglassSessionRequest{Clustername: "test", Username: "user@example.com", GroupName: "g1"}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		return w
+	}
+
+	first := makeRequest()
+	assert.NotEqual(t, http.StatusTooManyRequests, first.Code, "first request should not be rate-limited")
+
+	second := makeRequest()
+	assert.Equal(t, http.StatusTooManyRequests, second.Code, "second request should be rate-limited (burst exhausted)")
+	assert.NotEmpty(t, second.Header().Get("Retry-After"), "Retry-After header must be set on 429")
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &body))
+	assert.Contains(t, body["error"], "rate limit")
 }
