@@ -377,13 +377,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	session.Status.Approval.ApprovedAt = &now
 	// Sanitize approval reason to prevent injection attacks
 	if req.Reason != "" {
-		sanitized, err := breakglass.SanitizeReasonText(req.Reason)
-		if err != nil {
-			reqLog.Warnw("Failed to sanitize approval reason, using empty string", "error", err)
-			session.Status.Approval.Reason = "" // Use empty string as safe fallback
-		} else {
-			session.Status.Approval.Reason = sanitized
-		}
+		session.Status.Approval.Reason = breakglass.SanitizeReasonText(req.Reason)
 	} else {
 		session.Status.Approval.Reason = req.Reason
 	}
@@ -460,12 +454,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	// Sanitize rejection reason to prevent injection attacks
 	sanitizedReason := req.Reason
 	if req.Reason != "" {
-		var err error
-		sanitizedReason, err = breakglass.SanitizeReasonText(req.Reason)
-		if err != nil {
-			reqLog.Warnw("Failed to sanitize rejection reason, using empty string", "error", err)
-			sanitizedReason = "" // Use empty string as safe fallback
-		}
+		sanitizedReason = breakglass.SanitizeReasonText(req.Reason)
 	}
 	session.Status.Approval.Reason = sanitizedReason
 

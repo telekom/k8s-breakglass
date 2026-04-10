@@ -3,6 +3,7 @@ package breakglass
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -23,7 +24,7 @@ type BreakglassSessionRequest struct {
 	GroupName   string `json:"group,omitempty"`
 	// Reason is an optional free-text field supplied by the requester. Its requirement and description
 	// are driven by the escalation's RequestReason configuration.
-	// Max 1024 characters, sanitized on server-side to prevent injection attacks.
+	// Max 500 characters, sanitized on server-side to prevent injection attacks.
 	Reason string `json:"reason,omitempty"`
 	// Duration is the requested duration in seconds. Must not exceed the escalation's maxValidFor.
 	// Optional; if not provided, uses escalation's maxValidFor.
@@ -32,15 +33,17 @@ type BreakglassSessionRequest struct {
 	ScheduledStartTime string `json:"scheduledStartTime,omitempty"`
 }
 
-const MaxReasonLength = 1024
+const MaxReasonLength = 500
+
+// allowedReasonChars is an allowlist pattern that matches characters NOT permitted in reason text.
+// Only alphanumeric characters, spaces, and basic punctuation (.,;:!?'-) are permitted.
+// Everything else is stripped to prevent XSS and injection attacks.
+var allowedReasonChars = regexp.MustCompile(`[^a-zA-Z0-9 .,;:!?'\-]`)
 
 // SanitizeReason sanitizes the reason field to prevent injection attacks.
-// Trims whitespace and removes dangerous HTML/JS/TS patterns while preserving safe content.
+// Trims whitespace, strips non-allowlisted characters, and enforces maximum length.
 func (r *BreakglassSessionRequest) SanitizeReason() error {
-	sanitized, err := SanitizeReasonText(r.Reason)
-	if err != nil {
-		return err
-	}
+	sanitized := SanitizeReasonText(r.Reason)
 	if utf8.RuneCountInString(sanitized) > MaxReasonLength {
 		return fmt.Errorf("reason must be at most %d characters", MaxReasonLength)
 	}
@@ -48,95 +51,21 @@ func (r *BreakglassSessionRequest) SanitizeReason() error {
 	return nil
 }
 
-// dangerousPatterns contains patterns that could be used for injection attacks.
-var dangerousPatterns = []string{
-	"<script", "</script",
-	"<iframe", "</iframe",
-	"javascript:", "data:text/html",
-	"onerror=", "onload=", "onclick=", "onmouseover=",
-	"<svg", "</svg",
-	"<object", "</object",
-	"<embed", "</embed",
-	"<link", "</link",
-	"<style", "</style",
-	"<img", "</img",
-	"<frame", "</frame",
-	"<frameset", "</frameset",
-	"<base",
-	"<form", "</form",
-	"<input", "</input",
-	"<button", "</button",
-	"<textarea", "</textarea",
-	"<select", "</select",
-	"<option", "</option",
-	"<label",
-	"<legend",
-	"<fieldset",
-	"eval(", "expression(", "vbscript:",
-	"<!--", "-->", // HTML comments can hide malicious content
-	"<?php", "<?=", "?>", // PHP injection
-	"<%", "%>", // ASP injection
-}
-
-// SanitizeReasonText sanitizes a reason string to prevent injection attacks.
-// Trims whitespace and removes dangerous HTML/JS/TS patterns while preserving safe content.
-// This is a standalone function that can be used for any reason field.
-func SanitizeReasonText(reason string) (string, error) {
-	// Trim whitespace
-	reason = strings.TrimSpace(reason)
-
-	// Check each pattern in a case-insensitive manner
-	// We iterate multiple times until no more patterns are found to handle nested cases
-	for {
-		foundPattern := false
-		for _, pattern := range dangerousPatterns {
-			// Find pattern case-insensitively by searching in the original string
-			// We need to find the byte position in the original string, not the lowercased one
-			idx := indexCaseInsensitive(reason, pattern)
-			if idx >= 0 {
-				// Strip out the dangerous pattern and everything after it
-				reason = reason[:idx]
-				reason = strings.TrimSpace(reason)
-				foundPattern = true
-				break // Restart the loop with the modified string
-			}
-		}
-		if !foundPattern {
-			break
-		}
-	}
-
-	return reason, nil
-}
-
-// indexCaseInsensitive finds the byte index of pattern in s using case-insensitive matching.
-// Returns -1 if not found. This returns the index in the ORIGINAL string s, which is required
-// for safe slicing.
+// SanitizeReasonText sanitizes a reason string to prevent injection attacks using an allowlist approach.
+// Only alphanumeric characters, spaces, and basic punctuation (.,;:!?'-) are permitted.
+// All other characters — including HTML tags, script injection markers, Unicode specials,
+// and URL-encoded bypass attempts — are stripped. Leading/trailing whitespace is trimmed.
 //
-// IMPORTANT: We cannot use strings.Index(strings.ToLower(s), strings.ToLower(pattern)) because
-// ToLower can change byte lengths for certain Unicode characters (e.g., some multi-byte chars).
-// Using an index from the lowercased string to slice the original would cause panics or
-// incorrect results. This was discovered via fuzz testing.
-func indexCaseInsensitive(s, pattern string) int {
-	if len(pattern) == 0 {
-		return 0
-	}
-	if len(s) < len(pattern) {
-		return -1
-	}
-
-	// Iterate through each possible starting position using range to ensure
-	// we start at valid UTF-8 character boundaries.
-	// strings.EqualFold handles Unicode case folding correctly.
-	for i := range s {
-		if i+len(pattern) > len(s) {
-			break // No room for pattern to fit, exit early
-		}
-		if strings.EqualFold(s[i:i+len(pattern)], pattern) {
-			return i
-		}
-	}
-	return -1
+// This allowlist approach is more robust than a blacklist because it cannot be bypassed
+// via encoding tricks, novel HTML tags, or patterns not yet in the deny list.
+func SanitizeReasonText(reason string) string {
+	// Trim leading/trailing whitespace first
+	reason = strings.TrimSpace(reason)
+	// Strip any character not in the allowlist
+	reason = allowedReasonChars.ReplaceAllString(reason, "")
+	// Re-trim in case stripping left new leading/trailing spaces
+	reason = strings.TrimSpace(reason)
+	return reason
 }
 
 // ValidateDuration validates that the requested duration is within acceptable bounds.
