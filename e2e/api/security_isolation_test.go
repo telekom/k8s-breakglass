@@ -73,7 +73,7 @@ func TestCrossClusterSessionIsolation(t *testing.T) {
 		Cluster: clusterA,
 		User:    sessionUser,
 		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "SEC-001: Cross-cluster isolation test",
+		Reason:  "SEC-001 - Cross-cluster isolation test",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
@@ -140,7 +140,7 @@ func TestExpiredSessionRaceCondition(t *testing.T) {
 		Cluster: clusterName,
 		User:    sessionUser,
 		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "SEC-002: Expired session race condition test",
+		Reason:  "SEC-002 - Expired session race condition test",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
@@ -210,7 +210,7 @@ func TestDifferentUserSameGroup(t *testing.T) {
 		Cluster: clusterName,
 		User:    userA.Email,
 		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "SEC-003: User isolation test",
+		Reason:  "SEC-003 - User isolation test",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
@@ -273,7 +273,7 @@ func TestSameUserDifferentGroup(t *testing.T) {
 		Cluster: clusterName,
 		User:    user,
 		Group:   escalationGroupX.Spec.EscalatedGroup,
-		Reason:  "SEC-004: Group isolation test",
+		Reason:  "SEC-004 - Group isolation test",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
