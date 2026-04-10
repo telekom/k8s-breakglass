@@ -26,7 +26,8 @@ func TestAllowIDPMismatch_Logic_HappyPath(t *testing.T) {
 	}
 
 	// Apply the logic from session_controller.go
-	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0
+	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0 ||
+		len(escalation.Spec.AllowedIdentityProvidersForRequests) > 0
 	clusterHasIDPRestriction := len(clusterConfig.Spec.IdentityProviderRefs) > 0
 	allowIDPMismatch := !escalationHasIDPRestriction && !clusterHasIDPRestriction
 
@@ -53,7 +54,8 @@ func TestAllowIDPMismatch_Logic_WithEscalationRestriction(t *testing.T) {
 	}
 
 	// Apply the logic
-	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0
+	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0 ||
+		len(escalation.Spec.AllowedIdentityProvidersForRequests) > 0
 	clusterHasIDPRestriction := len(clusterConfig.Spec.IdentityProviderRefs) > 0
 	allowIDPMismatch := !escalationHasIDPRestriction && !clusterHasIDPRestriction
 
@@ -80,7 +82,8 @@ func TestAllowIDPMismatch_Logic_WithClusterRestriction(t *testing.T) {
 	}
 
 	// Apply the logic
-	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0
+	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0 ||
+		len(escalation.Spec.AllowedIdentityProvidersForRequests) > 0
 	clusterHasIDPRestriction := len(clusterConfig.Spec.IdentityProviderRefs) > 0
 	allowIDPMismatch := !escalationHasIDPRestriction && !clusterHasIDPRestriction
 
@@ -107,7 +110,8 @@ func TestAllowIDPMismatch_Logic_WithBothRestrictions(t *testing.T) {
 	}
 
 	// Apply the logic
-	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0
+	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0 ||
+		len(escalation.Spec.AllowedIdentityProvidersForRequests) > 0
 	clusterHasIDPRestriction := len(clusterConfig.Spec.IdentityProviderRefs) > 0
 	allowIDPMismatch := !escalationHasIDPRestriction && !clusterHasIDPRestriction
 
@@ -176,7 +180,8 @@ func TestDefaultAllowIDPMismatch_WhenClusterManagerNil_BadPath(t *testing.T) {
 	clusterHasIDPRestriction := false // Default (can't check without manager)
 
 	// Apply the logic
-	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0
+	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0 ||
+		len(escalation.Spec.AllowedIdentityProvidersForRequests) > 0
 	allowIDPMismatch := !escalationHasIDPRestriction && !clusterHasIDPRestriction
 
 	// Verify: should be true (defaults to unrestricted when manager unavailable)
@@ -197,12 +202,38 @@ func TestDefaultAllowIDPMismatch_WhenClusterNotFound_BadPath(t *testing.T) {
 	clusterHasIDPRestriction := false // Default when fetch fails
 
 	// Apply the logic
-	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0
+	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0 ||
+		len(escalation.Spec.AllowedIdentityProvidersForRequests) > 0
 	allowIDPMismatch := !escalationHasIDPRestriction && !clusterHasIDPRestriction
 
 	// Verify: should be true (defaults to unrestricted when cluster not found)
 	assert.True(t, allowIDPMismatch,
 		"AllowIDPMismatch should default to true when cluster config cannot be found")
+}
+
+func TestAllowIDPMismatch_Logic_WithForRequestsRestriction(t *testing.T) {
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+	}
+
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			IdentityProviderRefs: []string{},
+		},
+	}
+
+	escalationHasIDPRestriction := len(escalation.Spec.AllowedIdentityProviders) > 0 ||
+		len(escalation.Spec.AllowedIdentityProvidersForRequests) > 0
+	clusterHasIDPRestriction := len(clusterConfig.Spec.IdentityProviderRefs) > 0
+	allowIDPMismatch := !escalationHasIDPRestriction && !clusterHasIDPRestriction
+
+	assert.True(t, escalationHasIDPRestriction,
+		"escalationHasIDPRestriction should be true when AllowedIdentityProvidersForRequests is set")
+	assert.False(t, allowIDPMismatch,
+		"AllowIDPMismatch should be false when AllowedIdentityProvidersForRequests restricts IDPs")
 }
 
 // TestMultiIDPApprovalFlow_RequestFromIDP1_ApprovedByIDP2 tests approval flow across IDPs

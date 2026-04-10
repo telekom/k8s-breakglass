@@ -501,7 +501,8 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 
 	// Determine AllowIDPMismatch flag: set to true when neither escalation nor cluster have IDP restrictions
 	// This ensures backward compatibility for single-IDP deployments
-	escalationHasIDPRestriction := len(matchedEsc.Spec.AllowedIdentityProviders) > 0
+	escalationHasIDPRestriction := len(matchedEsc.Spec.AllowedIdentityProviders) > 0 ||
+		len(matchedEsc.Spec.AllowedIdentityProvidersForRequests) > 0
 	clusterHasIDPRestriction := false
 
 	// Use the already-fetched clusterConfig for IDP restriction check (avoid duplicate fetch)

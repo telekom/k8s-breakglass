@@ -2,11 +2,14 @@ package breakglass
 
 import (
 	"context"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -187,4 +190,152 @@ func TestAuthenticatedIdentity_WithError(t *testing.T) {
 	}
 	assert.Empty(t, id.email)
 	assert.NotNil(t, id.emailErr)
+}
+
+// ----- buildSessionSpec integration tests -----
+
+func TestBuildSessionSpec_AllowIDPMismatch_WithForRequestsOnly(t *testing.T) {
+	wc := newTestSessionController(t)
+	log := zaptest.NewLogger(t).Sugar()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("identity_provider_name", "requester-idp")
+	c.Set("issuer", "https://idp.example.com")
+
+	// Escalation uses only the new per-role field (legacy AllowedIdentityProviders is empty)
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-split", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup:                       "admin",
+			MaxValidFor:                          "1h",
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+
+	request := BreakglassSessionRequest{
+		Clustername: "test-cluster",
+		GroupName:   "admin",
+		Username:    "user@example.com",
+	}
+
+	spec, ok := wc.buildSessionSpec(c, request, "user@example.com", escalation, nil, nil, log)
+
+	require.True(t, ok, "buildSessionSpec should succeed")
+	assert.False(t, spec.AllowIDPMismatch,
+		"AllowIDPMismatch must be false when AllowedIdentityProvidersForRequests restricts IDPs")
+	assert.Equal(t, "requester-idp", spec.IdentityProviderName)
+}
+
+func TestBuildSessionSpec_AllowIDPMismatch_WithLegacyFieldOnly(t *testing.T) {
+	wc := newTestSessionController(t)
+	log := zaptest.NewLogger(t).Sugar()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("identity_provider_name", "corp-idp")
+	c.Set("issuer", "https://corp.example.com")
+
+	// Escalation uses legacy unified field only
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-legacy", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup:           "admin",
+			MaxValidFor:              "1h",
+			AllowedIdentityProviders: []string{"corp-idp"},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+
+	request := BreakglassSessionRequest{
+		Clustername: "test-cluster",
+		GroupName:   "admin",
+		Username:    "user@example.com",
+	}
+
+	spec, ok := wc.buildSessionSpec(c, request, "user@example.com", escalation, nil, nil, log)
+
+	require.True(t, ok, "buildSessionSpec should succeed")
+	assert.False(t, spec.AllowIDPMismatch,
+		"AllowIDPMismatch must be false when legacy AllowedIdentityProviders restricts IDPs")
+}
+
+func TestBuildSessionSpec_AllowIDPMismatch_NeitherFieldSet(t *testing.T) {
+	wc := newTestSessionController(t)
+	log := zaptest.NewLogger(t).Sugar()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("identity_provider_name", "any-idp")
+	c.Set("issuer", "https://any.example.com")
+
+	// Escalation has no IDP restrictions at all
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-unrestricted", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin",
+			MaxValidFor:    "1h",
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+
+	request := BreakglassSessionRequest{
+		Clustername: "test-cluster",
+		GroupName:   "admin",
+		Username:    "user@example.com",
+	}
+
+	spec, ok := wc.buildSessionSpec(c, request, "user@example.com", escalation, nil, nil, log)
+
+	require.True(t, ok, "buildSessionSpec should succeed")
+	assert.True(t, spec.AllowIDPMismatch,
+		"AllowIDPMismatch must be true when neither escalation nor cluster restricts IDPs (backward compat)")
+}
+
+func TestBuildSessionSpec_AllowIDPMismatch_ClusterRestrictionOverrides(t *testing.T) {
+	wc := newTestSessionController(t)
+	log := zaptest.NewLogger(t).Sugar()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("identity_provider_name", "any-idp")
+	c.Set("issuer", "https://any.example.com")
+
+	// Escalation is unrestricted but cluster has IDP refs
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-unrestricted", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin",
+			MaxValidFor:    "1h",
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			IdentityProviderRefs: []string{"idp-ref-1"},
+		},
+	}
+
+	request := BreakglassSessionRequest{
+		Clustername: "test-cluster",
+		GroupName:   "admin",
+		Username:    "user@example.com",
+	}
+
+	spec, ok := wc.buildSessionSpec(c, request, "user@example.com", escalation, clusterConfig, nil, log)
+
+	require.True(t, ok, "buildSessionSpec should succeed")
+	assert.False(t, spec.AllowIDPMismatch,
+		"AllowIDPMismatch must be false when cluster has IDP restrictions even if escalation is unrestricted")
 }

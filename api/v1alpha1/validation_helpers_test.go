@@ -812,6 +812,98 @@ func TestValidateSessionIdentityProviderAuthorization_NoMatchingEscalation(t *te
 	assert.Nil(t, errs, "should pass when no matching escalation found")
 }
 
+func TestValidateSessionIdentityProviderAuthorization_WithForRequestsField(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-split-idp", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			Allowed: BreakglassEscalationAllowed{
+				Clusters: []string{"test-cluster"},
+			},
+			Approvers:                            BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"test-cluster",
+		"cluster-admin",
+		"requester-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.Nil(t, errs, "should allow IDP matching AllowedIdentityProvidersForRequests")
+
+	errs = validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"test-cluster",
+		"cluster-admin",
+		"unauthorized-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.NotNil(t, errs, "should reject IDP not in AllowedIdentityProvidersForRequests")
+
+	errs = validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"test-cluster",
+		"cluster-admin",
+		"approver-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.NotNil(t, errs, "should reject approver-only IDP when used for requesting")
+}
+
+func TestValidateSessionIdentityProviderAuthorization_ForRequestsFieldEmpty_Unrestricted(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-no-idp", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			Allowed: BreakglassEscalationAllowed{
+				Clusters: []string{"test-cluster"},
+			},
+			Approvers: BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"test-cluster",
+		"cluster-admin",
+		"any-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.Nil(t, errs, "should allow any IDP when both AllowedIdentityProviders and AllowedIdentityProvidersForRequests are empty")
+}
+
 // TestListObjectsByName tests the list-by-name helper
 func TestListObjectsByName_EmptyName(t *testing.T) {
 	scheme := runtime.NewScheme()

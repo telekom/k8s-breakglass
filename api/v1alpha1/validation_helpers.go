@@ -496,8 +496,13 @@ func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *fiel
 // Rules:
 // - If session.identityProviderName is not set, authorization passes (single-IDP or manual creation)
 // - Finds all escalations that match the session's cluster and grantedGroup
-// - If any matching escalation has allowedIdentityProviders set, verifies session's IDP is in the list
-// - If all matching escalations have empty allowedIdentityProviders, authorization passes (all IDPs allowed)
+// - Resolves the effective allowed-IDP list per escalation:
+//   - Uses AllowedIdentityProviders if set (legacy unified field)
+//   - Falls back to AllowedIdentityProvidersForRequests if AllowedIdentityProviders is empty (new per-role field)
+//   - The two fields are mutually exclusive per CRD validation, so at most one is set
+//
+// - If any matching escalation's effective list is non-empty, verifies session's IDP is in it
+// - If all matching escalations have empty effective allowed-IDP lists, authorization passes (all IDPs allowed)
 //
 // This prevents users from using escalations that don't allow their IDP and provides
 // defense-in-depth against IDP spoofing attempts.
@@ -565,16 +570,25 @@ func validateSessionIdentityProviderAuthorization(
 	// Check if ANY matching escalation disallows this IDP
 	var errs field.ErrorList
 	for _, esc := range relevantEscalations {
-		// If escalation has no allowed IDPs list, all enabled IDPs are allowed - short-circuit to success
-		if len(esc.Spec.AllowedIdentityProviders) == 0 {
+		// Resolve the effective allowed IDPs list:
+		// - Prefer AllowedIdentityProviders (legacy unified field)
+		// - Fall back to AllowedIdentityProvidersForRequests (new per-role field)
+		// These fields are mutually exclusive per CRD validation, so at most one is set.
+		allowedIDPs := esc.Spec.AllowedIdentityProviders
+		if len(allowedIDPs) == 0 {
+			allowedIDPs = esc.Spec.AllowedIdentityProvidersForRequests
+		}
+
+		// If escalation has no allowed IDPs in either field, all enabled IDPs are allowed
+		if len(allowedIDPs) == 0 {
 			// At least one escalation allows all IDPs (unrestricted), so authorization passes
 			// This is a short-circuit: if any escalation is unrestricted for this user, they're authorized
 			return nil
 		}
 
-		// Check if session's IDP is in escalation's allowed list
+		// Check if session's IDP is in escalation's effective allowed list
 		found := false
-		for _, allowedIDP := range esc.Spec.AllowedIdentityProviders {
+		for _, allowedIDP := range allowedIDPs {
 			if allowedIDP == sessionIDPName {
 				found = true
 				break
@@ -586,7 +600,7 @@ func validateSessionIdentityProviderAuthorization(
 			errs = append(errs, field.Forbidden(
 				path,
 				fmt.Sprintf("IdentityProvider %q is not allowed by escalation %q (allowed IDPs: %v)",
-					sessionIDPName, esc.Name, esc.Spec.AllowedIdentityProviders),
+					sessionIDPName, esc.Name, allowedIDPs),
 			))
 		}
 	}
