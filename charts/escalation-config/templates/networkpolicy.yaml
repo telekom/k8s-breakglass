@@ -15,7 +15,6 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    {{- /* Allow ingress on the HTTP/API + frontend port */}}
     - ports:
         - port: {{ .Values.networkPolicy.apiPort }}
           protocol: TCP
@@ -25,7 +24,6 @@ spec:
             matchLabels:
 {{ toYaml .Values.networkPolicy.ingressNamespaceSelector | indent 14 }}
       {{- end }}
-    {{- /* Allow ingress on the metrics port */}}
     - ports:
         - port: {{ .Values.networkPolicy.metricsPort }}
           protocol: TCP
@@ -35,15 +33,17 @@ spec:
             matchLabels:
 {{ toYaml .Values.networkPolicy.metricsNamespaceSelector | indent 14 }}
       {{- end }}
-    {{- /* Allow ingress on the webhook port */}}
+    {{- if .Values.networkPolicy.webhookMetricsPort }}
+    - ports:
+        - port: {{ .Values.networkPolicy.webhookMetricsPort }}
+          protocol: TCP
+    {{- end }}
     - ports:
         - port: {{ .Values.networkPolicy.webhookPort }}
           protocol: TCP
-    {{- /* Allow ingress on the health probe port */}}
     - ports:
         - port: {{ .Values.networkPolicy.healthPort }}
           protocol: TCP
-    {{- /* Additional custom ingress rules */}}
     {{- if .Values.networkPolicy.additionalIngressRules }}
 {{ toYaml .Values.networkPolicy.additionalIngressRules | indent 4 }}
     {{- end }}
