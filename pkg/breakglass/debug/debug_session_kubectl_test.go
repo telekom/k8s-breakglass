@@ -653,6 +653,12 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		},
 	}
 
+	productionNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "production",
+		},
+	}
+
 	// Create a test pod to copy
 	testPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -695,7 +701,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 
 	targetClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(testPod, testNs).
+		WithObjects(testPod, testNs, productionNs).
 		Build()
 
 	hubClient := fake.NewClientBuilder().
@@ -778,7 +784,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 
 		targetClient2 := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(testPod, testNs).
+			WithObjects(testPod, testNs, productionNs).
 			Build()
 		handler2 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
 			clients: map[string]ctrlclient.Client{"test-cluster": targetClient2},
@@ -823,7 +829,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 
 		targetClient3 := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(testPod, testNs).
+			WithObjects(testPod, testNs, productionNs).
 			Build()
 		handler3 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
 			clients: map[string]ctrlclient.Client{"test-cluster": targetClient3},
@@ -840,6 +846,70 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.NotNil(t, pod)
+	})
+
+	t.Run("label selector allows matching namespace", func(t *testing.T) {
+		labeledNs := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "production",
+				Labels: map[string]string{"env": "prod"},
+			},
+		}
+		sessionWithSelector := testSession.DeepCopy()
+		sessionWithSelector.Status.ResolvedTemplate.KubectlDebug.PodCopy.AllowedNamespaces = &breakglassv1alpha1.NamespaceFilter{
+			SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+				{MatchLabels: map[string]string{"env": "prod"}},
+			},
+		}
+
+		targetClient4 := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testPod, testNs, labeledNs).
+			Build()
+		handler4 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+			clients: map[string]ctrlclient.Client{"test-cluster": targetClient4},
+		})
+
+		pod, err := handler4.CreatePodCopy(
+			context.Background(),
+			sessionWithSelector,
+			"production",
+			"app-pod",
+			"",
+			"test-user@example.com",
+		)
+
+		require.NoError(t, err)
+		assert.NotNil(t, pod)
+	})
+
+	t.Run("label selector blocks non-matching namespace", func(t *testing.T) {
+		sessionWithSelector := testSession.DeepCopy()
+		sessionWithSelector.Status.ResolvedTemplate.KubectlDebug.PodCopy.AllowedNamespaces = &breakglassv1alpha1.NamespaceFilter{
+			SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+				{MatchLabels: map[string]string{"env": "staging"}},
+			},
+		}
+
+		targetClient5 := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testPod, testNs, productionNs).
+			Build()
+		handler5 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+			clients: map[string]ctrlclient.Client{"test-cluster": targetClient5},
+		})
+
+		_, err := handler5.CreatePodCopy(
+			context.Background(),
+			sessionWithSelector,
+			"production",
+			"app-pod",
+			"",
+			"test-user@example.com",
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "namespace production is not allowed for pod copy")
 	})
 }
 

@@ -253,15 +253,19 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		return nil, fmt.Errorf("pod copy is not enabled for this template")
 	}
 
-	// Validate namespace
-	if !h.isNamespaceAllowed(originalNamespace, pc.AllowedNamespaces, pc.DeniedNamespaces) {
-		return nil, fmt.Errorf("namespace %s is not allowed for pod copy", originalNamespace)
-	}
-
-	// Get target cluster client
+	// Get target cluster client (needed before namespace validation to fetch labels)
 	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+	}
+
+	nsLabels, err := h.fetchNamespaceLabels(ctx, targetClient, originalNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch namespace labels for %s: %w", originalNamespace, err)
+	}
+	matcher := utils.NewNamespaceAllowDenyMatcher(pc.AllowedNamespaces, pc.DeniedNamespaces)
+	if !matcher.IsAllowedWithLabels(originalNamespace, nsLabels) {
+		return nil, fmt.Errorf("namespace %s is not allowed for pod copy", originalNamespace)
 	}
 
 	// Get the original pod
@@ -571,6 +575,14 @@ func (h *KubectlDebugHandler) isNamespaceAllowed(namespace string, allowed, deni
 	// Use NamespaceAllowDenyMatcher for combined allow/deny logic
 	matcher := utils.NewNamespaceAllowDenyMatcher(allowed, denied)
 	return matcher.IsAllowed(namespace)
+}
+
+func (h *KubectlDebugHandler) fetchNamespaceLabels(ctx context.Context, cl ctrlclient.Client, namespace string) (map[string]string, error) {
+	ns := &corev1.Namespace{}
+	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, ns); err != nil {
+		return nil, err
+	}
+	return ns.Labels, nil
 }
 
 func (h *KubectlDebugHandler) isImageAllowed(image string, allowed []string) bool {
