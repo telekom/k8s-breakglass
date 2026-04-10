@@ -31,7 +31,8 @@ func TestSessionsList(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(sessions)
+		envelope := map[string]interface{}{"items": sessions}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	defer server.Close()
 
@@ -259,7 +260,8 @@ func TestSessionsList_WithFilters(t *testing.T) {
 		require.Equal(t, "true", query.Get("activeOnly"))
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(sessions)
+		envelope := map[string]interface{}{"items": sessions}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	defer server.Close()
 

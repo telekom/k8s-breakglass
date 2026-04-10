@@ -72,11 +72,13 @@ func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]b
 	if encoded := params.Encode(); encoded != "" {
 		endpoint = fmt.Sprintf("%s?%s", endpoint, encoded)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &sessions); err != nil {
+	var envelope struct {
+		Items []breakglassv1alpha1.BreakglassSession `json:"items"`
+	}
+	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &envelope); err != nil {
 		return nil, err
 	}
-	return sessions, nil
+	return envelope.Items, nil
 }
 
 // SessionGetResponse wraps the session with authorization metadata

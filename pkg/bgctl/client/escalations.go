@@ -18,11 +18,13 @@ func (c *Client) Escalations() *EscalationService {
 
 func (e *EscalationService) List(ctx context.Context) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	endpoint := "api/breakglassEscalations"
-	var escs []breakglassv1alpha1.BreakglassEscalation
-	if err := e.client.do(ctx, http.MethodGet, endpoint, nil, &escs); err != nil {
+	var envelope struct {
+		Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+	}
+	if err := e.client.do(ctx, http.MethodGet, endpoint, nil, &envelope); err != nil {
 		return nil, err
 	}
-	return escs, nil
+	return envelope.Items, nil
 }
 
 func (e *EscalationService) Get(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassEscalation, error) {

@@ -24,7 +24,7 @@ export default class BreakglassService {
       const r = await this.client.get("/breakglassSessions", {
         params: { mine: true, approver: false, state: "pending" },
       });
-      const sessions = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
+      const sessions = Array.isArray(r.data?.items) ? (r.data.items as SessionCR[]) : [];
       debug("BreakglassService.fetchMyOutstandingRequests", "Fetched outstanding requests", {
         count: sessions.length,
       });
@@ -56,7 +56,7 @@ export default class BreakglassService {
       const r = await this.client.get("/breakglassEscalations");
       // Each escalation spec has: allowed (clusters, groups), approvers (users, groups), escalatedGroup, maxValidFor, retainFor, idleTimeout, clusterConfigRefs, denyPolicyRefs
       // We explode multi-cluster escalations into individual entries per cluster so UI can show sessions per cluster.
-      const data = Array.isArray(r.data) ? r.data : [];
+      const data = Array.isArray(r.data?.items) ? r.data.items : [];
       const output: AvailableBreakglass[] = [];
       data.forEach((item: Record<string, unknown>) => {
         const spec = (item?.spec || {}) as Record<string, unknown>;
@@ -110,7 +110,7 @@ export default class BreakglassService {
       const r = await this.client.get("/breakglassSessions", {
         params: { state: "approved", mine: true, approver: false },
       });
-      const data = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
+      const data = Array.isArray(r.data?.items) ? (r.data.items as SessionCR[]) : [];
       debug("BreakglassService.fetchActiveSessions", "Fetched active sessions", { count: data.length });
       // Normalize approved sessions to a shape that includes metadata/spec/status so
       // callers (getBreakglasses) can build sessionActive/sessionPending consistently.
@@ -142,7 +142,7 @@ export default class BreakglassService {
       const r = await this.client.get("/breakglassSessions", {
         params: { state: "pending", approver: true, mine: false },
       });
-      const data = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
+      const data = Array.isArray(r.data?.items) ? (r.data.items as SessionCR[]) : [];
       debug("BreakglassService.fetchPendingSessionsForApproval", "Fetched pending sessions", { count: data.length });
 
       // Backend now returns sessions with approvalReason populated from session.spec.approvalReasonConfig
@@ -213,7 +213,7 @@ export default class BreakglassService {
       const response = await this.client.get("/breakglassSessions", {
         params,
       });
-      const results = Array.isArray(response.data) ? (response.data as SessionCR[]) : [];
+      const results = Array.isArray(response.data?.items) ? (response.data.items as SessionCR[]) : [];
       debug("BreakglassService.searchSessions", "Search complete", { count: results.length });
       return results;
     } catch (e) {
@@ -350,7 +350,7 @@ export default class BreakglassService {
       const response = await this.client.get("/breakglassSessions", {
         params: { state: "rejected,withdrawn", mine: true, approver: false },
       });
-      const all = Array.isArray(response.data) ? response.data : [];
+      const all = Array.isArray(response.data?.items) ? response.data.items : [];
       debug("BreakglassService.fetchHistoricalSessions", "Fetched historical sessions", { count: all.length });
       return all.map((ses: SessionCR) => ({
         name: ses?.metadata?.name || "",
@@ -382,8 +382,8 @@ export default class BreakglassService {
         this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "timeout" } }),
         this.fetchHistoricalSessions(),
       ]);
-      const approved = Array.isArray(activeResp.data) ? activeResp.data : [];
-      const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
+      const approved = Array.isArray(activeResp.data?.items) ? activeResp.data.items : [];
+      const timedOut = Array.isArray(timedOutResp.data?.items) ? timedOutResp.data.items : [];
 
       // Normalize entries to ActiveBreakglass shape
       const approvedNormalized = approved.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
@@ -413,7 +413,7 @@ export default class BreakglassService {
       const response = await this.client.get("/breakglassSessions", {
         params: { state: "approved,timeout", mine: false, approver: false, approvedByMe: true },
       });
-      const data = Array.isArray(response.data) ? response.data : [];
+      const data = Array.isArray(response.data?.items) ? response.data.items : [];
 
       const combined = data.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
       const seen = new Map<string, ActiveBreakglass>();

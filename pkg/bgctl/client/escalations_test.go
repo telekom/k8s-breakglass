@@ -49,7 +49,8 @@ func TestEscalationsList(t *testing.T) {
 		require.Equal(t, http.MethodGet, r.Method)
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(escalations)
+		envelope := map[string]interface{}{"items": escalations}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	defer server.Close()
 
@@ -81,7 +82,8 @@ func TestEscalationsGet(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(escalations)
+		envelope := map[string]interface{}{"items": escalations}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	defer server.Close()
 
@@ -109,7 +111,8 @@ func TestEscalationsGet_NotFound(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(escalations)
+		envelope := map[string]interface{}{"items": escalations}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	defer server.Close()
 
@@ -143,7 +146,8 @@ func TestEscalationsListClusters(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(escalations)
+		envelope := map[string]interface{}{"items": escalations}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	defer server.Close()
 
@@ -162,7 +166,8 @@ func TestEscalationsListClusters(t *testing.T) {
 func TestEscalationsListClusters_Empty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]breakglassv1alpha1.BreakglassEscalation{})
+		envelope := map[string]interface{}{"items": []breakglassv1alpha1.BreakglassEscalation{}}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	defer server.Close()
 

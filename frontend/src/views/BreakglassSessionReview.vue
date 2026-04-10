@@ -132,7 +132,7 @@ async function getActiveBreakglasses() {
     const response = await service.getSessionStatus(params);
     if (response.status === 200) {
       state.getBreakglassesMsg = "";
-      state.breakglasses = response.data;
+      state.breakglasses = Array.isArray(response.data?.items) ? response.data.items : [];
     }
   } catch (errResponse: unknown) {
     const axiosLike = errResponse as AxiosLikeError;
