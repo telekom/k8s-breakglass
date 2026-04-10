@@ -791,6 +791,86 @@ func TestAuthErrorMessageForJWKSLoad(t *testing.T) {
 	}
 }
 
+func TestRetryAfterFromRateLimitedError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "standard rate limited error with seconds duration",
+			err:  fmt.Errorf("%w: retry after 9s", errJWKSFetchRateLimited),
+			want: "9",
+		},
+		{
+			name: "rate limited with sub-second remainder rounds up to 1",
+			err:  fmt.Errorf("%w: retry after 500ms", errJWKSFetchRateLimited),
+			want: "1",
+		},
+		{
+			name: "rate limited with mixed duration",
+			err:  fmt.Errorf("%w: retry after 4.999s", errJWKSFetchRateLimited),
+			want: "4",
+		},
+		{
+			name: "error without retry after segment returns default",
+			err:  errJWKSFetchRateLimited,
+			want: "10",
+		},
+		{
+			name: "wrapped error preserves retry after",
+			err:  fmt.Errorf("outer: %w", fmt.Errorf("%w: retry after 7s", errJWKSFetchRateLimited)),
+			want: "7",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, retryAfterFromRateLimitedError(tt.err))
+		})
+	}
+}
+
+func TestAuthenticate_RateLimitedJWKS_Returns429(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	auth := &AuthHandler{
+		log:         zaptest.NewLogger(t).Sugar(),
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		idpLoader:   config.NewIdentityProviderLoader(fakeClient),
+	}
+	auth.jwksFetchLimiter.Store("https://idp.example.com", time.Now())
+
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	claims := jwt.MapClaims{
+		"iss": "https://idp.example.com",
+		"sub": "user@example.com",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenStr, err := tok.SignedString([]byte("secret"))
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	retryAfter := w.Header().Get("Retry-After")
+	assert.NotEmpty(t, retryAfter, "Retry-After header must be set")
+	assert.Contains(t, w.Body.String(), `"TOO_MANY_REQUESTS"`)
+}
+
 // --- SEC-005: Audience claim validation ---
 
 func TestAuthMiddleware_AudienceValidation(t *testing.T) {

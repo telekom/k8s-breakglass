@@ -469,6 +469,25 @@ func authErrorMessageForJWKSLoad(err error) string {
 	}
 }
 
+func retryAfterFromRateLimitedError(err error) string {
+	const prefix = "retry after "
+	msg := err.Error()
+	idx := strings.LastIndex(msg, prefix)
+	if idx < 0 {
+		return "10"
+	}
+	durationStr := msg[idx+len(prefix):]
+	d, parseErr := time.ParseDuration(durationStr)
+	if parseErr != nil || d <= 0 {
+		return "10"
+	}
+	secs := int(d.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	return fmt.Sprintf("%d", secs)
+}
+
 func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	if c.Request.Method == http.MethodOptions {
 		return true
@@ -539,7 +558,11 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
 			metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
 
-			RespondUnauthorizedWithMessage(c, authErrorMessageForJWKSLoad(err))
+			if errors.Is(err, errJWKSFetchRateLimited) {
+				RespondTooManyRequestsWithRetryAfter(c, retryAfterFromRateLimitedError(err), authErrorMessageForJWKSLoad(err))
+			} else {
+				RespondUnauthorizedWithMessage(c, authErrorMessageForJWKSLoad(err))
+			}
 			c.Abort()
 			return false
 		}
