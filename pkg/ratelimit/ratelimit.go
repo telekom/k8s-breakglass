@@ -88,6 +88,18 @@ func DefaultSessionCreationConfig() Config {
 	}
 }
 
+// PermissiveSessionCreationConfig returns a rate limit config that effectively allows
+// unrestricted session creation. Use this only in tests and development environments
+// where rate limiting would cause false failures due to rapid sequential requests.
+func PermissiveSessionCreationConfig() Config {
+	return Config{
+		Rate:            1000,
+		Burst:           10000,
+		CleanupInterval: time.Minute,
+		MaxAge:          5 * time.Minute,
+	}
+}
+
 // entry holds rate limiter and last access time for an IP or user
 type entry struct {
 	limiter    *rate.Limiter

@@ -43,9 +43,10 @@ type Config struct {
 	EnableValidatingWebhooks bool
 
 	// Configuration flags
-	ConfigPath          string
-	BreakglassNamespace string
-	DisableEmail        bool
+	ConfigPath              string
+	BreakglassNamespace     string
+	DisableEmail            bool
+	DisableSessionRateLimit bool
 
 	// Interval flags
 	ClusterConfigCheckInterval string
@@ -184,6 +185,8 @@ func Parse() *Config {
 		"The Kubernetes namespace containing breakglass resources (e.g., IdentityProvider secrets)")
 	flag.BoolVar(&config.DisableEmail, "disable-email", getEnvBool("BREAKGLASS_DISABLE_EMAIL", false),
 		"Disable email notifications for breakglass session requests")
+	flag.BoolVar(&config.DisableSessionRateLimit, "disable-session-rate-limit", getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false),
+		"Disable per-user session creation rate limiting (for testing and development only)")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -231,6 +234,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"config_path", c.ConfigPath,
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
+		"disable_session_rate_limit", c.DisableSessionRateLimit,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,

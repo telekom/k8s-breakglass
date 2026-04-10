@@ -167,7 +167,11 @@ Rate limiting uses Gin's `ClientIP()` function to identify clients:
 
 ### Runtime Configuration
 
-Rate limits are **not currently configurable at runtime** via `config.yaml` or environment variables. All limits are defined as compile-time defaults in `pkg/ratelimit/ratelimit.go`.
+Most rate limits are defined as compile-time defaults in `pkg/ratelimit/ratelimit.go` and are not configurable at runtime via `config.yaml`.
+
+**Exception — session creation rate limit:** The per-user session creation rate limiter can be disabled at runtime using the `--disable-session-rate-limit` flag (or `BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true` environment variable). This replaces the default restrictive limiter (10 req/min, burst 1) with a permissive limiter (1000 req/s, burst 10000).
+
+> **⚠️ Warning:** Only disable session rate limiting in test and development environments. In production, always keep the rate limiter enabled to protect against session flooding.
 
 ### Modifying Limits
 

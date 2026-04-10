@@ -39,6 +39,36 @@ func TestDefaultConfigs(t *testing.T) {
 		assert.Greater(t, sarCfg.Rate, apiCfg.Rate)
 		assert.Greater(t, sarCfg.Burst, apiCfg.Burst)
 	})
+
+	t.Run("DefaultSessionCreationConfig", func(t *testing.T) {
+		cfg := DefaultSessionCreationConfig()
+		assert.Equal(t, 1, cfg.Burst, "session creation burst must be 1 to prevent flooding")
+		assert.Greater(t, cfg.Rate, float64(0))
+		assert.Less(t, cfg.Rate, float64(1), "session creation rate must be sub-1 req/s (10/min)")
+	})
+
+	t.Run("PermissiveSessionCreationConfig has high burst and rate", func(t *testing.T) {
+		cfg := PermissiveSessionCreationConfig()
+		assert.GreaterOrEqual(t, cfg.Burst, 1000, "permissive config must allow large burst")
+		assert.GreaterOrEqual(t, cfg.Rate, float64(100), "permissive config must allow high rate")
+	})
+
+	t.Run("PermissiveSessionCreationConfig is more permissive than DefaultSessionCreationConfig", func(t *testing.T) {
+		def := DefaultSessionCreationConfig()
+		perm := PermissiveSessionCreationConfig()
+		assert.Greater(t, perm.Rate, def.Rate)
+		assert.Greater(t, perm.Burst, def.Burst)
+	})
+
+	t.Run("PermissiveSessionCreationConfig allows rapid sequential requests", func(t *testing.T) {
+		cfg := PermissiveSessionCreationConfig()
+		rl := New(cfg)
+		defer rl.Stop()
+
+		for i := 0; i < 100; i++ {
+			assert.True(t, rl.Allow("user@example.com"), "permissive limiter must allow request %d", i)
+		}
+	})
 }
 
 func TestNew(t *testing.T) {

@@ -458,6 +458,12 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		authMiddleware, cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).
 		WithMailService(mailService).WithAuditService(auditService)
 
+	if cliConfig.DisableSessionRateLimit {
+		permissiveLimiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())
+		sessionController.WithSessionCreationRateLimiter(permissiveLimiter)
+		log.Warnw("Session creation rate limiter disabled via --disable-session-rate-limit flag; do not use in production")
+	}
+
 	// Setup debug session API controller with mail and audit services
 	// Uses combined auth + rate limiting middleware
 	// Uses APIReader for consistent reads after writes (avoids cache coherence issues)
