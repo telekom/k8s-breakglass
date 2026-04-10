@@ -389,8 +389,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	respSessions = decodeSessionPage(t, response.Body)
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("Expected one created session, got %#v", respSessions)
 	}
@@ -413,7 +412,6 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions = []breakglassv1alpha1.BreakglassSession{}
 	respSessions = decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("Expected one session after approve, got %#v", respSessions)
@@ -450,7 +448,6 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions = []breakglassv1alpha1.BreakglassSession{}
 	respSessions = decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("Expected one session after invalid reject attempt, got %#v", respSessions)
@@ -2220,8 +2217,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions, got %d", res.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	respSessions = decodeSessionPage(t, res.Body)
+	respSessions := decodeSessionPage(t, res.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("expected one session, got %#v", respSessions)
 	}
@@ -2249,7 +2245,6 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions after approve, got %d", res.StatusCode)
 	}
-	respSessions = []breakglassv1alpha1.BreakglassSession{}
 	respSessions = decodeSessionPage(t, res.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("expected one session after approve, got %#v", respSessions)
@@ -2437,7 +2432,6 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	sessions = []breakglassv1alpha1.BreakglassSession{}
 	sessions = decodeSessionPage(t, w.Result().Body)
 	if sessions[0].Status.State != breakglassv1alpha1.SessionStateRejected {
 		t.Fatalf("expected state rejected, got %s", sessions[0].Status.State)
