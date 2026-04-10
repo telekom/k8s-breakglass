@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Per-user rate limiting on session creation**: `POST /api/breakglassSessions` now enforces a per-user rate limit (10 requests/minute, burst of 1) keyed on the authenticated user's email. Requests exceeding the limit receive `429 Too Many Requests` with a `Retry-After` header indicating when to retry. Falls back to per-IP limiting when no email identity is available.
+- **Per-user rate limiting on session creation**: `POST /api/breakglassSessions` now enforces a per-user rate limit (10 requests/minute, burst of 1) keyed on the authenticated user's email. Requests exceeding the limit receive `429 Too Many Requests` with a `Retry-After` header indicating when to retry. A valid `email` claim is required; requests without one are rejected.
 
 ### Added
 
