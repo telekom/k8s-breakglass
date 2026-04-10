@@ -76,7 +76,7 @@ func DefaultSARConfig() Config {
 	}
 }
 
-// DefaultSessionCreationConfig returns per-user rate limit config for POST /sessions.
+// DefaultSessionCreationConfig returns per-user rate limit config for POST /api/breakglassSessions.
 // 10 requests per minute with burst of 1 to prevent flooding.
 func DefaultSessionCreationConfig() Config {
 	const sessionCreationRatePerSec = float64(10) / 60
@@ -157,6 +157,11 @@ func (rl *IPRateLimiter) AllowWithRetryAfter(key string) (bool, time.Duration) {
 	e.lastAccess = time.Now()
 
 	r := e.limiter.Reserve()
+	if !r.OK() {
+		// Burst <= 0: reservation is invalid (infinite delay). Cancel and deny.
+		r.Cancel()
+		return false, time.Minute
+	}
 	delay := r.Delay()
 	if delay == 0 {
 		return true, 0
