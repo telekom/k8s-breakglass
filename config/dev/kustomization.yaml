@@ -71,6 +71,14 @@ patches:
       value:
         name: CLEANUP_INTERVAL
         value: "10s"
+    # Disable per-user session creation rate limiting in E2E tests to prevent
+    # sequential session-creation tests (e.g. TestWebhookExpiredSession,
+    # TestWebhookPendingSession, TestWebhookRejectedSession) from hitting 429.
+    - op: add
+      path: /spec/template/spec/containers/0/env/-
+      value:
+        name: BREAKGLASS_DISABLE_SESSION_RATE_LIMIT
+        value: "true"
     # Increase memory limits for E2E tests (controller handles many CRs)
     - op: replace
       path: /spec/template/spec/containers/0/resources/limits/memory
