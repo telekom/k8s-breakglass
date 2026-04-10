@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
@@ -97,6 +99,8 @@ type BreakglassSessionController struct {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	}
 	clusterConfigManager *ClusterConfigManager
+
+	sessionCreationLimiter *ratelimit.IPRateLimiter
 
 	// inFlightCreates prevents TOCTOU race conditions during session creation.
 	// Without this guard, two concurrent requests for the same (cluster, user, group)
@@ -229,6 +233,20 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	authIdentity, ok := wc.resolveAuthenticatedIdentity(c, &request, reqLog)
 	if !ok {
 		return
+	}
+
+	if wc.sessionCreationLimiter != nil {
+		rateLimitKey := authIdentity.email
+		if rateLimitKey == "" {
+			rateLimitKey = c.ClientIP()
+		}
+		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
+		if !allowed {
+			retrySecs := int(math.Ceil(retryAfter.Seconds()))
+			c.Header("Retry-After", fmt.Sprintf("%d", retrySecs))
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "session creation rate limit exceeded, please try again later"})
+			return
+		}
 	}
 
 	// Phase 2: Validate session request parameters
