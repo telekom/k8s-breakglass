@@ -2,7 +2,7 @@
  * Tests for App component
  *
  * Covers:
- * - High-contrast toggle button aria-pressed attribute reflects state
+ * - High-contrast toggle button aria-label and visual state reflect toggle state
  *
  * @vitest-environment jsdom
  */
@@ -89,32 +89,36 @@ describe("App — high-contrast toggle", () => {
     });
   }
 
-  it("sets aria-pressed='false' on hc-toggle when high contrast is off", () => {
+  it("shows disabled aria-label and no hc-active class when high contrast is off", () => {
     localStorage.setItem("breakglass-high-contrast", "false");
     wrapper = mountApp();
 
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.exists()).toBe(true);
-    expect(btn.attributes("aria-pressed")).toBe("false");
+    expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.classes()).not.toContain("hc-active");
   });
 
-  it("sets aria-pressed='true' on hc-toggle when high contrast is on", () => {
+  it("shows enabled aria-label and hc-active class when high contrast is on", () => {
     localStorage.setItem("breakglass-high-contrast", "true");
     wrapper = mountApp();
 
     const btn = wrapper.find(".hc-toggle-button");
-    expect(btn.attributes("aria-pressed")).toBe("true");
+    expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.classes()).toContain("hc-active");
   });
 
-  it("toggles aria-pressed when the hc-toggle button is clicked", async () => {
+  it("toggles aria-label and hc-active class when the hc-toggle button is clicked", async () => {
     localStorage.setItem("breakglass-high-contrast", "false");
     wrapper = mountApp();
 
     const btn = wrapper.find(".hc-toggle-button");
-    expect(btn.attributes("aria-pressed")).toBe("false");
+    expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.classes()).not.toContain("hc-active");
 
     await btn.trigger("click");
 
-    expect(btn.attributes("aria-pressed")).toBe("true");
+    expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.classes()).toContain("hc-active");
   });
 });

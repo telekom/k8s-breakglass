@@ -22,12 +22,6 @@ const authenticated = computed(() => user.value && !user.value?.expired);
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
 const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
-const isTestMode = import.meta.env.MODE === "test";
-
-const ariaPressedBind = computed(() => {
-  if (isTestMode) return { "aria-pressed": highContrast.value ? "true" : "false" };
-  return {};
-});
 
 const route = useRoute();
 const router = useRouter();
@@ -416,12 +410,9 @@ watch(
 
         <scale-telekom-nav-list slot="functions" variant="functions" alignment="right" class="header-functions">
           <scale-telekom-nav-item class="hc-toggle-nav-item">
-            <!-- eslint-disable-next-line vuejs-accessibility/no-redundant-roles -- role="button" required: parent scale-telekom-nav-item overrides implicit role in a11y tree -->
             <button
               type="button"
-              role="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
-              v-bind="ariaPressedBind"
               :aria-label="
                 highContrast
                   ? 'High contrast mode enabled. Click to disable.'
