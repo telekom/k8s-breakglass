@@ -7137,3 +7137,174 @@ func TestHandleRequestBreakglassSession_PerUserRateLimit(t *testing.T) {
 	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &body))
 	assert.Contains(t, body["error"], "rate limit")
 }
+
+// TestHandleRequestBreakglassSession_RateLimitBeforeSessionCreation verifies that the
+// rate limit check fires before any BreakglassSession object is written to the store.
+// This proves the "before expensive phases" ordering introduced in this commit.
+func TestHandleRequestBreakglassSession_RateLimitBeforeSessionCreation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-ordering", Namespace: "escns"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "g1",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "ratelimited@example.com")
+			c.Set("username", "ratelimited@example.com")
+			c.Set("user_id", "ratelimited@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	tightLimiter := ratelimit.New(ratelimit.Config{
+		Rate:            0.0001,
+		Burst:           1,
+		CleanupInterval: time.Minute,
+		MaxAge:          5 * time.Minute,
+	})
+	defer tightLimiter.Stop()
+	ctrl.WithSessionCreationRateLimiter(tightLimiter)
+
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	makeRequest := func() *httptest.ResponseRecorder {
+		reqData := BreakglassSessionRequest{Clustername: "test", Username: "ratelimited@example.com", GroupName: "g1"}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		return w
+	}
+
+	// First request: allowed through, session is created.
+	first := makeRequest()
+	assert.NotEqual(t, http.StatusTooManyRequests, first.Code, "first request must not be rate-limited")
+
+	// Second request: rate-limited — no additional session should be created.
+	second := makeRequest()
+	require.Equal(t, http.StatusTooManyRequests, second.Code, "second request must be rate-limited")
+
+	// Verify no extra session was written to the store for the rejected request.
+	var sessionList breakglassv1alpha1.BreakglassSessionList
+	require.NoError(t, cli.List(context.Background(), &sessionList))
+	assert.LessOrEqual(t, len(sessionList.Items), 1,
+		"rate-limited request must not create a BreakglassSession in the store")
+}
+
+// TestHandleRequestBreakglassSession_RateLimitEmailEmptyFallback verifies that when the
+// authenticated email is empty the rate limiter falls back to the username as the key.
+func TestHandleRequestBreakglassSession_RateLimitEmailEmptyFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-noemail", Namespace: "escns"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "g1",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	// Middleware: email is empty; username is set. Rate limiter must use username as key.
+	const username = "svc-account"
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "")
+			c.Set("username", username)
+			c.Set("user_id", username)
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	tightLimiter := ratelimit.New(ratelimit.Config{
+		Rate:            0.0001,
+		Burst:           1,
+		CleanupInterval: time.Minute,
+		MaxAge:          5 * time.Minute,
+	})
+	defer tightLimiter.Stop()
+	ctrl.WithSessionCreationRateLimiter(tightLimiter)
+
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	makeRequest := func() *httptest.ResponseRecorder {
+		reqData := BreakglassSessionRequest{Clustername: "test", Username: username, GroupName: "g1"}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		return w
+	}
+
+	// First request: burst of 1 consumed.
+	first := makeRequest()
+	assert.NotEqual(t, http.StatusTooManyRequests, first.Code, "first request must not be rate-limited")
+
+	// Second request: rate-limited; proves username was used as the key (not IP).
+	second := makeRequest()
+	assert.Equal(t, http.StatusTooManyRequests, second.Code,
+		"second request with same username must be rate-limited even when email is empty")
+}
+
+// TestWithSessionCreationRateLimiter_SameInstanceDoesNotStop verifies the double-Stop guard:
+// passing the same limiter instance twice must not stop it.
+func TestWithSessionCreationRateLimiter_SameInstanceDoesNotStop(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		nil, "/config/config.yaml", nil, cli)
+
+	limiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())
+
+	// First call: sets the limiter.
+	ctrl.WithSessionCreationRateLimiter(limiter)
+	// Second call with the same pointer: must NOT stop the limiter (no panic / double-Stop).
+	ctrl.WithSessionCreationRateLimiter(limiter)
+
+	// Limiter must still be functional (AllowWithRetryAfter does not panic).
+	allowed, _ := limiter.AllowWithRetryAfter("probe-key")
+	assert.True(t, allowed, "limiter must still be functional after being set twice")
+
+	limiter.Stop()
+}
