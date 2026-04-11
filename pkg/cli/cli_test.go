@@ -291,9 +291,22 @@ func TestDisableSessionRateLimit_EnvVarFalse(t *testing.T) {
 }
 
 func TestDisableSessionRateLimit_EmptyEnvVar(t *testing.T) {
+	// Empty string is present-but-unparseable: getEnvBool falls back to defaultVal.
 	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
 	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
-	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT unset should default to false")
+	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT='' (empty) should fall back to default (false)")
+}
+
+func TestDisableSessionRateLimit_EnvVarUnset(t *testing.T) {
+	// Truly unset (LookupEnv returns ok=false): getEnvBool returns defaultVal.
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "placeholder-to-ensure-set")
+	t.Cleanup(func() {
+		// os.Unsetenv is not provided by t.Setenv, so we unset manually.
+		_ = os.Unsetenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT")
+	})
+	_ = os.Unsetenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
+	assert.False(t, got, "unset BREAKGLASS_DISABLE_SESSION_RATE_LIMIT should default to false")
 }
 
 // parseWithArgs resets the global flag.CommandLine, sets os.Args to the provided

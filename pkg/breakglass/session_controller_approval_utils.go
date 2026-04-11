@@ -439,6 +439,12 @@ func (wc *BreakglassSessionController) WithSessionCreationRateLimiter(rl *rateli
 	return wc
 }
 
+func (wc *BreakglassSessionController) Close() {
+	if wc.sessionCreationLimiter != nil {
+		wc.sessionCreationLimiter.Stop()
+	}
+}
+
 // sendSessionApprovalEmail sends an approval notification to the requester
 func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session breakglassv1alpha1.BreakglassSession) bool {
 	// Check if mail is available (either via service or legacy queue)
