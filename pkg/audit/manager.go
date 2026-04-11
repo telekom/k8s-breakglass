@@ -234,11 +234,6 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 					zap.String("event_type", string(event.Type)),
 					zap.String("event_id", event.ID),
 					zap.Error(writeErr))
-			} else {
-				m.processedEvents.Add(1)
-				metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
-				m.sensitiveEventsSyncWritten.Add(1)
-				metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(m.sink.Name()).Inc()
 			}
 
 			return
@@ -256,9 +251,18 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 
 // syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.
 // If no direct sinks are configured, it falls back to the queued sink.
+// Metrics are incremented per-sink on success and failure.
 func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 	if len(m.directSinks) == 0 {
-		return m.sink.Write(ctx, event)
+		if err := m.sink.Write(ctx, event); err != nil {
+			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
+			return err
+		}
+		m.processedEvents.Add(1)
+		metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
+		m.sensitiveEventsSyncWritten.Add(1)
+		metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(m.sink.Name()).Inc()
+		return nil
 	}
 	var errs []error
 	for _, s := range m.directSinks {
@@ -269,6 +273,11 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 				zap.Error(err))
 			metrics.AuditSinkErrors.WithLabelValues(s.Name(), "sensitive_sync_fallback").Inc()
 			errs = append(errs, err)
+		} else {
+			m.processedEvents.Add(1)
+			metrics.AuditEventsProcessed.WithLabelValues(s.Name()).Inc()
+			m.sensitiveEventsSyncWritten.Add(1)
+			metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(s.Name()).Inc()
 		}
 	}
 	return errors.Join(errs...)

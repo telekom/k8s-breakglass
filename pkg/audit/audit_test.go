@@ -1211,6 +1211,7 @@ func TestManager_SensitiveEventsNotDroppedOnQueueFull(t *testing.T) {
 	var mu sync.Mutex
 	var sensitiveReceived int
 	blockWorker := make(chan struct{})
+	workerBlocking := make(chan struct{}, 1)
 
 	sink := &testSink{
 		name: "blocking",
@@ -1221,7 +1222,11 @@ func TestManager_SensitiveEventsNotDroppedOnQueueFull(t *testing.T) {
 				mu.Unlock()
 				return
 			}
-			// Non-sensitive events block the worker so the queue stays full.
+			// Signal that the worker is now blocking so the test can proceed.
+			select {
+			case workerBlocking <- struct{}{}:
+			default:
+			}
 			<-blockWorker
 		},
 	}
@@ -1235,7 +1240,12 @@ func TestManager_SensitiveEventsNotDroppedOnQueueFull(t *testing.T) {
 
 	// Given: one event occupies the worker (blocked), one fills the queue slot.
 	manager.Emit(context.Background(), &Event{Type: EventResourceGet})
-	time.Sleep(20 * time.Millisecond)
+	// Wait until the worker is actually blocking before filling the queue.
+	select {
+	case <-workerBlocking:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not start blocking within 2s")
+	}
 	manager.Emit(context.Background(), &Event{Type: EventResourceList})
 
 	// When: sensitive events are emitted against a full queue.
