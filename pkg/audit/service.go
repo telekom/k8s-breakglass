@@ -87,7 +87,15 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Close existing sinks
+	// Close the existing manager first so all in-flight goroutines stop before
+	// the underlying sinks are torn down. Without this ordering, async workers
+	// could write to sinks that are being closed concurrently.
+	if s.manager != nil {
+		_ = s.manager.Close()
+		s.manager = nil
+	}
+
+	// Now safe to close the underlying sinks.
 	s.closeSinksLocked()
 
 	// Filter to only enabled configs

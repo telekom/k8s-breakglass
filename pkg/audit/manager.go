@@ -222,8 +222,9 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
 	default:
-		// Queue is full — sensitive events fall back to synchronous write
-		// instead of being dropped, honouring the "never drop" contract.
+		// Queue is full — sensitive events fall back to a synchronous direct write
+		// to bypass manager-queue overflow. Per-sink queue drops (QueuedSink
+		// queue_full / circuit_open) are not intercepted by this path.
 		if IsSensitiveEvent(event.Type) {
 			writeCtx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
 			defer cancel()
@@ -265,6 +266,7 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 		return nil
 	}
 	var errs []error
+	anySucceeded := false
 	for _, s := range m.directSinks {
 		if err := s.Write(ctx, event); err != nil {
 			m.logger.Error("direct sink write failed for sensitive event",
@@ -274,11 +276,18 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 			metrics.AuditSinkErrors.WithLabelValues(s.Name(), "sensitive_sync_fallback").Inc()
 			errs = append(errs, err)
 		} else {
-			m.processedEvents.Add(1)
+			anySucceeded = true
+			// Per-sink Prometheus counter reflects actual sink delivery.
 			metrics.AuditEventsProcessed.WithLabelValues(s.Name()).Inc()
-			m.sensitiveEventsSyncWritten.Add(1)
 			metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(s.Name()).Inc()
 		}
+	}
+	// Increment in-memory counters once per event (not once per sink) so that
+	// ManagerStats.ProcessedEvents is not artificially inflated when multiple
+	// direct sinks are configured.
+	if anySucceeded {
+		m.processedEvents.Add(1)
+		m.sensitiveEventsSyncWritten.Add(1)
 	}
 	return errors.Join(errs...)
 }
