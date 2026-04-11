@@ -412,6 +412,7 @@ watch(
           <scale-telekom-nav-item class="hc-toggle-nav-item">
             <button
               type="button"
+              role="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
               :aria-pressed="highContrast"
               :aria-label="
