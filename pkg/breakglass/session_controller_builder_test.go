@@ -673,3 +673,72 @@ func TestEmitSessionAuditEvent_WithAuditService(t *testing.T) {
 	assert.Equal(t, "production", events[0].Target.Cluster)
 	assert.Equal(t, "approver@example.com", events[0].Actor.User)
 }
+
+func TestEmitSessionAuditEvent_GrantedGroupUnredacted(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger := zaptest.NewLogger(t)
+	mockAudit := NewMockAuditEmitter(true)
+
+	ctrl := NewBreakglassSessionController(
+		logger.Sugar(),
+		config.Config{},
+		&sesmanager, &escmanager,
+		nil, "/config/config.yaml", nil, cli,
+	).WithAuditService(mockAudit)
+
+	const groupName = "platform-admins"
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:         "user@example.com",
+			GrantedGroup: groupName,
+			Cluster:      "prod",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+
+	ctrl.emitSessionAuditEvent(t.Context(), audit.EventSessionApproved, session, "approver@example.com", "approved")
+
+	events := mockAudit.GetEvents()
+	require.Len(t, events, 1)
+	assert.Equal(t, groupName, events[0].Details["grantedGroup"],
+		"Details[grantedGroup] must be the unredacted group name")
+}
+
+func TestEmitSessionExpiredAuditEvent_GrantedGroupUnredacted(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger := zaptest.NewLogger(t)
+	mockAudit := NewMockAuditEmitter(true)
+
+	ctrl := NewBreakglassSessionController(
+		logger.Sugar(),
+		config.Config{},
+		&sesmanager, &escmanager,
+		nil, "/config/config.yaml", nil, cli,
+	).WithAuditService(mockAudit)
+
+	const groupName = "platform-admins"
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "s2", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:         "user@example.com",
+			GrantedGroup: groupName,
+			Cluster:      "prod",
+		},
+	}
+
+	ctrl.emitSessionExpiredAuditEvent(t.Context(), session, "timeExpired")
+
+	events := mockAudit.GetEvents()
+	require.Len(t, events, 1)
+	assert.Equal(t, groupName, events[0].Details["grantedGroup"],
+		"Details[grantedGroup] must be the unredacted group name")
+}
