@@ -183,7 +183,15 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 		DropOnFull:   dropOnFull,
 		SampleRate:   sampleRate,
 		WriteTimeout: 5 * time.Second,
-		DirectSinks:  allSinks,
+		// DirectSinks references the same sink instances stored in s.sinks.
+		// On the next ReloadMultiple call, the Manager is closed (draining all
+		// async workers) before s.closeSinksLocked() tears down these sinks, so
+		// the ordering is safe. Any sensitive-event sync writes in flight between
+		// the close of the old Manager and the close of its sinks will have already
+		// completed before closeSinksLocked runs. This coupling is a known
+		// limitation of the current reload architecture; refactoring would require
+		// decoupling the Manager lifetime from the sink slice.
+		DirectSinks: allSinks,
 	}
 
 	s.manager = NewManager(isolatedMultiSink, managerCfg, s.logger)
