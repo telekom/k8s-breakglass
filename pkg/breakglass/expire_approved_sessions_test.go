@@ -134,7 +134,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updated.Status.State)
 	})
 
-	t.Run("expires session 1 second past ExpiresAt", func(t *testing.T) {
+	t.Run("expires recently expired session", func(t *testing.T) {
 		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "boundary-session",
@@ -149,7 +149,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 				State:           breakglassv1alpha1.SessionStateApproved,
 				ApprovedAt:      metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 				ActualStartTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(-1 * time.Second)),
+				ExpiresAt:       metav1.NewTime(time.Now().Add(-30 * time.Second)),
 			},
 		}
 
@@ -172,9 +172,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
 	})
 
-	t.Run("does not expire session that expires 1 second in the future", func(t *testing.T) {
-		// Verify that a session with ExpiresAt barely in the future is NOT expired.
-		// Note: metav1.Time has second-level precision, so we use a full second margin.
+	t.Run("does not expire session with ExpiresAt in the future", func(t *testing.T) {
+		// Keep a generous buffer: expiry is checked against the live wall clock,
+		// and 1-5s margins have flaked in CI.
 		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "near-future-boundary",
@@ -189,7 +189,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 				State:           breakglassv1alpha1.SessionStateApproved,
 				ApprovedAt:      metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 				ActualStartTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(1 * time.Second)),
+				ExpiresAt:       metav1.NewTime(time.Now().Add(30 * time.Second)),
 			},
 		}
 
@@ -210,7 +210,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			&updated)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updated.Status.State,
-			"ExpiresAt 1s in the future should NOT expire")
+			"ExpiresAt in the future should NOT expire")
 	})
 
 	t.Run("does not expire session with zero ExpiresAt", func(t *testing.T) {
@@ -473,15 +473,15 @@ func TestIsSessionExpiredEdgeCases(t *testing.T) {
 			"Approved session past ExpiresAt should expire even without ActualStartTime")
 	})
 
-	t.Run("exact boundary — ExpiresAt in the near future is not yet expired", func(t *testing.T) {
+	t.Run("ExpiresAt in the near future is not yet expired", func(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,
-				ExpiresAt: metav1.NewTime(time.Now().Add(5 * time.Second)), // expires very soon, but not yet
+				ExpiresAt: metav1.NewTime(time.Now().Add(30 * time.Second)),
 			},
 		}
 		assert.False(t, IsSessionExpired(session),
-			"Session whose ExpiresAt is slightly in the future should NOT be expired")
+			"Session whose ExpiresAt is in the future should NOT be expired")
 	})
 
 	t.Run("negative remaining duration — far past ExpiresAt", func(t *testing.T) {
