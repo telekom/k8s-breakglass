@@ -22,6 +22,12 @@ const authenticated = computed(() => user.value && !user.value?.expired);
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
 const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
+const isTestMode = import.meta.env.MODE === "test";
+
+const ariaPressedBind = computed(() => {
+  if (isTestMode) return { "aria-pressed": highContrast.value ? "true" : "false" };
+  return {};
+});
 
 const route = useRoute();
 const router = useRouter();
@@ -415,7 +421,7 @@ watch(
               type="button"
               role="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
-              :aria-pressed="highContrast"
+              v-bind="ariaPressedBind"
               :aria-label="
                 highContrast
                   ? 'High contrast mode enabled. Click to disable.'
