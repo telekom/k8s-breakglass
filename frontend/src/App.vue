@@ -413,6 +413,7 @@ watch(
             <button
               type="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
+              :aria-pressed="highContrast"
               :aria-label="
                 highContrast
                   ? 'High contrast mode enabled. Click to disable.'
