@@ -621,12 +621,12 @@ func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context,
 		},
 		RequestContext: &audit.RequestContext{
 			SessionName:    session.Name,
-			EscalationName: session.Spec.GrantedGroup,
+			EscalationName: system.RedactGroupName(session.Spec.GrantedGroup),
 		},
 		Details: map[string]interface{}{
 			"message":      message,
 			"cluster":      session.Spec.Cluster,
-			"grantedGroup": session.Spec.GrantedGroup,
+			"grantedGroup": system.RedactGroupName(session.Spec.GrantedGroup),
 			"state":        string(session.Status.State),
 		},
 	}
@@ -663,13 +663,13 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 		},
 		RequestContext: &audit.RequestContext{
 			SessionName:    session.Name,
-			EscalationName: session.Spec.GrantedGroup,
+			EscalationName: system.RedactGroupName(session.Spec.GrantedGroup),
 		},
 		Details: map[string]interface{}{
 			"message":          message,
 			"expirationReason": reason,
 			"cluster":          session.Spec.Cluster,
-			"grantedGroup":     session.Spec.GrantedGroup,
+			"grantedGroup":     system.RedactGroupName(session.Spec.GrantedGroup),
 			"user":             session.Spec.User,
 		},
 	}
