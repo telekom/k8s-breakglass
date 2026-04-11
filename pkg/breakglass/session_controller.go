@@ -256,6 +256,21 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	reqLog = reqLog.With("cluster", cug.Clustername, "user", cug.Username, "group", cug.GroupName)
 	reqLog.Info("Validated session request parameters")
 
+	// Apply per-user rate limit before the expensive group/escalation lookups.
+	if wc.sessionCreationLimiter != nil {
+		rateLimitKey := strings.ToLower(strings.TrimSpace(authIdentity.email))
+		if rateLimitKey == "" {
+			rateLimitKey = strings.ToLower(strings.TrimSpace(authIdentity.username))
+		}
+		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
+		if !allowed {
+			retrySecs := int(math.Ceil(retryAfter.Seconds()))
+			c.Header("Retry-After", fmt.Sprintf("%d", retrySecs))
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "session creation rate limit exceeded, please try again later"})
+			return
+		}
+	}
+
 	// Phase 3: Load global config via cached loader
 	var globalCfg *config.Config
 	if wc.configLoader != nil {
@@ -292,22 +307,6 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		if strings.TrimSpace(request.Reason) == "" {
 			reqLog.Warnw("Missing required request reason", "group", request.GroupName)
 			apiresponses.RespondUnprocessableEntity(c, "missing required request reason")
-			return
-		}
-	}
-
-	// Apply per-user rate limit after all validation passes to prevent invalid requests
-	// from consuming the rate-limit budget.
-	if wc.sessionCreationLimiter != nil {
-		rateLimitKey := strings.ToLower(strings.TrimSpace(authIdentity.email))
-		if rateLimitKey == "" {
-			rateLimitKey = c.ClientIP()
-		}
-		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
-		if !allowed {
-			retrySecs := int(math.Ceil(retryAfter.Seconds()))
-			c.Header("Retry-After", fmt.Sprintf("%d", retrySecs))
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "session creation rate limit exceeded, please try again later"})
 			return
 		}
 	}
