@@ -89,8 +89,22 @@ describe("createAuthenticatedApiClient", () => {
       "Authorization header set",
       "(token length: 9)",
     );
-    const allCalls = debugSpy.mock.calls.flat().join(" ");
-    expect(allCalls).not.toContain("dev-token");
+    // Only inspect the auth-header log — response data may legitimately echo the authorization value.
+    const authHeaderCalls = debugSpy.mock.calls.filter((call) =>
+      call.some((arg) => typeof arg === "string" && arg.includes("Authorization header set")),
+    );
+    const authHeaderCallsStringified = authHeaderCalls
+      .flat()
+      .map((arg) => {
+        if (typeof arg === "string") return arg;
+        try {
+          return JSON.stringify(arg);
+        } catch {
+          return String(arg);
+        }
+      })
+      .join(" ");
+    expect(authHeaderCallsStringified).not.toContain("dev-token");
   });
 });
 
