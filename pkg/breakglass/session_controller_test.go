@@ -7127,7 +7127,7 @@ func TestHandleRequestBreakglassSession_PerUserRateLimit(t *testing.T) {
 	}
 
 	first := makeRequest()
-	assert.NotEqual(t, http.StatusTooManyRequests, first.Code, "first request should not be rate-limited")
+	require.Equal(t, http.StatusCreated, first.Code, "first request must create a BreakglassSession")
 
 	second := makeRequest()
 	assert.Equal(t, http.StatusTooManyRequests, second.Code, "second request should be rate-limited (burst exhausted)")

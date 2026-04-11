@@ -756,10 +756,10 @@ breakglass-controller --disable-session-rate-limit
 BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true breakglass-controller
 ```
 
-> **⚠️ Warning:** Do not enable this flag in production. The per-user session creation rate limiter (10 requests/minute, burst 1) protects against session flooding. Disabling it removes that protection.
+> **⚠️ Warning:** Do not enable this flag in production. The per-user session creation rate limiter (10 requests/minute, burst 1) protects against session flooding. Disabling it effectively disables that strict protection by swapping in a highly permissive limiter.
 
 When **disabled**:
-- The session-creation-specific rate limiter is bypassed (global per-IP and authenticated per-user middleware limiters still apply)
+- The session-creation-specific rate limiter is effectively disabled by replacing the default limiter with a permissive limiter (global per-IP and authenticated per-user middleware limiters still apply)
 - Intended for E2E tests and development environments
 - The default limiter (10 req/min, burst 1) is replaced with a permissive limiter (1000 req/s, burst 10000)
 

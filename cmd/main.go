@@ -460,6 +460,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 
 	if cliConfig.DisableSessionRateLimit {
 		permissiveLimiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())
+		context.AfterFunc(ctx, permissiveLimiter.Stop)
 		sessionController.WithSessionCreationRateLimiter(permissiveLimiter)
 		log.Warnw("Session creation rate limiter disabled via --disable-session-rate-limit flag; do not use in production")
 	}
