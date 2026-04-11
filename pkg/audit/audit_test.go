@@ -1273,6 +1273,7 @@ func TestManager_SensitiveEventsNotDroppedOnQueueFull(t *testing.T) {
 func TestManager_SensitiveEventSyncFallbackWriteError(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	blockWorker := make(chan struct{})
+	workerBlocking := make(chan struct{}, 1)
 
 	writeErr := fmt.Errorf("simulated sink failure")
 	sink := &errableSink{
@@ -1280,6 +1281,11 @@ func TestManager_SensitiveEventSyncFallbackWriteError(t *testing.T) {
 		writeFn: func(event *Event) error {
 			if IsSensitiveEvent(event.Type) {
 				return writeErr
+			}
+			// Signal that the worker is now blocking so the test can proceed.
+			select {
+			case workerBlocking <- struct{}{}:
+			default:
 			}
 			<-blockWorker
 			return nil
@@ -1295,7 +1301,12 @@ func TestManager_SensitiveEventSyncFallbackWriteError(t *testing.T) {
 
 	// Given: queue is full (one event blocks worker, one fills queue slot).
 	manager.Emit(context.Background(), &Event{Type: EventResourceGet})
-	time.Sleep(20 * time.Millisecond) //nolint:mnd // let worker pick up blocking event
+	// Wait until the worker is actually blocking before filling the queue.
+	select {
+	case <-workerBlocking:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not start blocking within 2s")
+	}
 	manager.Emit(context.Background(), &Event{Type: EventResourceList})
 
 	// When: a sensitive event is emitted and the sync fallback write fails.
