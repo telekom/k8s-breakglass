@@ -590,37 +590,43 @@ Authorization: Bearer <token>
 
 **Status Code:** `200 OK`
 
-**Response:** Array of `BreakglassEscalation` resources filtered by user's groups:
+**Response:** Paginated envelope containing `BreakglassEscalation` resources filtered by user's groups. The `metadata.continue` field is non-empty when additional pages are available.
 
 ```json
-[
-  {
-    "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
-    "kind": "BreakglassEscalation",
-    "metadata": {
-      "name": "cluster-admin-escalation",
-      "namespace": "breakglass-system",
-      "uid": "...",
-      "creationTimestamp": "2024-01-01T00:00:00Z"
-    },
-    "spec": {
-      "displayName": "Cluster Admin Access",
-      "description": "Temporary cluster admin access for incident response",
-      "escalatedGroup": "cluster-admin",
-      "maxValidFor": "2h",
-      "approvers": {
-        "users": ["admin@example.com"],
-        "groups": ["admins"]
+{
+  "items": [
+    {
+      "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
+      "kind": "BreakglassEscalation",
+      "metadata": {
+        "name": "cluster-admin-escalation",
+        "namespace": "breakglass-system",
+        "uid": "...",
+        "creationTimestamp": "2024-01-01T00:00:00Z"
       },
-      "requestReason": {
-        "mandatory": true,
-        "description": "Please provide the incident ticket ID"
-      },
-      "blockSelfApproval": true,
-      "allowedApproverDomains": ["example.com"]
+      "spec": {
+        "displayName": "Cluster Admin Access",
+        "description": "Temporary cluster admin access for incident response",
+        "escalatedGroup": "cluster-admin",
+        "maxValidFor": "2h",
+        "approvers": {
+          "users": ["admin@example.com"],
+          "groups": ["admins"]
+        },
+        "requestReason": {
+          "mandatory": true,
+          "description": "Please provide the incident ticket ID"
+        },
+        "blockSelfApproval": true,
+        "allowedApproverDomains": ["example.com"]
+      }
     }
+  ],
+  "metadata": {
+    "continue": "",
+    "total": 1
   }
-]
+}
 ```
 
 ## Webhook Authorization API

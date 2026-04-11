@@ -43,42 +43,62 @@ type SessionActionRequest struct {
 }
 
 func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]breakglassv1alpha1.BreakglassSession, error) {
-	endpoint := "api/breakglassSessions"
-	params := url.Values{}
+	baseParams := url.Values{}
 	if opts.Cluster != "" {
-		params.Set("cluster", opts.Cluster)
+		baseParams.Set("cluster", opts.Cluster)
 	}
 	if opts.User != "" {
-		params.Set("user", opts.User)
+		baseParams.Set("user", opts.User)
 	}
 	if opts.Group != "" {
-		params.Set("group", opts.Group)
+		baseParams.Set("group", opts.Group)
 	}
 	if opts.Mine {
-		params.Set("mine", "true")
+		baseParams.Set("mine", "true")
 	}
 	if opts.Approver {
-		params.Set("approver", "true")
+		baseParams.Set("approver", "true")
 	}
 	if opts.ApprovedByMe {
-		params.Set("approvedByMe", "true")
+		baseParams.Set("approvedByMe", "true")
 	}
 	if opts.ActiveOnly {
-		params.Set("activeOnly", "true")
+		baseParams.Set("activeOnly", "true")
 	}
 	if len(opts.State) > 0 {
-		params.Set("state", strings.Join(opts.State, ","))
+		baseParams.Set("state", strings.Join(opts.State, ","))
 	}
-	if encoded := params.Encode(); encoded != "" {
-		endpoint = fmt.Sprintf("%s?%s", endpoint, encoded)
+
+	var all []breakglassv1alpha1.BreakglassSession
+	continueToken := ""
+	for {
+		params := url.Values{}
+		for k, v := range baseParams {
+			params[k] = v
+		}
+		if continueToken != "" {
+			params.Set("continue", continueToken)
+		}
+		endpoint := "api/breakglassSessions"
+		if encoded := params.Encode(); encoded != "" {
+			endpoint = fmt.Sprintf("%s?%s", endpoint, encoded)
+		}
+		var envelope struct {
+			Items    []breakglassv1alpha1.BreakglassSession `json:"items"`
+			Metadata struct {
+				Continue string `json:"continue"`
+			} `json:"metadata"`
+		}
+		if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &envelope); err != nil {
+			return nil, err
+		}
+		all = append(all, envelope.Items...)
+		if envelope.Metadata.Continue == "" {
+			break
+		}
+		continueToken = envelope.Metadata.Continue
 	}
-	var envelope struct {
-		Items []breakglassv1alpha1.BreakglassSession `json:"items"`
-	}
-	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &envelope); err != nil {
-		return nil, err
-	}
-	return envelope.Items, nil
+	return all, nil
 }
 
 // SessionGetResponse wraps the session with authorization metadata

@@ -198,6 +198,34 @@ func TestPaginate_EmptySlice(t *testing.T) {
 	}
 }
 
+func TestPaginate_InvalidInputs(t *testing.T) {
+	items := makeInts(10)
+
+	page, nextToken := utils.Paginate(items, 0, 0)
+	if len(page) != 0 {
+		t.Errorf("expected 0 items for limit=0, got %d", len(page))
+	}
+	if nextToken != "" {
+		t.Errorf("expected empty nextToken for limit=0, got %q", nextToken)
+	}
+
+	page, nextToken = utils.Paginate(items, -1, 0)
+	if len(page) != 0 {
+		t.Errorf("expected 0 items for limit=-1, got %d", len(page))
+	}
+	if nextToken != "" {
+		t.Errorf("expected empty nextToken for limit=-1, got %q", nextToken)
+	}
+
+	page, nextToken = utils.Paginate(items, 10, -1)
+	if len(page) != 0 {
+		t.Errorf("expected 0 items for offset=-1, got %d", len(page))
+	}
+	if nextToken != "" {
+		t.Errorf("expected empty nextToken for offset=-1, got %q", nextToken)
+	}
+}
+
 func TestPaginate_DefaultPaginationContinuation(t *testing.T) {
 	// Verify the full walk of 250 items in pages of 100.
 	items := makeInts(250)

@@ -65,7 +65,12 @@ func EncodeContinueToken(offset int) string {
 
 // Paginate applies limit and offset to items and returns the current page and the next
 // continue token. The returned token is empty if there are no more items after this page.
+// Invalid inputs (non-positive limit or negative offset) return an empty page with no token.
 func Paginate[T any](items []T, limit, offset int) (page []T, nextToken string) {
+	if limit <= 0 || offset < 0 {
+		return []T{}, ""
+	}
+
 	total := len(items)
 
 	// Offset past end of list → empty page, no continuation.
