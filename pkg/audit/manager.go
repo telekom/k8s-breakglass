@@ -18,6 +18,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -233,7 +234,6 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 					zap.String("event_type", string(event.Type)),
 					zap.String("event_id", event.ID),
 					zap.Error(writeErr))
-				metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
 			} else {
 				m.processedEvents.Add(1)
 				metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
@@ -260,13 +260,18 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 	if len(m.directSinks) == 0 {
 		return m.sink.Write(ctx, event)
 	}
-	var lastErr error
+	var errs []error
 	for _, s := range m.directSinks {
 		if err := s.Write(ctx, event); err != nil {
-			lastErr = err
+			m.logger.Error("direct sink write failed for sensitive event",
+				zap.String("sink", s.Name()),
+				zap.String("event_id", event.ID),
+				zap.Error(err))
+			metrics.AuditSinkErrors.WithLabelValues(s.Name(), "sensitive_sync_fallback").Inc()
+			errs = append(errs, err)
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }
 
 // EmitSync sends an audit event synchronously.
