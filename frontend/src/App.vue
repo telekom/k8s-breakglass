@@ -410,6 +410,7 @@ watch(
 
         <scale-telekom-nav-list slot="functions" variant="functions" alignment="right" class="header-functions">
           <scale-telekom-nav-item class="hc-toggle-nav-item">
+            <!-- eslint-disable-next-line vuejs-accessibility/no-redundant-roles -- role="button" required: parent scale-telekom-nav-item overrides implicit role in a11y tree -->
             <button
               type="button"
               role="button"
