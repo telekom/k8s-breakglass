@@ -1603,3 +1603,76 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 
 	_ = manager.Close()
 }
+
+func TestSyncWriteDirect_AllSinksFail(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	err1 := fmt.Errorf("sink-a failure")
+	err2 := fmt.Errorf("sink-b failure")
+	sinkA := &errableSink{name: "a", writeFn: func(_ *Event) error { return err1 }}
+	sinkB := &errableSink{name: "b", writeFn: func(_ *Event) error { return err2 }}
+
+	primarySink := &errableSink{name: "primary", writeFn: func(_ *Event) error { return nil }}
+
+	m := NewManager(primarySink, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+		DirectSinks: []Sink{sinkA, sinkB},
+	}, logger)
+	defer func() { _ = m.Close() }()
+
+	err := m.syncWriteDirect(context.Background(), &Event{ID: "e1", Type: EventSessionRevoked})
+	require.Error(t, err, "joined error expected when all sinks fail")
+	assert.ErrorIs(t, err, err1, "err1 must be present in joined error")
+	assert.ErrorIs(t, err, err2, "err2 must be present in joined error")
+}
+
+func TestSyncWriteDirect_PartialFailure(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	sinkErr := fmt.Errorf("sink-a failure")
+	sinkA := &errableSink{name: "a", writeFn: func(_ *Event) error { return sinkErr }}
+
+	var sinkBReceived []*Event
+	sinkB := &errableSink{name: "b", writeFn: func(e *Event) error {
+		sinkBReceived = append(sinkBReceived, e)
+		return nil
+	}}
+
+	primarySink := &errableSink{name: "primary", writeFn: func(_ *Event) error { return nil }}
+
+	m := NewManager(primarySink, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+		DirectSinks: []Sink{sinkA, sinkB},
+	}, logger)
+	defer func() { _ = m.Close() }()
+
+	evt := &Event{ID: "e2", Type: EventSessionRevoked}
+	err := m.syncWriteDirect(context.Background(), evt)
+	require.Error(t, err, "must return error when any sink fails")
+	assert.ErrorIs(t, err, sinkErr)
+	assert.Len(t, sinkBReceived, 1, "successful sink must still receive the event")
+}
+
+func TestSyncWriteDirect_NoDirectSinks_FallsBackToPrimary(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	var primaryReceived []*Event
+	primarySink := &errableSink{name: "primary", writeFn: func(e *Event) error {
+		primaryReceived = append(primaryReceived, e)
+		return nil
+	}}
+
+	m := NewManager(primarySink, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+	}, logger)
+	defer func() { _ = m.Close() }()
+
+	evt := &Event{ID: "e3", Type: EventSessionRevoked}
+	err := m.syncWriteDirect(context.Background(), evt)
+	require.NoError(t, err)
+	require.Len(t, primaryReceived, 1, "primary sink must receive event when no direct sinks configured")
+	assert.Equal(t, "e3", primaryReceived[0].ID)
+}
