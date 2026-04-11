@@ -290,7 +290,7 @@ func TestDisableSessionRateLimit_EnvVarFalse(t *testing.T) {
 	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false should parse as false")
 }
 
-func TestDisableSessionRateLimit_EnvVarMissing(t *testing.T) {
+func TestDisableSessionRateLimit_EmptyEnvVar(t *testing.T) {
 	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
 	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
 	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT unset should default to false")

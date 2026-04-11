@@ -432,7 +432,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 }
 
 func (wc *BreakglassSessionController) WithSessionCreationRateLimiter(rl *ratelimit.IPRateLimiter) *BreakglassSessionController {
-	if wc.sessionCreationLimiter != nil {
+	if wc.sessionCreationLimiter != nil && wc.sessionCreationLimiter != rl {
 		wc.sessionCreationLimiter.Stop()
 	}
 	wc.sessionCreationLimiter = rl

@@ -2200,6 +2200,10 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 		return []string{"system:authenticated"}, nil
 	}
 
+	permissiveLimiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())
+	defer permissiveLimiter.Stop()
+	ctrl.WithSessionCreationRateLimiter(permissiveLimiter)
+
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
