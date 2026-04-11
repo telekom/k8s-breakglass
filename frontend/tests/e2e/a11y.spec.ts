@@ -394,7 +394,6 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
 
   test.describe("High Contrast Toggle", () => {
     test("High contrast toggle persists and applies data attribute", async ({ page }) => {
-      await page.goto("/");
       await performMockLogin(page);
 
       const toggleBtn = page.locator(".hc-toggle-button");
