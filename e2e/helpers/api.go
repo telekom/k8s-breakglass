@@ -442,9 +442,10 @@ func (c *APIClient) CancelSessionViaAPI(ctx context.Context, t *testing.T, sessi
 	return nil
 }
 
-// ListSessions lists all sessions via the REST API
+// ListSessions lists all sessions via the REST API.
+// Uses limit=500 (max page size) to ensure all sessions are returned in test scenarios.
 func (c *APIClient) ListSessions(ctx context.Context) ([]breakglassv1alpha1.BreakglassSession, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, sessionsBasePath, nil)
+	resp, err := c.doRequest(ctx, http.MethodGet, sessionsBasePath+"?limit=500", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
