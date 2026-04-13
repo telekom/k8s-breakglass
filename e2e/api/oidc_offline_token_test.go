@@ -538,7 +538,10 @@ func TestOIDC_OfflineToken_Rotation_PersistsNewToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for Ready — this triggers token exchange and rotation persist.
-	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
+	// Use a generous timeout: the controller reaches Keycloak via the in-cluster service
+	// URL, and Keycloak may need up to ~60s to recover after a pod restart. 150s gives
+	// enough headroom while keeping the test within its 5-minute context budget.
+	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 150*time.Second)
 	require.NoError(t, err, "CC with rotation enabled should become Ready")
 
 	// Poll for the rotated key to appear in the secret (best-effort write may be async).

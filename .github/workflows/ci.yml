@@ -1389,6 +1389,23 @@ jobs:
             exit 1
           fi
 
+          # Wait for Keycloak pod to be Ready in-cluster.
+          # The port-forward confirms localhost connectivity, but the Keycloak pod
+          # itself may still be starting or recovering from a restart. The controller
+          # reaches Keycloak via the in-cluster service URL, so we must ensure the pod
+          # is Ready before the tests create ClusterConfig objects that trigger OIDC
+          # discovery requests. Without this, the rotation tests (OT-007, OT-008) fail
+          # with "connection refused" on breakglass-keycloak.breakglass-system.svc.cluster.local:8443.
+          echo "Waiting for Keycloak pod to be Ready in-cluster (up to 120s)..."
+          if ! kubectl wait pod -n breakglass-system -l app=keycloak \
+              --for=condition=Ready --timeout=120s 2>&1; then
+            echo "ERROR: Keycloak pod not Ready after 120s"
+            kubectl get pods -n breakglass-system -l app=keycloak -o wide 2>&1 || true
+            kubectl describe pod -n breakglass-system -l app=keycloak 2>&1 || true
+            exit 1
+          fi
+          echo "✓ Keycloak pod is Ready in-cluster"
+
           # Wait for API to be reachable
           for i in {1..20}; do
             if curl -s http://localhost:8080/api/config > /dev/null 2>&1; then
