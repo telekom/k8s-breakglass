@@ -3978,6 +3978,9 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status, "Requester should not be able to self-approve")
 	})
 
+	// Ensure Unix timestamp advances between session creations to avoid name collisions.
+	// The server generates session names using time.Now().Unix() (see debug_session_api.go).
+	time.Sleep(1100 * time.Millisecond)
 	t.Run("ApproverCannotTerminateOthersSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4009,6 +4012,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status, "Non-owner should not be able to terminate")
 	})
 
+	time.Sleep(1100 * time.Millisecond)
 	t.Run("ApproverCannotRenewOthersSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4040,6 +4044,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status, "Non-owner should not be able to renew")
 	})
 
+	time.Sleep(1100 * time.Millisecond)
 	t.Run("RequesterCannotRejectOwnSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4065,6 +4070,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		// Log the result for analysis
 	})
 
+	time.Sleep(1100 * time.Millisecond)
 	t.Run("UnauthorizedUserCannotAccessSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4086,10 +4092,9 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		_, err = unauthClient.GetDebugSession(ctx, t, session.Name)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "401")
-		// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
-		time.Sleep(1100 * time.Millisecond)
 	})
 
+	time.Sleep(1100 * time.Millisecond)
 	t.Run("ApproverCanViewAllSessions", func(t *testing.T) {
 		// Create a session owned by requester
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
