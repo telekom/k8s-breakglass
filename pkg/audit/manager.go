@@ -273,6 +273,9 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
 			return err
 		}
+		// processedEvents counts enqueue/write attempts that succeeded at this
+		// layer; it does not guarantee downstream delivery (the queued sink may
+		// still drop the event if its own queue is full or the circuit is open).
 		m.processedEvents.Add(1)
 		metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
 		m.sensitiveEventsSyncWritten.Add(1)
@@ -329,7 +332,7 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 
 // shouldSample returns true if the event should be sampled (dropped).
 func (m *Manager) shouldSample(eventType EventType) bool {
-	// Sensitive events are never sampled — they must always be captured.
+	// Sensitive events are never sampled.
 	if IsSensitiveEvent(eventType) {
 		return false
 	}

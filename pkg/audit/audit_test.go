@@ -19,6 +19,23 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+// allSensitiveEventTypes mirrors the cases in IsSensitiveEvent so that
+// TestIsSensitiveEvent and sampling tests share a single source of truth.
+var allSensitiveEventTypes = []EventType{
+	EventSessionRequested, EventSessionApproved, EventSessionDenied,
+	EventSessionRejected, EventSessionExpired,
+	EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
+	EventAccessDenied, EventAccessDeniedPolicy,
+	EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
+	EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
+	EventDebugSessionCreated, EventDebugSessionStarted,
+	EventDebugSessionTerminated, EventDebugSessionFailed,
+	EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
+	EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
+	EventResourceImpersonate, EventPolicyBypassed,
+	EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride,
+}
+
 func TestEventTypes(t *testing.T) {
 	tests := []struct {
 		eventType        EventType
@@ -185,18 +202,7 @@ func TestIsHighVolumeEvent(t *testing.T) {
 }
 
 func TestIsSensitiveEvent(t *testing.T) {
-	sensitiveEvents := []EventType{
-		EventSessionRequested, EventSessionApproved, EventSessionDenied,
-		EventSessionRevoked, EventAccessDenied, EventAccessDeniedPolicy,
-		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
-		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
-		EventDebugSessionCreated, EventDebugSessionTerminated,
-		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
-		EventResourceImpersonate, EventPolicyBypassed,
-		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride,
-	}
-
-	for _, evt := range sensitiveEvents {
+	for _, evt := range allSensitiveEventTypes {
 		assert.True(t, IsSensitiveEvent(evt), "expected %s to be sensitive event", evt)
 	}
 
@@ -1172,34 +1178,18 @@ func TestManager_SensitiveEventsNeverSampled(t *testing.T) {
 		HighVolumeEventTypes: []EventType{EventResourceGet, EventSessionRequested},
 	}, logger)
 
-	sensitiveTypes := []EventType{
-		EventSessionRequested, EventSessionApproved, EventSessionDenied,
-		EventSessionRejected, EventSessionExpired,
-		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
-		EventAccessDenied, EventAccessDeniedPolicy,
-		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
-		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
-		EventDebugSessionCreated, EventDebugSessionStarted,
-		EventDebugSessionTerminated, EventDebugSessionFailed,
-		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
-		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
-		EventResourceImpersonate, EventPolicyBypassed,
-		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride,
-	}
-
 	const eventsPerType = 50
-	for _, evtType := range sensitiveTypes {
+	for _, evtType := range allSensitiveEventTypes {
 		for i := 0; i < eventsPerType; i++ {
 			manager.Emit(context.Background(), &Event{Type: evtType})
 		}
 	}
 
-	time.Sleep(200 * time.Millisecond) //nolint:mnd // drain async queue before closing
 	_ = manager.Close()
 
 	mu.Lock()
 	defer mu.Unlock()
-	for _, evtType := range sensitiveTypes {
+	for _, evtType := range allSensitiveEventTypes {
 		assert.Equal(t, eventsPerType, received[evtType],
 			"sensitive event %s must never be sampled", evtType)
 	}
