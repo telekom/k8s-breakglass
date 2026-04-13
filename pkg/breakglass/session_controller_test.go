@@ -6909,12 +6909,7 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 		return []string{"system:authenticated"}, nil
 	}
 
-	permissiveLimiter := ratelimit.New(ratelimit.Config{
-		Rate:            1000,
-		Burst:           10000,
-		CleanupInterval: time.Minute,
-		MaxAge:          5 * time.Minute,
-	})
+	permissiveLimiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())
 	defer permissiveLimiter.Stop()
 	ctrl.WithSessionCreationRateLimiter(permissiveLimiter)
 

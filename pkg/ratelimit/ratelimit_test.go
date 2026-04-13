@@ -66,7 +66,7 @@ func TestDefaultConfigs(t *testing.T) {
 		defer rl.Stop()
 
 		for i := 0; i < 100; i++ {
-			assert.True(t, rl.Allow("user@example.com"), "permissive limiter must allow request %d", i)
+			assert.Truef(t, rl.Allow("user@example.com"), "permissive limiter must allow request %d", i)
 		}
 	})
 }
