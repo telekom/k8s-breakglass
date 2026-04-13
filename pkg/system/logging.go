@@ -42,7 +42,7 @@ func EnrichReqLoggerWithAuth(c *gin.Context, reqLogger *zap.SugaredLogger) *zap.
 	if v, ok := c.Get("groups"); ok {
 		if groups, ok2 := v.([]string); ok2 && len(groups) > 0 {
 			reqLogger = reqLogger.With("groupCount", len(groups))
-			reqLogger.Debugw("Request token groups", "groupCount", len(groups), "groups", "[REDACTED]")
+			reqLogger.Debugw("Request token groups", "groups", "[REDACTED]")
 		}
 	}
 	return reqLogger
