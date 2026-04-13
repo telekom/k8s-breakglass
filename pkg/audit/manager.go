@@ -111,7 +111,8 @@ type ManagerConfig struct {
 
 	// DirectSinks are the underlying raw sinks used for true synchronous
 	// writes during sensitive-event fallback, bypassing QueuedSink layers.
-	// If empty, the fallback uses the queued sink (best-effort, non-blocking).
+	// If empty, the fallback writes through the primary sink chain, which may
+	// block up to the context timeout and is subject to downstream queue limits.
 	DirectSinks []Sink
 }
 

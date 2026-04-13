@@ -91,7 +91,10 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	// the underlying sinks are torn down. Without this ordering, async workers
 	// could write to sinks that are being closed concurrently.
 	if s.manager != nil {
-		_ = s.manager.Close()
+		if err := s.manager.Close(); err != nil {
+			s.logger.Warn("failed to close audit manager during reload",
+				zap.String("error", err.Error()))
+		}
 		s.manager = nil
 	}
 
