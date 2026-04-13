@@ -38,7 +38,11 @@ type Manager struct {
 	logger      *zap.Logger
 	wg          sync.WaitGroup
 	closed      atomic.Bool
-	stopStats   chan struct{} // Signal to stop stats reporter
+	// closeMu guards asyncQueue sends against concurrent Close. Emit/EmitSync
+	// hold RLock while sending; Close holds Lock before closing the channel, so
+	// no send can race with the channel close.
+	closeMu   sync.RWMutex
+	stopStats chan struct{} // Signal to stop stats reporter
 
 	// Metrics for monitoring
 	queuedEvents               atomic.Int64
@@ -217,7 +221,17 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 		event.Severity = SeverityForEventType(event.Type)
 	}
 
-	// Non-blocking send to async queue
+	// Non-blocking send to async queue.
+	// Hold closeMu.RLock so that Close cannot close the channel concurrently.
+	m.closeMu.RLock()
+	defer m.closeMu.RUnlock()
+
+	// Re-check closed under the lock: Close sets closed=true then acquires
+	// closeMu.Lock, so if we see closed=true here the channel is already closed.
+	if m.closed.Load() {
+		return
+	}
+
 	select {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
@@ -420,7 +434,12 @@ func (m *Manager) Close() error {
 	// Stop stats reporter
 	close(m.stopStats)
 
+	// Acquire the exclusive write lock before closing the channel so that any
+	// concurrent Emit holding the read lock finishes its send first.
+	m.closeMu.Lock()
 	close(m.asyncQueue)
+	m.closeMu.Unlock()
+
 	m.wg.Wait()
 
 	m.logger.Info("audit manager stopped",
