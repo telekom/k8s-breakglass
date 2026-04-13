@@ -3752,8 +3752,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		assert.Contains(t, session.Spec.InvitedParticipants, "user1@example.com")
 		assert.Contains(t, session.Spec.InvitedParticipants, "user2@example.com")
 		t.Logf("Created session with invited participants: %v", session.Spec.InvitedParticipants)
-		// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
-		time.Sleep(1100 * time.Millisecond)
+		helpers.WaitForNextUnixSecond()
 	})
 
 	t.Run("CreateWithNodeSelector", func(t *testing.T) {
@@ -3779,8 +3778,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		// Verify node selector was set
 		assert.Equal(t, "linux", session.Spec.NodeSelector["kubernetes.io/os"])
 		t.Logf("Created session with node selector: %v", session.Spec.NodeSelector)
-		// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
-		time.Sleep(1100 * time.Millisecond)
+		helpers.WaitForNextUnixSecond()
 	})
 
 	t.Run("CreateWithSchedulingOption", func(t *testing.T) {
@@ -3803,8 +3801,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 
 		assert.Equal(t, "priority", session.Spec.SelectedSchedulingOption)
 		t.Logf("Created session with scheduling option: %s", session.Spec.SelectedSchedulingOption)
-		// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
-		time.Sleep(1100 * time.Millisecond)
+		helpers.WaitForNextUnixSecond()
 	})
 
 	t.Run("CreateWithInvalidSchedulingOption", func(t *testing.T) {
@@ -3818,9 +3815,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 
 		_, status, err := apiClient.CreateDebugSession(ctx, t, req)
 		t.Logf("Create with invalid scheduling option: status=%d, err=%v", status, err)
-		// Should either fail validation or use default
-		// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
-		time.Sleep(1100 * time.Millisecond)
+		helpers.WaitForNextUnixSecond()
 	})
 
 	t.Run("CreateWithLongReason", func(t *testing.T) {
@@ -3839,8 +3834,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 			cleanup.Add(&breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 			})
-			// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
-			time.Sleep(1100 * time.Millisecond)
+			helpers.WaitForNextUnixSecond()
 		}
 	})
 
@@ -3978,6 +3972,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status, "Requester should not be able to self-approve")
 	})
 
+	helpers.WaitForNextUnixSecond()
 	t.Run("ApproverCannotTerminateOthersSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4009,6 +4004,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status, "Non-owner should not be able to terminate")
 	})
 
+	helpers.WaitForNextUnixSecond()
 	t.Run("ApproverCannotRenewOthersSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4040,6 +4036,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status, "Non-owner should not be able to renew")
 	})
 
+	helpers.WaitForNextUnixSecond()
 	t.Run("RequesterCannotRejectOwnSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4065,6 +4062,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		// Log the result for analysis
 	})
 
+	helpers.WaitForNextUnixSecond()
 	t.Run("UnauthorizedUserCannotAccessSession", func(t *testing.T) {
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
 			TemplateRef:       sessionTemplateName,
@@ -4086,10 +4084,9 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		_, err = unauthClient.GetDebugSession(ctx, t, session.Name)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "401")
-		// Wait to ensure next subtest gets a different timestamp (session names use Unix seconds)
-		time.Sleep(1100 * time.Millisecond)
 	})
 
+	helpers.WaitForNextUnixSecond()
 	t.Run("ApproverCanViewAllSessions", func(t *testing.T) {
 		// Create a session owned by requester
 		session, _, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{

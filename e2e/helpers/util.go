@@ -110,3 +110,13 @@ func PastTime(d time.Duration) metav1.Time {
 func GenerateUniqueName(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, uuid.New().String()[:8])
 }
+
+// WaitForNextUnixSecond blocks until time.Now().Unix() increments, ensuring
+// that consecutive session names (which embed Unix seconds) are unique.
+// It polls in short intervals so it only sleeps as long as actually needed.
+func WaitForNextUnixSecond() {
+	target := time.Now().Unix() + 1
+	for time.Now().Unix() < target {
+		time.Sleep(50 * time.Millisecond)
+	}
+}
