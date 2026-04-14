@@ -77,14 +77,9 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 
 	// Attempt to resolve groups from token first (preferred) then fallback to cluster-based resolution
 	var userGroups []string
-	// Raw token groups (pre-normalization) for trace diagnostics
 	if raw, exists := c.Get("groups"); exists {
 		if arr, ok := raw.([]string); ok {
 			reqLog.Debugw("Extracted raw token groups from JWT claims", "rawTokenGroupCount", len(arr))
-		}
-	}
-	if tg, exists := c.Get("groups"); exists {
-		if arr, ok := tg.([]string); ok {
 			userGroups = append(userGroups, arr...)
 		}
 	}
