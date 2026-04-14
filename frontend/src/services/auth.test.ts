@@ -59,8 +59,13 @@ describe("AuthService", () => {
       expect(authService.userManager.settings.userStore).toBeDefined();
     });
 
-    it("should enable automatic silent renew", () => {
-      expect(authService.userManager.settings.automaticSilentRenew).toBe(true);
+    it("should disable automatic silent renew for security", () => {
+      expect(authService.userManager.settings.automaticSilentRenew).toBe(false);
+    });
+
+    it("should not include offline_access in scope", () => {
+      expect(authService.userManager.settings.scope).toBeDefined();
+      expect(authService.userManager.settings.scope).not.toContain("offline_access");
     });
   });
 
