@@ -171,6 +171,16 @@ function getOIDCStorage(): Storage {
   if (!isBrowser) {
     return fallbackStorage;
   }
+  const prefersPersistent = getTokenPersistenceMode() === "persistent";
+  if (prefersPersistent && typeof window.localStorage !== "undefined") {
+    if (!isProdBuild) {
+      warn(
+        "AuthService",
+        "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
+      );
+    }
+    return window.localStorage;
+  }
   return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
 }
 
@@ -871,7 +881,7 @@ export default class AuthService {
       redirect_uri: this.baseURL + AuthRedirect,
       silent_redirect_uri: this.baseURL + AuthSilentRedirect,
       response_type: "code",
-      // Include offline_access to get refresh tokens for CSP-blocked iframe fallback
+      // offline_access intentionally omitted: breakglass tokens are short-lived emergency credentials; silent refresh would allow sessions to outlive their intended window
       scope: "openid profile email",
       post_logout_redirect_uri: this.baseURL,
       filterProtocolClaims: true,
