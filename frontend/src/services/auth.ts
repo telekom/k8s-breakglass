@@ -840,10 +840,11 @@ export default class AuthService {
       silent_redirect_uri: this.baseURL + AuthSilentRedirect,
       response_type: "code",
       // offline_access intentionally omitted: breakglass tokens are short-lived emergency credentials; silent refresh would allow sessions to outlive their intended window
+      // automaticSilentRenew is also disabled to prevent iframe-based silent session extension
       scope: "openid profile email",
       post_logout_redirect_uri: this.baseURL,
       filterProtocolClaims: true,
-      automaticSilentRenew: true,
+      automaticSilentRenew: false,
       accessTokenExpiringNotificationTimeInSeconds: 60,
       // Prefer refresh tokens over iframe when available (works around CSP frame-ancestors issues)
       revokeTokensOnSignout: true,
