@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`--disable-session-rate-limit` flag**: New CLI flag (`BREAKGLASS_DISABLE_SESSION_RATE_LIMIT` env var) replaces the strict session-creation rate limiter with a permissive one (1000 req/s, burst 10000). Intended for E2E testing and development environments only. Do not use in production.
 
+### Fixed
+
+- **Orphaned session cleanup now restricted to terminal states**: `markCleanupExpiredSession` previously deleted orphaned `BreakglassSession` objects in any non-Pending state, including active `Approved` and `WaitingForScheduledTime` sessions that had no `RetainedUntil` set. The predicate is now an explicit allowlist of terminal states (`Expired`, `IdleExpired`, `Rejected`, `Withdrawn`, `ApprovalTimeout`) — active sessions are never deleted by the orphan cleanup path.
+
 ### Changed
 
 - **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.
