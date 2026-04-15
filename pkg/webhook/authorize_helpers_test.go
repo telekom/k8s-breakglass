@@ -102,7 +102,7 @@ func TestBuildFinalReason_DeniedWithSessionSARSkip(t *testing.T) {
 	wc.buildFinalReason(s)
 
 	assert.Contains(t, s.reason, "1 active breakglass session(s) found")
-	assert.Contains(t, s.reason, "session-1(adm***)")
+	assert.Contains(t, s.reason, "session-1([REDACTED])")
 	assert.Contains(t, s.reason, "rest config unavailable")
 }
 
