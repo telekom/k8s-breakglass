@@ -217,6 +217,13 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 	sessions := bsl.Items
 
 	now := time.Now()
+	terminalStates := map[breakglassv1alpha1.BreakglassSessionState]bool{
+		breakglassv1alpha1.SessionStateExpired:     true,
+		breakglassv1alpha1.SessionStateIdleExpired: true,
+		breakglassv1alpha1.SessionStateRejected:    true,
+		breakglassv1alpha1.SessionStateWithdrawn:   true,
+		breakglassv1alpha1.SessionStateTimeout:     true,
+	}
 	for _, ses := range sessions {
 		// Check for context cancellation to allow graceful shutdown
 		select {
@@ -249,13 +256,6 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 		// Expired, IdleExpired, Rejected, Withdrawn, ApprovalTimeout.
 		// Active states (Pending, Approved, WaitingForScheduledTime) are never deleted here.
 		if len(ses.OwnerReferences) == 0 {
-			terminalStates := map[breakglassv1alpha1.BreakglassSessionState]bool{
-				breakglassv1alpha1.SessionStateExpired:     true,
-				breakglassv1alpha1.SessionStateIdleExpired: true,
-				breakglassv1alpha1.SessionStateRejected:    true,
-				breakglassv1alpha1.SessionStateWithdrawn:   true,
-				breakglassv1alpha1.SessionStateTimeout:     true,
-			}
 			if ses.Status.RetainedUntil.IsZero() && terminalStates[ses.Status.State] {
 				routine.Log.Infow("Deleting session without OwnerReferences (orphaned/legacy - no RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
 				if err := routine.Manager.DeleteBreakglassSession(ctx, &ses); err != nil {
@@ -267,7 +267,7 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 				routine.Log.Debugw("Deleted orphaned breakglass session", system.NamespacedFields(ses.Name, ses.Namespace)...)
 				continue
 			}
-			routine.Log.Debugw("Skipping deletion of session without OwnerReferences (active state or has RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
+			routine.Log.Debugw("Skipping deletion of session without OwnerReferences (non-terminal state or has RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
 		}
 	}
 	routine.Log.Infow("Expired breakglass sessions deletion completed", "deleted", deletedCount)
