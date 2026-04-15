@@ -609,6 +609,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 			cr := breakglass.CleanupRoutine{
 				Log:           log,
 				Manager:       deps.sessionManager,
+				AuditManager:  deps.auditService.Manager(),
 				LeaderElected: leaderElectedCh,
 				MailService:   deps.mailService,
 				BrandingName:  deps.cfg.Frontend.BrandingName,
