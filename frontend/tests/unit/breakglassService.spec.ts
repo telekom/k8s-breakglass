@@ -133,8 +133,16 @@ describe("BreakglassService", () => {
     });
 
     it("fetchActiveSessions walks all pages", async () => {
-      const page1 = { metadata: { name: "a1" }, spec: { grantedGroup: "grp", cluster: "cl" }, status: { state: "Approved" } };
-      const page2 = { metadata: { name: "a2" }, spec: { grantedGroup: "grp", cluster: "cl" }, status: { state: "Approved" } };
+      const page1 = {
+        metadata: { name: "a1" },
+        spec: { grantedGroup: "grp", cluster: "cl" },
+        status: { state: "Approved" },
+      };
+      const page2 = {
+        metadata: { name: "a2" },
+        spec: { grantedGroup: "grp", cluster: "cl" },
+        status: { state: "Approved" },
+      };
       mockGet
         .mockResolvedValueOnce({ data: { items: [page1], metadata: { continue: "next" } } })
         .mockResolvedValueOnce({ data: { items: [page2], metadata: { continue: "" } } });
@@ -160,7 +168,11 @@ describe("BreakglassService", () => {
 
     it("fetchHistoricalSessions walks all pages", async () => {
       const h1 = { metadata: { name: "h1" }, spec: { grantedGroup: "g", cluster: "c" }, status: { state: "Rejected" } };
-      const h2 = { metadata: { name: "h2" }, spec: { grantedGroup: "g", cluster: "c" }, status: { state: "Withdrawn" } };
+      const h2 = {
+        metadata: { name: "h2" },
+        spec: { grantedGroup: "g", cluster: "c" },
+        status: { state: "Withdrawn" },
+      };
       mockGet
         .mockResolvedValueOnce({ data: { items: [h1], metadata: { continue: "p2" } } })
         .mockResolvedValueOnce({ data: { items: [h2], metadata: { continue: "" } } });
@@ -173,7 +185,11 @@ describe("BreakglassService", () => {
     });
 
     it("fetchSessionsIApproved walks all pages", async () => {
-      const a1 = { metadata: { name: "ia1" }, spec: { grantedGroup: "g", cluster: "c" }, status: { state: "Approved" } };
+      const a1 = {
+        metadata: { name: "ia1" },
+        spec: { grantedGroup: "g", cluster: "c" },
+        status: { state: "Approved" },
+      };
       const a2 = { metadata: { name: "ia2" }, spec: { grantedGroup: "g", cluster: "c" }, status: { state: "Timeout" } };
       mockGet
         .mockResolvedValueOnce({ data: { items: [a1], metadata: { continue: "tok" } } })
