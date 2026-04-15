@@ -127,7 +127,7 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 	idpList := &breakglassv1alpha1.IdentityProviderList{}
 	if err := wc.escalManager.List(ctx, idpList); err != nil {
 		reqLog.With("error", err.Error()).Warn("Failed to list IdentityProviders for IDP hint")
-		return "(Your token issuer is not configured for this cluster)"
+		return "(could not determine token issuer configuration)"
 	}
 
 	for _, idp := range idpList.Items {
