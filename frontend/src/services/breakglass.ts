@@ -18,13 +18,13 @@ export type SessionSearchParams = {
 
 export default class BreakglassService {
   public async fetchMyOutstandingRequests(): Promise<SessionCR[]> {
-    // Use RESTful endpoint with filtering
     debug("BreakglassService.fetchMyOutstandingRequests", "Fetching outstanding requests");
     try {
-      const r = await this.client.get("/breakglassSessions", {
-        params: { mine: true, approver: false, state: "pending" },
+      const sessions = await this.fetchAllPages<SessionCR>("/breakglassSessions", {
+        mine: true,
+        approver: false,
+        state: "pending",
       });
-      const sessions = Array.isArray(r.data?.items) ? (r.data.items as SessionCR[]) : [];
       debug("BreakglassService.fetchMyOutstandingRequests", "Fetched outstanding requests", {
         count: sessions.length,
       });
@@ -32,7 +32,7 @@ export default class BreakglassService {
     } catch (e) {
       handleAxiosError("BreakglassService.fetchMyOutstandingRequests", e, "Failed to fetch outstanding requests");
       debug("BreakglassService.fetchMyOutstandingRequests", "Request failed", { errorMessage: (e as Error)?.message });
-      throw e; // Re-throw so UI can show error state
+      throw e;
     }
   }
   private client: AxiosInstance;
@@ -45,6 +45,19 @@ export default class BreakglassService {
     // Note: Error handling is done in individual methods to provide context-specific messages.
     // Do NOT add a response interceptor that calls handleAxiosError here, as it would cause
     // duplicate error toasts (interceptor + method catch block).
+  }
+
+  private async fetchAllPages<T>(url: string, params: Record<string, unknown>): Promise<T[]> {
+    const all: T[] = [];
+    let continueToken: string | undefined = undefined;
+    do {
+      const requestParams = continueToken ? { ...params, continue: continueToken } : params;
+      const r = await this.client.get(url, { params: requestParams });
+      const items = Array.isArray(r.data?.items) ? (r.data.items as T[]) : [];
+      all.push(...items);
+      continueToken = r.data?.metadata?.continue || "";
+    } while (continueToken);
+    return all;
   }
 
   // Backend endpoints:
@@ -107,10 +120,11 @@ export default class BreakglassService {
   public async fetchActiveSessions(): Promise<ActiveBreakglass[]> {
     try {
       debug("BreakglassService.fetchActiveSessions", "Fetching active sessions");
-      const r = await this.client.get("/breakglassSessions", {
-        params: { state: "approved", mine: true, approver: false },
+      const data = await this.fetchAllPages<SessionCR>("/breakglassSessions", {
+        state: "approved",
+        mine: true,
+        approver: false,
       });
-      const data = Array.isArray(r.data?.items) ? (r.data.items as SessionCR[]) : [];
       debug("BreakglassService.fetchActiveSessions", "Fetched active sessions", { count: data.length });
       // Normalize approved sessions to a shape that includes metadata/spec/status so
       // callers (getBreakglasses) can build sessionActive/sessionPending consistently.
@@ -139,10 +153,11 @@ export default class BreakglassService {
   public async fetchPendingSessionsForApproval(): Promise<SessionCR[]> {
     try {
       debug("BreakglassService.fetchPendingSessionsForApproval", "Fetching pending sessions for approval");
-      const r = await this.client.get("/breakglassSessions", {
-        params: { state: "pending", approver: true, mine: false },
+      const data = await this.fetchAllPages<SessionCR>("/breakglassSessions", {
+        state: "pending",
+        approver: true,
+        mine: false,
       });
-      const data = Array.isArray(r.data?.items) ? (r.data.items as SessionCR[]) : [];
       debug("BreakglassService.fetchPendingSessionsForApproval", "Fetched pending sessions", { count: data.length });
 
       // Backend now returns sessions with approvalReason populated from session.spec.approvalReasonConfig
@@ -210,10 +225,7 @@ export default class BreakglassService {
   public async searchSessions(params: SessionSearchParams = {}): Promise<SessionCR[]> {
     try {
       debug("BreakglassService.searchSessions", "Searching sessions", { params });
-      const response = await this.client.get("/breakglassSessions", {
-        params,
-      });
-      const results = Array.isArray(response.data?.items) ? (response.data.items as SessionCR[]) : [];
+      const results = await this.fetchAllPages<SessionCR>("/breakglassSessions", params as Record<string, unknown>);
       debug("BreakglassService.searchSessions", "Search complete", { count: results.length });
       return results;
     } catch (e) {
@@ -347,10 +359,11 @@ export default class BreakglassService {
   public async fetchHistoricalSessions(): Promise<ActiveBreakglass[]> {
     try {
       debug("BreakglassService.fetchHistoricalSessions", "Fetching historical sessions");
-      const response = await this.client.get("/breakglassSessions", {
-        params: { state: "rejected,withdrawn", mine: true, approver: false },
+      const all = await this.fetchAllPages<SessionCR>("/breakglassSessions", {
+        state: "rejected,withdrawn",
+        mine: true,
+        approver: false,
       });
-      const all = Array.isArray(response.data?.items) ? response.data.items : [];
       debug("BreakglassService.fetchHistoricalSessions", "Fetched historical sessions", { count: all.length });
       return all.map((ses: SessionCR) => ({
         name: ses?.metadata?.name || "",
@@ -377,13 +390,11 @@ export default class BreakglassService {
   public async fetchMySessions(): Promise<ActiveBreakglass[]> {
     try {
       debug("BreakglassService.fetchMySessions", "Fetching my sessions");
-      const [activeResp, timedOutResp, historical] = await Promise.all([
-        this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "approved" } }),
-        this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "timeout" } }),
+      const [approved, timedOut, historical] = await Promise.all([
+        this.fetchAllPages<SessionCR>("/breakglassSessions", { mine: true, approver: false, state: "approved" }),
+        this.fetchAllPages<SessionCR>("/breakglassSessions", { mine: true, approver: false, state: "timeout" }),
         this.fetchHistoricalSessions(),
       ]);
-      const approved = Array.isArray(activeResp.data?.items) ? activeResp.data.items : [];
-      const timedOut = Array.isArray(timedOutResp.data?.items) ? timedOutResp.data.items : [];
 
       // Normalize entries to ActiveBreakglass shape
       const approvedNormalized = approved.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
@@ -410,10 +421,12 @@ export default class BreakglassService {
   public async fetchSessionsIApproved(): Promise<ActiveBreakglass[]> {
     try {
       debug("BreakglassService.fetchSessionsIApproved", "Fetching sessions I approved");
-      const response = await this.client.get("/breakglassSessions", {
-        params: { state: "approved,timeout", mine: false, approver: false, approvedByMe: true },
+      const data = await this.fetchAllPages<SessionCR>("/breakglassSessions", {
+        state: "approved,timeout",
+        mine: false,
+        approver: false,
+        approvedByMe: true,
       });
-      const data = Array.isArray(response.data?.items) ? response.data.items : [];
 
       const combined = data.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
       const seen = new Map<string, ActiveBreakglass>();

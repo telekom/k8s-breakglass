@@ -442,29 +442,49 @@ func (c *APIClient) CancelSessionViaAPI(ctx context.Context, t *testing.T, sessi
 	return nil
 }
 
-// ListSessions lists all sessions via the REST API.
-// Uses limit=500 (max page size) to ensure all sessions are returned in test scenarios.
+// ListSessions lists all sessions via the REST API, following pagination continuation tokens.
 func (c *APIClient) ListSessions(ctx context.Context) ([]breakglassv1alpha1.BreakglassSession, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, sessionsBasePath+"?limit=500", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list sessions: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var all []breakglassv1alpha1.BreakglassSession
+	continueToken := ""
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to list sessions: status=%d, body=%s", resp.StatusCode, string(body))
+	for {
+		path := sessionsBasePath
+		if continueToken != "" {
+			path += "?continue=" + continueToken
+		}
+
+		resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list sessions: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("failed to list sessions: status=%d, body=%s", resp.StatusCode, string(body))
+		}
+
+		// The API returns a paginated envelope: {"items": [...], "metadata": {"continue": "...", "total": N}}
+		var envelope struct {
+			Items    []breakglassv1alpha1.BreakglassSession `json:"items"`
+			Metadata struct {
+				Continue string `json:"continue"`
+			} `json:"metadata"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("failed to decode sessions: %w", err)
+		}
+		_ = resp.Body.Close()
+
+		all = append(all, envelope.Items...)
+		if envelope.Metadata.Continue == "" {
+			break
+		}
+		continueToken = envelope.Metadata.Continue
 	}
 
-	// The API returns a paginated envelope: {"items": [...], "metadata": {"continue": "...", "total": N}}
-	var envelope struct {
-		Items []breakglassv1alpha1.BreakglassSession `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, fmt.Errorf("failed to decode sessions: %w", err)
-	}
-
-	return envelope.Items, nil
+	return all, nil
 }
 
 // GetSession gets a specific session via the REST API
