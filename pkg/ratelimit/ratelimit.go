@@ -84,10 +84,11 @@ type entry struct {
 
 // IPRateLimiter implements per-IP rate limiting with automatic cleanup
 type IPRateLimiter struct {
-	mu      sync.RWMutex
-	entries map[string]*entry
-	config  Config
-	done    chan struct{}
+	mu       sync.RWMutex
+	entries  map[string]*entry
+	config   Config
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // New creates a new per-IP rate limiter with the given configuration
@@ -159,9 +160,9 @@ func (rl *IPRateLimiter) MiddlewareWithExclusions(excludedPrefixes []string) gin
 	}
 }
 
-// Stop stops the cleanup goroutine
+// Stop stops the cleanup goroutine. Safe to call multiple times concurrently.
 func (rl *IPRateLimiter) Stop() {
-	close(rl.done)
+	rl.stopOnce.Do(func() { close(rl.done) })
 }
 
 // cleanup periodically removes stale entries
