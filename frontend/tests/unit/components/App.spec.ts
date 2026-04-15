@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, VueWrapper } from "@vue/test-utils";
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createMemoryHistory } from "vue-router";
 import App from "@/App.vue";
 import { AuthKey, BrandingKey } from "@/keys";
 
@@ -38,7 +38,7 @@ const SCALE_STUBS = {
 function createMockRouter() {
   const stub = { template: "<div/>" };
   return createRouter({
-    history: createWebHistory(),
+    history: createMemoryHistory(),
     routes: [
       { path: "/", name: "home", component: stub },
       { path: "/approvals/pending", name: "pendingApprovals", component: stub },
