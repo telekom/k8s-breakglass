@@ -590,8 +590,11 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		go func() {
 			defer wg.Done()
 			cr := breakglass.CleanupRoutine{
-				Log:           log,
-				Manager:       deps.sessionManager,
+				Log:     log,
+				Manager: deps.sessionManager,
+				// AuditService is stored so Manager() can be resolved lazily on each
+				// cleanup iteration, picking up the current manager after any reload.
+				AuditService:  deps.auditService,
 				LeaderElected: leaderElectedCh,
 				MailService:   deps.mailService,
 				BrandingName:  deps.cfg.Frontend.BrandingName,
