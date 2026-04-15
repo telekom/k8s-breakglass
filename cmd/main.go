@@ -592,12 +592,9 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 			cr := breakglass.CleanupRoutine{
 				Log:     log,
 				Manager: deps.sessionManager,
-				// AuditManager is resolved here, once, from the audit service.
-				// This is intentional: auditService is fully configured before
-				// startBackgroundRoutines is called. If the audit config is later
-				// reloaded, the cleanup routine will not pick up the new manager;
-				// restart the process to apply changes.
-				AuditManager:  deps.auditService.Manager(),
+				// AuditService is stored so Manager() can be resolved lazily on each
+				// cleanup iteration, picking up the current manager after any reload.
+				AuditService:  deps.auditService,
 				LeaderElected: leaderElectedCh,
 				MailService:   deps.mailService,
 				BrandingName:  deps.cfg.Frontend.BrandingName,
