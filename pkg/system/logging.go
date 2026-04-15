@@ -48,25 +48,18 @@ func EnrichReqLoggerWithAuth(c *gin.Context, reqLogger *zap.SugaredLogger) *zap.
 	return reqLogger
 }
 
-// RedactGroupName returns a short hint for a group name so logs can correlate
-// related events without disclosing the full value. The hint is a partial mask:
-// short names (≤4 runes) are fully masked; longer names expose only the first 3
-// runes followed by "***". This is NOT a cryptographically non-reversible
-// redaction — it reduces incidental disclosure in logs but is NOT a substitute
-// for access controls on log aggregation systems.
-// Behaviour:
-//   - 0 runes  → ""
-//   - 1–4 runes → "***"  (fully masked to avoid disclosing short names like "ops", "sre")
-//   - 5+ runes → first 3 chars + "***"
+// RedactGroupName fully redacts a group name so that no prefix or structural
+// signal is disclosed in log output. Any non-empty name is replaced with the
+// literal string "[REDACTED]"; empty names are returned as-is.
+//
+// This is NOT a cryptographically non-reversible redaction — it prevents
+// incidental log disclosure but is NOT a substitute for access controls on
+// log aggregation systems.
 func RedactGroupName(name string) string {
 	if name == "" {
 		return ""
 	}
-	runes := []rune(name)
-	if len(runes) <= 4 {
-		return "***"
-	}
-	return string(runes[:3]) + "***"
+	return "[REDACTED]"
 }
 
 // NamespacedFields returns a variadic slice of key/value pairs suitable for passing
