@@ -256,12 +256,15 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	reqLog = reqLog.With("cluster", cug.Clustername, "user", cug.Username, "group", cug.GroupName)
 	reqLog.Info("Validated session request parameters")
 
+	if authIdentity.email == "" {
+		reqLog.Errorw("Error getting user identity email", "error", authIdentity.emailErr)
+		apiresponses.RespondUnauthorizedWithMessage(c, "email claim is required for session creation")
+		return
+	}
+
 	// Apply per-user rate limit before the expensive group/escalation lookups.
 	if wc.sessionCreationLimiter != nil {
 		rateLimitKey := strings.ToLower(strings.TrimSpace(authIdentity.email))
-		if rateLimitKey == "" {
-			rateLimitKey = strings.ToLower(strings.TrimSpace(authIdentity.username))
-		}
 		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
 		if !allowed {
 			retrySecs := int(math.Ceil(retryAfter.Seconds()))
@@ -333,12 +336,6 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		return
 	}
 
-	// Phase 9: Validate email identity before proceeding
-	if authIdentity.email == "" {
-		reqLog.Errorw("Error getting user identity email", "error", authIdentity.emailErr)
-		apiresponses.RespondInternalError(c, "extract email from token", authIdentity.emailErr, reqLog)
-		return
-	}
 	username := authIdentity.username
 	reqLog.Debugw("Session creation initiated by user",
 		"requestorEmail", authIdentity.email, "requestorUsername", username,
