@@ -244,7 +244,7 @@ The following patterns are stripped from text fields:
 2. **Enable token refresh** - Allow token refresh for long-running sessions
 3. **Validate audiences** - Ensure tokens are issued for the breakglass client
 4. **Use HTTPS** - Always use TLS for OIDC communication
-5. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
+5. **`hardenedIDPHints` has no behavioural effect** - IDP hint messages always use a generic "not configured for this cluster" response; configured identity provider names are never exposed in webhook error messages. The flag is preserved for backwards compatibility. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
 
 ### Multi-Cluster OIDC Service Account
 
