@@ -1048,3 +1048,17 @@ func TestAuthenticatedConcurrency(t *testing.T) {
 		// Should not panic or deadlock
 	})
 }
+
+func TestIPRateLimiterStopIdempotent(t *testing.T) {
+	rl := New(DefaultAPIConfig())
+
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rl.Stop()
+		}()
+	}
+	wg.Wait()
+}
