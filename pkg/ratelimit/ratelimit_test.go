@@ -1060,5 +1060,18 @@ func TestIPRateLimiterStopIdempotent(t *testing.T) {
 			rl.Stop()
 		}()
 	}
-	wg.Wait()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	timeout := 2 * time.Second
+	if deadline, ok := t.Deadline(); ok {
+		if remaining := time.Until(deadline) / 10; remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for concurrent Stop calls to complete")
+	}
 }
