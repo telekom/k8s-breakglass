@@ -51,8 +51,8 @@ export default class BreakglassService {
     const all: T[] = [];
     let continueToken: string | undefined = undefined;
     do {
-      const requestParams = continueToken ? { ...params, continue: continueToken } : params;
-      const r = await this.client.get(url, { params: requestParams });
+      const requestParams: Record<string, unknown> = continueToken ? { ...params, continue: continueToken } : params;
+      const r: AxiosResponse = await this.client.get(url, { params: requestParams });
       const items = Array.isArray(r.data?.items) ? (r.data.items as T[]) : [];
       all.push(...items);
       continueToken = r.data?.metadata?.continue || "";
