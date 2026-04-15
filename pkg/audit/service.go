@@ -261,6 +261,15 @@ func (s *Service) IsEnabled() bool {
 	return s.enabled
 }
 
+// Manager returns the current audit Manager, or nil if auditing is not yet configured.
+// The returned pointer is safe to cache: it is non-nil only after the first successful
+// Reload/ReloadMultiple call and remains valid for the lifetime of the Service.
+func (s *Service) Manager() *Manager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.manager
+}
+
 // GetStats returns the current audit manager statistics.
 // Returns nil if the audit manager is not initialized.
 func (s *Service) GetStats() *ManagerStats {
