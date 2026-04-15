@@ -653,10 +653,10 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 				},
 			},
 			idps:           []breakglassv1alpha1.IdentityProvider{},
-			expectContains: "was issued by",
+			expectContains: "not configured for this cluster",
 		},
 		{
-			name: "disabled IDP is excluded from available providers list",
+			name: "provider names never enumerated even when IDPs exist",
 			sar: &authorizationv1.SubjectAccessReview{
 				Spec: authorizationv1.SubjectAccessReviewSpec{
 					User: "test-user",
@@ -682,7 +682,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 					},
 				},
 			},
-			expectContains: "Enabled Provider",
+			expectContains: "not configured for this cluster",
 		},
 	}
 
@@ -723,21 +723,19 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 
 		boolPtr := func(v bool) *bool { return &v }
 
-		// Test with hardenedIDPHints = false (explicitly disabled - should show provider names)
 		wcDefault := &WebhookController{
 			log:          logger.Sugar(),
 			escalManager: escalMgr,
 			config:       config.Config{Server: config.Server{HardenedIDPHints: boolPtr(false)}},
 		}
 		resultDefault := wcDefault.getIDPHintFromIssuer(context.Background(), sar, logger.Sugar())
-		if !contains(resultDefault, "Keycloak Provider") && !contains(resultDefault, "Azure AD") {
-			t.Errorf("expected default mode to show provider names, got %q", resultDefault)
+		if contains(resultDefault, "Keycloak Provider") || contains(resultDefault, "Azure AD") {
+			t.Errorf("provider names must not appear in IDP hint (info disclosure), got %q", resultDefault)
 		}
-		if contains(resultDefault, "not configured for this cluster") {
-			t.Errorf("default mode should not use hardened message, got %q", resultDefault)
+		if !contains(resultDefault, "not configured for this cluster") {
+			t.Errorf("expected generic non-disclosing message, got %q", resultDefault)
 		}
 
-		// Test with hardenedIDPHints = true (hardened - should NOT show provider names)
 		wcHardened := &WebhookController{
 			log:          logger.Sugar(),
 			escalManager: escalMgr,
