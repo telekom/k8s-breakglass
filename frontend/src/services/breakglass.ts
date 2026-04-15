@@ -66,7 +66,8 @@ export default class BreakglassService {
   private async fetchAvailableEscalations(): Promise<AvailableBreakglass[]> {
     try {
       debug("BreakglassService.fetchAvailableEscalations", "Fetching available escalations");
-      const r = await this.client.get("/breakglassEscalations");
+      const requestParams: Record<string, string> = { limit: "100" };
+      const r: AxiosResponse = await this.client.get("/breakglassEscalations", { params: requestParams });
       // Each escalation spec has: allowed (clusters, groups), approvers (users, groups), escalatedGroup, maxValidFor, retainFor, idleTimeout, clusterConfigRefs, denyPolicyRefs
       // We explode multi-cluster escalations into individual entries per cluster so UI can show sessions per cluster.
       const data = Array.isArray(r.data?.items) ? r.data.items : [];
