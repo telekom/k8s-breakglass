@@ -433,7 +433,13 @@ func TestConcurrency(t *testing.T) {
 			}()
 		}
 
-		wg.Wait()
+		done1 := make(chan struct{})
+		go func() { wg.Wait(); close(done1) }()
+		select {
+		case <-done1:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for goroutines to finish")
+		}
 		// Should not panic or deadlock
 		assert.Equal(t, 1, rl.Len())
 	})
@@ -457,7 +463,13 @@ func TestConcurrency(t *testing.T) {
 			}(i)
 		}
 
-		wg.Wait()
+		done2 := make(chan struct{})
+		go func() { wg.Wait(); close(done2) }()
+		select {
+		case <-done2:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for goroutines to finish")
+		}
 		// Should not panic or deadlock
 		assert.LessOrEqual(t, rl.Len(), 10) // At most 10 unique IPs (0-9)
 	})
