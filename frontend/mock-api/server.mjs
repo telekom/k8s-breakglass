@@ -283,6 +283,73 @@ app.post("/api/debugSessions/:name/reject", (req, res) => {
   res.json(session);
 });
 
+// ============================================================================
+// ADDITIONAL MOCK ENDPOINTS (frontend service stubs)
+// ============================================================================
+
+// Test endpoint (BreakglassService.testButton posts to /test)
+app.post("/api/test", (req, res) => {
+  const { user, cluster } = req.body || {};
+  res.json({ message: "mock test", user, cluster, ok: true });
+});
+
+// Cluster access reviews (BreakglassSessionService.getClusterAccessReviews)
+app.get("/api/reviews", (_req, res) => {
+  res.json([]);
+});
+
+// Cancel session (BreakglassSessionService.cancelSession)
+app.post("/api/breakglassSessions/:name/cancel", (req, res) => {
+  const name = req.params.name;
+  const updated = updateSessionState(name, "Canceled", {
+    reasonEnded: "canceled",
+    canceledAt: new Date().toISOString(),
+    reason: req.body?.reason || "Cancelled",
+  });
+  if (!updated) {
+    return res.status(404).json({ message: `session ${name} not found` });
+  }
+  res.json({ message: "session cancelled", session: updated });
+});
+
+// Debug kubectl operations (DebugSessionService)
+app.post("/api/debugSessions/:name/injectEphemeralContainer", (req, res) => {
+  const session = findDebugSession(req.params.name);
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json({
+    sessionName: req.params.name,
+    containerName: req.body?.containerName || "debugger",
+    status: "Injected",
+  });
+});
+
+app.post("/api/debugSessions/:name/createPodCopy", (req, res) => {
+  const session = findDebugSession(req.params.name);
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json({
+    sessionName: req.params.name,
+    podName: `${req.params.name}-copy`,
+    status: "Created",
+  });
+});
+
+app.post("/api/debugSessions/:name/createNodeDebugPod", (req, res) => {
+  const session = findDebugSession(req.params.name);
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json({
+    sessionName: req.params.name,
+    podName: `node-debugger-${req.params.name}`,
+    nodeName: req.body?.nodeName || "node-1",
+    status: "Created",
+  });
+});
+
 app.use((req, res, next) => {
   if (req.path.startsWith("/api")) {
     console.warn("[mock-api] Unhandled API route", req.method, req.path);

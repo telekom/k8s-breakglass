@@ -368,7 +368,7 @@ onUnmounted(() => {
 .session-approval-view {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: var(--space-2xl);
 }
 
 .loading-container {
@@ -377,7 +377,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   min-height: 400px;
-  gap: 1rem;
+  gap: var(--space-lg);
 }
 
 .error-container {
@@ -392,13 +392,13 @@ onUnmounted(() => {
 
 .error-icon {
   color: var(--scl-color-danger);
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-lg);
 }
 
 .error-title {
   font-size: 1.5rem;
   font-weight: 600;
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-xl);
   color: var(--scl-color-danger);
   text-align: center;
 }
@@ -416,13 +416,13 @@ onUnmounted(() => {
 }
 
 .self-approval-content p {
-  margin: 0.5rem 0;
+  margin: var(--space-sm) 0;
 }
 
 .self-approval-action {
-  margin-top: 1rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  margin-top: var(--space-lg);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
 .error-content {
@@ -431,53 +431,53 @@ onUnmounted(() => {
 
 .error-message {
   font-size: 1rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-sm);
 }
 
 .error-meta {
-  margin-top: 1rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  margin-top: var(--space-lg);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
 .meta-info {
   font-size: 0.9rem;
   color: var(--telekom-color-text-and-icon-additional);
-  margin: 0.25rem 0;
+  margin: var(--space-2xs) 0;
 }
 
 .error-reasons {
-  margin-top: 0.5rem;
-  padding-left: 1.5rem;
+  margin-top: var(--space-sm);
+  padding-left: var(--space-xl);
 }
 
 .error-reasons li {
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-sm);
 }
 
 .action-buttons {
   display: flex;
-  gap: 1rem;
+  gap: var(--space-lg);
   justify-content: center;
-  margin-top: 2rem;
+  margin-top: var(--space-2xl);
   flex-wrap: wrap;
 }
 
 .mt-3 {
-  margin-top: 1rem;
+  margin-top: var(--space-lg);
 }
 
 .approval-container {
-  margin-top: 2rem;
+  margin-top: var(--space-2xl);
 }
 
 .approval-container h1 {
   font-size: 2rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-sm);
 }
 
 .approval-container .subtitle {
   color: var(--telekom-color-text-and-icon-standard);
-  margin-bottom: 2rem;
+  margin-bottom: var(--space-2xl);
 }
 </style>

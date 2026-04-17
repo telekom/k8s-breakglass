@@ -14,6 +14,9 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
 
+  // a11y tests use mock auth and run separately via playwright.a11y.config.ts
+  testIgnore: "**/a11y.spec.ts",
+
   // These E2E tests run against a shared kind cluster with fixed users/escalations.
   // Run serially to avoid cross-test interference.
   fullyParallel: false,

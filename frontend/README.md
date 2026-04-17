@@ -129,6 +129,18 @@ npm run build
 npm run lint
 ```
 
+### Accessibility Testing
+
+Automated WCAG 2.1 AA + AAA accessibility regression tests using axe-core and Playwright:
+
+```sh
+npx playwright test --config=playwright.a11y.config.ts
+```
+
+This runs axe-core audits against all primary pages, error pages, and modals in four theme modes (light, dark, high contrast, high contrast dark). The tests use the mock dev server.
+
+See `frontend/SCALE_DEVIATIONS.md` for documented contrast deviations from the Scale Design System and their rationale.
+
 ## State Management Architecture
 
 The frontend uses a **state-first validation approach** where:

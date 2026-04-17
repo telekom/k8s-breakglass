@@ -246,7 +246,7 @@ if (isSilentRenew) {
     const app = document.getElementById("app");
     if (app) {
       app.innerHTML =
-        '<div style="padding: 20px; color: red; font-family: monospace;">Failed to initialize application. Please check the console for details.</div>';
+        '<div role="alert" style="padding: 20px; color: var(--telekom-color-functional-danger-standard, #e82010); font-family: monospace;">Failed to initialize application. Please check the console for details.</div>';
     }
   });
 }

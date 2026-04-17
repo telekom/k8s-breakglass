@@ -40,35 +40,35 @@ const cardClasses = computed(() => ({
     </div>
 
     <template v-if="hasSlot('chips')">
-      <scale-divider></scale-divider>
+      <div class="session-summary-card__separator" role="presentation"></div>
       <div class="session-summary-card__chips">
         <slot name="chips"></slot>
       </div>
     </template>
 
     <template v-if="hasSlot('meta')">
-      <scale-divider></scale-divider>
+      <div class="session-summary-card__separator" role="presentation"></div>
       <div class="session-summary-card__meta">
         <slot name="meta"></slot>
       </div>
     </template>
 
     <template v-if="hasSlot('body')">
-      <scale-divider></scale-divider>
+      <div class="session-summary-card__separator" role="presentation"></div>
       <div class="session-summary-card__body">
         <slot name="body"></slot>
       </div>
     </template>
 
     <template v-if="hasSlot('timeline')">
-      <scale-divider></scale-divider>
+      <div class="session-summary-card__separator" role="presentation"></div>
       <div class="session-summary-card__timeline">
         <slot name="timeline"></slot>
       </div>
     </template>
 
     <template v-if="hasSlot('footer')">
-      <scale-divider></scale-divider>
+      <div class="session-summary-card__separator" role="presentation"></div>
       <footer class="session-summary-card__footer">
         <slot name="footer"></slot>
       </footer>
@@ -81,11 +81,17 @@ const cardClasses = computed(() => ({
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--stack-gap-lg);
+  gap: var(--space-xl);
 }
 
 .session-summary-card--dense {
   gap: var(--stack-gap-md);
+}
+
+.session-summary-card__separator {
+  height: 1px;
+  background: var(--telekom-color-ui-border-standard);
+  opacity: 0.5;
 }
 
 .session-summary-card__header {
@@ -116,7 +122,7 @@ const cardClasses = computed(() => ({
 
 .session-summary-card__subtitle {
   font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-primary-standard);
+  color: var(--telekom-color-text-and-icon-additional);
   margin: var(--stack-gap-xs) 0 0;
   font-weight: 500;
 }
@@ -159,6 +165,13 @@ const cardClasses = computed(() => ({
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+:root[data-high-contrast="true"] .session-summary-card__chips {
+  border-color: var(--telekom-color-ui-border-standard);
 }
 
 /* Ensure long tag content doesn't overflow */

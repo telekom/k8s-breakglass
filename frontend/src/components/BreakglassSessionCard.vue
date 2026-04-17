@@ -42,13 +42,26 @@ const emit = defineEmits<{
 
 // Get normalized state for action logic
 const sessionState = computed(() => {
-  const state = props.breakglass.status?.state;
+  const state = props.breakglass.status?.state || props.breakglass.state;
+  if (!state) return "";
   return typeof state === "string" ? state.toLowerCase() : "";
 });
 
 // Session is actionable if in a non-terminal state
 const isActionable = computed(() => {
-  const terminalStates = ["rejected", "withdrawn", "expired", "approvaltimeout"];
+  const terminalStates = [
+    "rejected",
+    "withdrawn",
+    "expired",
+    "approvaltimeout",
+    "dropped",
+    "timeout",
+    "idleexpired",
+    "cancelled",
+    "canceled",
+    "completed",
+    "ended",
+  ];
   return !terminalStates.includes(sessionState.value);
 });
 
@@ -184,9 +197,9 @@ const requestReasonText = computed(() => {
 <template>
   <SessionSummaryCard
     class="session-card"
-    :eyebrow="'Group'"
+    :eyebrow="clusterLabel"
     :title="groupName"
-    :subtitle="`Cluster · ${clusterLabel}`"
+    :subtitle="breakglass.spec?.user || 'Unknown user'"
     :status-tone="chipVariant"
     data-testid="breakglass-session-card"
     dense
@@ -198,8 +211,7 @@ const requestReasonText = computed(() => {
     </template>
 
     <template #chips>
-      <scale-tag size="small" variant="neutral">{{ breakglass.spec?.user || "Unknown user" }}</scale-tag>
-      <scale-tag v-if="breakglass.spec?.identityProviderName" size="small" variant="info">
+      <scale-tag v-if="breakglass.spec?.identityProviderName" size="small" variant="neutral">
         {{ breakglass.spec.identityProviderName }}
       </scale-tag>
       <scale-tag v-if="breakglass.metadata?.name" size="small" variant="neutral" class="mono-tag">
@@ -288,8 +300,14 @@ const requestReasonText = computed(() => {
 
 .session-card__timeline {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-sm);
+}
+
+@media (max-width: 480px) {
+  .session-card__timeline {
+    grid-template-columns: 1fr;
+  }
 }
 
 .timeline-item {
@@ -307,29 +325,31 @@ const requestReasonText = computed(() => {
   background-color: var(--tone-chip-success-bg);
   border-color: var(--tone-chip-success-border);
   border-left: 3px solid var(--telekom-color-functional-success-standard);
+  color: var(--tone-chip-success-text);
 }
 
 .timeline-item--danger {
   background-color: var(--tone-chip-danger-bg);
   border-color: var(--tone-chip-danger-border);
   border-left: 3px solid var(--telekom-color-functional-danger-standard);
+  color: var(--tone-chip-danger-text);
 }
 
 .timeline-item--warning {
   background-color: var(--tone-chip-warning-bg);
   border-color: var(--tone-chip-warning-border);
   border-left: 3px solid var(--telekom-color-functional-warning-standard);
+  color: var(--tone-chip-warning-text);
 }
 
 .timeline-item--muted {
-  opacity: 0.7;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .timeline-item .label {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
   white-space: nowrap;
 }
 
@@ -347,7 +367,7 @@ const requestReasonText = computed(() => {
   flex-wrap: wrap;
 }
 
-@media (max-width: 540px) {
+@media (max-width: 480px) {
   .session-card__actions {
     width: 100%;
   }

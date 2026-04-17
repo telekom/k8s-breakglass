@@ -1,5 +1,5 @@
 <template>
-  <main class="ui-page pending-page" data-testid="my-requests-view">
+  <div class="ui-page pending-page" data-testid="my-requests-view">
     <PageHeader
       title="My Pending Requests"
       subtitle="Track your pending access requests and cancel anything you no longer need."
@@ -37,7 +37,9 @@
           </template>
 
           <template #chips>
-            <scale-tag v-if="req.metadata?.name" variant="info"> Request ID: {{ req.metadata.name }} </scale-tag>
+            <scale-tag v-if="req.metadata?.name" variant="neutral" class="mono-tag">
+              Request ID: {{ req.metadata.name }}
+            </scale-tag>
             <scale-tag v-if="req.spec?.identityProviderName" variant="neutral">
               IDP: {{ req.spec.identityProviderName }}
             </scale-tag>
@@ -72,14 +74,6 @@
 
           <template #footer>
             <div class="request-card__footer">
-              <div class="request-card__deadlines">
-                <span v-if="req.status?.timeoutAt" class="tone-chip tone-chip--warning">
-                  Timeout target: {{ formatDateTime(req.status.timeoutAt) }}
-                </span>
-                <span v-if="req.status?.expiresAt" class="tone-chip tone-chip--info">
-                  Hard stop: {{ formatDateTime(req.status.expiresAt) }}
-                </span>
-              </div>
               <ActionButton
                 data-testid="withdraw-button"
                 label="Withdraw"
@@ -102,7 +96,7 @@
       @confirm="confirmWithdraw"
       @cancel="cancelWithdraw"
     />
-  </main>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -277,21 +271,11 @@ onMounted(() => {
 .request-card__footer {
   width: 100%;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-md);
   flex-wrap: wrap;
   align-items: center;
 }
-
-.request-card__deadlines {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
-  color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.9rem;
-}
-
-/* tone-chip classes are now defined globally in base.css */
 
 @media (max-width: 600px) {
   .request-card__footer {
