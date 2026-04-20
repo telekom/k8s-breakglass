@@ -42,7 +42,7 @@
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.11.1",
+    "@axe-core/playwright": "^4.11.2",
     "@playwright/test": "^1.58.2",
     "@rollup/plugin-dynamic-import-vars": "^2.1.5",
     "@tsconfig/node22": "^22.0.5",
