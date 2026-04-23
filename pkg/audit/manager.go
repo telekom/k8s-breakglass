@@ -18,6 +18,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,17 +32,23 @@ import (
 // Manager coordinates audit event creation and distribution.
 // Designed for EXTREMELY granular audit trails with non-blocking operation.
 type Manager struct {
-	sink       Sink
-	asyncQueue chan *Event
-	logger     *zap.Logger
-	wg         sync.WaitGroup
-	closed     atomic.Bool
-	stopStats  chan struct{} // Signal to stop stats reporter
+	sink        Sink
+	directSinks []Sink // underlying sinks for true synchronous fallback writes
+	asyncQueue  chan *Event
+	logger      *zap.Logger
+	wg          sync.WaitGroup
+	closed      atomic.Bool
+	// closeMu guards asyncQueue sends against concurrent Close. Emit/EmitSync
+	// hold RLock while sending; Close holds Lock before closing the channel, so
+	// no send can race with the channel close.
+	closeMu   sync.RWMutex
+	stopStats chan struct{} // Signal to stop stats reporter
 
 	// Metrics for monitoring
-	queuedEvents    atomic.Int64
-	droppedEvents   atomic.Int64
-	processedEvents atomic.Int64
+	queuedEvents               atomic.Int64
+	droppedEvents              atomic.Int64
+	processedEvents            atomic.Int64
+	sensitiveEventsSyncWritten atomic.Int64
 
 	// Configuration
 	config ManagerConfig
@@ -101,6 +108,12 @@ type ManagerConfig struct {
 	// Set to 0 to disable periodic stats logging.
 	// Default: 30s
 	StatsInterval time.Duration
+
+	// DirectSinks are the underlying raw sinks used for true synchronous
+	// writes during sensitive-event fallback, bypassing QueuedSink layers.
+	// If empty, the fallback writes through the primary sink chain, which may
+	// block up to the context timeout and is subject to downstream queue limits.
+	DirectSinks []Sink
 }
 
 // DefaultManagerConfig returns default configuration for high-throughput.
@@ -142,11 +155,12 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	}
 
 	m := &Manager{
-		sink:       sink,
-		asyncQueue: make(chan *Event, cfg.QueueSize),
-		logger:     logger.Named("audit-manager"),
-		config:     cfg,
-		stopStats:  make(chan struct{}),
+		sink:        sink,
+		directSinks: cfg.DirectSinks,
+		asyncQueue:  make(chan *Event, cfg.QueueSize),
+		logger:      logger.Named("audit-manager"),
+		config:      cfg,
+		stopStats:   make(chan struct{}),
 	}
 
 	// Check if sink supports batch writes
@@ -179,8 +193,9 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	return m
 }
 
-// Emit sends an audit event asynchronously (non-blocking).
-// This method NEVER blocks - if the queue is full, the event is dropped.
+// Emit sends an audit event asynchronously (non-blocking for non-sensitive events).
+// Sensitive events (IsSensitiveEvent) fall back to a synchronous write when the
+// queue is full, which may block up to WriteTimeout.
 func (m *Manager) Emit(ctx context.Context, event *Event) {
 	if m.closed.Load() {
 		return
@@ -207,12 +222,39 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 		event.Severity = SeverityForEventType(event.Type)
 	}
 
-	// Non-blocking send to async queue
+	// Non-blocking send to async queue.
+	// Hold closeMu.RLock so that Close cannot close the channel concurrently.
+	m.closeMu.RLock()
+	defer m.closeMu.RUnlock()
+
+	// Re-check closed under the lock: Close sets closed=true then acquires
+	// closeMu.Lock, so if we see closed=true here the channel is already closed.
+	if m.closed.Load() {
+		return
+	}
+
 	select {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
 	default:
-		// Queue is full - drop event (non-blocking)
+		// Queue is full — sensitive events fall back to a synchronous direct write
+		// to bypass manager-queue overflow. Per-sink queue drops (QueuedSink
+		// queue_full / circuit_open) are not intercepted by this path.
+		if IsSensitiveEvent(event.Type) {
+			writeCtx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
+			defer cancel()
+
+			writeErr := m.syncWriteDirect(writeCtx, event)
+			if writeErr != nil {
+				m.logger.Error("failed sync-write of sensitive audit event",
+					zap.String("event_type", string(event.Type)),
+					zap.String("event_id", event.ID),
+					zap.Error(writeErr))
+			}
+
+			return
+		}
+
 		m.droppedEvents.Add(1)
 		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
 		if !m.config.DropOnFull {
@@ -221,6 +263,51 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 				zap.String("event_id", event.ID))
 		}
 	}
+}
+
+// syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.
+// If no direct sinks are configured, it falls back to the queued sink.
+// Metrics are incremented per-sink on success and failure.
+func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
+	if len(m.directSinks) == 0 {
+		if err := m.sink.Write(ctx, event); err != nil {
+			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
+			return err
+		}
+		// processedEvents counts enqueue/write attempts that succeeded at this
+		// layer; it does not guarantee downstream delivery (the queued sink may
+		// still drop the event if its own queue is full or the circuit is open).
+		m.processedEvents.Add(1)
+		metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
+		m.sensitiveEventsSyncWritten.Add(1)
+		metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(m.sink.Name()).Inc()
+		return nil
+	}
+	var errs []error
+	anySucceeded := false
+	for _, s := range m.directSinks {
+		if err := s.Write(ctx, event); err != nil {
+			m.logger.Error("direct sink write failed for sensitive event",
+				zap.String("sink", s.Name()),
+				zap.String("event_id", event.ID),
+				zap.Error(err))
+			metrics.AuditSinkErrors.WithLabelValues(s.Name(), "sensitive_sync_fallback").Inc()
+			errs = append(errs, err)
+		} else {
+			anySucceeded = true
+			// Per-sink Prometheus counter reflects actual sink delivery.
+			metrics.AuditEventsProcessed.WithLabelValues(s.Name()).Inc()
+			metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(s.Name()).Inc()
+		}
+	}
+	// Increment in-memory counters once per event (not once per sink) so that
+	// ManagerStats.ProcessedEvents is not artificially inflated when multiple
+	// direct sinks are configured.
+	if anySucceeded {
+		m.processedEvents.Add(1)
+		m.sensitiveEventsSyncWritten.Add(1)
+	}
+	return errors.Join(errs...)
 }
 
 // EmitSync sends an audit event synchronously.
@@ -246,6 +333,11 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 
 // shouldSample returns true if the event should be sampled (dropped).
 func (m *Manager) shouldSample(eventType EventType) bool {
+	// Sensitive events are never sampled.
+	if IsSensitiveEvent(eventType) {
+		return false
+	}
+
 	if m.config.SampleRate >= 1.0 {
 		return false
 	}
@@ -346,7 +438,12 @@ func (m *Manager) Close() error {
 	// Stop stats reporter
 	close(m.stopStats)
 
+	// Acquire the exclusive write lock before closing the channel so that any
+	// concurrent Emit holding the read lock finishes its send first.
+	m.closeMu.Lock()
 	close(m.asyncQueue)
+	m.closeMu.Unlock()
+
 	m.wg.Wait()
 
 	m.logger.Info("audit manager stopped",

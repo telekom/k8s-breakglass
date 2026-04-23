@@ -311,6 +311,20 @@ spec:
       - policy.violation
 ```
 
+> **Sensitive event guarantee:** The following event types are **never sampled**
+> regardless of the `rate` setting: session request/approve/deny/reject/expire/
+> revoke/withdraw/drop, access denial, secret CRUD, auth failure, debug session
+> create/start/terminate/fail/expire/approval-timeout, cluster role binding
+> create/delete, resource impersonation, policy bypass/violation, and pod
+> security deny/warning/override. When the manager's main async queue is full,
+> sensitive events fall back to a **direct synchronous write** path, blocking up
+> to `WriteTimeout`. This fallback is intended to avoid drops caused by manager-
+> queue overflow, but it does **not** override sink-local drop behavior such as a
+> per-sink queue reporting `queue_full` or `circuit_open`. The metric
+> `breakglass_audit_sensitive_events_sync_written_total` tracks how often this
+> manager-queue fallback occurs — a sustained non-zero value indicates the queue
+> should be enlarged.
+
 ## Queue Configuration
 
 Tune the async queue for your throughput:
