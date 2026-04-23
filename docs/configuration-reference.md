@@ -186,6 +186,8 @@ server:
 
 Controls whether identity provider names are exposed in authorization error messages.
 
+> **Note:** As of the current release, this flag has **no behavioural effect**. IDP hint messages always use a generic "not configured for this cluster" response regardless of this setting. The field is preserved for backwards compatibility and may be removed in a future version.
+
 | Property | Value |
 |----------|-------|
 | **Type** | `bool` |
@@ -199,16 +201,7 @@ server:
 
 **Behavior:**
 
-- `false` (default): When authentication fails due to an unknown token issuer, the error message lists available identity providers to help users identify which IDP to use.
-  - Example: `"Your token issuer 'https://wrong.issuer.com' is not configured. Available providers: keycloak, azure-ad"`
-
-- `true` (hardened): Error messages do not expose configured identity provider names, preventing reconnaissance attacks.
-  - Example: `"Your token issuer is not configured for this cluster"`
-
-**Security Considerations:**
-
-- In high-security environments, set `hardenedIDPHints: true` to prevent attackers from discovering which identity providers are configured.
-- In user-friendly environments (e.g., internal platforms), leave as `false` to help users troubleshoot authentication issues.
+- The flag is accepted but ignored. All error messages for unknown token issuers return a generic response that does not expose configured identity provider names.
 
 ---
 

@@ -124,16 +124,12 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 
 	reqLog.Debugw("Extracting IDP hint from issuer", "issuer", issuer)
 
-	// Try to find matching IdentityProvider by issuer
-	// This helps users know which provider authenticated them
 	idpList := &breakglassv1alpha1.IdentityProviderList{}
 	if err := wc.escalManager.List(ctx, idpList); err != nil {
 		reqLog.With("error", err.Error()).Warn("Failed to list IdentityProviders for IDP hint")
-		// Fallback: just mention the issuer
-		return fmt.Sprintf("(Your token was issued by %s)", issuer)
+		return "(Issuer validation failed; please contact your cluster administrator)"
 	}
 
-	// Find IdentityProvider with matching issuer
 	for _, idp := range idpList.Items {
 		if idp.Spec.Issuer == issuer {
 			displayName := idp.Spec.DisplayName
@@ -144,32 +140,7 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 		}
 	}
 
-	// Issuer didn't match any configured IDP - provide helpful guidance
-	// Unless hardened mode is enabled, list available providers to help user identify the right one
-	if wc.config.HardenedIDPHintsEnabled() {
-		// Hardened mode: don't expose available provider names to prevent reconnaissance
-		return "(Your token issuer is not configured for this cluster)"
-	}
-
-	// Default mode: list available providers to help users
-	var displayNames []string
-	for _, idp := range idpList.Items {
-		if idp.Spec.Disabled {
-			continue // skip disabled providers
-		}
-		displayName := idp.Spec.DisplayName
-		if displayName == "" {
-			displayName = idp.Name
-		}
-		displayNames = append(displayNames, displayName)
-	}
-
-	if len(displayNames) > 0 {
-		return fmt.Sprintf("(Your token issuer '%s' is not configured. Available providers: %s)", issuer, strings.Join(displayNames, ", "))
-	}
-
-	// Fallback: just mention the issuer
-	return fmt.Sprintf("(Your token was issued by %s)", issuer)
+	return "(Your token issuer is not configured for this cluster)"
 }
 
 // isRequestFromAllowedIDP checks if a requestor from a specific issuer (IDP) is allowed to use a specific escalation.
