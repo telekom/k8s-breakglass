@@ -39,6 +39,36 @@ func TestDefaultConfigs(t *testing.T) {
 		assert.Greater(t, sarCfg.Rate, apiCfg.Rate)
 		assert.Greater(t, sarCfg.Burst, apiCfg.Burst)
 	})
+
+	t.Run("DefaultSessionCreationConfig", func(t *testing.T) {
+		cfg := DefaultSessionCreationConfig()
+		assert.Equal(t, 1, cfg.Burst, "session creation burst must be 1 to prevent flooding")
+		assert.Greater(t, cfg.Rate, float64(0))
+		assert.Less(t, cfg.Rate, float64(1), "session creation rate must be sub-1 req/s (10/min)")
+	})
+
+	t.Run("PermissiveSessionCreationConfig has high burst and rate", func(t *testing.T) {
+		cfg := PermissiveSessionCreationConfig()
+		assert.GreaterOrEqual(t, cfg.Burst, 1000, "permissive config must allow large burst")
+		assert.GreaterOrEqual(t, cfg.Rate, float64(100), "permissive config must allow high rate")
+	})
+
+	t.Run("PermissiveSessionCreationConfig is more permissive than DefaultSessionCreationConfig", func(t *testing.T) {
+		def := DefaultSessionCreationConfig()
+		perm := PermissiveSessionCreationConfig()
+		assert.Greater(t, perm.Rate, def.Rate)
+		assert.Greater(t, perm.Burst, def.Burst)
+	})
+
+	t.Run("PermissiveSessionCreationConfig allows rapid sequential requests", func(t *testing.T) {
+		cfg := PermissiveSessionCreationConfig()
+		rl := New(cfg)
+		defer rl.Stop()
+
+		for i := 0; i < 100; i++ {
+			assert.Truef(t, rl.Allow("user@example.com"), "permissive limiter must allow request %d", i)
+		}
+	})
 }
 
 func TestNew(t *testing.T) {
@@ -69,13 +99,88 @@ func TestNew(t *testing.T) {
 	})
 }
 
+func TestAllowWithRetryAfter(t *testing.T) {
+	t.Run("allows first request and returns zero delay", func(t *testing.T) {
+		cfg := Config{Rate: 10, Burst: 1, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		allowed, delay := rl.AllowWithRetryAfter("user@example.com")
+		assert.True(t, allowed, "first request within burst must be allowed")
+		assert.Equal(t, time.Duration(0), delay, "delay must be zero when allowed")
+	})
+
+	t.Run("denies request after burst exhausted and returns positive delay", func(t *testing.T) {
+		cfg := Config{Rate: 0.0001, Burst: 1, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		// Exhaust burst
+		allowed, _ := rl.AllowWithRetryAfter("user@example.com")
+		require.True(t, allowed, "first request must be allowed")
+
+		// Second request must be denied
+		allowed, delay := rl.AllowWithRetryAfter("user@example.com")
+		assert.False(t, allowed, "second request must be denied after burst exhausted")
+		assert.Greater(t, delay, time.Duration(0), "retry-after delay must be positive when denied")
+	})
+
+	t.Run("denied request does not consume a token (cancels reservation)", func(t *testing.T) {
+		// Very slow rate: 1 token per 10 seconds, burst 1
+		cfg := Config{Rate: 0.1, Burst: 1, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		// Exhaust burst
+		allowed, _ := rl.AllowWithRetryAfter("key")
+		require.True(t, allowed)
+
+		// Denied — reservation should be cancelled
+		allowed, delay1 := rl.AllowWithRetryAfter("key")
+		require.False(t, allowed)
+		require.Greater(t, delay1, time.Duration(0))
+
+		// Second denial delay should not increase (the reservation was cancelled)
+		allowed, delay2 := rl.AllowWithRetryAfter("key")
+		require.False(t, allowed)
+		// Both denials should return approximately the same delay (within 10ms)
+		assert.InDelta(t, delay1.Seconds(), delay2.Seconds(), 0.1,
+			"cancelled reservation must not cause delay to accumulate")
+	})
+
+	t.Run("different keys have independent limits", func(t *testing.T) {
+		cfg := Config{Rate: 0.0001, Burst: 1, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		allowed1, _ := rl.AllowWithRetryAfter("user1@example.com")
+		require.True(t, allowed1)
+		// user1 is now exhausted
+
+		// user2 should still be allowed
+		allowed2, delay2 := rl.AllowWithRetryAfter("user2@example.com")
+		assert.True(t, allowed2, "second key must not be affected by first key's exhaustion")
+		assert.Equal(t, time.Duration(0), delay2)
+	})
+
+	t.Run("zero burst limiter returns denied with fallback delay", func(t *testing.T) {
+		// Burst=0 makes Reserve().OK() return false — tests the !r.OK() fallback path
+		cfg := Config{Rate: 1, Burst: 0, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		allowed, delay := rl.AllowWithRetryAfter("key")
+		assert.False(t, allowed, "zero-burst limiter must always deny")
+		assert.Equal(t, time.Minute, delay, "zero-burst limiter must return fallback delay of one minute")
+	})
+}
+
 func TestAllow(t *testing.T) {
 	t.Run("allows requests within burst limit", func(t *testing.T) {
 		cfg := Config{Rate: 1, Burst: 5, CleanupInterval: time.Hour, MaxAge: time.Hour}
 		rl := New(cfg)
 		defer rl.Stop()
 
-		// Should allow up to burst limit
 		for i := 0; i < 5; i++ {
 			assert.True(t, rl.Allow("192.168.1.1"), "request %d should be allowed", i)
 		}

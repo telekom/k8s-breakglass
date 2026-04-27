@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Per-user rate limiting on session creation**: `POST /api/breakglassSessions` now enforces a per-user rate limit (10 requests/minute, burst of 1) keyed on the authenticated user's email. Requests exceeding the limit receive `429 Too Many Requests` with a `Retry-After` header indicating when to retry. A valid `email` claim is required; requests without one are rejected.
+
+### Added
+
+- **`--disable-session-rate-limit` flag**: New CLI flag (`BREAKGLASS_DISABLE_SESSION_RATE_LIMIT` env var) replaces the strict session-creation rate limiter with a permissive one (1000 req/s, burst 10000). Intended for E2E testing and development environments only. Do not use in production.
+
 ### Changed
 
 - **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.

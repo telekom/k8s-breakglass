@@ -76,6 +76,30 @@ func DefaultSARConfig() Config {
 	}
 }
 
+// DefaultSessionCreationConfig returns per-user rate limit config for POST /api/breakglassSessions.
+// 10 requests per minute with burst of 1 to prevent flooding.
+func DefaultSessionCreationConfig() Config {
+	const sessionCreationRatePerSec = float64(10) / 60
+	return Config{
+		Rate:            sessionCreationRatePerSec,
+		Burst:           1,
+		CleanupInterval: 5 * time.Minute,
+		MaxAge:          15 * time.Minute,
+	}
+}
+
+// PermissiveSessionCreationConfig returns a rate limit config that effectively allows
+// unrestricted session creation. Use this only in tests and development environments
+// where rate limiting would cause false failures due to rapid sequential requests.
+func PermissiveSessionCreationConfig() Config {
+	return Config{
+		Rate:            1000,
+		Burst:           10000,
+		CleanupInterval: time.Minute,
+		MaxAge:          5 * time.Minute,
+	}
+}
+
 // entry holds rate limiter and last access time for an IP or user
 type entry struct {
 	limiter    *rate.Limiter
@@ -84,10 +108,11 @@ type entry struct {
 
 // IPRateLimiter implements per-IP rate limiting with automatic cleanup
 type IPRateLimiter struct {
-	mu      sync.RWMutex
-	entries map[string]*entry
-	config  Config
-	done    chan struct{}
+	mu       sync.RWMutex
+	entries  map[string]*entry
+	config   Config
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // New creates a new per-IP rate limiter with the given configuration
@@ -128,6 +153,36 @@ func (rl *IPRateLimiter) Allow(ip string) bool {
 	return e.limiter.Allow()
 }
 
+// AllowWithRetryAfter checks if a request from the given key should be allowed.
+// If denied, it returns the duration to wait before retrying.
+// The key can be any identifier: IP address, user email, etc.
+func (rl *IPRateLimiter) AllowWithRetryAfter(key string) (bool, time.Duration) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	e, exists := rl.entries[key]
+	if !exists {
+		e = &entry{
+			limiter: rate.NewLimiter(rate.Limit(rl.config.Rate), rl.config.Burst),
+		}
+		rl.entries[key] = e
+	}
+	e.lastAccess = time.Now()
+
+	r := e.limiter.Reserve()
+	if !r.OK() {
+		// Burst <= 0: reservation is invalid (infinite delay). Cancel and deny.
+		r.Cancel()
+		return false, time.Minute
+	}
+	delay := r.Delay()
+	if delay == 0 {
+		return true, 0
+	}
+	r.Cancel()
+	return false, delay
+}
+
 // Middleware returns a Gin middleware that applies per-IP rate limiting
 func (rl *IPRateLimiter) Middleware() gin.HandlerFunc {
 	return rl.MiddlewareWithExclusions(nil)
@@ -159,9 +214,9 @@ func (rl *IPRateLimiter) MiddlewareWithExclusions(excludedPrefixes []string) gin
 	}
 }
 
-// Stop stops the cleanup goroutine
+// Stop stops the cleanup goroutine. Safe to call multiple times.
 func (rl *IPRateLimiter) Stop() {
-	close(rl.done)
+	rl.stopOnce.Do(func() { close(rl.done) })
 }
 
 // cleanup periodically removes stale entries
