@@ -42,11 +42,24 @@ func EnrichReqLoggerWithAuth(c *gin.Context, reqLogger *zap.SugaredLogger) *zap.
 	if v, ok := c.Get("groups"); ok {
 		if groups, ok2 := v.([]string); ok2 && len(groups) > 0 {
 			reqLogger = reqLogger.With("groupCount", len(groups))
-			// full groups list is useful at debug level only
-			reqLogger.Debugw("Request token groups", "groups", groups)
+			reqLogger.Debugw("Request token groups", "groups", "[REDACTED]")
 		}
 	}
 	return reqLogger
+}
+
+// RedactGroupName fully redacts a group name so that no prefix or structural
+// signal is disclosed in log output. Any non-empty name is replaced with the
+// literal string "[REDACTED]"; empty names are returned as-is.
+//
+// This is NOT a cryptographically non-reversible redaction — it prevents
+// incidental log disclosure but is NOT a substitute for access controls on
+// log aggregation systems.
+func RedactGroupName(name string) string {
+	if name == "" {
+		return ""
+	}
+	return "[REDACTED]"
 }
 
 // NamespacedFields returns a variadic slice of key/value pairs suitable for passing

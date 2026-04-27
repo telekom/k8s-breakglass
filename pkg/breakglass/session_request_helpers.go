@@ -13,6 +13,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,7 +90,7 @@ func (wc *BreakglassSessionController) resolveUserGroups(
 	var userGroups []string
 	if raw, exists := c.Get("groups"); exists { // trace raw token groups before any normalization
 		if arr, ok := raw.([]string); ok {
-			reqLog.With("rawTokenGroups", arr, "rawTokenGroupCount", len(arr)).Debug("Extracted raw token groups from JWT claims")
+			reqLog.With("rawTokenGroupCount", len(arr)).Debug("Extracted raw token groups from JWT claims")
 		}
 	}
 	if tg, exists := c.Get("groups"); exists {
@@ -131,10 +132,15 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	// The UID stripping is only for API response serialization, not for internal processing.
 	if len(escalations) == 0 {
 		// Provide extra debug information in logs to help e2e diagnosis when no escalations are found
-		rawGroups, _ := c.Get("groups")
+		rawGroupCount := 0
+		if rawGroups, exists := c.Get("groups"); exists {
+			if arr, ok := rawGroups.([]string); ok {
+				rawGroupCount = len(arr)
+			}
+		}
 		reqLog.Warnw("No escalation groups found for user",
-			"user", cug.Username, "requestedGroup", cug.GroupName,
-			"cluster", cug.Clustername, "resolvedUserGroups", userGroups, "rawTokenGroups", rawGroups)
+			"user", cug.Username, "requestedGroupHint", system.RedactGroupName(cug.GroupName),
+			"cluster", cug.Clustername, "resolvedUserGroupCount", len(userGroups), "rawTokenGroupCount", rawGroupCount)
 		// Also log any escalations that exist for the cluster for visibility
 		if escList, listErr := wc.escalationManager.GetClusterBreakglassEscalations(ctx, cug.Clustername); listErr == nil {
 			names := make([]string, 0, len(escList))
@@ -166,14 +172,14 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 
 	reqLog.Debugw("Starting approver resolution from escalations",
 		"escalationCount", len(possibleEscals),
-		"requestedGroup", requestedGroup)
+		"requestedGroupHint", system.RedactGroupName(requestedGroup))
 
 	for i := range possibleEscals {
 		p := &possibleEscals[i]
 		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
 		reqLog.Debugw("Processing escalation for approver resolution",
 			"escalationName", p.Name,
-			"escalatedGroup", p.Spec.EscalatedGroup,
+			"escalatedGroupHint", system.RedactGroupName(p.Spec.EscalatedGroup),
 			"explicitUserCount", len(p.Spec.Approvers.Users),
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
@@ -184,7 +190,7 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
 			reqLog.Debugw("Matched escalation found during approver collection",
 				"escalationName", result.matchedEscalation.Name,
-				"escalatedGroup", result.matchedEscalation.Spec.EscalatedGroup,
+				"escalatedGroupHint", system.RedactGroupName(result.matchedEscalation.Spec.EscalatedGroup),
 				"denyPolicyCount", len(result.selectedDenyPolicies))
 		}
 
@@ -246,7 +252,7 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 	reqLog.Infow("Completed approver resolution from escalations",
 		"totalApproversCollected", len(result.allApprovers),
 		"approverGroupsCount", len(result.approversByGroup),
-		"requestedGroup", requestedGroup)
+		"requestedGroupHint", system.RedactGroupName(requestedGroup))
 
 	return result
 }
@@ -262,13 +268,13 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		if len(result.allApprovers) >= MaxTotalApprovers {
 			reqLog.Warnw("Total approvers limit reached, skipping remaining groups",
 				"limit", MaxTotalApprovers,
-				"skippedGroup", group,
+				"groupHint", system.RedactGroupName(group),
 				"escalation", p.Name)
 			break
 		}
 
 		reqLog.Debugw("Resolving approver group members",
-			"group", group,
+			"groupHint", system.RedactGroupName(group),
 			"escalation", p.Name)
 
 		var members []string
@@ -279,12 +285,12 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 			if statusMembers, ok := p.Status.ApproverGroupMembers[group]; ok {
 				members = statusMembers
 				reqLog.Debugw("Using deduplicated members from status (multi-IDP mode)",
-					"group", group,
+					"groupHint", system.RedactGroupName(group),
 					"escalation", p.Name,
 					"memberCount", len(members))
 			} else {
 				reqLog.Debugw("No members found in status for group (multi-IDP mode)",
-					"group", group,
+					"groupHint", system.RedactGroupName(group),
 					"escalation", p.Name)
 				continue
 			}
@@ -293,7 +299,7 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 			if wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 				members, err = wc.escalationManager.GetResolver().Members(ctx, group)
 				if err != nil {
-					reqLog.Warnw("Failed to resolve approver group members", "group", group, "error", err)
+					reqLog.Warnw("Failed to resolve approver group members", "groupHint", system.RedactGroupName(group), "error", err)
 					// Continue with other groups even if one fails
 					continue
 				}
@@ -303,7 +309,7 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		// Apply per-group member limit to prevent resource exhaustion
 		if len(members) > MaxApproverGroupMembers {
 			reqLog.Warnw("Approver group has too many members, truncating",
-				"group", group,
+				"groupHint", system.RedactGroupName(group),
 				"escalation", p.Name,
 				"originalCount", len(members),
 				"limit", MaxApproverGroupMembers)
@@ -314,13 +320,12 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		// Only log individual members at Debug level when the group is small enough.
 		if len(members) <= 20 {
 			reqLog.Debugw("Resolved approver group members",
-				"group", group,
+				"groupHint", system.RedactGroupName(group),
 				"escalation", p.Name,
-				"memberCount", len(members),
-				"members", members)
+				"memberCount", len(members))
 		} else {
 			reqLog.Debugw("Resolved approver group members",
-				"group", group,
+				"groupHint", system.RedactGroupName(group),
 				"escalation", p.Name,
 				"memberCount", len(members))
 		}
@@ -329,14 +334,14 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		remainingCapacity := MaxTotalApprovers - len(result.allApprovers)
 		if remainingCapacity == 0 {
 			reqLog.Warnw("No remaining capacity for approvers, skipping group",
-				"group", group,
+				"groupHint", system.RedactGroupName(group),
 				"escalation", p.Name,
 				"totalApproversLimit", MaxTotalApprovers)
 			break
 		}
 		if remainingCapacity < len(members) {
 			reqLog.Warnw("Truncating members to fit within total approvers limit",
-				"group", group,
+				"groupHint", system.RedactGroupName(group),
 				"escalation", p.Name,
 				"originalCount", len(members),
 				"truncatedTo", remainingCapacity,
@@ -352,7 +357,7 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		}
 		countAdded := len(result.allApprovers) - countBefore
 		reqLog.Debugw("Added group members to approvers",
-			"group", group,
+			"groupHint", system.RedactGroupName(group),
 			"escalation", p.Name,
 			"newMembersAdded", countAdded,
 			"totalApproversNow", len(result.allApprovers))
@@ -380,7 +385,7 @@ func (wc *BreakglassSessionController) checkDuplicateSession(
 	// A matching session exists; decide response based on its canonical state.
 	reqLog.Infow("Existing session found",
 		"session", ses.Name, "cluster", clustername,
-		"user", userIdentifier, "group", groupName, "state", ses.Status.State)
+		"user", userIdentifier, "groupHint", system.RedactGroupName(groupName), "state", ses.Status.State)
 	// Remove k8s internal fields before returning session in API response
 	dropK8sInternalFieldsSession(&ses)
 
@@ -617,12 +622,12 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 		}}
 		reqLog.Debugw("OwnerReference prepared for session create", "ownerRefs", bs.OwnerReferences)
 	} else {
-		reqLog.Debugw("No matching escalation found during session creation; no ownerRef will be attached", "requestedGroup", params.request.GroupName, "cluster", params.request.Clustername)
+		reqLog.Debugw("No matching escalation found during session creation; no ownerRef will be attached", "requestedGroupHint", system.RedactGroupName(params.request.GroupName), "cluster", params.request.Clustername)
 	}
 
 	// If no escalation was matched, reject creation: sessions must be tied to an escalation
 	if params.matchedEsc == nil {
-		reqLog.Warnw("Refusing to create session without matched escalation", "user", params.userIdentifier, "cluster", params.request.Clustername, "group", params.request.GroupName)
+		reqLog.Warnw("Refusing to create session without matched escalation", "user", params.userIdentifier, "cluster", params.request.Clustername, "groupHint", system.RedactGroupName(params.request.GroupName))
 		apiresponses.RespondForbidden(c, "no escalation found for requested group")
 		return nil, false
 	}
@@ -721,27 +726,25 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 		reqLog.Infow("Email sending disabled for this escalation via DisableNotifications",
 			"escalationName", matchedEsc.Name,
 			"cluster", bs.Spec.Cluster,
-			"grantedGroup", bs.Spec.GrantedGroup)
+			"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup))
 		return
 	}
 
 	reqLog.Infow("Resolved approvers from escalation (explicit users + group members)",
 		"approverCount", len(allApprovers),
-		"approvers", allApprovers,
 		"cluster", bs.Spec.Cluster,
-		"grantedGroup", bs.Spec.GrantedGroup)
+		"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup))
 
 	reqLog.Debugw("About to send breakglass request email",
 		"approvalsRequired", len(allApprovers),
-		"approvers", allApprovers,
 		"requestorEmail", authEmail,
 		"requestorUsername", username,
-		"grantedGroup", bs.Spec.GrantedGroup,
+		"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup),
 		"cluster", bs.Spec.Cluster)
 
 	if len(allApprovers) == 0 {
 		reqLog.Warnw("No approvers resolved for email notification; cannot send email with empty recipients",
-			"escalation", bs.Spec.GrantedGroup,
+			"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup),
 			"cluster", bs.Spec.Cluster,
 			"requestorEmail", authEmail,
 			"requestorUsername", username)
@@ -781,10 +784,10 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 			for g := range groupsToSync {
 				members, merr := wc.escalationManager.GetResolver().Members(ctx, g)
 				if merr != nil {
-					log.Warnw("Group member resolution failed during sync", "group", g, "error", merr)
+					log.Warnw("Group member resolution failed during sync", "groupHint", system.RedactGroupName(g), "error", merr)
 					continue
 				}
-				log.Debugw("Resolved group members for sync", "group", g, "count", len(members))
+				log.Debugw("Resolved group members for sync", "groupHint", system.RedactGroupName(g), "count", len(members))
 			}
 		}(goroutineLog)
 	}
@@ -792,19 +795,16 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 	// Filter out excluded users/groups and hidden groups from approvers list
 	reqLog.Debugw("About to filter approvers",
 		"escalationName", matchedEsc.Name,
-		"preFilterApproverCount", len(allApprovers),
-		"preFilterApprovers", allApprovers)
+		"preFilterApproverCount", len(allApprovers))
 
 	filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, matchedEsc)
 	reqLog.Debugw("After filterExcludedNotificationRecipients",
 		"postExcludeApproverCount", len(filteredApprovers),
-		"postExcludeApprovers", filteredApprovers,
 		"excludedCount", len(allApprovers)-len(filteredApprovers))
 
 	filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, matchedEsc)
 	reqLog.Debugw("After filterHiddenFromUIRecipients",
 		"postHiddenFilterApproverCount", len(filteredApprovers),
-		"postHiddenFilterApprovers", filteredApprovers,
 		"hiddenFilteredOutCount", len(allApprovers)-len(filteredApprovers))
 
 	if len(filteredApprovers) == 0 {

@@ -25,6 +25,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 )
 
 // denyReasonMessage is a user-facing instruction included in SubjectAccessReview deny responses.
@@ -840,7 +841,7 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			// ownerRefs still enable standard session-based SAR checks.
 			allowedGroupsToCheck = []string{s.Spec.GrantedGroup}
 			if log != nil {
-				log.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
+				log.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "sessionGroupHint", system.RedactGroupName(s.Spec.GrantedGroup))
 			}
 		}
 
@@ -893,7 +894,7 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		}
 
 		if log != nil {
-			log.Debugw("Impersonation groups to try", "groupsToTry", groupsToTry, "session", s.Name)
+			log.Debugw("Impersonation groups to try", "groupCount", len(groupsToTry), "session", s.Name)
 		}
 
 		for _, g := range groupsToTry {
@@ -919,20 +920,20 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 				}
 			}
 			if log != nil {
-				log.Debugw("Creating SubjectAccessReview for session impersonation", "group", g, "session", s.Name)
+				log.Debugw("Creating SubjectAccessReview for session impersonation", "groupHint", system.RedactGroupName(g), "session", s.Name)
 			}
 			resp, err := sarClient.Create(ctx, sar, metav1.CreateOptions{})
 			if err != nil {
 				if log != nil {
-					log.With("error", err, "group", g).Warn("session SAR error")
-					log.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
+					log.With("error", err, "groupHint", system.RedactGroupName(g)).Warn("session SAR error")
+					log.Debugw("Failed SAR create error details", "error", err, "groupHint", system.RedactGroupName(g), "hasResourceAttributes", sar.Spec.ResourceAttributes != nil, "hasNonResourceAttributes", sar.Spec.NonResourceAttributes != nil)
 				}
 				metrics.WebhookSessionSARErrors.WithLabelValues(clusterName).Inc()
 				continue
 			}
 			if resp != nil {
 				if log != nil {
-					log.Debugw("Session SAR response", "group", g, "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
+					log.Debugw("Session SAR response", "groupHint", system.RedactGroupName(g), "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
 				}
 			}
 			if resp != nil && resp.Status.Allowed {

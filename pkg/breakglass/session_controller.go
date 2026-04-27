@@ -223,7 +223,13 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		apiresponses.RespondUnprocessableEntity(c, "failed to decode JSON request body (invalid JSON or unknown fields)")
 		return
 	}
-	reqLog.Debugw("Decoded breakglass session request", "request", request)
+	reqLog.Debugw("Decoded breakglass session request",
+		"cluster", request.Clustername,
+		"requestedGroupHint", system.RedactGroupName(request.GroupName),
+		"requestedUsername", request.Username,
+		"hasReason", strings.TrimSpace(request.Reason) != "",
+		"hasScheduledStartTime", request.ScheduledStartTime != "",
+		"requestedDurationSeconds", request.Duration)
 
 	// Phase 1: Resolve authenticated identity and enforce username matching
 	authIdentity, ok := wc.resolveAuthenticatedIdentity(c, &request, reqLog)
@@ -233,7 +239,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 
 	// Phase 2: Validate session request parameters
 	if err := wc.validateSessionRequest(request); err != nil {
-		reqLog.With("error", err, "request", request).Warn("Invalid session request parameters")
+		reqLog.With("error", err, "cluster", request.Clustername, "requestedGroupHint", system.RedactGroupName(request.GroupName), "requestedUsername", request.Username).Warn("Invalid session request parameters")
 		apiresponses.RespondUnprocessableEntity(c, "missing input request data: "+err.Error())
 		return
 	}
@@ -249,7 +255,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		Username:    request.Username,
 		GroupName:   request.GroupName,
 	}
-	reqLog = reqLog.With("cluster", cug.Clustername, "user", cug.Username, "group", cug.GroupName)
+	reqLog = reqLog.With("cluster", cug.Clustername, "user", cug.Username, "groupHint", system.RedactGroupName(cug.GroupName))
 	reqLog.Info("Validated session request parameters")
 
 	// Phase 3: Load global config via cached loader
@@ -278,7 +284,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	resolution := wc.collectApproversFromEscalations(ctx, escalations, request.GroupName, reqLog)
 
 	if !slices.Contains(resolution.possibleGroups, request.GroupName) {
-		reqLog.Warnw("User not authorized for group", "user", request.Username, "group", request.GroupName)
+		reqLog.Warnw("User not authorized for group", "user", request.Username, "groupHint", system.RedactGroupName(request.GroupName))
 		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return
 	}
@@ -286,7 +292,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		resolution.matchedEscalation.Spec.RequestReason != nil &&
 		resolution.matchedEscalation.Spec.RequestReason.Mandatory {
 		if strings.TrimSpace(request.Reason) == "" {
-			reqLog.Warnw("Missing required request reason", "group", request.GroupName)
+			reqLog.Warnw("Missing required request reason", "groupHint", system.RedactGroupName(request.GroupName))
 			apiresponses.RespondUnprocessableEntity(c, "missing required request reason")
 			return
 		}
@@ -303,7 +309,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		createKey := request.Clustername + "/" + userIdentifier + "/" + request.GroupName
 		if _, loaded := wc.inFlightCreates.LoadOrStore(createKey, true); loaded {
 			reqLog.Infow("Concurrent session creation already in-flight, returning conflict",
-				"cluster", request.Clustername, "user", userIdentifier, "group", request.GroupName)
+				"cluster", request.Clustername, "user", userIdentifier, "groupHint", system.RedactGroupName(request.GroupName))
 			c.JSON(http.StatusConflict, gin.H{"error": "session creation already in progress"})
 			return
 		}
@@ -323,7 +329,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	username := authIdentity.username
 	reqLog.Debugw("Session creation initiated by user",
 		"requestorEmail", authIdentity.email, "requestorUsername", username,
-		"requestedGroup", request.GroupName, "requestedCluster", request.Clustername)
+		"requestedGroupHint", system.RedactGroupName(request.GroupName), "requestedCluster", request.Clustername)
 
 	// Phase 10: Build session spec from escalation and request
 	spec, ok := wc.buildSessionSpec(c, request, userIdentifier,
@@ -354,6 +360,6 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRequested, bs, request.Username, "Session requested")
 	reqLog.Debugw("Session created",
 		"user", request.Username, "cluster", request.Clustername,
-		"group", request.GroupName, "generatedName", bs.Name)
+		"groupHint", system.RedactGroupName(request.GroupName), "generatedName", bs.Name)
 	c.JSON(http.StatusCreated, *bs)
 }

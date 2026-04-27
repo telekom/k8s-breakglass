@@ -140,14 +140,14 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	groups []string,
 ) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
-	log.Debugw("Fetching group BreakglassEscalations", "groups", groups)
+	log.Debugw("Fetching group BreakglassEscalations", "groupCount", len(groups))
 	metrics.APIEndpointRequests.WithLabelValues("GetGroupBreakglassEscalations").Inc()
 	// First try index-based lookup for each group and collect results (deduped)
 	collectedMap := map[string]breakglassv1alpha1.BreakglassEscalation{}
 	for _, g := range groups {
 		list := breakglassv1alpha1.BreakglassEscalationList{}
 		if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.group": g}); err == nil {
-			log.Debugw("Index lookup for group returned items", "group", g, "count", len(list.Items))
+			log.Debugw("Index lookup for group returned items", "groupHint", system.RedactGroupName(g), "count", len(list.Items))
 			for _, it := range list.Items {
 				// apply group normalization check to be safe (fake client may ignore MatchingFields)
 				allowed := it.Spec.Allowed.Groups
@@ -183,11 +183,11 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 		}
 		for _, group := range groups {
 			if slices.Contains(allowedGroups, group) {
-				log.Debugw("Escalation matches user group", append(system.NamespacedFields(be.Name, ""), "matchingGroup", group, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)...)
+				log.Debugw("Escalation matches user group", append(system.NamespacedFields(be.Name, ""), "allowedGroupCount", len(be.Spec.Allowed.Groups))...)
 				return true
 			}
 		}
-		log.Debugw("Escalation does not match any user groups", append(system.NamespacedFields(be.Name, ""), "userGroups", groups, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)...)
+		log.Debugw("Escalation does not match any user groups", append(system.NamespacedFields(be.Name, ""), "userGroupCount", len(groups), "allowedGroupCount", len(be.Spec.Allowed.Groups))...)
 		return false
 	})
 }
@@ -298,7 +298,7 @@ func groupsMatch(userGroups, allowedGroups, oidcPrefixes []string) bool {
 
 // GetClusterGroupBreakglassEscalations returns escalations for specific cluster and user groups
 func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
-	em.getLogger().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groups", groups)
+	em.getLogger().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groupCount", len(groups))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 
 	// Try index-based lookup first for exact cluster matches and global "*" pattern
@@ -329,7 +329,7 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 
 // GetClusterGroupTargetBreakglassEscalation returns escalations for specific cluster, user groups, and target group
 func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
-	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroups", userGroups, "targetGroup", targetGroup)
+	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroupCount", len(userGroups), "targetGroupHint", system.RedactGroupName(targetGroup))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupTargetBreakglassEscalation").Inc()
 	// Try index-based lookup by escalatedGroup first
 	collected := make([]breakglassv1alpha1.BreakglassEscalation, 0)

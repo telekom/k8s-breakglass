@@ -103,7 +103,7 @@ func (wc *WebhookController) parseSARRequest(c *gin.Context) (*authorizeState, b
 	s.reqLog.Debug("Received SubjectAccessReview")
 	s.reqLog.Infow("Processing authorization",
 		"username", s.sar.Spec.User,
-		"groupsRequested", s.sar.Spec.Groups)
+		"groupsRequestedCount", len(s.sar.Spec.Groups))
 	return s, true
 }
 
@@ -221,7 +221,7 @@ func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeS
 		return false
 	}
 	s.phases.EndPhase(PhaseSessions) // End sessions phase
-	s.reqLog.With("groups", s.groups, "sessions", len(s.sessions),
+	s.reqLog.With("groupCount", len(s.groups), "sessions", len(s.sessions),
 		"tenant", s.tenant, "idpMismatches", len(s.idpMismatches)).
 		Debug("Retrieved user groups for cluster")
 	return true
@@ -378,7 +378,7 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 				s.reqLog.Infow("Request denied by session-scoped DenyPolicy",
 					"policy", pol,
 					"session", sess.Name,
-					"sessionGroup", sess.Spec.GrantedGroup,
+					"sessionGroupHint", system.RedactGroupName(sess.Spec.GrantedGroup),
 					"verb", act.Verb,
 					"apiGroup", act.APIGroup,
 					"resource", act.Resource,
@@ -453,7 +453,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 	var rbacErr error
 	// Log input to RBAC check for easier debugging
 	s.reqLog.Debugw("Invoking RBAC canDoFn",
-		"groups", s.groups, "resourceAttributes", s.sar.Spec.ResourceAttributes,
+		"groupCount", len(s.groups), "resourceAttributes", s.sar.Spec.ResourceAttributes,
 		"cluster", s.clusterName)
 
 	if wc.ccProvider != nil {
@@ -501,7 +501,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 		s.reqLog.Info("User authorized through regular RBAC permissions")
 		s.allowed = true
 		s.allowSource = "rbac"
-		s.allowDetail = fmt.Sprintf("groups=%v", s.groups)
+		s.allowDetail = fmt.Sprintf("groupCount=%d", len(s.groups))
 		// Emit allowed decision metric for action
 		if s.sar.Spec.ResourceAttributes != nil {
 			ra := s.sar.Spec.ResourceAttributes
@@ -530,15 +530,15 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 			s.sessionSARSkipErr = err
 		} else if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(
 			s.ctx, rc, s.sessions, s.sar, s.clusterName, s.reqLog); allowedSession {
-			s.reqLog.With("grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated).
+			s.reqLog.With("sessionGroupHint", system.RedactGroupName(grp), "session", sesName, "impersonationGroupHint", system.RedactGroupName(impersonated)).
 				Debug("Authorized via breakglass session group on target cluster")
 			s.allowed = true
 			s.allowSource = "session"
-			s.allowDetail = fmt.Sprintf("group=%s session=%s impersonated=%s", grp, sesName, impersonated)
+			s.allowDetail = fmt.Sprintf("session=%s sessionGroupHint=%s impersonationGroupHint=%s", sesName, system.RedactGroupName(grp), system.RedactGroupName(impersonated))
 			// Emit a single correlated info log showing the final accepted impersonated group for observability
 			s.reqLog.Infow("Final accepted impersonated group",
 				"username", username, "cluster", s.clusterName,
-				"grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
+				"sessionGroupHint", system.RedactGroupName(grp), "session", sesName, "impersonationGroupHint", system.RedactGroupName(impersonated))
 
 			// Record session activity for idle timeout detection and usage analytics (#314)
 			wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)
@@ -571,12 +571,12 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 		c.Status(http.StatusInternalServerError)
 		return false
 	}
-	s.reqLog.With("activeUserGroups", activeUserGroups).Debug("Retrieved user groups from active sessions")
+	s.reqLog.With("activeUserGroupCount", len(activeUserGroups)).Debug("Retrieved user groups from active sessions")
 
 	// Add basic user groups that all authenticated users should have
 	allUserGroups := append(activeUserGroups, "system:authenticated")
 	uniqueGroups := dedupeStrings(allUserGroups)
-	s.reqLog.With("allUserGroups", uniqueGroups).Debug("Final user groups including basic authenticated groups")
+	s.reqLog.With("allUserGroupCount", len(uniqueGroups)).Debug("Final user groups including basic authenticated groups")
 
 	// Check for group-based escalations
 	var escalErr error
@@ -636,7 +636,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	} else {
 		s.reqLog.Debugw("No escalation paths for user", "username", username)
 	}
-	s.reqLog.With("escalations", s.escals).Debug("Available escalation paths for user")
+	s.reqLog.With("escalationCount", len(s.escals)).Debug("Available escalation paths for user")
 	return true
 }
 
@@ -663,7 +663,7 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 			// Collect session names and granted groups for the diagnostic message
 			sessInfo := make([]string, 0, len(s.sessions))
 			for _, sess := range s.sessions {
-				sessInfo = append(sessInfo, sess.Name+"("+sess.Spec.GrantedGroup+")")
+				sessInfo = append(sessInfo, sess.Name+"("+system.RedactGroupName(sess.Spec.GrantedGroup)+")")
 			}
 			diag := fmt.Sprintf(
 				"Note: %d active breakglass session(s) found: %v. "+
@@ -676,7 +676,7 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 				s.reason = s.reason + " " + diag
 			}
 			// Also log this at info so admins see the mismatch between session state and SAR capabilities
-			s.reqLog.With("sessions", sessInfo, "error", s.sessionSARSkipErr.Error()).
+			s.reqLog.With("sessionCount", len(sessInfo), "sessionDetails", sessInfo, "error", s.sessionSARSkipErr.Error()).
 				Info("Active sessions present but unable to validate them against target cluster")
 		}
 	}
@@ -799,7 +799,7 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		if len(s.sessions) > 0 {
 			sessNames := make([]string, len(s.sessions))
 			for i, sess := range s.sessions {
-				sessNames[i] = sess.Name + "(" + sess.Spec.GrantedGroup + ")"
+				sessNames[i] = sess.Name + "(" + system.RedactGroupName(sess.Spec.GrantedGroup) + ")"
 			}
 			denialDetails["sessionDetails"] = sessNames
 		}

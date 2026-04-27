@@ -57,11 +57,11 @@ func TestBuildFinalReason_AllowedByRBAC(t *testing.T) {
 	s := newTestState(t)
 	s.allowed = true
 	s.allowSource = "rbac"
-	s.allowDetail = "groups=[admin]"
+	s.allowDetail = "groupCount=1"
 
 	wc.buildFinalReason(s)
 
-	assert.Contains(t, s.reason, "Allowed by RBAC (groups=[admin])")
+	assert.Contains(t, s.reason, "Allowed by RBAC (groupCount=1)")
 }
 
 func TestBuildFinalReason_AllowedBySession(t *testing.T) {
@@ -69,12 +69,12 @@ func TestBuildFinalReason_AllowedBySession(t *testing.T) {
 	s := newTestState(t)
 	s.allowed = true
 	s.allowSource = "session"
-	s.allowDetail = "group=admin session=my-session impersonated=admin"
+	s.allowDetail = "session=my-session sessionGroupHint=adm*** impersonationGroupHint=adm***"
 
 	wc.buildFinalReason(s)
 
 	assert.Contains(t, s.reason, "Allowed by breakglass session")
-	assert.Contains(t, s.reason, "group=admin session=my-session")
+	assert.Contains(t, s.reason, "session=my-session sessionGroupHint=adm***")
 }
 
 func TestBuildFinalReason_AllowedPreservesExistingReason(t *testing.T) {
@@ -102,7 +102,7 @@ func TestBuildFinalReason_DeniedWithSessionSARSkip(t *testing.T) {
 	wc.buildFinalReason(s)
 
 	assert.Contains(t, s.reason, "1 active breakglass session(s) found")
-	assert.Contains(t, s.reason, "session-1(admin)")
+	assert.Contains(t, s.reason, "session-1([REDACTED])")
 	assert.Contains(t, s.reason, "rest config unavailable")
 }
 

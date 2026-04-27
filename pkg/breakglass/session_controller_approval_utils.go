@@ -83,7 +83,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	var mostSpecificDenial ApprovalCheckResult
 	foundMatchingEscalation := false
 
-	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGrantedGroup", session.Spec.GrantedGroup, "candidateEscalationCount", len(escalations), "approverEmail", email)
+	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGroupHint", system.RedactGroupName(session.Spec.GrantedGroup), "candidateEscalationCount", len(escalations), "approverEmail", email)
 	for _, esc := range escalations {
 		if esc.Spec.EscalatedGroup != session.Spec.GrantedGroup {
 			continue
@@ -159,7 +159,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
 					reqLog.Debugw("Using deduplicated members from multi-IDP status",
-						"escalation", esc.Name, "group", g, "memberCount", len(members))
+						"escalation", esc.Name, "groupHint", system.RedactGroupName(g), "memberCount", len(members))
 				}
 			}
 
@@ -173,7 +173,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		} else {
 			for _, g := range approverGroupsToCheck {
 				if slices.Contains(approverGroups, g) {
-					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", g)
+					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "groupHint", system.RedactGroupName(g))
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}
@@ -185,7 +185,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				"session", session.Name, "escalation", esc.Name, "user", email, "dedupMemberCount", len(dedupMembers))
 		} else {
 			reqLog.Debugw("Escalation found but user not in approvers (continuing)",
-				"session", session.Name, "escalation", esc.Name, "user", email, "userGroups", approverGroups, "approverUsers", esc.Spec.Approvers.Users, "approverGroups", esc.Spec.Approvers.Groups)
+				"session", session.Name, "escalation", esc.Name, "user", email, "userGroupCount", len(approverGroups), "approverUserCount", len(esc.Spec.Approvers.Users), "approverGroupCount", len(esc.Spec.Approvers.Groups))
 		}
 		// Track not-an-approver as lowest priority denial
 		if mostSpecificDenial.Reason == ApprovalDenialNone {
@@ -199,7 +199,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 
 	// Return the most specific denial reason found, or no-matching-escalation if none found
 	if !foundMatchingEscalation {
-		reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "grantedGroup", session.Spec.GrantedGroup, "approverEmail", email, "approverGroups", approverGroups)
+		reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "approverEmail", email, "approverGroupCount", len(approverGroups))
 		return ApprovalCheckResult{
 			Allowed: false,
 			Reason:  ApprovalDenialNoMatchingEscalation,
@@ -418,7 +418,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 						groups = StripOIDCPrefixes(groups, cfgLoaded.Kubernetes.OIDCPrefixes)
 					}
 				}
-				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groups", groups)
+				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groupCount", len(groups))
 				return groups, nil
 			}
 			log.Debugw("Falling back to legacy GetUserGroupsWithConfig (kube context)", "cluster", cug.Clustername)
@@ -621,12 +621,12 @@ func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context,
 		},
 		RequestContext: &audit.RequestContext{
 			SessionName:    session.Name,
-			EscalationName: session.Spec.GrantedGroup,
+			EscalationName: system.RedactGroupName(session.Spec.GrantedGroup),
 		},
 		Details: map[string]interface{}{
 			"message":      message,
 			"cluster":      session.Spec.Cluster,
-			"grantedGroup": session.Spec.GrantedGroup,
+			"grantedGroup": system.RedactGroupName(session.Spec.GrantedGroup),
 			"state":        string(session.Status.State),
 		},
 	}
@@ -663,13 +663,13 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 		},
 		RequestContext: &audit.RequestContext{
 			SessionName:    session.Name,
-			EscalationName: session.Spec.GrantedGroup,
+			EscalationName: system.RedactGroupName(session.Spec.GrantedGroup),
 		},
 		Details: map[string]interface{}{
 			"message":          message,
 			"expirationReason": reason,
 			"cluster":          session.Spec.Cluster,
-			"grantedGroup":     session.Spec.GrantedGroup,
+			"grantedGroup":     system.RedactGroupName(session.Spec.GrantedGroup),
 			"user":             session.Spec.User,
 		},
 	}

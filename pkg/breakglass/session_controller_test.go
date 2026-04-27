@@ -7045,3 +7045,33 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 	assert.Equal(t, goroutines-1, conflicted,
 		"remaining concurrent requests should be rejected with 409 Conflict")
 }
+
+func TestTokenValidation_NotFoundReturns404WithValidFalse(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.identityProvider = ErrIdentityProvider{}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?token=nonexistent-session-name", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code, "missing token session must return 404")
+	var body struct {
+		Valid bool `json:"valid"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	require.False(t, body.Valid, "valid must be false when session is not found")
+}

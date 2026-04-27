@@ -31,6 +31,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -841,7 +842,7 @@ func (c *DebugSessionController) checkAutoApprove(autoApprove *breakglassv1alpha
 					c.log.Infow("Auto-approving debug session based on group match",
 						"session", ds.Name,
 						"user", ds.Spec.RequestedBy,
-						"matchedGroup", userGroup)
+						"matchedGroupHint", system.RedactGroupName(userGroup))
 					return true
 				}
 			}

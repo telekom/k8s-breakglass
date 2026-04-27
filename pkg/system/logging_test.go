@@ -51,6 +51,28 @@ func TestEnrichReqLoggerWithAuthAddsFields(t *testing.T) {
 	require.EqualValues(t, 2, infoCtx["groupCount"])
 }
 
+func TestEnrichReqLoggerGroupsNotLeakedInDebugLog(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("groups", []string{"secret-role-admin", "internal-ops"})
+
+	core, recorded := observer.New(zap.DebugLevel)
+	logger := zap.New(core).Sugar()
+	EnrichReqLoggerWithAuth(ctx, logger)
+
+	entries := recorded.All()
+	require.Len(t, entries, 1, "expected exactly one debug log entry for groups")
+
+	debugEntry := entries[0]
+	fields := debugEntry.ContextMap()
+
+	groupsVal, hasGroups := fields["groups"]
+	require.True(t, hasGroups, "groups field must be present in debug log")
+	require.Equal(t, "[REDACTED]", groupsVal, "group values must be redacted, not logged in plaintext")
+
+	_, hasRawGroups := fields["rawTokenGroups"]
+	require.False(t, hasRawGroups, "rawTokenGroups must not appear in log output")
+}
+
 func TestEnrichReqLoggerWithAuthHandlesNil(t *testing.T) {
 	sugar := zap.NewNop().Sugar()
 	require.Same(t, sugar, EnrichReqLoggerWithAuth(nil, sugar))
@@ -60,4 +82,26 @@ func TestEnrichReqLoggerWithAuthHandlesNil(t *testing.T) {
 func TestNamespacedFields(t *testing.T) {
 	require.Equal(t, []interface{}{"name", "obj", "namespace", "ns-1"}, NamespacedFields("obj", "ns-1"))
 	require.Equal(t, []interface{}{"name", "obj"}, NamespacedFields("obj", ""))
+}
+
+func TestRedactGroupName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty", input: "", want: ""},
+		{name: "one-char", input: "a", want: "[REDACTED]"},
+		{name: "three-chars", input: "ops", want: "[REDACTED]"},
+		{name: "four-chars", input: "sres", want: "[REDACTED]"},
+		{name: "five-chars", input: "admin", want: "[REDACTED]"},
+		{name: "long", input: "platform-team", want: "[REDACTED]"},
+		{name: "unicode", input: "グループ管理者", want: "[REDACTED]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, RedactGroupName(tt.input))
+		})
+	}
 }
