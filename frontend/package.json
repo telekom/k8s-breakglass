@@ -31,7 +31,7 @@
     "mock-api": "node --watch mock-api/server.mjs"
   },
   "dependencies": {
-    "@telekom/scale-components": "^3.0.0-beta.159",
+    "@telekom/scale-components": "^3.0.0-beta.160",
     "@telekom/scale-components-neutral": "^3.0.0-beta.159",
     "axios": "^1.15.1",
     "humanize-duration": "^3.33.2",
