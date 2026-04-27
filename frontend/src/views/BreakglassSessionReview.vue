@@ -129,11 +129,20 @@ async function getActiveBreakglasses() {
       mine: routeApprover.value ? false : true,
       approver: routeApprover.value ? true : false,
     };
-    const response = await service.getSessionStatus(params);
-    if (response.status === 200) {
-      state.getBreakglassesMsg = "";
-      state.breakglasses = response.data;
-    }
+    const all: SessionCR[] = [];
+    let continueToken: string | undefined = undefined;
+    do {
+      const response = await service.getSessionStatus(params, continueToken);
+      if (response.status === 200) {
+        state.getBreakglassesMsg = "";
+        const items: SessionCR[] = Array.isArray(response.data?.items) ? response.data.items : [];
+        all.push(...items);
+        continueToken = response.data?.metadata?.continue || "";
+      } else {
+        break;
+      }
+    } while (continueToken);
+    state.breakglasses = all;
   } catch (errResponse: unknown) {
     const axiosLike = errResponse as AxiosLikeError;
     if (axiosLike?.response?.status === 401 || axiosLike?.status === 401) {

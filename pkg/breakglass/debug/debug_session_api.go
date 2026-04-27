@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -228,11 +230,13 @@ type CreateNodeDebugPodRequest struct {
 type DebugSessionListResponse struct {
 	Sessions []DebugSessionSummary `json:"sessions"`
 	Total    int                   `json:"total"`
+	Continue string                `json:"continue,omitempty"`
 }
 
 // DebugSessionSummary represents a summarized debug session for list responses
 type DebugSessionSummary struct {
 	Name                   string                                   `json:"name"`
+	Namespace              string                                   `json:"namespace"`
 	TemplateRef            string                                   `json:"templateRef"`
 	Cluster                string                                   `json:"cluster"`
 	RequestedBy            string                                   `json:"requestedBy"`
@@ -351,6 +355,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		}
 		summaries = append(summaries, DebugSessionSummary{
 			Name:                   s.Name,
+			Namespace:              s.Namespace,
 			TemplateRef:            s.Spec.TemplateRef,
 			Cluster:                s.Spec.Cluster,
 			RequestedBy:            s.Spec.RequestedBy,
@@ -366,9 +371,39 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		})
 	}
 
+	sort.Slice(summaries, func(i, j int) bool {
+		var ti, tj time.Time
+		if summaries[i].StartsAt != nil {
+			ti = summaries[i].StartsAt.Time
+		}
+		if summaries[j].StartsAt != nil {
+			tj = summaries[j].StartsAt.Time
+		}
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		if summaries[i].Name != summaries[j].Name {
+			return summaries[i].Name < summaries[j].Name
+		}
+		return summaries[i].Namespace < summaries[j].Namespace
+	})
+
+	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
+	if lerr != nil {
+		apiresponses.RespondBadRequest(ctx, lerr.Error())
+		return
+	}
+	offset, oerr := utils.ParseContinueToken(ctx.Query("continue"))
+	if oerr != nil {
+		apiresponses.RespondBadRequest(ctx, oerr.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(summaries, limit, offset)
+
 	ctx.JSON(http.StatusOK, DebugSessionListResponse{
-		Sessions: summaries,
+		Sessions: page,
 		Total:    len(summaries),
+		Continue: nextToken,
 	})
 }
 

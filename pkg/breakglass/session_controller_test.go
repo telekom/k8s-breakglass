@@ -27,6 +27,27 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// pagedSessionsResponse mirrors the paginated JSON envelope returned by the
+// session list endpoint: {"items": [...], "metadata": {"continue": "...", "total": N}}
+type pagedSessionsResponse struct {
+	Items    []breakglassv1alpha1.BreakglassSession `json:"items"`
+	Metadata struct {
+		Continue string `json:"continue"`
+		Total    int    `json:"total"`
+	} `json:"metadata"`
+}
+
+// decodeSessionPage decodes a paged sessions response body and returns items.
+// It calls t.Helper() so failures are attributed to the caller.
+func decodeSessionPage(t *testing.T, body io.Reader) []breakglassv1alpha1.BreakglassSession {
+	t.Helper()
+	var paged pagedSessionsResponse
+	if err := json.NewDecoder(body).Decode(&paged); err != nil {
+		t.Fatalf("Failed to decode paginated session response: %v", err)
+	}
+	return paged.Items
+}
+
 type FakeMailSender struct {
 	LastRecivers          []string
 	LastSubject, LastBody string
@@ -210,11 +231,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 		}
-		respSessions := []breakglassv1alpha1.BreakglassSession{}
-		err := json.NewDecoder(response.Body).Decode(&respSessions)
-		if err != nil {
-			t.Fatalf("Failed to decode response body %v", err)
-		}
+		respSessions := decodeSessionPage(t, response.Body)
 		if l := len(respSessions); l != 1 {
 			t.Fatalf("Expected one breakglass session to be created go %d instead. (%#v)", l, respSessions)
 		}
@@ -372,10 +389,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("Expected one created session, got %#v", respSessions)
 	}
@@ -398,10 +412,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions = []breakglassv1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions = decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("Expected one session after approve, got %#v", respSessions)
 	}
@@ -437,10 +448,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions = []breakglassv1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions = decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("Expected one session after invalid reject attempt, got %#v", respSessions)
 	}
@@ -581,10 +589,7 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Expected OK getting sessions, got %d", resp.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed to decode sessions: %v", err)
-	}
+	sessions := decodeSessionPage(t, resp.Body)
 	if len(sessions) != 0 {
 		t.Fatalf("expected 0 sessions after refused create, got %d", len(sessions))
 	}
@@ -1191,11 +1196,7 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.User != "user1@example.com" {
 		t.Fatalf("Expected one session for user1@example.com, got: %#v", respSessions)
 	}
@@ -1853,11 +1854,7 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.Cluster != "clusterA" {
 		t.Fatalf("Expected one session for clusterA, got: %#v", respSessions)
 	}
@@ -1914,11 +1911,7 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.User != "alice@example.com" {
 		t.Fatalf("Expected one session for alice@example.com, got: %#v", respSessions)
 	}
@@ -1975,11 +1968,7 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.GrantedGroup != "admins" {
 		t.Fatalf("Expected one session for group admins, got: %#v", respSessions)
 	}
@@ -2138,11 +2127,7 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.User != "u1@example.com" || respSessions[0].Spec.Cluster != "c1" {
 		t.Fatalf("Expected one session for c1/u1, got: %#v", respSessions)
 	}
@@ -2232,10 +2217,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions, got %d", res.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(res.Body).Decode(&respSessions); err != nil {
-		t.Fatalf("failed to decode sessions: %v", err)
-	}
+	respSessions := decodeSessionPage(t, res.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("expected one session, got %#v", respSessions)
 	}
@@ -2263,10 +2245,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions after approve, got %d", res.StatusCode)
 	}
-	respSessions = []breakglassv1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(res.Body).Decode(&respSessions); err != nil {
-		t.Fatalf("failed to decode sessions after approve: %v", err)
-	}
+	respSessions = decodeSessionPage(t, res.Body)
 	if len(respSessions) != 1 {
 		t.Fatalf("expected one session after approve, got %#v", respSessions)
 	}
@@ -2335,10 +2314,7 @@ func TestLongReasonStored(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 fetching sessions, got %d", res.StatusCode)
 	}
-	sessions := []breakglassv1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("decode failed: %v", err)
-	}
+	sessions := decodeSessionPage(t, res.Body)
 	if len(sessions) != 0 {
 		t.Fatalf("expected 0 sessions, got %d", len(sessions))
 	}
@@ -2438,8 +2414,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	var sessions []breakglassv1alpha1.BreakglassSession
-	_ = json.NewDecoder(w.Result().Body).Decode(&sessions)
+	sessions := decodeSessionPage(t, w.Result().Body)
 	if len(sessions) != 1 {
 		t.Fatalf("expected session present")
 	}
@@ -2457,8 +2432,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	sessions = []breakglassv1alpha1.BreakglassSession{}
-	_ = json.NewDecoder(w.Result().Body).Decode(&sessions)
+	sessions = decodeSessionPage(t, w.Result().Body)
 	if sessions[0].Status.State != breakglassv1alpha1.SessionStateRejected {
 		t.Fatalf("expected state rejected, got %s", sessions[0].Status.State)
 	}
@@ -2514,11 +2488,7 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.Cluster != "cluster1" || respSessions[0].Spec.GrantedGroup != "ops" {
 		t.Fatalf("Expected one session for cluster1/ops, got: %#v", respSessions)
 	}
@@ -2574,11 +2544,7 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.User != "sam@example.com" || respSessions[0].Spec.GrantedGroup != "ops" {
 		t.Fatalf("Expected one session for sam/ops, got: %#v", respSessions)
 	}
@@ -2634,11 +2600,7 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
-	respSessions := []breakglassv1alpha1.BreakglassSession{}
-	err := json.NewDecoder(response.Body).Decode(&respSessions)
-	if err != nil {
-		t.Fatalf("Failed to decode response body %v", err)
-	}
+	respSessions := decodeSessionPage(t, response.Body)
 	if len(respSessions) != 1 || respSessions[0].Spec.Cluster != "z1" || respSessions[0].Spec.User != "p@example.com" || respSessions[0].Spec.GrantedGroup != "wheel" {
 		t.Fatalf("Expected one session for z1/p/wheel, got: %#v", respSessions)
 	}
@@ -2747,10 +2709,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("Expected status OK (200) got '%d' instead for state %s", response.StatusCode, state)
 		}
-		respSessions := []breakglassv1alpha1.BreakglassSession{}
-		if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
-			t.Fatalf("Failed to decode response body for state %s: %v", state, err)
-		}
+		respSessions := decodeSessionPage(t, response.Body)
 		return respSessions
 	}
 
@@ -2819,10 +2778,7 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 		}
-		var sessions []breakglassv1alpha1.BreakglassSession
-		if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
+		sessions := decodeSessionPage(t, res.Body)
 		if len(sessions) != len(want) {
 			t.Fatalf("expected %d sessions, got %d: %#v", len(want), len(sessions), sessions)
 		}
@@ -2902,10 +2858,7 @@ func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	sessions := decodeSessionPage(t, res.Body)
 	if len(sessions) != 2 {
 		t.Fatalf("expected two sessions approved by me, got %#v", sessions)
 	}
@@ -2981,10 +2934,7 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed decode response: %v", err)
-	}
+	sessions := decodeSessionPage(t, res.Body)
 	if len(sessions) != 1 || sessions[0].Name != "approver-sess-1" {
 		t.Fatalf("expected approver to see the pending session, got: %#v", sessions)
 	}
@@ -3103,10 +3053,7 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed decode response: %v", err)
-	}
+	sessions := decodeSessionPage(t, res.Body)
 	if len(sessions) != 0 {
 		t.Fatalf("expected no sessions visible due to blockSelfApproval, got: %#v", sessions)
 	}
@@ -3174,10 +3121,7 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed decode response: %v", err)
-	}
+	sessions := decodeSessionPage(t, res.Body)
 	if len(sessions) != 1 || sessions[0].Name != "domain-approve-sess" {
 		t.Fatalf("expected approver with allowed domain to see session, got: %#v", sessions)
 	}
@@ -3276,10 +3220,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("case %s: expected 200 OK, got %d", tc.name, res.StatusCode)
 		}
-		var got []breakglassv1alpha1.BreakglassSession
-		if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
-			t.Fatalf("case %s: failed to decode response: %v", tc.name, err)
-		}
+		got := decodeSessionPage(t, res.Body)
 		// build name set
 		gotNames := map[string]struct{}{}
 		for _, s := range got {

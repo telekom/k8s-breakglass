@@ -38,7 +38,7 @@ export default class BreakglassSessionService {
     }
   }
 
-  public async getSessionStatus(request: BreakglassSessionRequest) {
+  public async getSessionStatus(request: BreakglassSessionRequest, continueToken?: string) {
     // RESTful: GET /breakglassSessions?user=...&cluster=...&group=...&name=...
     try {
       const params: Record<string, string | boolean> = {};
@@ -51,6 +51,7 @@ export default class BreakglassSessionService {
       // Default client-side policy: mine defaults to true, approver defaults to false
       params.mine = request.mine === undefined ? true : request.mine;
       params.approver = request.approver === undefined ? false : request.approver;
+      if (continueToken) params.continue = continueToken;
       return await this.client.get("/breakglassSessions", { params });
     } catch (e) {
       handleAxiosError("BreakglassSessionService.getSessionStatus", e, "Failed to fetch session status");

@@ -48,12 +48,12 @@ app.get("/api/config/idps", (_req, res) => {
 });
 
 app.get("/api/breakglassEscalations", (_req, res) => {
-  res.json(breakglassEscalations);
+  res.json({ items: breakglassEscalations, metadata: {} });
 });
 
 app.get("/api/breakglassSessions", (req, res) => {
   const sessions = listSessions(req.query || {});
-  res.json(sessions);
+  res.json({ items: sessions, metadata: {} });
 });
 
 app.post("/api/breakglassSessions", (req, res) => {

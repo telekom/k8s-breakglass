@@ -75,10 +75,16 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
 	}
 
-	// Parse response
-	var escList []breakglassv1alpha1.BreakglassEscalation
-	err := json.Unmarshal(w.Body.Bytes(), &escList)
+	var paged struct {
+		Items    []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+		Metadata struct {
+			Continue string `json:"continue"`
+			Total    int    `json:"total"`
+		} `json:"metadata"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &paged)
 	require.NoError(t, err)
+	escList := paged.Items
 
 	if len(escList) != 1 {
 		t.Fatalf("expected 1 escalation, got %d", len(escList))

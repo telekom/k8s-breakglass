@@ -140,7 +140,8 @@ func setupMockEscalationServer(t *testing.T) *httptest.Server {
 		switch r.URL.Path {
 		case "/api/breakglassEscalations":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(escalations)
+			envelope := map[string]interface{}{"items": escalations}
+			_ = json.NewEncoder(w).Encode(envelope)
 		default:
 			http.NotFound(w, r)
 		}

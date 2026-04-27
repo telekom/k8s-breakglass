@@ -82,10 +82,17 @@ func TestHandleGetEscalations_ReturnsEscalationsForTokenGroups(t *testing.T) {
 		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
 	}
 
-	var out []breakglassv1alpha1.BreakglassEscalation
-	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
+	var paged struct {
+		Items    []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+		Metadata struct {
+			Continue string `json:"continue"`
+			Total    int    `json:"total"`
+		} `json:"metadata"`
+	}
+	if err := json.NewDecoder(w.Result().Body).Decode(&paged); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+	out := paged.Items
 
 	// Only esc1 should be returned because the token groups include system:authenticated
 	if len(out) != 1 {

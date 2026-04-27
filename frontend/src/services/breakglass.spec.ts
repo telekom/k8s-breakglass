@@ -39,18 +39,20 @@ describe("BreakglassService", () => {
 
   it("maps withdrawn and rejected sessions using status.state", async () => {
     mockClient.get.mockResolvedValueOnce({
-      data: [
-        {
-          metadata: { name: "withdrawn1" },
-          spec: { grantedGroup: "g1", cluster: "c1" },
-          status: { state: "Withdrawn" },
-        },
-        {
-          metadata: { name: "rejected1" },
-          spec: { grantedGroup: "g2", cluster: "c2" },
-          status: { state: "Rejected" },
-        },
-      ],
+      data: {
+        items: [
+          {
+            metadata: { name: "withdrawn1" },
+            spec: { grantedGroup: "g1", cluster: "c1" },
+            status: { state: "Withdrawn" },
+          },
+          {
+            metadata: { name: "rejected1" },
+            spec: { grantedGroup: "g2", cluster: "c2" },
+            status: { state: "Rejected" },
+          },
+        ],
+      },
     });
 
     const sessions = await service.fetchHistoricalSessions();
@@ -72,13 +74,15 @@ describe("BreakglassService", () => {
 
   it("explodes escalations and parses duration strings for all supported units", async () => {
     mockClient.get.mockResolvedValueOnce({
-      data: [
-        { spec: { allowed: { groups: ["ops"], clusters: ["alpha"] }, escalatedGroup: "ops", maxValidFor: "15s" } },
-        { spec: { allowed: { groups: ["db"], clusters: ["beta"] }, escalatedGroup: "db", maxValidFor: "10m" } },
-        { spec: { allowed: { groups: ["sec"], clusters: ["gamma"] }, escalatedGroup: "sec", maxValidFor: "2h" } },
-        { spec: { allowed: { groups: ["sre"], clusters: ["delta"] }, escalatedGroup: "sre", maxValidFor: "1d" } },
-        { spec: { allowed: { groups: ["qa"], clusters: ["epsilon"] }, escalatedGroup: "qa", maxValidFor: "999x" } },
-      ],
+      data: {
+        items: [
+          { spec: { allowed: { groups: ["ops"], clusters: ["alpha"] }, escalatedGroup: "ops", maxValidFor: "15s" } },
+          { spec: { allowed: { groups: ["db"], clusters: ["beta"] }, escalatedGroup: "db", maxValidFor: "10m" } },
+          { spec: { allowed: { groups: ["sec"], clusters: ["gamma"] }, escalatedGroup: "sec", maxValidFor: "2h" } },
+          { spec: { allowed: { groups: ["sre"], clusters: ["delta"] }, escalatedGroup: "sre", maxValidFor: "1d" } },
+          { spec: { allowed: { groups: ["qa"], clusters: ["epsilon"] }, escalatedGroup: "qa", maxValidFor: "999x" } },
+        ],
+      },
     });
 
     const escalations = await (
@@ -97,25 +101,29 @@ describe("BreakglassService", () => {
     // fetchAvailableEscalations -> returns one available escalation
     mockClient.get
       .mockResolvedValueOnce({
-        data: [
-          { spec: { allowed: { groups: ["test-user"], clusters: ["c1"] }, escalatedGroup: "g1", maxValidFor: "1h" } },
-        ],
+        data: {
+          items: [
+            { spec: { allowed: { groups: ["test-user"], clusters: ["c1"] }, escalatedGroup: "g1", maxValidFor: "1h" } },
+          ],
+        },
       })
       // fetchActiveSessions -> returns approved session with nested metadata/spec/status
       .mockResolvedValueOnce({
-        data: [
-          {
-            metadata: { name: "s1" },
-            spec: { grantedGroup: "g1", cluster: "c1" },
-            status: { expiresAt: new Date().toISOString(), state: "Approved" },
-          },
-        ],
+        data: {
+          items: [
+            {
+              metadata: { name: "s1" },
+              spec: { grantedGroup: "g1", cluster: "c1" },
+              status: { expiresAt: new Date().toISOString(), state: "Approved" },
+            },
+          ],
+        },
       })
       // fetchMyOutstandingRequests -> none
-      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: { items: [] } })
       // fetchHistoricalSessions -> rejected and withdrawn (two sequential GETs inside helper)
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] });
+      .mockResolvedValueOnce({ data: { items: [] } })
+      .mockResolvedValueOnce({ data: { items: [] } });
 
     const service = new BreakglassService({ getAccessToken: async () => "t" } as unknown as FakeAuth);
     const res = await service.getBreakglasses();
@@ -130,29 +138,35 @@ describe("BreakglassService", () => {
     const timestamp = new Date().toISOString();
     mockClient.get
       .mockResolvedValueOnce({
-        data: [
-          { spec: { allowed: { groups: ["ops"], clusters: ["alpha"] }, escalatedGroup: "ops", maxValidFor: "30m" } },
-          { spec: { allowed: { groups: ["sec"], clusters: ["beta"] }, escalatedGroup: "sec" } },
-        ],
+        data: {
+          items: [
+            { spec: { allowed: { groups: ["ops"], clusters: ["alpha"] }, escalatedGroup: "ops", maxValidFor: "30m" } },
+            { spec: { allowed: { groups: ["sec"], clusters: ["beta"] }, escalatedGroup: "sec" } },
+          ],
+        },
       })
-      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: { items: [] } })
       .mockResolvedValueOnce({
-        data: [
-          {
-            metadata: { name: "pending-1", creationTimestamp: timestamp },
-            spec: { grantedGroup: "ops", cluster: "alpha" },
-            status: { expiresAt: timestamp, state: "Pending" },
-          },
-        ],
+        data: {
+          items: [
+            {
+              metadata: { name: "pending-1", creationTimestamp: timestamp },
+              spec: { grantedGroup: "ops", cluster: "alpha" },
+              status: { expiresAt: timestamp, state: "Pending" },
+            },
+          ],
+        },
       })
       .mockResolvedValueOnce({
-        data: [
-          {
-            metadata: { name: "history-1" },
-            spec: { grantedGroup: "sec", cluster: "beta" },
-            status: { state: "Withdrawn" },
-          },
-        ],
+        data: {
+          items: [
+            {
+              metadata: { name: "history-1" },
+              spec: { grantedGroup: "sec", cluster: "beta" },
+              status: { state: "Withdrawn" },
+            },
+          ],
+        },
       });
 
     const breakglasses = await service.getBreakglasses();
@@ -340,7 +354,7 @@ describe("BreakglassService", () => {
   });
 
   it("fetches outstanding requests and rethrows errors", async () => {
-    mockClient.get.mockResolvedValueOnce({ data: [{ metadata: { name: "req" } }] });
+    mockClient.get.mockResolvedValueOnce({ data: { items: [{ metadata: { name: "req" } }] } });
     const outstanding = await service.fetchMyOutstandingRequests();
     expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", {
       params: { mine: true, approver: false, state: "pending" },
@@ -353,13 +367,15 @@ describe("BreakglassService", () => {
 
   it("normalizes approved sessions when fetching active sessions", async () => {
     mockClient.get.mockResolvedValueOnce({
-      data: [
-        {
-          metadata: { name: "sess" },
-          spec: { grantedGroup: "ops", cluster: "c-1" },
-          status: { expiresAt: new Date().toISOString(), state: "Approved" },
-        },
-      ],
+      data: {
+        items: [
+          {
+            metadata: { name: "sess" },
+            spec: { grantedGroup: "ops", cluster: "c-1" },
+            status: { expiresAt: new Date().toISOString(), state: "Approved" },
+          },
+        ],
+      },
     });
 
     const sessions = await service.fetchActiveSessions();
@@ -377,24 +393,28 @@ describe("BreakglassService", () => {
   it("enriches pending sessions with approval reasons when escalation config matches", async () => {
     mockClient.get
       .mockResolvedValueOnce({
-        data: [
-          {
-            metadata: { name: "pending" },
-            spec: { cluster: "c-1", grantedGroup: "ops" },
-          },
-        ],
+        data: {
+          items: [
+            {
+              metadata: { name: "pending" },
+              spec: { cluster: "c-1", grantedGroup: "ops" },
+            },
+          ],
+        },
       })
       .mockResolvedValueOnce({
-        data: [
-          {
-            spec: {
-              allowed: { groups: ["ops"], clusters: ["c-1"] },
-              approvers: { groups: ["sec"] },
-              escalatedGroup: "ops",
-              approvalReason: { mandatory: true, description: "Need manager approval" },
+        data: {
+          items: [
+            {
+              spec: {
+                allowed: { groups: ["ops"], clusters: ["c-1"] },
+                approvers: { groups: ["sec"] },
+                escalatedGroup: "ops",
+                approvalReason: { mandatory: true, description: "Need manager approval" },
+              },
             },
-          },
-        ],
+          ],
+        },
       });
 
     const pending = await service.fetchPendingSessionsForApproval();
@@ -404,7 +424,7 @@ describe("BreakglassService", () => {
 
   it("continues when available escalations cannot be fetched", async () => {
     mockClient.get
-      .mockResolvedValueOnce({ data: [{ metadata: { name: "pending" }, spec: {} }] })
+      .mockResolvedValueOnce({ data: { items: [{ metadata: { name: "pending" }, spec: {} }] } })
       .mockRejectedValueOnce(new Error("config down"));
 
     const pending = await service.fetchPendingSessionsForApproval();
@@ -413,7 +433,7 @@ describe("BreakglassService", () => {
   });
 
   it("searches sessions with arbitrary parameters and handles failures", async () => {
-    mockClient.get.mockResolvedValueOnce({ data: [{ metadata: { name: "s" } }] });
+    mockClient.get.mockResolvedValueOnce({ data: { items: [{ metadata: { name: "s" } }] } });
     const results = await service.searchSessions({ mine: true, state: "approved" });
     expect(results).toHaveLength(1);
 
@@ -449,15 +469,25 @@ describe("BreakglassService", () => {
     const now = Date.now();
     mockClient.get
       .mockResolvedValueOnce({
-        data: [{ metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } }],
+        data: {
+          items: [
+            { metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } },
+          ],
+        },
       })
       .mockResolvedValueOnce({
-        data: [{ metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } }],
+        data: {
+          items: [
+            { metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: now } },
+          ],
+        },
       })
       .mockResolvedValueOnce({
-        data: [
-          { metadata: { name: "hist" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Rejected" } },
-        ],
+        data: {
+          items: [
+            { metadata: { name: "hist" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Rejected" } },
+          ],
+        },
       });
 
     const sessions = await service.fetchMySessions();
@@ -469,10 +499,12 @@ describe("BreakglassService", () => {
 
   it("returns deduplicated sessions approved by the user", async () => {
     mockClient.get.mockResolvedValueOnce({
-      data: [
-        { metadata: { name: "same" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: 1 } },
-        { metadata: { name: "same" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: 1 } },
-      ],
+      data: {
+        items: [
+          { metadata: { name: "same" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: 1 } },
+          { metadata: { name: "same" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { expiresAt: 1 } },
+        ],
+      },
     });
 
     const sessions = await service.fetchSessionsIApproved();

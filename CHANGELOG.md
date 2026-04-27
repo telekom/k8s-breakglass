@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Server-side pagination for all list endpoints (K7, K17)**: All `GET` list endpoints (`/api/breakglassSessions`, `/api/breakglassEscalations`, `/api/debugSessions`, `/api/debugSessions/templates`, `/api/debugSessions/podTemplates`, `/api/clusterBindings`, `/api/clusterBindings/forCluster/:cluster`) now support `?limit=N` (default 100, max 500) and `?continue=<token>` query parameters. The `continue` token is an opaque, base64-encoded integer offset — it is not compatible with Kubernetes watch semantics and does not carry a `resourceVersion`. Responses include a `metadata.continue` (or top-level `continue`) field with an opaque token for retrieving the next page. The shared pagination helper lives in `pkg/utils/pagination.go`.
+
 ### Changed
 
 - **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.

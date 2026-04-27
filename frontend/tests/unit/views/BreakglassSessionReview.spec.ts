@@ -101,14 +101,17 @@ describe("BreakglassSessionReview", () => {
     await createWrapper();
 
     expect(mockGetSessionStatus).toHaveBeenCalledTimes(1);
-    expect(mockGetSessionStatus).toHaveBeenCalledWith({
-      name: undefined,
-      cluster: undefined,
-      user: undefined,
-      group: undefined,
-      mine: true,
-      approver: false,
-    });
+    expect(mockGetSessionStatus).toHaveBeenCalledWith(
+      {
+        name: undefined,
+        cluster: undefined,
+        user: undefined,
+        group: undefined,
+        mine: true,
+        approver: false,
+      },
+      undefined,
+    );
   });
 
   it("uses approver mode params when route query has approver=true", async () => {
@@ -120,6 +123,7 @@ describe("BreakglassSessionReview", () => {
         mine: false,
         approver: true,
       }),
+      undefined,
     );
   });
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -474,15 +475,36 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	for _, t := range templateList.Items {
 		templates = append(templates, DebugPodTemplateResponse{
 			Name:        t.Name,
+			Namespace:   t.Namespace,
 			DisplayName: t.Spec.DisplayName,
 			Description: t.Spec.Description,
 			Containers:  len(t.Spec.Template.Spec.Containers),
 		})
 	}
 
+	sort.Slice(templates, func(i, j int) bool {
+		if templates[i].Name != templates[j].Name {
+			return templates[i].Name < templates[j].Name
+		}
+		return templates[i].Namespace < templates[j].Namespace
+	})
+
+	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
+	if lerr != nil {
+		apiresponses.RespondBadRequest(ctx, lerr.Error())
+		return
+	}
+	offset, oerr := utils.ParseContinueToken(ctx.Query("continue"))
+	if oerr != nil {
+		apiresponses.RespondBadRequest(ctx, oerr.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(templates, limit, offset)
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"templates": templates,
+		"templates": page,
 		"total":     len(templates),
+		"continue":  nextToken,
 	})
 }
 

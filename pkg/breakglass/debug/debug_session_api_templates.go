@@ -12,6 +12,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -81,6 +82,7 @@ type NamespaceSelectorRequirementResponse struct {
 // DebugPodTemplateResponse represents a pod template in API responses
 type DebugPodTemplateResponse struct {
 	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description,omitempty"`
 	Containers  int    `json:"containers"`
@@ -345,9 +347,22 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		return templates[i].Name < templates[j].Name
 	})
 
+	limit, lerr := utils.ParsePageLimit(ctx.Query("limit"))
+	if lerr != nil {
+		apiresponses.RespondBadRequest(ctx, lerr.Error())
+		return
+	}
+	offset, oerr := utils.ParseContinueToken(ctx.Query("continue"))
+	if oerr != nil {
+		apiresponses.RespondBadRequest(ctx, oerr.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(templates, limit, offset)
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"templates": templates,
+		"templates": page,
 		"total":     len(templates),
+		"continue":  nextToken,
 	})
 }
 

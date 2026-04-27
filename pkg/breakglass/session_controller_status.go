@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -715,8 +716,39 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	// Enrich sessions with approvalReason from matching escalations
 	enriched := wc.enrichSessionsWithApprovalReason(ctx, filtered, reqLog)
 
-	reqLog.Infow("Returning filtered breakglass sessions", "count", len(enriched))
-	c.JSON(http.StatusOK, enriched)
+	// Sort by creation timestamp (newest first), then by name and namespace for deterministic pagination ordering
+	sort.Slice(enriched, func(i, j int) bool {
+		ti := enriched[i].CreationTimestamp.Time
+		tj := enriched[j].CreationTimestamp.Time
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		if enriched[i].Name != enriched[j].Name {
+			return enriched[i].Name < enriched[j].Name
+		}
+		return enriched[i].Namespace < enriched[j].Namespace
+	})
+
+	limit, err := utils.ParsePageLimit(c.Query("limit"))
+	if err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return
+	}
+	offset, err := utils.ParseContinueToken(c.Query("continue"))
+	if err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return
+	}
+	page, nextToken := utils.Paginate(enriched, limit, offset)
+
+	reqLog.Infow("Returning filtered breakglass sessions", "count", len(page), "total", len(enriched), "offset", offset, "limit", limit)
+	c.JSON(http.StatusOK, gin.H{
+		"items": page,
+		"metadata": gin.H{
+			"continue": nextToken,
+			"total":    len(enriched),
+		},
+	})
 }
 
 // SessionApprovalMeta contains authorization metadata for a session

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -17,12 +18,29 @@ func (c *Client) Escalations() *EscalationService {
 }
 
 func (e *EscalationService) List(ctx context.Context) ([]breakglassv1alpha1.BreakglassEscalation, error) {
-	endpoint := "api/breakglassEscalations"
-	var escs []breakglassv1alpha1.BreakglassEscalation
-	if err := e.client.do(ctx, http.MethodGet, endpoint, nil, &escs); err != nil {
-		return nil, err
+	var all []breakglassv1alpha1.BreakglassEscalation
+	continueToken := ""
+	for {
+		endpoint := "api/breakglassEscalations"
+		if continueToken != "" {
+			endpoint = fmt.Sprintf("%s?continue=%s", endpoint, url.QueryEscape(continueToken))
+		}
+		var envelope struct {
+			Items    []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+			Metadata struct {
+				Continue string `json:"continue"`
+			} `json:"metadata"`
+		}
+		if err := e.client.do(ctx, http.MethodGet, endpoint, nil, &envelope); err != nil {
+			return nil, err
+		}
+		all = append(all, envelope.Items...)
+		if envelope.Metadata.Continue == "" {
+			break
+		}
+		continueToken = envelope.Metadata.Continue
 	}
-	return escs, nil
+	return all, nil
 }
 
 func (e *EscalationService) Get(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassEscalation, error) {
