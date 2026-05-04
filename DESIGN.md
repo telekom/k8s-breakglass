@@ -50,6 +50,7 @@ Represents an active or pending request for privilege escalation.
 ### Frontend
 - Built with Vue 3, Vite, and strict TypeScript.
 - Uses Telekom's `scale-components` library for UI elements.
+- **Design Guidelines**: All UI components must strictly adhere to the [Telekom Scale Design System](https://telekom.github.io/scale/). Custom CSS overrides of Scale tokens (especially for colors and contrast) should be avoided to ensure perfect inheritance of accessibility features and dark mode.
 - Implements strict WCAG 2.1 AA accessibility standards.
 - Designed to gracefully degrade or hide invalid actions (e.g., filtering out clusters that are not `Ready`).
 
