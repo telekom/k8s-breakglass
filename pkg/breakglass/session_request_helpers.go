@@ -146,6 +146,22 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return nil, false
 	}
+
+	// Phase 5.5: Apply Rule 11: block unready escalations from session requests.
+	// This ensures that "Not Ready" clusters cannot be used for sessions even if they exist.
+	readyEscalations := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
+	for _, e := range escalations {
+		if e.IsReady() {
+			readyEscalations = append(readyEscalations, e)
+		}
+	}
+	if len(readyEscalations) == 0 {
+		reqLog.Warnw("Requested escalation exists but is not ready", "cluster", cug.Clustername, "group", cug.GroupName)
+		apiresponses.RespondForbidden(c, "requested cluster/escalation is not ready")
+		return nil, false
+	}
+	escalations = readyEscalations
+
 	reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(escalations))
 	return escalations, true
 }

@@ -178,6 +178,9 @@
 
   /* Surface helpers for dark mode sections */
   --surface-card-subtle: #242426;
+
+  /* Fix: Lower contrast for expired text in dark mode — boost to AAA */
+  --tone-chip-neutral-text: #e0e0e0;
 }
 
 /* ============================================
@@ -211,6 +214,10 @@
 
   /* Stronger focus indicator */
   --focus-outline: #000000;
+
+  /* Fix: Blue links on black in HC mode have poor contrast (~4.5:1). 
+   * Use a lighter blue for AAA (>7:1) */
+  --telekom-color-text-and-icon-link-standard: #66b3ff;
 }
 
 /* High contrast + dark mode combination */
@@ -517,12 +524,11 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-lg);
-  padding: var(--card-padding-sm);
-  background-color: var(--surface-toolbar);
-  border-radius: var(--radius-lg);
   border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);
   align-items: center;
+  /* Fix: Standardize toolbar padding per Scale styleguide */
+  padding: var(--space-md) var(--space-lg);
 }
 
 .ui-toolbar input,
@@ -701,6 +707,11 @@ select:focus {
 
 .ui-section p {
   color: var(--telekom-color-text-and-icon-additional);
+}
+
+/* Fix: High Contrast Brand Alignment */
+:root[data-high-contrast="true"] scale-telekom-header::part(app-name-text) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
 }
 
 .ui-link-button {
