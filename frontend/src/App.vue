@@ -434,21 +434,21 @@ watch(
           </scale-telekom-nav-item>
         </scale-telekom-nav-list>
 
-        <scale-telekom-nav-list slot="functions" variant="functions" alignment="right" class="header-functions">
-          <scale-telekom-nav-item class="theme-toggle-nav-item">
+        <div slot="functions" class="header-functions-container">
+          <div class="theme-utilities">
             <button
               type="button"
               class="theme-toggle-button"
+              :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
               :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
               @click="toggleTheme"
             >
-              <scale-icon-action-light-dark-mode :decorative="true"></scale-icon-action-light-dark-mode>
+              <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
             </button>
-          </scale-telekom-nav-item>
-          <scale-telekom-nav-item class="hc-toggle-nav-item">
             <button
               type="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
+              :title="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
               :aria-label="
                 highContrast
                   ? 'High contrast mode enabled. Click to disable.'
@@ -456,53 +456,67 @@ watch(
               "
               @click="toggleHighContrast"
             >
-              <scale-icon-action-visibility :decorative="true"></scale-icon-action-visibility>
+              <scale-icon-action-visibility size="20" :decorative="true"></scale-icon-action-visibility>
             </button>
-          </scale-telekom-nav-item>
+          </div>
 
-          <scale-telekom-nav-item class="profile-nav-item">
-            <scale-telekom-profile-menu
-              v-if="authenticated"
-              ref="profileMenuRef"
-              class="profile-menu"
-              data-testid="user-menu"
-              :label="profileMenuLabel"
-              :accessibility-label="profileMenuAriaLabel"
-              :close-menu-accessibility-label="profileMenuCloseLabel"
-              :app-name="brandingTitle"
-              :service-name="brandingTitle"
-              :service-description="profileMenuServiceDescription"
-              :logged-in="authenticated"
-              hide-login-settings
-              logout-label="Logout"
-              logout-url="javascript:void(0);"
-              :user-info="profileMenuUserInfoJson"
-              :service-links="profileMenuServiceLinksJson"
-            ></scale-telekom-profile-menu>
-          </scale-telekom-nav-item>
+          <scale-telekom-nav-list variant="functions" alignment="right" class="header-functions">
+            <scale-telekom-nav-item v-if="authenticated" class="profile-nav-item">
+              <scale-telekom-profile-menu
+                ref="profileMenuRef"
+                class="profile-menu"
+                data-testid="user-menu"
+                :label="profileMenuLabel"
+                :accessibility-label="profileMenuAriaLabel"
+                :close-menu-accessibility-label="profileMenuCloseLabel"
+                :app-name="brandingTitle"
+                :service-name="brandingTitle"
+                :service-description="profileMenuServiceDescription"
+                :logged-in="authenticated"
+                hide-login-settings
+                logout-label="Logout"
+                logout-url="javascript:void(0);"
+                :user-info="profileMenuUserInfoJson"
+                :service-links="profileMenuServiceLinksJson"
+              ></scale-telekom-profile-menu>
+            </scale-telekom-nav-item>
 
-          <scale-telekom-nav-item class="mobile-nav-item">
-            <button type="button" class="mobile-nav-trigger" aria-label="Open navigation menu">
-              <scale-icon-action-menu decorative></scale-icon-action-menu>
-            </button>
-            <scale-telekom-nav-flyout ref="mobileNavFlyoutRef" variant="mobile">
-              <scale-telekom-mobile-flyout-canvas :app-name="brandingTitle" :app-name-link="homeHref">
-                <scale-telekom-mobile-menu slot="mobile-main-nav">
-                  <scale-telekom-mobile-menu-item
-                    v-for="item in primaryNavItems"
-                    :key="`mobile-${item.id}`"
-                    :active="activeNavId === item.id"
-                    :aria-current="activeNavId === item.id ? 'page' : undefined"
-                  >
-                    <a :href="navHref(item)" @click="handleMobileNavItemClick($event, item)">
-                      {{ item.label }}
-                    </a>
-                  </scale-telekom-mobile-menu-item>
-                </scale-telekom-mobile-menu>
-              </scale-telekom-mobile-flyout-canvas>
-            </scale-telekom-nav-flyout>
-          </scale-telekom-nav-item>
-        </scale-telekom-nav-list>
+            <scale-telekom-nav-item class="mobile-nav-item">
+              <button type="button" class="mobile-nav-trigger" aria-label="Open navigation menu">
+                <scale-icon-action-menu decorative></scale-icon-action-menu>
+              </button>
+              <scale-telekom-nav-flyout ref="mobileNavFlyoutRef" variant="mobile">
+                <scale-telekom-mobile-flyout-canvas :app-name="brandingTitle" :app-name-link="homeHref">
+                  <scale-telekom-mobile-menu slot="mobile-main-nav">
+                    <scale-telekom-mobile-menu-item
+                      v-for="item in primaryNavItems"
+                      :key="`mobile-${item.id}`"
+                      :active="activeNavId === item.id"
+                      :aria-current="activeNavId === item.id ? 'page' : undefined"
+                    >
+                      <a :href="navHref(item)" @click="handleMobileNavItemClick($event, item)">
+                        {{ item.label }}
+                      </a>
+                    </scale-telekom-mobile-menu-item>
+                    <!-- Mobile Theme Toggles -->
+                    <scale-telekom-mobile-menu-item class="mobile-theme-item">
+                      <div class="mobile-utilities">
+                        <button type="button" @click="toggleTheme" class="mobile-util-btn">
+                          <scale-icon-action-light-dark-mode size="24" :decorative="true"></scale-icon-action-light-dark-mode>
+                          <span>{{ theme === 'dark' ? 'Light Mode' : 'Dark Mode' }}</span>
+                        </button>
+                        <button type="button" @click="toggleHighContrast" :class="['mobile-util-btn', { active: highContrast }]">
+                          <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
+                          <span>High Contrast</span>
+                        </button>
+                      </div>
+                    </scale-telekom-mobile-menu-item>
+                  </scale-telekom-mobile-menu>
+                </scale-telekom-mobile-flyout-canvas>
+              </scale-telekom-nav-flyout>
+            </scale-telekom-nav-item>
+          </scale-telekom-nav-list>
+        </div>
       </scale-telekom-header>
 
       <main id="main" class="app-container">
@@ -540,10 +554,19 @@ scale-telekom-header::part(app-name-text) {
   font-size: 1.17rem;
 }
 
-.hc-toggle-nav-item,
-.theme-toggle-nav-item {
+.header-functions-container {
   display: flex;
   align-items: center;
+  gap: var(--space-md);
+}
+
+.theme-utilities {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-md);
+  border-right: 1px solid var(--telekom-color-ui-border-standard);
+  margin-right: var(--space-sm);
 }
 
 .hc-toggle-button,
@@ -556,22 +579,63 @@ scale-telekom-header::part(app-name-text) {
   border-radius: var(--telekom-radius-standard, 0.5rem);
   border: 1px solid transparent;
   background: transparent;
-  color: inherit;
+  color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
-  transition:
-    background-color 150ms ease,
-    border-color 150ms ease;
+  transition: all 0.2s ease;
 }
 
 .hc-toggle-button:hover,
 .theme-toggle-button:hover {
-  background-color: var(--surface-card-subtle);
+  background-color: var(--telekom-color-ui-subtle);
+  transform: translateY(-1px);
+}
+
+.hc-toggle-button:active,
+.theme-toggle-button:active {
+  transform: translateY(0) scale(0.95);
 }
 
 .hc-toggle-button.hc-active {
-  background-color: var(--telekom-color-functional-informational-subtle, #d3d7f9);
-  border-color: var(--telekom-color-functional-informational-standard, #2238df);
-  color: var(--telekom-color-functional-informational-standard, #2238df);
+  background-color: var(--telekom-color-primary-standard);
+  color: var(--telekom-color-text-and-icon-white);
+}
+
+.mobile-theme-item {
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
+  margin-top: var(--space-md);
+  padding-top: var(--space-sm);
+  background-color: var(--telekom-color-ui-subtle);
+}
+
+.mobile-utilities {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+}
+
+.mobile-util-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  background: transparent;
+  border: none;
+  color: var(--telekom-color-text-and-icon-standard);
+  font: inherit;
+  padding: var(--space-md);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: background-color 0.2s ease;
+}
+
+.mobile-util-btn:hover {
+  background-color: var(--telekom-color-ui-subtle-hover);
+}
+
+.mobile-util-btn.active {
+  color: var(--telekom-color-primary-standard);
+  font-weight: bold;
 }
 
 .center {
@@ -615,6 +679,9 @@ scale-telekom-header::part(app-name-text) {
 @media (max-width: 1039px) {
   .mobile-nav-item {
     display: flex;
+  }
+  .theme-utilities {
+    display: none; /* Hide on mobile header, use flyout menu instead */
   }
 }
 </style>
