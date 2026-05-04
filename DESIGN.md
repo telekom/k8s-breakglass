@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Breakglass Architecture & Design
 
 This document details the architectural design and core concepts of the `k8s-breakglass` project.
