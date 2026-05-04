@@ -64,7 +64,7 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 
 	// Parse query parameters for filtering
 	clusterFilter := c.Query("cluster")
-	activeOnly := breakglass.ParseBoolQuery(c.Query("activeOnly"), false)
+	activeOnly := breakglass.ParseBoolQuery(c.Query("activeOnly"), true)
 
 	email, err := ec.identityProvider.GetEmail(c)
 	if err != nil {

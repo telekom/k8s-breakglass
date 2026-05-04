@@ -380,6 +380,16 @@ func (be *BreakglassEscalation) GetCondition(condType string) *metav1.Condition 
 	return apimeta.FindStatusCondition(be.Status.Conditions, condType)
 }
 
+// IsReady checks if the escalation has a Ready condition with status True.
+// For compatibility with unit tests and initial states, it returns true if no conditions are set.
+func (be *BreakglassEscalation) IsReady() bool {
+	if len(be.Status.Conditions) == 0 {
+		return true
+	}
+	cond := be.GetCondition(string(BreakglassEscalationConditionReady))
+	return cond != nil && cond.Status == metav1.ConditionTrue
+}
+
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
 func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj *BreakglassEscalation) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers

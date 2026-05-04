@@ -169,6 +169,11 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 
 	for i := range possibleEscals {
 		p := &possibleEscals[i]
+		if !p.IsReady() {
+			reqLog.Debugw("Skipping unready escalation during approver resolution", "escalationName", p.Name)
+			continue
+		}
+
 		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
 		reqLog.Debugw("Processing escalation for approver resolution",
 			"escalationName", p.Name,
@@ -177,7 +182,8 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
 		// Always check if this is the matched escalation first (needed for deny policies)
-		isMatchedEscalation := p.Spec.EscalatedGroup == requestedGroup && result.matchedEscalation == nil
+		// Only consider the escalation if it's in a "Ready" state.
+		isMatchedEscalation := p.Spec.EscalatedGroup == requestedGroup && result.matchedEscalation == nil && p.IsReady()
 		if isMatchedEscalation {
 			result.matchedEscalation = p
 			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
