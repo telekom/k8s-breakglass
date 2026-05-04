@@ -540,12 +540,14 @@ scale-telekom-header::part(app-name-text) {
   font-size: 1.17rem;
 }
 
-.hc-toggle-nav-item, .theme-toggle-nav-item {
+.hc-toggle-nav-item,
+.theme-toggle-nav-item {
   display: flex;
   align-items: center;
 }
 
-.hc-toggle-button, .theme-toggle-button {
+.hc-toggle-button,
+.theme-toggle-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -561,7 +563,8 @@ scale-telekom-header::part(app-name-text) {
     border-color 150ms ease;
 }
 
-.hc-toggle-button:hover, .theme-toggle-button:hover {
+.hc-toggle-button:hover,
+.theme-toggle-button:hover {
   background-color: var(--surface-card-subtle);
 }
 
