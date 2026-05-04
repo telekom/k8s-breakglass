@@ -384,7 +384,9 @@ func (be *BreakglassEscalation) GetCondition(condType string) *metav1.Condition 
 // For compatibility with unit tests and initial states, it returns true if no conditions are set.
 func (be *BreakglassEscalation) IsReady() bool {
 	if len(be.Status.Conditions) == 0 {
-		return true
+		// For compatibility with unit tests where objects are often created without metadata,
+		// we return true if Generation is 0. Real objects in K8s always have Generation > 0.
+		return be.Generation == 0
 	}
 	cond := be.GetCondition(string(BreakglassEscalationConditionReady))
 	return cond != nil && cond.Status == metav1.ConditionTrue

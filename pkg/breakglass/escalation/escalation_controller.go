@@ -6,7 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
@@ -215,10 +214,5 @@ func NewBreakglassEscalationController(log *zap.SugaredLogger,
 
 // isEscalationReady checks if an escalation has Ready=True condition.
 func isEscalationReady(esc *breakglassv1alpha1.BreakglassEscalation) bool {
-	for _, cond := range esc.Status.Conditions {
-		if cond.Type == "Ready" && cond.Status == metav1.ConditionTrue {
-			return true
-		}
-	}
-	return false
+	return esc.IsReady()
 }
