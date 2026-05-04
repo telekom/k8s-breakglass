@@ -17,6 +17,14 @@ cd frontend && npm test          # Frontend tests
 Go-based Kubernetes controller (controller-runtime) + Vue 3/TypeScript frontend (Vite).
 Hub-and-spoke topology: central breakglass service manages temporary privilege escalations across multiple K8s clusters.
 
+## Agent Documentation Hierarchy
+
+This project uses hierarchical `AGENTS.md` files to provide context-specific instructions to AI agents based on the directory they are working in:
+- **Root**: `AGENTS.md` (This file) - General project structure and reviewer personas.
+- **Frontend**: [`frontend/AGENTS.md`](frontend/AGENTS.md) - Vue 3, Vite, and Scale UI component conventions.
+- **Backend**: [`pkg/AGENTS.md`](pkg/AGENTS.md) - Go controller-runtime, error wrapping, and Gin API rules.
+- **API Types**: [`api/AGENTS.md`](api/AGENTS.md) - CRD kubebuilder markers, generation, and backwards compatibility.
+
 ## Directory Layout
 
 ```
