@@ -28,7 +28,7 @@ const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
 
-// Theme handling respects the user's system preference without offering a manual toggle
+// Theme handling respects the user's system preference but offers a manual override
 const theme = ref<"light" | "dark">(getInitialTheme());
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
@@ -83,7 +83,18 @@ function getInitialTheme(): "light" | "dark" {
   if (typeof window === "undefined") {
     return "light";
   }
+  try {
+    const stored = localStorage.getItem("breakglass-theme");
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {}
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function toggleTheme() {
+  theme.value = theme.value === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem("breakglass-theme", theme.value);
+  } catch {}
 }
 
 function applyTheme(value: "light" | "dark") {
@@ -102,7 +113,13 @@ onMounted(() => {
   if (typeof window === "undefined") return;
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
-    theme.value = event.matches ? "dark" : "light";
+    try {
+      if (!localStorage.getItem("breakglass-theme")) {
+        theme.value = event.matches ? "dark" : "light";
+      }
+    } catch {
+      theme.value = event.matches ? "dark" : "light";
+    }
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
 
@@ -418,6 +435,16 @@ watch(
         </scale-telekom-nav-list>
 
         <scale-telekom-nav-list slot="functions" variant="functions" alignment="right" class="header-functions">
+          <scale-telekom-nav-item class="theme-toggle-nav-item">
+            <button
+              type="button"
+              class="hc-toggle-button"
+              :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              @click="toggleTheme"
+            >
+              <scale-icon-action-light-dark-mode :decorative="true"></scale-icon-action-light-dark-mode>
+            </button>
+          </scale-telekom-nav-item>
           <scale-telekom-nav-item class="hc-toggle-nav-item">
             <button
               type="button"
@@ -429,7 +456,7 @@ watch(
               "
               @click="toggleHighContrast"
             >
-              <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
+              <scale-icon-action-visibility :decorative="true"></scale-icon-action-visibility>
             </button>
           </scale-telekom-nav-item>
 
@@ -527,7 +554,7 @@ scale-telekom-header::part(app-name-text) {
   border-radius: var(--telekom-radius-standard, 0.5rem);
   border: 1px solid transparent;
   background: transparent;
-  color: var(--telekom-color-text-and-icon-standard);
+  color: inherit;
   cursor: pointer;
   transition:
     background-color 150ms ease,
