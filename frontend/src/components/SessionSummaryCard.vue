@@ -149,7 +149,8 @@ const cardClasses = computed(() => ({
 }
 
 .session-summary-card__status[data-tone="muted"] {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
+  opacity: 0.85;
 }
 
 .session-summary-card__meta,
