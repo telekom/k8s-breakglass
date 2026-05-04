@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Breakglass Frontend — Agent Instructions
 
 This document provides conventions specifically for AI coding agents working in the `frontend` directory.

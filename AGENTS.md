@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Breakglass Controller — Agent Instructions
 
 This document provides conventions for AI coding agents working on this repository.
