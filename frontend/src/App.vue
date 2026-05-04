@@ -501,13 +501,12 @@ watch(
                     <!-- Mobile Theme Toggles -->
                     <scale-telekom-mobile-menu-item class="mobile-theme-item">
                       <div class="mobile-utilities">
-                        <button
-                          type="button"
-                          class="mobile-util-btn"
-                          @click="toggleTheme"
-                        >
-                          <scale-icon-action-light-dark-mode size="24" :decorative="true"></scale-icon-action-light-dark-mode>
-                          <span>{{ theme === 'dark' ? 'Light Mode' : 'Dark Mode' }}</span>
+                        <button type="button" class="mobile-util-btn" @click="toggleTheme">
+                          <scale-icon-action-light-dark-mode
+                            size="24"
+                            :decorative="true"
+                          ></scale-icon-action-light-dark-mode>
+                          <span>{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
                         </button>
                         <button
                           type="button"
