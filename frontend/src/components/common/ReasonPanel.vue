@@ -70,7 +70,7 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
   text-transform: uppercase;
   font: var(--telekom-text-style-small-bold);
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .reason-panel__icon {

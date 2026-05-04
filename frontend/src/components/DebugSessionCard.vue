@@ -292,7 +292,6 @@ function handleRenew() {
 .cluster {
   font-size: 0.875rem;
   color: var(--telekom-color-text-and-icon-standard);
-  opacity: 0.85;
 }
 
 .card-body {
@@ -340,7 +339,6 @@ function handleRenew() {
 .info-item .label {
   font-size: 0.75rem;
   color: var(--telekom-color-text-and-icon-standard);
-  opacity: 0.85;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }

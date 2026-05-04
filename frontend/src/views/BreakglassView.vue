@@ -379,7 +379,7 @@ async function onDrop(bg: Breakglass) {
 }
 
 .toolbar-info {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   margin-left: auto;
   font-size: 0.9rem;
   align-self: center;

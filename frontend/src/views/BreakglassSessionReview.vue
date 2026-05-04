@@ -415,7 +415,7 @@ async function onCancel(bg: SessionCR) {
 
 .toolbar-info {
   font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .review-session-message {

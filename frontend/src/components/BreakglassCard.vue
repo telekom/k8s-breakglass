@@ -708,7 +708,6 @@ function drop() {
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-standard);
-  opacity: 0.85;
 }
 
 .session-section {
@@ -729,7 +728,6 @@ function drop() {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-standard);
-  opacity: 0.85;
 }
 
 .session-section--reason h4 {
@@ -793,7 +791,6 @@ function drop() {
 .breakglass-card__cta {
   flex: 1 1 320px;
   color: var(--telekom-color-text-and-icon-standard);
-  opacity: 0.85;
 }
 
 .breakglass-card__cta p {

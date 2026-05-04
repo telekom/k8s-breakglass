@@ -518,7 +518,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .toolbar-info {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   margin-left: auto;
   font-size: 0.9rem;
 }
@@ -575,7 +575,7 @@ onMounted(fetchPendingApprovals);
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .session-pill-list {
@@ -599,7 +599,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .countdown-label {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.85rem;
   font-weight: 500;
 }
@@ -610,7 +610,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .timer-absolute {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.8rem;
 }
 
@@ -635,7 +635,7 @@ onMounted(fetchPendingApprovals);
 
 .countdown-value small {
   font-size: 0.8rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 /* tone-chip and tone-callout classes are defined globally in base.css */
