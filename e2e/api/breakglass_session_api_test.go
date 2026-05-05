@@ -377,6 +377,7 @@ func TestBreakglassSessionAPICreateAndGet(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation), "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Wait for escalation to settle
 	time.Sleep(helpers.CachePropagationDelay)
@@ -480,6 +481,7 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation), "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Wait for escalation to settle
 	time.Sleep(helpers.CachePropagationDelay)
@@ -606,6 +608,7 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation), "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Wait for escalation to settle
 	time.Sleep(helpers.CachePropagationDelay)

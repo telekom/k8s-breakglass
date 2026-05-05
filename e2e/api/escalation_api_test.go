@@ -294,6 +294,7 @@ func TestEscalationAPIEscalationProperties(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Get auth token
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
@@ -356,6 +357,7 @@ func TestEscalationAPIActiveStatus(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Get auth token
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
