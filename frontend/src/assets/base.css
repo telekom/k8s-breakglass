@@ -383,7 +383,38 @@ scale-modal {
 scale-modal::part(body) {
   display: flex;
   flex-direction: column;
+  gap: var(--space-lg);
+}
+
+scale-modal::part(header) {
+  border-bottom: 1px solid var(--telekom-color-ui-border-standard);
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-md);
+}
+
+/* Global modal actions footer pattern */
+.modal-actions {
+  margin-top: var(--space-xl);
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-md);
+  justify-content: flex-end;
+  padding: var(--space-lg) 0 var(--space-md);
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
+}
+
+.modal-actions scale-button {
+  min-width: 8rem;
+}
+
+@media (max-width: 640px) {
+  .modal-actions {
+    justify-content: stretch;
+    padding: var(--space-md) 0;
+  }
+  .modal-actions > * {
+    width: 100%;
+  }
 }
 
 /* ============================================

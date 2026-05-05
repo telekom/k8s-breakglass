@@ -872,26 +872,6 @@ function drop() {
   font-size: 0.9rem;
 }
 
-.modal-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  justify-content: center;
-  margin-top: var(--space-xl);
-  padding: var(--space-lg) 0 var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-/* Ensure all buttons have pill shape */
-.modal-actions :deep(scale-button) {
-  --radius: var(--radius-pill);
-}
-
-.modal-actions :deep(scale-button)::part(button),
-.modal-actions :deep(scale-button)::part(base) {
-  border-radius: var(--radius-pill) !important;
-}
-
 :deep(input::placeholder),
 :deep(textarea::placeholder) {
   color: var(--telekom-color-text-placeholder);

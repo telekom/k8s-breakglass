@@ -93,12 +93,8 @@ func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t 
 	if cluster != "" {
 		params = append(params, "cluster="+cluster)
 	}
-	if includeHidden {
-		params = append(params, "includeHidden=true")
-	}
-	if activeOnly {
-		params = append(params, "activeOnly=true")
-	}
+	params = append(params, fmt.Sprintf("includeHidden=%v", includeHidden))
+	params = append(params, fmt.Sprintf("activeOnly=%v", activeOnly))
 	if len(params) > 0 {
 		path += "?"
 		for i, p := range params {
@@ -595,6 +591,6 @@ func TestEscalationAPIReadinessFiltering(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode, "Requesting an unready escalation should be forbidden")
 
 		body, _ := io.ReadAll(resp.Body)
-		assert.Contains(t, string(body), "user not authorized for requested group", "Error message should indicate authorization failure")
+		assert.Contains(t, string(body), "requested cluster/escalation is not ready", "Error message should indicate readiness failure")
 	})
 }
