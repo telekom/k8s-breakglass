@@ -34,7 +34,12 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore - dev flag injected via window
           if (typeof window !== "undefined" && (window.__DEV_TOKEN_LOG === true || window.__DEV_TOKEN_LOG === "true")) {
-            logger.debug("HttpClient", "Authorization header:", headers.get("Authorization"));
+            const authHeader = headers.get("Authorization");
+            const tokenLength =
+              typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+                ? authHeader.length - "Bearer ".length
+                : 0;
+            logger.debug("HttpClient", "Authorization header set", `(token length: ${tokenLength})`);
           }
         } catch {
           // Window object unavailable (SSR / test) — dev token logging not applicable
