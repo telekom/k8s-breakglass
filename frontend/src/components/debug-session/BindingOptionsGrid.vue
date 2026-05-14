@@ -152,14 +152,13 @@ const emit = defineEmits<{
 
 .form-section h3 {
   margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
+  font: var(--telekom-text-style-heading-5);
 }
 
 .section-description {
   margin: 0;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .binding-options-grid {
@@ -175,8 +174,8 @@ const emit = defineEmits<{
   border-radius: var(--radius-md);
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    box-shadow 0.15s;
+    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard, ease),
+    box-shadow var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard, ease);
 }
 
 .binding-option-card:hover {
@@ -207,8 +206,8 @@ const emit = defineEmits<{
 }
 
 .selected-badge {
-  font-size: 0.6875rem;
-  padding: 0.125rem 0.5rem;
+  font: var(--telekom-text-style-badge);
+  padding: var(--space-2xs) var(--space-sm);
   background: var(--telekom-color-primary-standard);
   color: var(--telekom-color-text-and-icon-inverted-standard, #ffffff);
   border-radius: var(--radius-full);
@@ -226,7 +225,7 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-2xs);
   padding: var(--space-xs) var(--space-sm);
   background: var(--telekom-color-background-surface-subtle);
   border-radius: var(--radius-sm);
@@ -234,12 +233,12 @@ const emit = defineEmits<{
 }
 
 .binding-key-constraints .key-constraint .value {
+  font: var(--telekom-text-style-caption);
   font-weight: 600;
-  font-size: 0.875rem;
 }
 
 .binding-key-constraints .key-constraint .label {
-  font-size: 0.625rem;
+  font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -269,9 +268,9 @@ const emit = defineEmits<{
 .binding-features .feature-tag {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.6875rem;
-  padding: 2px 8px;
+  gap: var(--space-xs);
+  font: var(--telekom-text-style-badge);
+  padding: var(--space-2xs) var(--space-sm);
   background: var(--telekom-color-background-surface-subtle);
   border-radius: var(--radius-full);
   color: var(--telekom-color-text-and-icon-additional);
@@ -291,18 +290,18 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   padding: var(--space-xs) 0;
 }
 
 .binding-target-ns .ns-icon {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .binding-target-ns .ns-value {
   font-family: monospace;
   background: var(--telekom-color-background-surface-subtle);
-  padding: 2px 6px;
+  padding: var(--space-2xs) var(--space-sm);
   border-radius: var(--radius-xs);
 }
 
@@ -310,7 +309,7 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  font-size: 0.6875rem;
+  font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
   padding-top: var(--space-xs);
   border-top: 1px solid var(--telekom-color-ui-border-subtle);
@@ -331,8 +330,8 @@ const emit = defineEmits<{
 .binding-source-ref {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.6875rem;
+  gap: var(--space-xs);
+  font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
   padding-top: var(--space-xs);
   margin-top: auto;
@@ -340,8 +339,8 @@ const emit = defineEmits<{
 }
 
 .binding-source-ref .ref-value {
+  font: var(--telekom-text-style-badge);
   font-family: monospace;
-  font-size: 0.625rem;
   color: var(--telekom-color-text-and-icon-disabled);
 }
 </style>

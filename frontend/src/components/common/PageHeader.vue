@@ -88,7 +88,7 @@ const displayBadge = computed(() => {
 }
 
 .page-header__title {
-  margin: 0 0 var(--stack-gap-xs);
+  margin: 0 0 var(--space-xs);
   line-height: 1.2;
 }
 

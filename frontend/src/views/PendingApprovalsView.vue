@@ -555,7 +555,7 @@ onMounted(fetchPendingApprovals);
 .approval-body {
   display: flex;
   flex-direction: column;
-  gap: var(--stack-gap-lg);
+  gap: var(--space-lg);
 }
 
 .session-section {

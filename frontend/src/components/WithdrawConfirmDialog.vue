@@ -52,7 +52,7 @@ const emit = defineEmits<{
 
 .withdraw-detail {
   margin-top: var(--space-sm);
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-body);
   color: var(--telekom-color-text-and-icon-additional);
 }
 </style>

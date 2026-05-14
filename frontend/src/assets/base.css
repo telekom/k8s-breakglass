@@ -45,7 +45,7 @@
   --card-padding-sm: var(--scl-spacing-16, 1rem);
   --card-gap: var(--scl-spacing-16, 1rem);
 
-  /* Stack & flow gaps */
+  /* Stack & flow gaps — @deprecated Use --space-* instead (same values, one scale to learn) */
   --stack-gap-xs: var(--scl-spacing-4, 0.25rem);
   --stack-gap-sm: var(--scl-spacing-8, 0.5rem);
   --stack-gap-md: var(--scl-spacing-12, 0.75rem);
@@ -80,6 +80,8 @@
   );
 
   --focus-outline: var(--telekom-color-functional-focus-standard, #2238df);
+
+  --z-skip-link: 99;
 
   --cta-bg: #8a004f;
   --cta-bg-hover: #6b003d;
@@ -465,7 +467,7 @@ select:focus {
   border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);
   text-decoration: none;
-  z-index: 99;
+  z-index: var(--z-skip-link);
   translate: 0 -150%;
   transition: translate var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
@@ -893,7 +895,7 @@ select:focus {
 .dev-debug-panel summary::before {
   content: "▶";
   font-size: 0.625rem;
-  transition: transform 0.2s ease;
+  transition: transform var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard, ease);
   flex-shrink: 0;
 }
 

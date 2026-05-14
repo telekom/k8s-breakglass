@@ -85,7 +85,7 @@ const cardClasses = computed(() => ({
 }
 
 .session-summary-card--dense {
-  gap: var(--stack-gap-md);
+  gap: var(--space-md);
 }
 
 .session-summary-card__separator {
@@ -117,13 +117,13 @@ const cardClasses = computed(() => ({
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-additional);
-  margin: 0 0 var(--stack-gap-xs);
+  margin: 0 0 var(--space-xs);
 }
 
 .session-summary-card__subtitle {
   font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
-  margin: var(--stack-gap-xs) 0 0;
+  margin: var(--space-xs) 0 0;
   font-weight: 500;
 }
 
@@ -131,7 +131,7 @@ const cardClasses = computed(() => ({
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--stack-gap-xs);
+  gap: var(--space-xs);
   flex-shrink: 0;
   text-align: right;
 }
