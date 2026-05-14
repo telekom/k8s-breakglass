@@ -457,10 +457,14 @@ func IsHighVolumeEvent(eventType EventType) bool {
 func IsSensitiveEvent(eventType EventType) bool {
 	switch eventType {
 	case EventSessionRequested, EventSessionApproved, EventSessionDenied,
-		EventSessionRevoked, EventAccessDenied, EventAccessDeniedPolicy,
+		EventSessionRejected, EventSessionExpired,
+		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
+		EventAccessDenied, EventAccessDeniedPolicy,
 		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
-		EventDebugSessionCreated, EventDebugSessionTerminated,
+		EventDebugSessionCreated, EventDebugSessionStarted,
+		EventDebugSessionTerminated, EventDebugSessionFailed,
+		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
 		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:

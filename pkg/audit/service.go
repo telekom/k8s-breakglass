@@ -87,7 +87,18 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Close existing sinks
+	// Close the existing manager first so all in-flight goroutines stop before
+	// the underlying sinks are torn down. Without this ordering, async workers
+	// could write to sinks that are being closed concurrently.
+	if s.manager != nil {
+		if err := s.manager.Close(); err != nil {
+			s.logger.Warn("failed to close audit manager during reload",
+				zap.String("error", err.Error()))
+		}
+		s.manager = nil
+	}
+
+	// Now safe to close the underlying sinks.
 	s.closeSinksLocked()
 
 	// Filter to only enabled configs
@@ -175,6 +186,15 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 		DropOnFull:   dropOnFull,
 		SampleRate:   sampleRate,
 		WriteTimeout: 5 * time.Second,
+		// DirectSinks references the same sink instances stored in s.sinks.
+		// On the next ReloadMultiple call, the Manager is closed (draining all
+		// async workers) before s.closeSinksLocked() tears down these sinks, so
+		// the ordering is safe. Any sensitive-event sync writes in flight between
+		// the close of the old Manager and the close of its sinks will have already
+		// completed before closeSinksLocked runs. This coupling is a known
+		// limitation of the current reload architecture; refactoring would require
+		// decoupling the Manager lifetime from the sink slice.
+		DirectSinks: allSinks,
 	}
 
 	s.manager = NewManager(isolatedMultiSink, managerCfg, s.logger)
@@ -229,29 +249,25 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 // Emit sends an audit event asynchronously.
 func (s *Service) Emit(ctx context.Context, event *Event) {
 	s.mu.RLock()
-	manager := s.manager
-	enabled := s.enabled
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	if !enabled || manager == nil {
+	if !s.enabled || s.manager == nil {
 		return
 	}
 
-	manager.Emit(ctx, event)
+	s.manager.Emit(ctx, event)
 }
 
 // EmitSync sends an audit event synchronously (use sparingly).
 func (s *Service) EmitSync(ctx context.Context, event *Event) error {
 	s.mu.RLock()
-	manager := s.manager
-	enabled := s.enabled
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	if !enabled || manager == nil {
+	if !s.enabled || s.manager == nil {
 		return nil
 	}
 
-	return manager.EmitSync(ctx, event)
+	return s.manager.EmitSync(ctx, event)
 }
 
 // IsEnabled returns whether auditing is currently enabled.

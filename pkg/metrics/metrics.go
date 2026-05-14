@@ -497,6 +497,10 @@ var (
 		Name: "breakglass_audit_events_dropped_total",
 		Help: "Total number of audit events dropped due to queue overflow or circuit breaker",
 	}, []string{"sink", "reason"})
+	AuditSensitiveEventsSyncWritten = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_audit_sensitive_events_sync_written_total",
+		Help: "Total number of sensitive audit events written synchronously because the async queue was full",
+	}, []string{"sink"})
 	AuditSinkErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_sink_errors_total",
 		Help: "Total number of errors per audit sink",
@@ -724,6 +728,7 @@ func init() {
 	// Register audit metrics
 	ctrlmetrics.Registry.MustRegister(AuditEventsProcessed)
 	ctrlmetrics.Registry.MustRegister(AuditEventsDropped)
+	ctrlmetrics.Registry.MustRegister(AuditSensitiveEventsSyncWritten)
 	ctrlmetrics.Registry.MustRegister(AuditSinkErrors)
 	ctrlmetrics.Registry.MustRegister(AuditSinkLatency)
 	ctrlmetrics.Registry.MustRegister(AuditQueueLength)
