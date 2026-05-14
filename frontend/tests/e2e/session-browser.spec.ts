@@ -19,7 +19,7 @@ test.describe.serial("Session Browser", () => {
     // Should see session browser page - either session list or empty state
     const sessionList = page.locator('[data-testid="session-list"]');
     const emptyState = page.locator("text=No items found");
-    const sessionBrowserHeader = page.locator('h2:has-text("Session Browser")');
+    const sessionBrowserHeader = page.locator('h1:has-text("Session Browser")');
     await expect(sessionList.or(emptyState).or(sessionBrowserHeader).first()).toBeVisible({ timeout: 10000 });
   });
 

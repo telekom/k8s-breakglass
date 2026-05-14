@@ -117,7 +117,7 @@ test.describe.serial("Login Flow", () => {
     // Either one indicates successful page load for authenticated user
     const sessionList = page.locator('[data-testid="session-list"]');
     const emptyState = page.locator("text=No items found");
-    const sessionPageHeader = page.locator('h2:has-text("Session Browser")');
+    const sessionPageHeader = page.locator('h1:has-text("Session Browser")');
     await expect(sessionList.or(emptyState).or(sessionPageHeader).first()).toBeVisible({ timeout: 10000 });
   });
 });
