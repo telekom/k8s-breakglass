@@ -279,37 +279,36 @@ function handleDurationChange(ev: Event) {
 
 .form-section h3 {
   margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
+  font: var(--telekom-text-style-heading-5);
 }
 
 .section-description {
   margin: 0;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .option-description {
   display: block;
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 0.25rem;
+  margin-top: var(--space-xs);
 }
 
 .scheduling-constraint-details {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
 }
 
 .constraint-tag {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  font-size: 0.6875rem;
+  gap: var(--space-2xs);
+  font: var(--telekom-text-style-badge);
   font-family: monospace;
-  padding: 1px 6px;
+  padding: var(--space-2xs) var(--space-sm);
   border-radius: var(--radius-xs);
   white-space: nowrap;
 }
@@ -342,14 +341,14 @@ function handleDurationChange(ev: Event) {
 
 .hint-label {
   margin: 0;
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
 .pattern-badge {
   display: inline-block;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
+  padding: var(--space-2xs) var(--space-sm);
+  font: var(--telekom-text-style-small);
   font-family: monospace;
   background: var(--telekom-color-background-surface-subtle);
   border: 1px solid var(--telekom-color-ui-border-subtle);
@@ -359,9 +358,9 @@ function handleDurationChange(ev: Event) {
 .selector-badge {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-sm);
+  font: var(--telekom-text-style-small);
   font-family: monospace;
   background: var(--telekom-color-background-surface-subtle);
   border: 1px solid var(--telekom-color-ui-border-subtle);
@@ -375,7 +374,7 @@ function handleDurationChange(ev: Event) {
 
 .label-pair::after {
   content: ",";
-  margin-right: 0.25rem;
+  margin-right: var(--space-xs);
 }
 
 .label-pair:last-child::after {
@@ -393,7 +392,7 @@ function handleDurationChange(ev: Event) {
 }
 
 .fixed-label {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
@@ -418,7 +417,7 @@ function handleDurationChange(ev: Event) {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
@@ -454,13 +453,11 @@ function handleDurationChange(ev: Event) {
 
 .extra-variables-section h4 {
   margin: 0 0 var(--space-xs) 0;
-  font-size: 1rem;
-  font-weight: 600;
+  font: var(--telekom-text-style-heading-6);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
 .extra-variables-section .section-description {
-  font-size: 0.875rem;
   color: var(--telekom-color-text-and-icon-additional);
   margin: 0 0 var(--space-md) 0;
 }

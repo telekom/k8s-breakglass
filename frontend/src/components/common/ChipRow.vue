@@ -75,7 +75,7 @@ function getDisplayText(item: ChipItem): string {
 }
 
 .chip-row--compact {
-  gap: var(--stack-gap-xs);
+  gap: var(--space-xs);
 }
 
 .chip-row__chip {

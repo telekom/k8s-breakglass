@@ -274,8 +274,8 @@ const requestReasonText = computed(() => {
 }
 
 .mono-tag {
+  font: var(--telekom-text-style-badge);
   font-family: var(--telekom-typography-font-family-mono, monospace);
-  font-size: 0.8em;
 }
 
 .session-card__reason {
@@ -287,7 +287,7 @@ const requestReasonText = computed(() => {
 
 .session-card__reason h4 {
   margin: 0 0 var(--space-2xs);
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-additional);
@@ -347,15 +347,15 @@ const requestReasonText = computed(() => {
 }
 
 .timeline-item .label {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   white-space: nowrap;
 }
 
 .timeline-item .value {
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
-  font-size: 0.9rem;
   color: var(--telekom-color-text-and-icon-standard);
   word-break: break-word;
 }

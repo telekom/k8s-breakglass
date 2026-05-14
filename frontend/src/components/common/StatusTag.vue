@@ -102,11 +102,11 @@ const tagVariant = computed(() => {
 
 .status-tag--small {
   font: var(--telekom-text-style-badge);
-  padding: var(--stack-gap-xs) var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
 }
 
 .status-tag__icon {
-  margin-right: var(--stack-gap-xs);
+  margin-right: var(--space-xs);
 }
 
 .status-tag__label {

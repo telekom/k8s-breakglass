@@ -823,7 +823,7 @@ header p {
 .sessions-list {
   display: flex;
   flex-direction: column;
-  gap: var(--stack-gap-lg);
+  gap: var(--space-lg);
   margin-top: var(--space-md);
 }
 

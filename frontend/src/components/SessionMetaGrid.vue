@@ -77,14 +77,14 @@ function formatValue(value?: string | number | null) {
   }
 
   .meta-grid__label {
-    margin-bottom: var(--stack-gap-xs);
+    margin-bottom: var(--space-xs);
   }
 }
 
 .meta-label {
   display: inline-flex;
   align-items: center;
-  gap: var(--stack-gap-xs);
+  gap: var(--space-xs);
   font: var(--telekom-text-style-small);
   text-transform: uppercase;
   letter-spacing: 0.08em;

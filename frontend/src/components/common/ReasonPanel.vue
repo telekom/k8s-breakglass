@@ -66,7 +66,7 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
 .reason-panel__label {
   display: flex;
   align-items: center;
-  gap: var(--stack-gap-xs);
+  gap: var(--space-xs);
   text-transform: uppercase;
   font: var(--telekom-text-style-small-bold);
   letter-spacing: 0.08em;
@@ -78,7 +78,7 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
 }
 
 .reason-panel__text {
-  margin: var(--stack-gap-sm) 0 0;
+  margin: var(--space-sm) 0 0;
   white-space: pre-wrap;
   line-height: 1.5;
   color: var(--telekom-color-text-and-icon-standard);

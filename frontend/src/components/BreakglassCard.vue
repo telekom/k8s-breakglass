@@ -700,7 +700,7 @@ function drop() {
 .breakglass-card {
   display: flex;
   flex-direction: column;
-  gap: var(--stack-gap-lg);
+  gap: var(--space-lg);
 }
 
 .status-detail {
