@@ -71,7 +71,7 @@ Applied to public API endpoints that accept optional authentication and to authe
 
 **Identity extraction differs by authentication mode:**
 
-- **Auth-required endpoints** (`Middleware()`): The `email` context key is set directly from the JWT `email` claim. If the `email` claim is missing or empty, the rate limiter falls back to per-IP tracking.
+- **Auth-required endpoints** (`Middleware()`): The `email` context key is set directly from the JWT `email` claim. If the `email` claim is missing or empty, the rate limiter internally uses client IP as the limiter key, but the downstream handler rejects the request (a valid email identity is required for session creation).
 - **Auth-optional endpoints** (`OptionalAuthRateLimitMiddleware`): The middleware uses `tryExtractUserIdentity()`, which prefers the JWT `email` claim and falls back to `sub` (subject) when email is unavailable.
 
 #### Unauthenticated Path
@@ -142,7 +142,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 }
 ```
 
-> **Note:** The server does **not** currently emit `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, or `X-RateLimit-Reset` headers. Clients should implement exponential backoff when receiving `429` responses.
+> **Note:** When the **session-creation-specific limiter** triggers for `POST /api/breakglassSessions`, the server emits a `Retry-After` header (integer seconds) on the resulting `429` response. If that same request is rate-limited earlier by the global per-IP limiter or the authenticated per-user middleware limiter, no `Retry-After` header is emitted. For all other rate-limited endpoints, no `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, or `X-RateLimit-Reset` headers are emitted. Clients should implement exponential backoff when receiving `429` responses that do not include those headers.
 
 ## Memory Management
 
@@ -167,7 +167,11 @@ Rate limiting uses Gin's `ClientIP()` function to identify clients:
 
 ### Runtime Configuration
 
-Rate limits are **not currently configurable at runtime** via `config.yaml` or environment variables. All limits are defined as compile-time defaults in `pkg/ratelimit/ratelimit.go`.
+Most rate limits are defined as compile-time defaults in `pkg/ratelimit/ratelimit.go` and are not configurable at runtime via `config.yaml`.
+
+**Exception — session creation rate limit:** The per-user session creation rate limiter can be disabled at runtime using the `--disable-session-rate-limit` flag (or `BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true` environment variable). This replaces the default restrictive limiter (10 req/min, burst 1) with a permissive limiter (1000 req/s, burst 10000).
+
+> **⚠️ Warning:** Only disable session rate limiting in test and development environments. In production, always keep the rate limiter enabled to protect against session flooding.
 
 ### Modifying Limits
 

@@ -355,6 +355,9 @@ func run() error {
 	runErr := awaitShutdownSignal(sigChan, errCh, log)
 
 	shutdownServices(cfg, server, svcs.mailService, svcs.auditService, svcs.webhookCtrl, shouldEnableHTTPServer, otelShutdown, log)
+	if svcs.sessionController != nil {
+		svcs.sessionController.Close()
+	}
 
 	cancel()
 	log.Info("Waiting for all goroutines to finish")
@@ -375,6 +378,7 @@ type services struct {
 	auditService      *audit.Service
 	apiControllers    []api.APIController
 	webhookCtrl       *webhook.WebhookController
+	sessionController *breakglass.BreakglassSessionController
 }
 
 // setupServices builds the business-logic services: IDP, escalation manager, session
@@ -458,6 +462,13 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		authMiddleware, cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).
 		WithMailService(mailService).WithAuditService(auditService)
 
+	if cliConfig.DisableSessionRateLimit {
+		permissiveLimiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())
+		context.AfterFunc(ctx, permissiveLimiter.Stop)
+		sessionController.WithSessionCreationRateLimiter(permissiveLimiter)
+		log.Warnw("Session creation rate limiter disabled via --disable-session-rate-limit flag; do not use in production")
+	}
+
 	// Setup debug session API controller with mail and audit services
 	// Uses combined auth + rate limiting middleware
 	// Uses APIReader for consistent reads after writes (avoids cache coherence issues)
@@ -486,6 +497,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		auditService:      auditService,
 		apiControllers:    apiControllers,
 		webhookCtrl:       webhookCtrl,
+		sessionController: sessionController,
 	}, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
@@ -97,6 +99,8 @@ type BreakglassSessionController struct {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	}
 	clusterConfigManager *ClusterConfigManager
+
+	sessionCreationLimiter *ratelimit.IPRateLimiter
 
 	// inFlightCreates prevents TOCTOU race conditions during session creation.
 	// Without this guard, two concurrent requests for the same (cluster, user, group)
@@ -252,6 +256,24 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	reqLog = reqLog.With("cluster", cug.Clustername, "user", cug.Username, "group", cug.GroupName)
 	reqLog.Info("Validated session request parameters")
 
+	if authIdentity.email == "" {
+		reqLog.Errorw("Error getting user identity email", "error", authIdentity.emailErr)
+		apiresponses.RespondUnauthorizedWithMessage(c, "email claim is required for session creation")
+		return
+	}
+
+	// Apply per-user rate limit before the expensive group/escalation lookups.
+	if wc.sessionCreationLimiter != nil {
+		rateLimitKey := strings.ToLower(strings.TrimSpace(authIdentity.email))
+		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
+		if !allowed {
+			retrySecs := int(math.Ceil(retryAfter.Seconds()))
+			c.Header("Retry-After", fmt.Sprintf("%d", retrySecs))
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "session creation rate limit exceeded, please try again later"})
+			return
+		}
+	}
+
 	// Phase 3: Load global config via cached loader
 	var globalCfg *config.Config
 	if wc.configLoader != nil {
@@ -314,12 +336,6 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		return
 	}
 
-	// Phase 9: Validate email identity before proceeding
-	if authIdentity.email == "" {
-		reqLog.Errorw("Error getting user identity email", "error", authIdentity.emailErr)
-		apiresponses.RespondInternalError(c, "extract email from token", authIdentity.emailErr, reqLog)
-		return
-	}
 	username := authIdentity.username
 	reqLog.Debugw("Session creation initiated by user",
 		"requestorEmail", authIdentity.email, "requestorUsername", username,

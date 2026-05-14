@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -381,20 +382,21 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	// Tests can set mail directly via struct initialization with &FakeMailSender{}.
 
 	ctrl := &BreakglassSessionController{
-		log:                  log,
-		config:               cfg,
-		sessionManager:       sessionManager,
-		escalationManager:    escalationManager,
-		middleware:           middleware,
-		identityProvider:     ip,
-		mail:                 nil, // Do not create stub sender; use mailService via WithMailService()
-		mailQueue:            nil,
-		disableEmail:         disableEmailFlag,
-		configPath:           configPath,
-		configLoader:         config.NewCachedLoader(configPath, 5*time.Second), // Cache config, check file every 5s
-		ccProvider:           ccProvider,
-		clusterConfigManager: NewClusterConfigManager(clusterConfigClient, WithClusterConfigLogger(log)),
-		inFlightCreates:      &sync.Map{},
+		log:                    log,
+		config:                 cfg,
+		sessionManager:         sessionManager,
+		escalationManager:      escalationManager,
+		middleware:             middleware,
+		identityProvider:       ip,
+		mail:                   nil, // Do not create stub sender; use mailService via WithMailService()
+		mailQueue:              nil,
+		disableEmail:           disableEmailFlag,
+		configPath:             configPath,
+		configLoader:           config.NewCachedLoader(configPath, 5*time.Second), // Cache config, check file every 5s
+		ccProvider:             ccProvider,
+		clusterConfigManager:   NewClusterConfigManager(clusterConfigClient, WithClusterConfigLogger(log)),
+		inFlightCreates:        &sync.Map{},
+		sessionCreationLimiter: ratelimit.New(ratelimit.DefaultSessionCreationConfig()),
 	}
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -427,6 +429,20 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	}
 
 	return ctrl
+}
+
+func (wc *BreakglassSessionController) WithSessionCreationRateLimiter(rl *ratelimit.IPRateLimiter) *BreakglassSessionController {
+	if wc.sessionCreationLimiter != nil && wc.sessionCreationLimiter != rl {
+		wc.sessionCreationLimiter.Stop()
+	}
+	wc.sessionCreationLimiter = rl
+	return wc
+}
+
+func (wc *BreakglassSessionController) Close() {
+	if wc.sessionCreationLimiter != nil {
+		wc.sessionCreationLimiter.Stop()
+	}
 }
 
 // sendSessionApprovalEmail sends an approval notification to the requester

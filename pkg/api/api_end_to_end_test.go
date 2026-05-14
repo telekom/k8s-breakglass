@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
+	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 )
 
@@ -179,6 +180,9 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 
 	middleware := testIdentityMiddleware()
 	sessionController := breakglass.NewBreakglassSessionController(logger.Sugar(), cfg, sessionManager, escalationManager, middleware, "", provider, cli, true)
+	permissiveLimiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())
+	t.Cleanup(permissiveLimiter.Stop)
+	sessionController.WithSessionCreationRateLimiter(permissiveLimiter)
 	escalationController := escalation.NewBreakglassEscalationController(logger.Sugar(), escalationManager, middleware, "")
 	webhookController := webhook.NewWebhookController(logger.Sugar(), cfg, sessionManager, escalationManager, provider, policy.NewEvaluator(cli, logger.Sugar()))
 	webhookController.SetCanDoFn(func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clusterName string) (bool, error) {

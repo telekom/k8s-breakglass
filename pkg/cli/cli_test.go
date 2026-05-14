@@ -2,6 +2,8 @@ package cli
 
 import (
 	"crypto/tls"
+	"flag"
+	"os"
 	"testing"
 	"time"
 
@@ -269,4 +271,98 @@ func TestWebhookConfig_DefaultValues(t *testing.T) {
 	assert.Empty(t, config.SvcName)
 	assert.False(t, config.CertGeneration)
 	assert.False(t, config.MetricsSecure)
+}
+
+func TestDisableSessionRateLimit_DefaultIsFalse(t *testing.T) {
+	config := &Config{}
+	assert.False(t, config.DisableSessionRateLimit, "DisableSessionRateLimit should default to false")
+}
+
+func TestDisableSessionRateLimit_EnvVar(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "true")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
+	assert.True(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true should parse as true")
+}
+
+func TestDisableSessionRateLimit_EnvVarFalse(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "false")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", true)
+	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false should parse as false")
+}
+
+func TestDisableSessionRateLimit_EmptyEnvVar(t *testing.T) {
+	// Empty string is present-but-unparseable: getEnvBool falls back to defaultVal.
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
+	assert.False(t, got, "BREAKGLASS_DISABLE_SESSION_RATE_LIMIT='' (empty) should fall back to default (false)")
+}
+
+func TestDisableSessionRateLimit_EnvVarUnset(t *testing.T) {
+	// Truly unset (LookupEnv returns ok=false): getEnvBool returns defaultVal.
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "placeholder-to-ensure-set")
+	t.Cleanup(func() {
+		// os.Unsetenv is not provided by t.Setenv, so we unset manually.
+		_ = os.Unsetenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT")
+	})
+	_ = os.Unsetenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT")
+	got := getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false)
+	assert.False(t, got, "unset BREAKGLASS_DISABLE_SESSION_RATE_LIMIT should default to false")
+}
+
+// parseWithArgs resets the global flag.CommandLine, sets os.Args to the provided
+// arguments, and calls Parse(). It restores os.Args and flag.CommandLine on return.
+// This is the only safe way to test Parse() (which calls flag.Parse() on the global
+// flag.CommandLine) without spawning a subprocess.
+func parseWithArgs(t *testing.T, args []string) *Config {
+	t.Helper()
+
+	origArgs := os.Args
+	origFlagCommandLine := flag.CommandLine
+
+	t.Cleanup(func() {
+		os.Args = origArgs
+		flag.CommandLine = origFlagCommandLine
+	})
+
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+
+	os.Args = append([]string{os.Args[0]}, args...)
+
+	return Parse()
+}
+
+func TestParse_DisableSessionRateLimit_Default(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
+
+	cfg := parseWithArgs(t, []string{})
+
+	assert.False(t, cfg.DisableSessionRateLimit,
+		"DisableSessionRateLimit should be false when neither flag nor env var is set")
+}
+
+func TestParse_DisableSessionRateLimit_Flag(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "")
+
+	cfg := parseWithArgs(t, []string{"--disable-session-rate-limit"})
+
+	assert.True(t, cfg.DisableSessionRateLimit,
+		"DisableSessionRateLimit should be true when --disable-session-rate-limit flag is passed")
+}
+
+func TestParse_DisableSessionRateLimit_EnvVar(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "true")
+
+	cfg := parseWithArgs(t, []string{})
+
+	assert.True(t, cfg.DisableSessionRateLimit,
+		"DisableSessionRateLimit should be true when BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=true")
+}
+
+func TestParse_DisableSessionRateLimit_FlagOverridesEnv(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", "false")
+
+	cfg := parseWithArgs(t, []string{"--disable-session-rate-limit"})
+
+	assert.True(t, cfg.DisableSessionRateLimit,
+		"CLI flag --disable-session-rate-limit should override BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false")
 }
