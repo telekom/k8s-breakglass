@@ -509,7 +509,7 @@ function handleTemplateChange(ev: Event) {
 
     <div v-else-if="!hasTemplates" class="no-templates-message" data-testid="no-templates-message">
       <scale-icon-alert-error size="48" color="var(--scl-color-text-disabled)"></scale-icon-alert-error>
-      <h3>No Debug Session Templates Available</h3>
+      <h2>No Debug Session Templates Available</h2>
       <p>
         There are no debug session templates configured in this environment. Please contact your administrator to create
         a DebugSessionTemplate resource.
@@ -519,7 +519,7 @@ function handleTemplateChange(ev: Event) {
 
     <div v-else-if="!hasAvailableTemplates" class="no-templates-message" data-testid="no-available-templates-message">
       <scale-icon-alert-warning size="48" color="var(--scl-color-warning)"></scale-icon-alert-warning>
-      <h3>No Templates With Available Clusters</h3>
+      <h2>No Templates With Available Clusters</h2>
       <p>
         {{ templates.length }} template(s) exist, but none have clusters you can access. This may be due to cluster
         configuration or access restrictions. Please contact your administrator.
@@ -530,7 +530,7 @@ function handleTemplateChange(ev: Event) {
     <!-- Step 1: Template Selection -->
     <div v-else-if="currentStep === 1" class="create-form">
       <div class="form-section">
-        <h3>Session Template</h3>
+        <h2>Session Template</h2>
         <p class="section-description">
           Select a debug session template that defines the access level and constraints.
         </p>
