@@ -387,7 +387,7 @@ onMounted(() => {
   <div class="session-browser" data-testid="session-browser">
     <section class="filters-card" data-testid="filters-section">
       <header>
-        <h2>Session Browser</h2>
+        <h1>Session Browser</h1>
         <p>
           Run ad-hoc queries across <code>/breakglassSessions</code>. Use presets for familiar views or mix any API
           filters.
@@ -484,7 +484,7 @@ onMounted(() => {
 
     <section class="results-card" data-testid="results-section">
       <header>
-        <h3>Results ({{ visibleSessions.length }})</h3>
+        <h2>Results ({{ visibleSessions.length }})</h2>
         <p v-if="loading" role="status" aria-live="polite" data-testid="loading-indicator">Loading sessions…</p>
         <p v-else-if="error" class="error" role="alert" data-testid="error-message">{{ error }}</p>
       </header>

@@ -463,6 +463,9 @@ select:focus {
   background-color: var(--surface-card);
   color: var(--telekom-color-text-and-icon-standard);
   padding: var(--space-sm) var(--space-lg);
+  min-height: 44px; /* WCAG 2.5.5 touch target */
+  display: inline-flex;
+  align-items: center;
   border-radius: var(--radius-pill);
   border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);

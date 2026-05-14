@@ -82,7 +82,7 @@ function handleRenew() {
   <div class="debug-session-card" :class="`state-${stateClass}`" data-testid="debug-session-card">
     <div class="card-header" data-testid="card-header">
       <div class="session-info">
-        <h3 class="session-name" data-testid="session-name">{{ session.name }}</h3>
+        <h2 class="session-name" data-testid="session-name">{{ session.name }}</h2>
         <div class="session-meta">
           <span class="cluster" data-testid="session-cluster">{{ session.cluster }}</span>
           <scale-tag :variant="stateVariant" size="small" data-testid="session-state">{{ stateLabel }}</scale-tag>

@@ -41,7 +41,7 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
 </script>
 
 <template>
-  <div v-if="hasReason" class="reason-panel" :class="[`reason-panel--${variant}`]" role="region" :aria-label="label">
+  <div v-if="hasReason" class="reason-panel" :class="[`reason-panel--${variant}`]">
     <span class="reason-panel__label">
       <span v-if="displayIcon" class="reason-panel__icon" aria-hidden="true">
         <scale-icon-action-edit v-if="displayIcon === 'action-edit'" size="16" decorative />

@@ -50,8 +50,17 @@ function applyHighContrast(value: boolean) {
   if (typeof document !== "undefined") {
     if (value) {
       document.documentElement.setAttribute("data-high-contrast", "true");
+      // Scale's high-contrast tokens are designed for a dark canvas (black
+      // background / white text).  Without data-theme="dark" the text-colour
+      // tokens stay dark while the background tokens go near-black, producing
+      // near-zero contrast.  Force dark mode whenever HC is active so all
+      // token values resolve correctly (WCAG 1.4.3 / 1.4.6).
+      document.documentElement.setAttribute("data-theme", "dark");
+      document.documentElement.setAttribute("data-mode", "dark");
     } else {
       document.documentElement.removeAttribute("data-high-contrast");
+      // Restore the theme that was active before HC was enabled.
+      applyTheme(theme.value);
     }
   }
 }
@@ -448,7 +457,6 @@ watch(
           <scale-telekom-nav-item class="mobile-nav-item">
             <button type="button" class="mobile-nav-trigger" aria-label="Open navigation menu">
               <scale-icon-action-menu decorative></scale-icon-action-menu>
-              <span class="sr-only">Open navigation menu</span>
             </button>
             <scale-telekom-nav-flyout ref="mobileNavFlyoutRef" variant="mobile">
               <scale-telekom-mobile-flyout-canvas :app-name="brandingTitle" :app-name-link="homeHref">
@@ -514,8 +522,8 @@ scale-telekom-header::part(app-name-text) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--telekom-radius-standard, 0.5rem);
   border: 1px solid transparent;
   background: transparent;

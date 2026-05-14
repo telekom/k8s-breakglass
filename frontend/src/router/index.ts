@@ -27,63 +27,75 @@ const router = createRouter({
       path: "/",
       name: "home",
       component: BreakglassView,
+      meta: { title: "Home" },
     },
     {
       path: "/sessions/review",
       alias: "/review",
       name: "breakglassSessionReview",
       component: BreakglassSessionReviewView,
+      meta: { title: "Review Session" },
     },
     {
       path: "/session/:sessionName/approve",
       name: "sessionApproval",
       component: SessionApprovalView,
+      meta: { title: "Approve Session" },
     },
     {
       path: "/session/:sessionName",
       name: "sessionIncomplete",
       component: SessionErrorView,
+      meta: { title: "Session Error" },
     },
     {
       path: "/session",
       name: "sessionMissing",
       component: SessionErrorView,
+      meta: { title: "Session Error" },
     },
     {
       path: "/approvals/pending",
       name: "pendingApprovals",
       component: PendingApprovalsView,
+      meta: { title: "Pending Approvals" },
     },
     {
       path: "/requests/mine",
       name: "myPendingRequests",
       component: MyPendingRequests,
+      meta: { title: "My Requests" },
     },
     {
       path: "/sessions",
       name: "sessionBrowser",
       component: SessionBrowser,
+      meta: { title: "Session Browser" },
     },
     // Debug Session Routes
     {
       path: "/debug-sessions",
       name: "debugSessionBrowser",
       component: DebugSessionBrowser,
+      meta: { title: "Debug Sessions" },
     },
     {
       path: "/debug-sessions/create",
       name: "debugSessionCreate",
       component: DebugSessionCreate,
+      meta: { title: "New Debug Session" },
     },
     {
       path: "/debug-sessions/:name",
       name: "debugSessionDetails",
       component: DebugSessionDetails,
+      meta: { title: "Debug Session" },
     },
     {
       path: "/:pathMatch(.*)*",
       name: "notFound",
       component: NotFoundView,
+      meta: { title: "Page Not Found" },
     },
   ],
 });
@@ -122,6 +134,13 @@ router.afterEach((to, from, failure) => {
         path: to.path,
         name: to.name,
       });
+    }
+
+    // Update document title for screen readers and browser history (WCAG 2.4.2).
+    const pageTitle = to.meta?.title as string | undefined;
+    if (pageTitle) {
+      const appName = document.title.split(" — ")[1] || document.title || "Breakglass";
+      document.title = `${pageTitle} — ${appName}`;
     }
 
     // Move focus to the main heading after navigation for screen readers.
