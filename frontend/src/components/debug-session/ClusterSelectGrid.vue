@@ -108,14 +108,14 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
             <span
               v-if="cluster.bindingRef"
               class="source-badge binding"
-              :title="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
+              :aria-label="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
             >
-              <scale-icon-content-link size="12"></scale-icon-content-link>
+              <scale-icon-content-link size="12" aria-hidden="true"></scale-icon-content-link>
               via Binding:
               <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
             </span>
-            <span v-else class="source-badge direct" title="Direct access from template allowed.clusters">
-              <scale-icon-action-success size="12"></scale-icon-action-success>
+            <span v-else class="source-badge direct">
+              <scale-icon-action-success size="12" aria-hidden="true"></scale-icon-action-success>
               Direct
             </span>
           </div>
@@ -142,13 +142,16 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
           <!-- Additional Info -->
           <div class="cluster-extra-info">
-            <span v-if="cluster.impersonation?.enabled" class="extra-item" title="Uses ServiceAccount impersonation">
-              <scale-icon-action-random size="12"></scale-icon-action-random> SA Impersonation
+            <span
+              v-if="cluster.impersonation?.enabled"
+              class="extra-item"
+              aria-label="Uses ServiceAccount impersonation"
+            >
+              <scale-icon-action-random size="12" aria-hidden="true"></scale-icon-action-random> SA Impersonation
             </span>
             <span
               v-if="cluster.schedulingOptions?.options && cluster.schedulingOptions.options.length > 1"
               class="extra-item"
-              title="Multiple node options"
             >
               <scale-icon-device-server size="12"></scale-icon-device-server>
               {{ cluster.schedulingOptions?.options?.length }} node options

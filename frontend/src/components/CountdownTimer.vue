@@ -105,7 +105,6 @@ watch(
   font-weight: bold;
   color: var(--telekom-color-text-and-icon-standard);
   margin-left: 0.5em;
-  cursor: pointer;
   transition:
     color 0.2s,
     background 0.2s;

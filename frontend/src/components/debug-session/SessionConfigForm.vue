@@ -102,7 +102,7 @@ function handleDurationChange(ev: Event) {
             v-for="(value, key) in opt.schedulingConstraints.nodeSelector"
             :key="`ns-${String(key)}`"
             class="constraint-tag node-selector"
-            :title="`Node selector: ${String(key)}=${value}`"
+            :aria-label="`Node selector: ${String(key)}=${value}`"
           >
             {{ key }}={{ value }}
           </span>
@@ -110,7 +110,7 @@ function handleDurationChange(ev: Event) {
             v-for="(value, key) in opt.schedulingConstraints.deniedNodeLabels"
             :key="`dnl-${String(key)}`"
             class="constraint-tag denied-label"
-            :title="`Excluded: ${String(key)}=${value}`"
+            :aria-label="`Excluded: ${String(key)}=${value}`"
           >
             ✕ {{ key }}={{ value }}
           </span>
@@ -118,7 +118,7 @@ function handleDurationChange(ev: Event) {
             v-for="(tol, tidx) in opt.schedulingConstraints.tolerations"
             :key="`tol-${tidx}`"
             class="constraint-tag toleration"
-            :title="`Toleration: ${tol.key} ${tol.operator || ''} ${tol.value || ''} ${tol.effect || ''}`"
+            :aria-label="`Toleration: ${tol.key} ${tol.operator || ''} ${tol.value || ''} ${tol.effect || ''}`"
           >
             ⚡ {{ tol.key }}{{ tol.value ? `=${tol.value}` : "" }}{{ tol.effect ? `:${tol.effect}` : "" }}
           </span>
