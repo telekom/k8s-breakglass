@@ -176,6 +176,8 @@ func TestNotificationOnSessionCreation(t *testing.T) {
 	require.NoError(t, err, "Failed to create escalation")
 	cleanup.Add(escalation)
 
+	helpers.WaitForEscalationReady(t, ctx, cli, escalationName, namespace, 90*time.Second)
+
 	// Create session via REST API - this should trigger a notification email
 	sessionReq := helpers.SessionRequest{
 		Cluster:  clusterName,
@@ -247,6 +249,7 @@ func TestNotificationWithGroupApprovers(t *testing.T) {
 	require.NoError(t, err, "Failed to create escalation with group-based approvers")
 	cleanup.Add(escalation)
 
+	helpers.WaitForEscalationReady(t, ctx, cli, escalationName, namespace, 90*time.Second)
 	t.Logf("Created escalation with approver group: %s", approverGroup)
 
 	// Create session via REST API - this should trigger a notification email
@@ -346,6 +349,8 @@ func TestNotificationOnSessionApproval(t *testing.T) {
 	require.NoError(t, err, "Failed to create escalation")
 	cleanup.Add(escalation)
 
+	helpers.WaitForEscalationReady(t, ctx, cli, escalationName, namespace, 90*time.Second)
+
 	// Create session via REST API
 	sessionReq := helpers.SessionRequest{
 		Cluster:  clusterName,
@@ -417,6 +422,8 @@ func TestNotificationOnSessionRejection(t *testing.T) {
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
 	cleanup.Add(escalation)
+
+	helpers.WaitForEscalationReady(t, ctx, cli, escalationName, namespace, 90*time.Second)
 
 	// Create session via REST API
 	sessionReq := helpers.SessionRequest{
