@@ -113,7 +113,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 		log.Warnw("Duplicate active sessions detected — terminating duplicates",
 			"cluster", key.Cluster,
 			"user", key.User,
-			"groupHint", system.RedactGroupName(key.Group),
+			"group", system.RedactGroupName(key.Group),
 			"keepSession", sessions[0].Name,
 			"duplicateCount", len(sessions)-1,
 		)
@@ -125,7 +125,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 				log.Infow("Duplicate cleanup interrupted by context cancellation",
 					"cluster", key.Cluster,
 					"user", key.User,
-					"groupHint", system.RedactGroupName(key.Group),
+					"group", system.RedactGroupName(key.Group),
 				)
 				return
 			default:

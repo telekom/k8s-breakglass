@@ -147,7 +147,7 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	for _, g := range groups {
 		list := breakglassv1alpha1.BreakglassEscalationList{}
 		if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.group": g}); err == nil {
-			log.Debugw("Index lookup for group returned items", "groupHint", system.RedactGroupName(g), "count", len(list.Items))
+			log.Debugw("Index lookup for group returned items", "group", system.RedactGroupName(g), "count", len(list.Items))
 			for _, it := range list.Items {
 				// apply group normalization check to be safe (fake client may ignore MatchingFields)
 				allowed := it.Spec.Allowed.Groups

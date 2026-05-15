@@ -352,7 +352,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 		wc.log.Errorw("Cannot send breakglass request email: approvers list is empty",
 			"session", bs.Name,
 			"cluster", bs.Spec.Cluster,
-			"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup),
+			"group", system.RedactGroupName(bs.Spec.GrantedGroup),
 			"requestUsername", requestUsername,
 			"requestEmail", requestEmail)
 		return fmt.Errorf("cannot send email: no approvers available")
@@ -362,9 +362,10 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 
 	wc.log.Debugw("Rendering breakglass session request email",
 		"session", bs.Name,
-		"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup),
+		"subject", subject,
+		"group", system.RedactGroupName(bs.Spec.GrantedGroup),
 		"recipientCount", len(approvers),
-		"approverGroupCount", len(approverGroupsToShow),
+		"approvers", system.RedactSlice(approvers),
 		"requestEmail", requestEmail,
 		"requestUsername", requestUsername)
 
@@ -477,7 +478,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			"session", bs.Name,
 			"error", err,
 			"recipientCount", len(approvers),
-			"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup))
+			"group", system.RedactGroupName(bs.Spec.GrantedGroup))
 		return err
 	}
 
@@ -485,7 +486,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 		"session", bs.Name,
 		"bodyLength", len(body),
 		"recipientCount", len(approvers),
-		"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup))
+		"group", system.RedactGroupName(bs.Spec.GrantedGroup))
 
 	// Use mail service (preferred) or mail queue for non-blocking async sending
 	sessionID := fmt.Sprintf("session-%s", bs.Name)
@@ -494,14 +495,14 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Warnw("Failed to enqueue session request email via mail service",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"subjectLength", len(subject),
+				"subject", subject,
 				"error", err)
 			return err
 		}
 		wc.log.Infow("Breakglass session request email queued",
 			"session", bs.Name,
 			"recipientCount", len(approvers),
-			"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup))
+			"group", system.RedactGroupName(bs.Spec.GrantedGroup))
 		return nil
 	}
 
@@ -511,7 +512,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Warnw("Failed to enqueue session request email (will not retry)",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"subjectLength", len(subject),
+				"subject", subject,
 				"error", err)
 			// Don't fall back to synchronous send - if queue is configured but failing,
 			// synchronous send would likely fail too. Just log and continue.
@@ -520,7 +521,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 		wc.log.Infow("Breakglass session request email queued",
 			"session", bs.Name,
 			"recipientCount", len(approvers),
-			"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup))
+			"group", system.RedactGroupName(bs.Spec.GrantedGroup))
 		return nil
 	}
 
@@ -532,14 +533,14 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Errorw("failed to send request email",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"subjectLength", len(subject),
+				"subject", subject,
 				"error", err)
 			return err
 		}
 		wc.log.Infow("Breakglass session request email sent",
 			"session", bs.Name,
 			"recipientCount", len(approvers),
-			"groupHint", system.RedactGroupName(bs.Spec.GrantedGroup))
+			"group", system.RedactGroupName(bs.Spec.GrantedGroup))
 		return nil
 	}
 
@@ -547,7 +548,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 	wc.log.Warnw("No mail provider configured - email notification skipped",
 		"session", bs.Name,
 		"recipientCount", len(approvers),
-		"subjectLength", len(subject))
+		"subject", subject)
 	return nil
 }
 
@@ -681,17 +682,17 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 
 		for _, group := range exclusions.Groups {
 			log.Debugw("Attempting to resolve excluded group members",
-				"groupHint", system.RedactGroupName(group))
+				"group", system.RedactGroupName(group))
 			members, err := wc.escalationManager.GetResolver().Members(ctx, group)
 			if err != nil {
 				log.Warnw("Failed to resolve members of excluded group",
-					"groupHint", system.RedactGroupName(group),
+					"group", system.RedactGroupName(group),
 					"error", err,
 					"errorType", fmt.Sprintf("%T", err))
 				continue
 			}
 			log.Infow("Successfully resolved excluded group members",
-				"groupHint", system.RedactGroupName(group),
+				"group", system.RedactGroupName(group),
 				"memberCount", len(members))
 			resolvedGroupsCount++
 			totalMembersCount += len(members)
@@ -790,7 +791,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 				continue
 			}
 			log.Infow("Successfully resolved hidden group members",
-				"groupHint", system.RedactGroupName(group),
+				"group", system.RedactGroupName(group),
 				"memberCount", len(members))
 			resolvedGroupsCount++
 			totalMembersCount += len(members)

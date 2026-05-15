@@ -84,7 +84,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	var mostSpecificDenial ApprovalCheckResult
 	foundMatchingEscalation := false
 
-	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGroupHint", system.RedactGroupName(session.Spec.GrantedGroup), "candidateEscalationCount", len(escalations), "approverEmail", email)
+	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGroup", system.RedactGroupName(session.Spec.GrantedGroup), "candidateEscalationCount", len(escalations), "approverEmail", email)
 	for _, esc := range escalations {
 		if esc.Spec.EscalatedGroup != session.Spec.GrantedGroup {
 			continue
@@ -160,7 +160,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
 					reqLog.Debugw("Using deduplicated members from multi-IDP status",
-						"escalation", esc.Name, "groupHint", system.RedactGroupName(g), "memberCount", len(members))
+						"escalation", esc.Name, "group", system.RedactGroupName(g), "memberCount", len(members))
 				}
 			}
 
@@ -174,7 +174,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		} else {
 			for _, g := range approverGroupsToCheck {
 				if slices.Contains(approverGroups, g) {
-					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "groupHint", system.RedactGroupName(g))
+					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(g))
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}

@@ -15,6 +15,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -342,7 +343,10 @@ func TestBuildSessionSpec_AllowIDPMismatch_ClusterRestrictionOverrides(t *testin
 		"AllowIDPMismatch must be false when cluster has IDP restrictions even if escalation is unrestricted")
 }
 
-func TestResolveUserGroupsDoesNotLogRawTokenGroups(t *testing.T) {
+func TestResolveUserGroupsRedactsRawTokenGroupsWhenEnabled(t *testing.T) {
+	system.SetLogRedaction(true)
+	defer system.SetLogRedaction(false)
+
 	gin.SetMode(gin.TestMode)
 
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
@@ -369,8 +373,9 @@ func TestResolveUserGroupsDoesNotLogRawTokenGroups(t *testing.T) {
 
 	for _, entry := range recorded.All() {
 		fields := entry.ContextMap()
-		_, hasRawTokenGroups := fields["rawTokenGroups"]
-		require.False(t, hasRawTokenGroups,
-			"rawTokenGroups field must not appear in any log entry (found in: %q)", entry.Message)
+		if val, ok := fields["rawTokenGroups"]; ok {
+			require.Equal(t, "[3 items]", val,
+				"rawTokenGroups must be redacted when log redaction is enabled (found in: %q)", entry.Message)
+		}
 	}
 }

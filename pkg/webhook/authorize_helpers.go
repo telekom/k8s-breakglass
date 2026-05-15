@@ -378,7 +378,7 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 				s.reqLog.Infow("Request denied by session-scoped DenyPolicy",
 					"policy", pol,
 					"session", sess.Name,
-					"sessionGroupHint", system.RedactGroupName(sess.Spec.GrantedGroup),
+					"sessionGroup", system.RedactGroupName(sess.Spec.GrantedGroup),
 					"verb", act.Verb,
 					"apiGroup", act.APIGroup,
 					"resource", act.Resource,
@@ -530,15 +530,15 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 			s.sessionSARSkipErr = err
 		} else if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(
 			s.ctx, rc, s.sessions, s.sar, s.clusterName, s.reqLog); allowedSession {
-			s.reqLog.With("sessionGroupHint", system.RedactGroupName(grp), "session", sesName, "impersonationGroupHint", system.RedactGroupName(impersonated)).
+			s.reqLog.With("sessionGroup", system.RedactGroupName(grp), "session", sesName, "impersonationGroup", system.RedactGroupName(impersonated)).
 				Debug("Authorized via breakglass session group on target cluster")
 			s.allowed = true
 			s.allowSource = "session"
-			s.allowDetail = fmt.Sprintf("session=%s sessionGroupHint=%s impersonationGroupHint=%s", sesName, system.RedactGroupName(grp), system.RedactGroupName(impersonated))
+			s.allowDetail = fmt.Sprintf("session=%s sessionGroup=%s impersonationGroup=%s", sesName, system.RedactGroupName(grp), system.RedactGroupName(impersonated))
 			// Emit a single correlated info log showing the final accepted impersonated group for observability
 			s.reqLog.Infow("Final accepted impersonated group",
 				"username", username, "cluster", s.clusterName,
-				"sessionGroupHint", system.RedactGroupName(grp), "session", sesName, "impersonationGroupHint", system.RedactGroupName(impersonated))
+				"sessionGroup", system.RedactGroupName(grp), "session", sesName, "impersonationGroup", system.RedactGroupName(impersonated))
 
 			// Record session activity for idle timeout detection and usage analytics (#314)
 			wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)

@@ -112,13 +112,13 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 	displayable := []breakglassv1alpha1.BreakglassSession{}
 
 	for _, ses := range sessions {
-		ef.Log.Debugw("Processing session for approvability", "session", ses.Name, "requestedGroupHint", system.RedactGroupName(ses.Spec.GrantedGroup))
+		ef.Log.Debugw("Processing session for approvability", "session", ses.Name, "requestedGroup", system.RedactGroupName(ses.Spec.GrantedGroup))
 		sessionApprovable := false
 
 		for _, esc := range escalations {
 			if ses.Spec.GrantedGroup != esc.Spec.EscalatedGroup ||
 				!clusterMatchesPatterns(ses.Spec.Cluster, esc.Spec.Allowed.Clusters) {
-				ef.Log.Debugw("Session-escalation mismatch", "session", ses.Name, "escalation", esc.Name, "sessionGroupHint", system.RedactGroupName(ses.Spec.GrantedGroup), "escalationGroupHint", system.RedactGroupName(esc.Spec.EscalatedGroup))
+				ef.Log.Debugw("Session-escalation mismatch", "session", ses.Name, "escalation", esc.Name, "sessionGroup", system.RedactGroupName(ses.Spec.GrantedGroup), "escalationGroupHint", system.RedactGroupName(esc.Spec.EscalatedGroup))
 				continue
 			}
 

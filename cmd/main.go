@@ -175,6 +175,11 @@ func run() error {
 		return fmt.Errorf("load config for breakglass controller: %w", err)
 	}
 
+	system.SetLogRedaction(cfg.Server.RedactLogs)
+	if cfg.Server.RedactLogs {
+		log.Infow("Log redaction enabled via config")
+	}
+
 	if cliConfig.Debug {
 		log.Infow("Configuration loaded (redacted)",
 			"configPath", cliConfig.ConfigPath,

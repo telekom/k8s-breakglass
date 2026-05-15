@@ -182,7 +182,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
 		if log != nil {
 			log.Errorw("Keycloak resolver has incomplete configuration; cannot resolve groups",
-				"groupHint", system.RedactGroupName(group),
+				"group", system.RedactGroupName(group),
 				"baseURL", k.cfg.BaseURL,
 				"realm", k.cfg.Realm,
 				"clientID", k.cfg.ClientID)
@@ -192,26 +192,26 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 	if v, ok := k.cache.get(group); ok {
 		if log != nil {
-			log.Debugw("Keycloak cache hit for group", "groupHint", system.RedactGroupName(group), "membersCount", len(v))
+			log.Debugw("Keycloak cache hit for group", "group", system.RedactGroupName(group), "membersCount", len(v))
 		}
 		return v, nil
 	}
 	if log != nil {
-		log.Debugw("Keycloak cache miss for group; will perform lookup", "groupHint", system.RedactGroupName(group))
+		log.Debugw("Keycloak cache miss for group; will perform lookup", "group", system.RedactGroupName(group))
 	}
 
 	// Get token
 	token, err := k.getToken(ctx)
 	if err != nil {
 		if log != nil {
-			log.Errorw("Failed to get Keycloak token", "groupHint", system.RedactGroupName(group), "error", err)
+			log.Errorw("Failed to get Keycloak token", "group", system.RedactGroupName(group), "error", err)
 		}
 		return nil, err
 	}
 
 	// 1. Search for group by name
 	if log != nil {
-		log.Debugw("Starting group search step", "groupHint", system.RedactGroupName(group))
+		log.Debugw("Starting group search step", "group", system.RedactGroupName(group))
 		log.Debugw("GetGroups API call details",
 			"baseURL", k.cfg.BaseURL,
 			"realm", k.cfg.Realm,
@@ -224,7 +224,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if err != nil {
 		if log != nil {
 			log.Errorw("Keycloak groups search failed",
-				"groupHint", system.RedactGroupName(group),
+				"group", system.RedactGroupName(group),
 				"error", err,
 				"errorType", fmt.Sprintf("%T", err),
 				"tokenLen", len(token),
@@ -234,7 +234,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		return nil, err
 	}
 	if log != nil {
-		log.Debugw("Keycloak groups search completed", "groupHint", system.RedactGroupName(group), "returnedGroupCount", len(groups))
+		log.Debugw("Keycloak groups search completed", "group", system.RedactGroupName(group), "returnedGroupCount", len(groups))
 		if len(groups) > 0 {
 			for i, g := range groups {
 				log.Debugw("Group search result",
@@ -257,14 +257,14 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		if g.Name != nil && strings.EqualFold(*g.Name, group) {
 			groupID = g.ID
 			if log != nil {
-				log.Debugw("Found matching group by name", "groupHint", system.RedactGroupName(group), "groupID", *groupID, "matchedNameHint", system.RedactGroupName(*g.Name))
+				log.Debugw("Found matching group by name", "group", system.RedactGroupName(group), "groupID", *groupID, "matchedNameHint", system.RedactGroupName(*g.Name))
 			}
 			break
 		}
 	}
 	if groupID == nil {
 		if log != nil {
-			log.Warnw("Group not found in search results", "groupHint", system.RedactGroupName(group))
+			log.Warnw("Group not found in search results", "group", system.RedactGroupName(group))
 		}
 		k.cache.set(group, []string{})
 		return []string{}, nil
@@ -272,7 +272,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 
 	// 2. Get direct group members
 	if log != nil {
-		log.Debugw("Starting direct members fetch step", "groupHint", system.RedactGroupName(group), "groupID", *groupID)
+		log.Debugw("Starting direct members fetch step", "group", system.RedactGroupName(group), "groupID", *groupID)
 		log.Debugw("GetGroupMembers API call details",
 			"baseURL", k.cfg.BaseURL,
 			"realm", k.cfg.Realm,
@@ -285,7 +285,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if err != nil {
 		if log != nil {
 			log.Errorw("Keycloak members fetch failed",
-				"groupHint", system.RedactGroupName(group),
+				"group", system.RedactGroupName(group),
 				"groupID", *groupID,
 				"error", err,
 				"errorType", fmt.Sprintf("%T", err),
@@ -295,7 +295,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		return nil, err
 	}
 	if log != nil {
-		log.Debugw("Direct members fetch completed", "groupHint", system.RedactGroupName(group), "directMemberCount", len(members))
+		log.Debugw("Direct members fetch completed", "group", system.RedactGroupName(group), "directMemberCount", len(members))
 	}
 
 	// Collect member identifiers
@@ -314,7 +314,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 
 	// 3. Get group detail to retrieve subgroups
 	if log != nil {
-		log.Debugw("Starting subgroups fetch step", "groupHint", system.RedactGroupName(group), "groupID", *groupID, "currentMemberCount", len(out))
+		log.Debugw("Starting subgroups fetch step", "group", system.RedactGroupName(group), "groupID", *groupID, "currentMemberCount", len(out))
 		log.Debugw("GetGroup API call details",
 			"baseURL", k.cfg.BaseURL,
 			"realm", k.cfg.Realm,
@@ -326,7 +326,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if err != nil {
 		if log != nil {
 			log.Warnw("Keycloak group detail fetch failed",
-				"groupHint", system.RedactGroupName(group),
+				"group", system.RedactGroupName(group),
 				"error", err,
 				"errorType", fmt.Sprintf("%T", err),
 				"tokenLen", len(token),
@@ -335,14 +335,14 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		// Continue with just direct members
 	} else if groupDetail != nil && groupDetail.SubGroups != nil {
 		if log != nil {
-			log.Debugw("Subgroups fetch completed", "groupHint", system.RedactGroupName(group), "subgroupCount", len(*groupDetail.SubGroups))
+			log.Debugw("Subgroups fetch completed", "group", system.RedactGroupName(group), "subgroupCount", len(*groupDetail.SubGroups))
 		}
 		for sgIdx, sg := range *groupDetail.SubGroups {
 			if sg.ID == nil {
 				continue
 			}
 			if log != nil {
-				log.Debugw("Processing subgroup", "groupHint", system.RedactGroupName(group), "parentGroupID", *groupID, "subgroupIndex", sgIdx, "subgroupID", *sg.ID, "subgroupNameHint", func() string {
+				log.Debugw("Processing subgroup", "group", system.RedactGroupName(group), "parentGroupID", *groupID, "subgroupIndex", sgIdx, "subgroupID", *sg.ID, "subgroupNameHint", func() string {
 					if sg.Name == nil {
 						return ""
 					}
@@ -364,7 +364,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 			if err != nil {
 				if log != nil {
 					log.Warnw("Subgroup members fetch failed",
-						"groupHint", system.RedactGroupName(group),
+						"group", system.RedactGroupName(group),
 						"subgroupID", *sg.ID,
 						"error", err,
 						"errorType", fmt.Sprintf("%T", err),
@@ -394,17 +394,17 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 
 	// 4. Normalize and deduplicate members
 	if log != nil {
-		log.Debugw("Starting member list normalization", "groupHint", system.RedactGroupName(group), "beforeNormalizationCount", len(out))
+		log.Debugw("Starting member list normalization", "group", system.RedactGroupName(group), "beforeNormalizationCount", len(out))
 	}
 	out = normalizeMembers(out)
 	if log != nil {
-		log.Infow("Keycloak group member resolution completed successfully", "groupHint", system.RedactGroupName(group), "finalResolvedCount", len(out))
+		log.Infow("Keycloak group member resolution completed successfully", "group", system.RedactGroupName(group), "finalResolvedCount", len(out))
 	}
 
 	// 5. Cache and return results
 	k.cache.set(group, out)
 	if log != nil {
-		log.Debugw("Group member resolution returning successfully", "groupHint", system.RedactGroupName(group), "memberCount", len(out))
+		log.Debugw("Group member resolution returning successfully", "group", system.RedactGroupName(group), "memberCount", len(out))
 	}
 	return out, nil
 }
@@ -540,24 +540,24 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			log.Debugw("Using legacy single resolver mode", "escalation", esc.Name)
 
 			for _, g := range groups {
-				log.Debugw("Resolving group for escalation", "escalation", esc.Name, "groupHint", system.RedactGroupName(g), "resolverType", fmt.Sprintf("%T", u.Resolver))
+				log.Debugw("Resolving group for escalation", "escalation", esc.Name, "group", system.RedactGroupName(g), "resolverType", fmt.Sprintf("%T", u.Resolver))
 				var norm []string
 				if u.Resolver != nil {
-					log.Debugw("Calling group member resolver", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "resolverType", fmt.Sprintf("%T", u.Resolver))
+					log.Debugw("Calling group member resolver", "group", system.RedactGroupName(g), "escalation", esc.Name, "resolverType", fmt.Sprintf("%T", u.Resolver))
 					members, err := u.Resolver.Members(ctx, g)
 					if err != nil {
-						log.Errorw("Failed resolving group members from resolver", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
+						log.Errorw("Failed resolving group members from resolver", "group", system.RedactGroupName(g), "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
 						continue
 					}
-					log.Debugw("Group member resolver returned members", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "rawMemberCount", len(members))
+					log.Debugw("Group member resolver returned members", "group", system.RedactGroupName(g), "escalation", esc.Name, "rawMemberCount", len(members))
 					norm = normalizeMembers(members)
-					log.Infow("Resolved approver group members (normalized)", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm))
+					log.Infow("Resolved approver group members (normalized)", "group", system.RedactGroupName(g), "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm))
 				} else {
-					log.Warnw("No group member resolver configured; skipping group resolution", "groupHint", system.RedactGroupName(g), "escalation", esc.Name)
+					log.Warnw("No group member resolver configured; skipping group resolution", "group", system.RedactGroupName(g), "escalation", esc.Name)
 					continue
 				}
 				if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
-					log.Debugw("Group members changed; marking for update", "groupHint", system.RedactGroupName(g), "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
+					log.Debugw("Group members changed; marking for update", "group", system.RedactGroupName(g), "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
 					updated.Status.ApproverGroupMembers[g] = norm
 					changed = true
 				}
@@ -626,7 +626,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 			if u.Resolver != nil {
 				members, err := u.Resolver.Members(ctx, g)
 				if err != nil {
-					log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "groupHint", system.RedactGroupName(g), "error", err)
+					log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "group", system.RedactGroupName(g), "error", err)
 					continue
 				}
 				groupMembers[g] = normalizeMembers(members)
@@ -688,7 +688,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 			members, err := resolver.Members(ctx, g)
 			if err != nil {
 				errorMsg := fmt.Sprintf("IDP %s: timeout/error fetching group %s: %v", idpName, system.RedactGroupName(g), err)
-				log.Warnw("Failed to resolve group members from IDP", "escalation", escalation.Name, "idp", idpName, "groupHint", system.RedactGroupName(g), "error", err)
+				log.Warnw("Failed to resolve group members from IDP", "escalation", escalation.Name, "idp", idpName, "group", system.RedactGroupName(g), "error", err)
 				syncErrors = append(syncErrors, errorMsg)
 				idpSuccess = false
 
