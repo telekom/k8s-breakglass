@@ -192,6 +192,22 @@ func WaitForClusterConfigCondition(t *testing.T, ctx context.Context, cli client
 	return &cfg
 }
 
+// WaitForEscalationReady waits for a BreakglassEscalation to have Ready=True condition.
+func WaitForEscalationReady(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) *breakglassv1alpha1.BreakglassEscalation {
+	var esc breakglassv1alpha1.BreakglassEscalation
+	err := WaitForCondition(ctx, func() (bool, error) {
+		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &esc); err != nil {
+			return false, nil
+		}
+		cond := esc.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionReady))
+		return cond != nil && cond.Status == metav1.ConditionTrue, nil
+	}, timeout, DefaultInterval)
+	if t != nil {
+		require.NoError(t, err, "Timeout waiting for BreakglassEscalation %s to be Ready", name)
+	}
+	return &esc
+}
+
 // WaitForAuditConfigReady waits for an AuditConfig to have Ready=True condition.
 // This is important to ensure the audit system is fully configured before running tests
 // that expect audit events to be captured.
