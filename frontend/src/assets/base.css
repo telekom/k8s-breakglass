@@ -214,10 +214,6 @@
 
   /* Stronger focus indicator */
   --focus-outline: #000000;
-
-  /* Fix: Blue links on black in HC mode have poor contrast (~4.5:1). 
-   * Use a lighter blue for AAA (>7:1) */
-  --telekom-color-text-and-icon-link-standard: #66b3ff;
 }
 
 /* High contrast + dark mode combination */
@@ -246,6 +242,10 @@
   --chip-bg: #4a0030;
 
   --focus-outline: #ffffff;
+
+  /* Scale's default link blue has poor contrast on dark backgrounds (~4.5:1).
+   * Use a lighter blue that meets AAA (>7:1) on typical HC dark surfaces. */
+  --telekom-color-text-and-icon-link-standard: #66b3ff;
 }
 
 /* ============================================
