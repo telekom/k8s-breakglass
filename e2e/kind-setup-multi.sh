@@ -523,6 +523,32 @@ wait_for_deploy_by_label() {
   fi
 }
 
+wait_for_escalation_ready() {
+  local name="$1"
+  local namespace="${2:-breakglass-system}"
+  local max_attempts="${3:-90}"
+  local attempt=0
+
+  log "Waiting for BreakglassEscalation $name to be Ready..."
+  while [ $attempt -lt $max_attempts ]; do
+    local ready_status
+    ready_status=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get breakglassescalation "$name" -n "$namespace" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+
+    if [ "$ready_status" = "True" ]; then
+      log "BreakglassEscalation $name is Ready"
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  log "Warning: BreakglassEscalation $name did not become Ready within $max_attempts seconds"
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get breakglassescalation "$name" -n "$namespace" -o yaml 2>/dev/null || true
+  return 1
+}
+
 # Start port forward (use common library function)
 start_port_forward_multi() {
   local kubeconfig="$1"
@@ -2149,7 +2175,31 @@ main() {
   
   # Apply multi-cluster resources (includes IdentityProviders pointing to real Keycloak)
   apply_multi_cluster_resources
-  
+
+  # Wait for all BreakglassEscalation resources to become Ready before tests run.
+  # Without this, session creation tests fail with 403 "escalation is not ready" because
+  # the controller hasn't reconciled the escalation CRs yet.
+  log "Waiting for BreakglassEscalation resources to become Ready..."
+  MC_ESCALATION_NAMES=(
+    "mc-global-readonly"
+    "mc-hub-admin"
+    "mc-spoke-a-pods"
+    "mc-spoke-b-debugger"
+    "mc-employee-access"
+    "mc-contractor-access"
+    "mc-spoke-clusters-admin"
+    "mc-spoke-pods-reader"
+    "mc-spoke-limited-access"
+    "mc-spoke-emergency-admin"
+  )
+  mc_esc_failures=0
+  for esc_name in "${MC_ESCALATION_NAMES[@]}"; do
+    wait_for_escalation_ready "$esc_name" "breakglass-system" 90 || mc_esc_failures=$((mc_esc_failures + 1))
+  done
+  if [ "$mc_esc_failures" -gt 0 ]; then
+    log "Warning: $mc_esc_failures escalation(s) did not become Ready - some multi-cluster tests may fail"
+  fi
+
   # Start port-forward for MailHog (for notification tests)
   log "Setting up MailHog port-forward..."
   MH_SVC_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc --all-namespaces -l app=mailhog -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)

@@ -265,6 +265,32 @@ wait_for_identityprovider_ready() {
   return 1
 }
 
+wait_for_escalation_ready() {
+  local name="$1"
+  local namespace="${2:-breakglass-system}"
+  local max_attempts="${3:-90}"
+  local attempt=0
+
+  log "Waiting for BreakglassEscalation $name to be Ready..."
+  while [ $attempt -lt $max_attempts ]; do
+    local ready_status
+    ready_status=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get breakglassescalation "$name" -n "$namespace" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+
+    if [ "$ready_status" = "True" ]; then
+      log "BreakglassEscalation $name is Ready"
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  log "Warning: BreakglassEscalation $name did not become Ready within $max_attempts seconds"
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get breakglassescalation "$name" -n "$namespace" -o yaml 2>/dev/null || true
+  return 1
+}
+
 assign_keycloak_service_account_roles() {
   # Assign realm-management roles to the breakglass-group-sync service account
   # This is needed because Keycloak realm import doesn't reliably import service account role mappings
@@ -1649,6 +1675,32 @@ done
 
 # Apply the e2e test CRs that were excluded from kustomize to avoid webhook validation race
 apply_e2e_test_crs
+
+# Wait for all BreakglassEscalation resources to become Ready before tests run.
+# Without this, session creation tests fail with 403 "escalation is not ready" because
+# the controller hasn't reconciled the escalation CRs yet.
+log "Waiting for BreakglassEscalation resources to become Ready..."
+ESCALATION_NAMES=(
+  "e2e-escalation-create-all-test"
+  "e2e-escalation-pods-admin-test"
+  "e2e-escalation-emergency-admin-test"
+  "e2e-escalation-tenant-b-dev-test"
+  "e2e-escalation-read-only-test"
+  "e2e-escalation-multi-cluster-ops-test"
+  "test-audit-escalation"
+  "ui-e2e-request-session-test"
+  "ui-e2e-approve-email-test"
+  "ui-e2e-reject-session-test"
+  "ui-e2e-my-requests-test"
+  "ui-e2e-pending-approvals-test"
+)
+escalation_failures=0
+for esc_name in "${ESCALATION_NAMES[@]}"; do
+  wait_for_escalation_ready "$esc_name" "breakglass-system" 90 || escalation_failures=$((escalation_failures + 1))
+done
+if [ "$escalation_failures" -gt 0 ]; then
+  log "Warning: $escalation_failures escalation(s) did not become Ready - some tests may fail"
+fi
 
 # Apply cluster-config and deny-policy overrides AFTER controller is ready (webhooks need to be serving)
 # NOTE: Cluster configs and deny policies are now applied by apply_e2e_test_crs function above
