@@ -55,7 +55,7 @@ func CanGroupsDo(ctx context.Context,
 	if rc == nil {
 		return false, errors.New("rest config is nil")
 	}
-	zap.S().Debugw("Checking if groups can perform SAR operation", "groups", groups, "cluster", clustername)
+	zap.S().Debugw("Checking if groups can perform SAR operation", "groupCount", len(groups), "cluster", clustername)
 	// Copy to avoid mutating shared config
 	cfg := rest.CopyConfig(rc)
 	cfg.Impersonate = rest.ImpersonationConfig{UserName: "system:auth-checker", Groups: groups}
@@ -116,14 +116,14 @@ func StripOIDCPrefixes(groups []string, oidcPrefixes []string) []string {
 	}
 
 	var strippedGroups []string
-	zap.S().Debugw("Stripping OIDC prefixes from groups", "originalGroups", groups, "prefixes", oidcPrefixes)
+	zap.S().Debugw("Stripping OIDC prefixes from groups", "originalGroupCount", len(groups), "prefixCount", len(oidcPrefixes))
 
 	for _, group := range groups {
 		strippedGroup := group
 		for _, prefix := range oidcPrefixes {
 			if strings.HasPrefix(group, prefix) {
 				strippedGroup = strings.TrimPrefix(group, prefix)
-				zap.S().Debugw("Stripped OIDC prefix from group", "originalGroup", group, "prefix", prefix, "strippedGroup", strippedGroup)
+				zap.S().Debugw("Stripped OIDC prefix from group", "prefix", prefix)
 				break
 			}
 		}
@@ -135,7 +135,7 @@ func StripOIDCPrefixes(groups []string, oidcPrefixes []string) []string {
 		strippedGroups = []string{}
 	}
 
-	zap.S().Debugw("OIDC prefix stripping complete", "originalGroups", groups, "strippedGroups", strippedGroups)
+	zap.S().Debugw("OIDC prefix stripping complete", "originalGroupCount", len(groups), "strippedGroupCount", len(strippedGroups))
 	return strippedGroups
 }
 
@@ -198,7 +198,7 @@ func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath
 	finalGroups := originalGroups
 	if configLoaded && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		finalGroups = StripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
-		zap.S().Infow("Applied OIDC prefix stripping", "originalGroups", originalGroups, "finalGroups", finalGroups, "oidcPrefixes", cfg.Kubernetes.OIDCPrefixes)
+		zap.S().Infow("Applied OIDC prefix stripping", "originalGroupCount", len(originalGroups), "finalGroupCount", len(finalGroups), "oidcPrefixCount", len(cfg.Kubernetes.OIDCPrefixes))
 	} else {
 		zap.S().Debug("No OIDC prefixes configured, using original groups")
 	}
@@ -216,7 +216,7 @@ func GetUserGroups(ctx context.Context, cug ClusterUserGroup) ([]string, error) 
 
 	// Removed BREAKGLASS_E2E_ASSUME_GROUPS fallback to ensure real cluster auth is always required.
 
-	zap.S().Infow("GetUserGroups complete", "cluster", cug.Clustername, "username", cug.Username, "groups", finalGroups, "count", len(finalGroups))
+	zap.S().Infow("GetUserGroups complete", "cluster", cug.Clustername, "username", cug.Username, "groupCount", len(finalGroups))
 	return finalGroups, nil
 }
 
@@ -229,7 +229,7 @@ func GetUserGroupsWithConfig(ctx context.Context, cug ClusterUserGroup, configPa
 		return nil, err
 	}
 
-	zap.S().Infow("GetUserGroupsWithConfig complete", "cluster", cug.Clustername, "username", cug.Username, "groups", finalGroups, "count", len(finalGroups))
+	zap.S().Infow("GetUserGroupsWithConfig complete", "cluster", cug.Clustername, "username", cug.Username, "groupCount", len(finalGroups))
 	return finalGroups, nil
 }
 

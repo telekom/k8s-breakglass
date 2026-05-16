@@ -1,9 +1,23 @@
 package system
 
 import (
+	"fmt"
+	"sync/atomic"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// redactEnabled is an atomic flag controlling log redaction. When 0 (default),
+// values are logged in full for easier debugging. Call SetLogRedaction(true) to
+// enable redaction of group names, member lists, and other sensitive fields.
+var redactEnabled atomic.Bool
+
+// SetLogRedaction toggles log-level redaction globally.
+func SetLogRedaction(enabled bool) { redactEnabled.Store(enabled) }
+
+// LogRedactionEnabled reports whether log redaction is currently active.
+func LogRedactionEnabled() bool { return redactEnabled.Load() }
 
 // ReqLoggerKey is the context key used to store request-scoped logger in gin context.
 const ReqLoggerKey = "reqLogger"
@@ -42,11 +56,30 @@ func EnrichReqLoggerWithAuth(c *gin.Context, reqLogger *zap.SugaredLogger) *zap.
 	if v, ok := c.Get("groups"); ok {
 		if groups, ok2 := v.([]string); ok2 && len(groups) > 0 {
 			reqLogger = reqLogger.With("groupCount", len(groups))
-			// full groups list is useful at debug level only
-			reqLogger.Debugw("Request token groups", "groups", groups)
+			reqLogger.Debugw("Request token groups", "groups", RedactSlice(groups))
 		}
 	}
 	return reqLogger
+}
+
+// RedactGroupName returns the group name as-is when log redaction is disabled
+// (default). When redaction is enabled via SetLogRedaction(true), non-empty
+// names are replaced with "[REDACTED]".
+func RedactGroupName(name string) string {
+	if !redactEnabled.Load() || name == "" {
+		return name
+	}
+	return "[REDACTED]"
+}
+
+// RedactSlice returns the slice as-is when log redaction is disabled. When
+// enabled, it returns a summary string like "[3 items]" to avoid logging
+// sensitive list contents.
+func RedactSlice(vals []string) interface{} {
+	if !redactEnabled.Load() {
+		return vals
+	}
+	return fmt.Sprintf("[%d items]", len(vals))
 }
 
 // NamespacedFields returns a variadic slice of key/value pairs suitable for passing

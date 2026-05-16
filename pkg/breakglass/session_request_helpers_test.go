@@ -8,11 +8,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -338,4 +341,41 @@ func TestBuildSessionSpec_AllowIDPMismatch_ClusterRestrictionOverrides(t *testin
 	require.True(t, ok, "buildSessionSpec should succeed")
 	assert.False(t, spec.AllowIDPMismatch,
 		"AllowIDPMismatch must be false when cluster has IDP restrictions even if escalation is unrestricted")
+}
+
+func TestResolveUserGroupsRedactsRawTokenGroupsWhenEnabled(t *testing.T) {
+	system.SetLogRedaction(true)
+	defer system.SetLogRedaction(false)
+
+	gin.SetMode(gin.TestMode)
+
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	sesManager := &SessionManager{Client: cli}
+	escManager := &testEscalationLookup{Client: cli}
+
+	core, recorded := observer.New(zap.DebugLevel)
+	obsLogger := zap.New(core).Sugar()
+
+	wc := NewBreakglassSessionController(
+		zaptest.NewLogger(t).Sugar(), config.Config{},
+		sesManager, escManager,
+		nil, "/config/config.yaml", nil, cli,
+	)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("groups", []string{"secret-admin-role", "internal-platform-ops", "privileged-cluster-access"})
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, obsLogger)
+
+	require.True(t, ok, "resolveUserGroups should succeed when groups are in context")
+	require.ElementsMatch(t, []string{"secret-admin-role", "internal-platform-ops", "privileged-cluster-access"}, groups)
+
+	for _, entry := range recorded.All() {
+		fields := entry.ContextMap()
+		if val, ok := fields["rawTokenGroups"]; ok {
+			require.Equal(t, "[3 items]", val,
+				"rawTokenGroups must be redacted when log redaction is enabled (found in: %q)", entry.Message)
+		}
+	}
 }

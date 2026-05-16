@@ -184,6 +184,13 @@ type Server struct {
 	// only Prometheus counters are incremented — no status writes occur.
 	// +optional
 	EnableActivityTracking bool `yaml:"enableActivityTracking,omitempty"`
+
+	// RedactLogs enables redaction of sensitive values (group names, member
+	// lists, email subjects) in log output. When false (default), full values
+	// are logged for easier debugging. Enable in production if log aggregation
+	// systems are broadly accessible.
+	// +optional
+	RedactLogs bool `yaml:"redactLogs,omitempty"`
 }
 
 // ServerTimeouts configures HTTP server timeouts.

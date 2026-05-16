@@ -77,14 +77,9 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 
 	// Attempt to resolve groups from token first (preferred) then fallback to cluster-based resolution
 	var userGroups []string
-	// Raw token groups (pre-normalization) for trace diagnostics
 	if raw, exists := c.Get("groups"); exists {
 		if arr, ok := raw.([]string); ok {
-			reqLog.Debugw("Extracted raw token groups from JWT claims", "rawTokenGroups", arr, "rawTokenGroupCount", len(arr))
-		}
-	}
-	if tg, exists := c.Get("groups"); exists {
-		if arr, ok := tg.([]string); ok {
+			reqLog.Debugw("Extracted raw token groups from JWT claims", "rawTokenGroupCount", len(arr))
 			userGroups = append(userGroups, arr...)
 		}
 	}
@@ -107,7 +102,7 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		// Avoid logging wrapped errors (which may include stack traces). Log a concise message only.
 		reqLog.Debugw("Continuing without OIDC prefix stripping", "error", cerr.Error())
 	}
-	reqLog.Debugw("Resolved user groups (token first)", "userGroups", userGroups, "groupCount", len(userGroups))
+	reqLog.Debugw("Resolved user groups (token first)", "userGroupCount", len(userGroups))
 
 	escalations, err := ec.manager.GetGroupBreakglassEscalations(c.Request.Context(), userGroups)
 	if err != nil {

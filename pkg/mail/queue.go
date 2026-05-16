@@ -97,8 +97,8 @@ func (q *Queue) Enqueue(id string, receivers []string, subject, body string) err
 	if len(receivers) == 0 {
 		q.log.Errorw("Cannot enqueue email: empty receivers list",
 			"id", id,
-			"subject", subject,
-			"stackTrace", fmt.Sprintf("%+v", receivers))
+			"subjectLength", len(subject),
+			"recipientCount", len(receivers))
 		metrics.MailQueueDropped.WithLabelValues(q.sender.GetHost()).Inc()
 		return fmt.Errorf("cannot enqueue email with no receivers")
 	}
@@ -128,7 +128,7 @@ func (q *Queue) Enqueue(id string, receivers []string, subject, body string) err
 		q.log.Debugw("Email queued for sending",
 			"id", id,
 			"receivers", len(receivers),
-			"subject", subject)
+			"subjectLength", len(subject))
 		return nil
 	case <-q.ctx.Done():
 		q.log.Errorw("Cannot enqueue, queue is shutting down", "id", id)
@@ -246,7 +246,7 @@ func (q *Queue) processItem(item *QueueItem) {
 			"id", item.ID,
 			"attempt", item.Attempt,
 			"receivers", len(item.Receivers),
-			"subject", item.Subject)
+			"subjectLength", len(item.Subject))
 		metrics.MailSent.WithLabelValues(q.sender.GetHost()).Inc()
 		item.Succeeded = true
 		return
@@ -270,8 +270,8 @@ func (q *Queue) processItem(item *QueueItem) {
 			"id", item.ID,
 			"attempts", item.Attempt,
 			"error", err,
-			"receivers", item.Receivers,
-			"subject", item.Subject)
+			"recipientCount", len(item.Receivers),
+			"subjectLength", len(item.Subject))
 		metrics.MailFailed.WithLabelValues(q.sender.GetHost()).Inc()
 	}
 }
