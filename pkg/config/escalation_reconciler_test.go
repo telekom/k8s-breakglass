@@ -441,6 +441,21 @@ func TestEscalationReconciler_ValidateClusterRef(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("wildcard cluster ref is valid", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"*"},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.NoError(t, err)
+	})
+
 	t.Run("valid cluster ref passes", func(t *testing.T) {
 		cluster := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "default"},

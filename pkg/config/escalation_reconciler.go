@@ -403,7 +403,7 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 	var missing []string
 	for _, clusterName := range esc.Spec.ClusterConfigRefs {
 		name := strings.TrimSpace(clusterName)
-		if name == "" {
+		if name == "" || name == "*" {
 			continue
 		}
 
