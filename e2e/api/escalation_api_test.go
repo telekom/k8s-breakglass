@@ -602,6 +602,6 @@ func TestEscalationAPIReadinessFiltering(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode, "Requesting an unready escalation should be forbidden")
 
 		body, _ := io.ReadAll(resp.Body)
-		assert.Contains(t, string(body), "requested cluster/escalation is not ready", "Error message should indicate readiness failure")
+		assert.Contains(t, string(body), "user not authorized for requested group", "Unready escalation should be hidden from authorization layer")
 	})
 }
