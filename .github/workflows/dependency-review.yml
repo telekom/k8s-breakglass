@@ -40,5 +40,5 @@ jobs:
           # Fail on moderate or higher severity vulnerabilities
           fail-on-severity: moderate
 
-          # Comment on PR with details
-          comment-summary-in-pr: always
+          # Comment on PR with details (only for non-fork PRs where write access is available)
+          comment-summary-in-pr: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'always' || 'never' }}
