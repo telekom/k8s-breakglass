@@ -210,6 +210,16 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 				"error", ve.error)
 		}
 
+		// Set aggregate Ready condition to false
+		apimeta.SetStatusCondition(&escalation.Status.Conditions, metav1.Condition{
+			Type:               string(breakglassv1alpha1.BreakglassEscalationConditionReady),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: escalation.Generation,
+			Reason:             "ValidationFailed",
+			Message:            "One or more validations failed, see other conditions for details",
+			LastTransitionTime: now,
+		})
+
 		// Update ObservedGeneration before applying status
 		escalation.Status.ObservedGeneration = escalation.Generation
 		if err := r.applyStatus(ctx, escalation); err != nil {
@@ -217,7 +227,19 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 				"escalation", escalation.Name,
 				"error", err)
 		}
-		// Validation errors are persisted to status; avoid requeue storms for invalid resources.
+
+		// Reference validation errors (cluster, IDP, deny policy, mail provider) may be
+		// transient if the referenced resource hasn't been created yet. Requeue to retry.
+		hasRefError := false
+		for _, ve := range validationErrors {
+			if ve.conditionType != string(breakglassv1alpha1.BreakglassEscalationConditionConfigValidated) {
+				hasRefError = true
+				break
+			}
+		}
+		if hasRefError {
+			return reconcile.Result{RequeueAfter: 3 * time.Second}, nil
+		}
 		return reconcile.Result{}, nil
 	}
 
@@ -228,6 +250,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid,
 		breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid,
 		breakglassv1alpha1.BreakglassEscalationConditionMailProviderValid,
+		breakglassv1alpha1.BreakglassEscalationConditionReady,
 	} {
 		condition := metav1.Condition{
 			Type:               string(condType),
@@ -380,7 +403,7 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 	var missing []string
 	for _, clusterName := range esc.Spec.ClusterConfigRefs {
 		name := strings.TrimSpace(clusterName)
-		if name == "" {
+		if name == "" || name == "*" {
 			continue
 		}
 

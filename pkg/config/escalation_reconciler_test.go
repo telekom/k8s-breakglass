@@ -173,9 +173,9 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Validation errors are now persisted to status instead of returning an error
+		// Reference validation errors requeue to handle transient missing resources
 		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{}, result)
+		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -219,9 +219,9 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Validation errors are now persisted to status instead of returning an error
+		// Reference validation errors requeue to handle transient missing resources
 		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{}, result)
+		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -276,9 +276,9 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Validation errors are now persisted to status instead of returning an error
+		// Reference validation errors requeue to handle transient missing resources
 		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{}, result)
+		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -322,9 +322,9 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Validation errors are now persisted to status instead of returning an error
+		// Reference validation errors requeue to handle transient missing resources
 		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{}, result)
+		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -434,6 +434,21 @@ func TestEscalationReconciler_ValidateClusterRef(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				ClusterConfigRefs: []string{"", "  "},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.NoError(t, err)
+	})
+
+	t.Run("wildcard cluster ref is valid", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"*"},
 			},
 		}
 

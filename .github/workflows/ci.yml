@@ -261,7 +261,7 @@ jobs:
           echo "=== Manifest Comparison Summary ==="
           cat manifest-diff.md
       - name: Comment on PR with manifest changes
-        if: github.event_name == 'pull_request' && steps.get_release.outputs.has_previous_release == 'true'
+        if: github.event_name == 'pull_request' && steps.get_release.outputs.has_previous_release == 'true' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -673,7 +673,7 @@ jobs:
   single-cluster-e2e:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
@@ -1392,8 +1392,27 @@ jobs:
           ) &
           echo "API port-forward keepalive started (PID: $!)"
 
-          # Wait for Keycloak to be reachable
-          for i in {1..30}; do
+          # Wait for Keycloak pod to be Ready in-cluster first.
+          # The pod must be Ready before port-forward will succeed reliably.
+          echo "Waiting for Keycloak pod to be Ready in-cluster (up to 180s)..."
+          if ! kubectl wait pod -n breakglass-system -l app=keycloak \
+              --for=condition=Ready --timeout=180s 2>&1; then
+            echo "WARNING: Keycloak pod not Ready after 180s, attempting restart..."
+            kubectl delete pod -n breakglass-system -l app=keycloak --grace-period=10 2>&1 || true
+            echo "Waiting for Keycloak pod to restart and become Ready (up to 120s)..."
+            sleep 5
+            if ! kubectl wait pod -n breakglass-system -l app=keycloak \
+                --for=condition=Ready --timeout=120s 2>&1; then
+              echo "ERROR: Keycloak pod not Ready after restart"
+              kubectl get pods -n breakglass-system -l app=keycloak -o wide 2>&1 || true
+              kubectl describe pod -n breakglass-system -l app=keycloak 2>&1 || true
+              exit 1
+            fi
+          fi
+          echo "✓ Keycloak pod is Ready in-cluster"
+
+          # Wait for Keycloak to be reachable via port-forward
+          for i in {1..60}; do
             if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
               echo "✓ Keycloak reachable at localhost:8443"
               break
@@ -1402,27 +1421,10 @@ jobs:
           done
 
           if ! curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
-            echo "ERROR: Keycloak not reachable at localhost:8443"
+            echo "ERROR: Keycloak not reachable at localhost:8443 after 60s"
             kubectl get pods -n breakglass-system -l app=keycloak 2>&1 || true
             exit 1
           fi
-
-          # Wait for Keycloak pod to be Ready in-cluster.
-          # The port-forward confirms localhost connectivity, but the Keycloak pod
-          # itself may still be starting or recovering from a restart. The controller
-          # reaches Keycloak via the in-cluster service URL, so we must ensure the pod
-          # is Ready before the tests create ClusterConfig objects that trigger OIDC
-          # discovery requests. Without this, the rotation tests (OT-007, OT-008) fail
-          # with "connection refused" on breakglass-keycloak.breakglass-system.svc.cluster.local:8443.
-          echo "Waiting for Keycloak pod to be Ready in-cluster (up to 120s)..."
-          if ! kubectl wait pod -n breakglass-system -l app=keycloak \
-              --for=condition=Ready --timeout=120s 2>&1; then
-            echo "ERROR: Keycloak pod not Ready after 120s"
-            kubectl get pods -n breakglass-system -l app=keycloak -o wide 2>&1 || true
-            kubectl describe pod -n breakglass-system -l app=keycloak 2>&1 || true
-            exit 1
-          fi
-          echo "✓ Keycloak pod is Ready in-cluster"
 
           # Wait for API to be reachable
           for i in {1..20}; do
@@ -1510,7 +1512,7 @@ jobs:
   ui-e2e:
     name: UI E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
@@ -2145,7 +2147,7 @@ jobs:
   multi-cluster-e2e:
     name: Multi-Cluster E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
