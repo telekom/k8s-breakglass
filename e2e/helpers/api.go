@@ -151,7 +151,7 @@ const sessionsBasePath = "/api/breakglassSessions"
 // informer cache propagation delay or controller reconciliation lag after
 // creating an escalation resource.
 func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req SessionRequest) (*breakglassv1alpha1.BreakglassSession, error) {
-	const maxRetries = 5
+	const maxRetries = 15
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
