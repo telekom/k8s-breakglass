@@ -244,11 +244,14 @@ func TestEscalationAPIList(t *testing.T) {
 	})
 
 	t.Run("APIFiltersByClusterParameter", func(t *testing.T) {
-		// Verify that filtering with a nonexistent cluster returns no escalations.
+		// Verify that filtering with a nonexistent cluster returns only wildcard escalations.
 		escalations, status, err := apiClient.ListEscalationsForCluster(ctx, t, "nonexistent-cluster-xyz")
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, status)
-		assert.Empty(t, escalations, "Should return no escalations for nonexistent cluster")
+		for _, e := range escalations {
+			assert.Contains(t, e.Spec.ClusterConfigRefs, "*",
+				"Only wildcard escalations should match nonexistent cluster, got: %s", e.Name)
+		}
 	})
 
 	t.Run("EscalationsReturnedForUserGroups", func(t *testing.T) {
