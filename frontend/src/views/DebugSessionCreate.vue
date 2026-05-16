@@ -796,7 +796,7 @@ function handleTemplateChange(ev: Event) {
 
 .template-details .detail {
   font-size: 0.75rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .template-details .detail strong {

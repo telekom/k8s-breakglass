@@ -170,6 +170,23 @@ func WaitForPodReady(ctx context.Context, cli client.Client, namespace, name str
 	}, timeout, DefaultInterval)
 }
 
+// WaitForEscalationReady waits for a BreakglassEscalation to have Ready=True condition.
+func WaitForEscalationReady(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) *breakglassv1alpha1.BreakglassEscalation {
+	var esc breakglassv1alpha1.BreakglassEscalation
+
+	err := WaitForCondition(ctx, func() (bool, error) {
+		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &esc); err != nil {
+			return false, nil
+		}
+		return esc.IsReady(), nil
+	}, timeout, DefaultInterval)
+
+	if t != nil {
+		require.NoError(t, err, "Timeout waiting for BreakglassEscalation %s to be Ready", name)
+	}
+	return &esc
+}
+
 // WaitForClusterConfigCondition waits for a ClusterConfig to have a specific condition status
 func WaitForClusterConfigCondition(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, conditionType breakglassv1alpha1.ClusterConfigConditionType, expectedStatus metav1.ConditionStatus, timeout time.Duration) *breakglassv1alpha1.ClusterConfig {
 	var cfg breakglassv1alpha1.ClusterConfig
@@ -190,22 +207,6 @@ func WaitForClusterConfigCondition(t *testing.T, ctx context.Context, cli client
 		require.NoError(t, err, "Timeout waiting for ClusterConfig %s condition %s to be %s", name, conditionType, expectedStatus)
 	}
 	return &cfg
-}
-
-// WaitForEscalationReady waits for a BreakglassEscalation to have Ready=True condition.
-func WaitForEscalationReady(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, timeout time.Duration) *breakglassv1alpha1.BreakglassEscalation {
-	var esc breakglassv1alpha1.BreakglassEscalation
-	err := WaitForCondition(ctx, func() (bool, error) {
-		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &esc); err != nil {
-			return false, nil
-		}
-		cond := esc.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionReady))
-		return cond != nil && cond.Status == metav1.ConditionTrue, nil
-	}, timeout, DefaultInterval)
-	if t != nil {
-		require.NoError(t, err, "Timeout waiting for BreakglassEscalation %s to be Ready", name)
-	}
-	return &esc
 }
 
 // WaitForAuditConfigReady waits for an AuditConfig to have Ready=True condition.

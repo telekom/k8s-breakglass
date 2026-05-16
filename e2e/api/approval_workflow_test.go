@@ -50,6 +50,7 @@ func TestApprovalSingleApprover(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	requesterClient := tc.ClientForUser(helpers.TestUsers.Requester)
 	approverClient := tc.ClientForUser(helpers.TestUsers.Approver)
@@ -99,6 +100,7 @@ func TestApprovalAnyFromList(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	requesterClient := tc.ClientForUser(helpers.TestUsers.Requester)
 	seniorApproverClient := tc.ClientForUser(helpers.TestUsers.SeniorApprover)
@@ -143,6 +145,7 @@ func TestApprovalUnauthorizedRejected(t *testing.T) {
 		Build() // Only TestUsers.Approver.Email can approve (default)
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	requesterClient := tc.ClientForUser(helpers.TestUsers.Requester)
 	// Use OpsGamma who is NOT in the allowed approvers list
@@ -185,6 +188,7 @@ func TestApprovalByGroup(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	requesterClient := tc.ClientForUser(helpers.TestUsers.Requester)
 	approverClient := tc.ClientForUser(helpers.TestUsers.Approver) // In "approver" group
@@ -223,6 +227,7 @@ func TestRejectionWithReason(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	requesterClient := tc.ClientForUser(helpers.TestUsers.Requester)
 	approverClient := tc.ClientForUser(helpers.TestUsers.Approver)
@@ -268,6 +273,7 @@ func TestApprovalTimeoutNoAutoApprove(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	requesterClient := tc.ClientForUser(helpers.TestUsers.Requester)
 

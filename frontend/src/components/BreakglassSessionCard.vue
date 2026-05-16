@@ -290,7 +290,7 @@ const requestReasonText = computed(() => {
   font: var(--telekom-text-style-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .session-card__reason p {
@@ -343,7 +343,7 @@ const requestReasonText = computed(() => {
 }
 
 .timeline-item--muted {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .timeline-item .label {

@@ -275,9 +275,7 @@ func TestSecurityApprovalRequired(t *testing.T) {
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
-
-		// Wait for escalation reconciliation
-		time.Sleep(helpers.CachePropagationDelay)
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		// Create a session that will be pending approval
 		session, err := apiClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -383,9 +381,7 @@ func TestSecurityUnreachableClusterDenied(t *testing.T) {
 		cleanup.Add(escalation)
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation for unreachable cluster")
-
-		// Wait for ClusterConfig to be processed
-		time.Sleep(helpers.CachePropagationDelay)
+		helpers.WaitForCachePropagation(ctx) // Wait for controller to at least see it
 
 		// Try to create a session for the unreachable cluster
 		// This should fail because the cluster cannot be reached for verification
@@ -445,9 +441,7 @@ func TestSecurityUnauthorizedGroupDenied(t *testing.T) {
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create restricted escalation")
-
-		// Wait for reconciliation
-		time.Sleep(helpers.CachePropagationDelay)
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		// Try to create a session for this escalation - should be denied
 		_, err = apiClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -644,8 +638,7 @@ func TestSecuritySessionCannotSelfApprove(t *testing.T) {
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
-
-		time.Sleep(helpers.CachePropagationDelay)
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		// Create a session as the requester
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -1103,6 +1096,7 @@ func TestSecurityAllowedApproverDomains(t *testing.T) {
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		// Verify escalation was created with domain restriction
 		var fetched breakglassv1alpha1.BreakglassEscalation
@@ -1156,8 +1150,7 @@ func TestSecuritySessionRejectionWorkflow(t *testing.T) {
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
-
-		time.Sleep(helpers.CachePropagationDelay)
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		// Create a session
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -1223,8 +1216,7 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
-
-		time.Sleep(helpers.CachePropagationDelay)
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		// Create a session
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -1267,8 +1259,7 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
-
-		time.Sleep(helpers.CachePropagationDelay)
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,

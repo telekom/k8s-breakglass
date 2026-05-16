@@ -235,18 +235,6 @@ function handleNoteChange(ev: Event) {
   border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
-/* Ensure all buttons have pill shape */
-.modal-actions :deep(scale-button) {
-  --radius: var(--radius-pill);
-}
-
-.modal-actions :deep(scale-button)::part(button),
-.modal-actions :deep(scale-button)::part(base) {
-  border-radius: var(--radius-pill) !important;
-}
-
-/* min-width delegated to ActionButton or scale-button defaults for consistency */
-
 .modal-actions :deep(scale-button) {
   min-width: 8rem;
 }

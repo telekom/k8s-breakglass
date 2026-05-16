@@ -707,7 +707,7 @@ function drop() {
   margin: 0;
   font-size: 0.9rem;
   font-weight: 500;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .session-section {
@@ -727,7 +727,7 @@ function drop() {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .session-section--reason h4 {
@@ -790,7 +790,7 @@ function drop() {
 
 .breakglass-card__cta {
   flex: 1 1 320px;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .breakglass-card__cta p {
@@ -870,26 +870,6 @@ function drop() {
   padding-top: var(--space-xs);
   border-top: 1px solid var(--telekom-color-ui-border-standard);
   font-size: 0.9rem;
-}
-
-.modal-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  justify-content: center;
-  margin-top: var(--space-xl);
-  padding: var(--space-lg) 0 var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-/* Ensure all buttons have pill shape */
-.modal-actions :deep(scale-button) {
-  --radius: var(--radius-pill);
-}
-
-.modal-actions :deep(scale-button)::part(button),
-.modal-actions :deep(scale-button)::part(base) {
-  border-radius: var(--radius-pill) !important;
 }
 
 :deep(input::placeholder),

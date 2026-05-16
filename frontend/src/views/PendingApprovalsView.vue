@@ -8,8 +8,8 @@
     />
 
     <!-- Filter and Sort Controls -->
-    <div class="approvals-toolbar" data-testid="approvals-toolbar">
-      <div class="approvals-toolbar__control">
+    <div class="approvals-toolbar ui-toolbar" data-testid="approvals-toolbar">
+      <div class="approvals-toolbar__control ui-toolbar-field">
         <scale-dropdown-select
           id="sort-select"
           data-testid="sort-select"
@@ -23,7 +23,7 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="approvals-toolbar__control">
+      <div class="approvals-toolbar__control ui-toolbar-field">
         <scale-dropdown-select
           id="urgency-filter"
           data-testid="urgency-filter"
@@ -38,7 +38,7 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="toolbar-info" data-testid="toolbar-info">
+      <div class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
       </div>
     </div>
@@ -498,29 +498,6 @@ onMounted(fetchPendingApprovals);
 
 .approvals-toolbar {
   margin-bottom: var(--space-lg);
-  background: var(--surface-elevated);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  padding: var(--space-md);
-  border-radius: var(--radius-md);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  align-items: center;
-}
-
-.approvals-toolbar__control {
-  flex: 1 1 200px;
-  min-width: 200px;
-}
-
-.approvals-toolbar__control > * {
-  width: 100%;
-}
-
-.toolbar-info {
-  color: var(--telekom-color-text-and-icon-additional);
-  margin-left: auto;
-  font-size: 0.9rem;
 }
 
 /* Using global .masonry-layout class from base.css for sessions-list */
@@ -575,7 +552,7 @@ onMounted(fetchPendingApprovals);
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .session-pill-list {
@@ -589,17 +566,17 @@ onMounted(fetchPendingApprovals);
 }
 
 .timer-panel {
-  background: var(--surface-card);
+  background: var(--surface-card-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--radius-lg);
-  padding: var(--space-xl) var(--space-xl);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .countdown-label {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.85rem;
   font-weight: 500;
 }
@@ -610,7 +587,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .timer-absolute {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.8rem;
 }
 
@@ -635,7 +612,7 @@ onMounted(fetchPendingApprovals);
 
 .countdown-value small {
   font-size: 0.8rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 /* tone-chip and tone-callout classes are defined globally in base.css */

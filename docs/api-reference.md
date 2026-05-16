@@ -539,16 +539,20 @@ Authorization: Bearer <token>
 
 ### List Escalations
 
-Retrieve available escalation policies matching the authenticated user's groups.
-
-```http
-GET /api/breakglassEscalations
+GET /api/breakglassEscalations?activeOnly=<true|false>&cluster=<cluster>
 Authorization: Bearer <token>
 ```
 
 **Status Code:** `200 OK`
 
-**Response:** Array of `BreakglassEscalation` resources filtered by user's groups:
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `activeOnly` | boolean | Only return ready escalations (default: `true`). Unready escalations are hidden by default to prevent session requests to broken clusters. |
+| `cluster` | string | Filter by target cluster name. Supports exact matching and glob patterns. |
+
+**Response:** Array of `BreakglassEscalation` resources filtered by user's groups and readiness:
 
 ```json
 [

@@ -291,7 +291,7 @@ function handleRenew() {
 
 .cluster {
   font-size: 0.875rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .card-body {
@@ -324,6 +324,12 @@ function handleRenew() {
   gap: var(--space-sm);
 }
 
+@media (max-width: 640px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .info-item {
   display: flex;
   flex-direction: column;
@@ -332,7 +338,7 @@ function handleRenew() {
 
 .info-item .label {
   font-size: 0.75rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }

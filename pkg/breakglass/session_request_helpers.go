@@ -146,6 +146,22 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return nil, false
 	}
+
+	// Phase 5.5: Apply Rule 11: block unready escalations from session requests.
+	// This ensures that "Not Ready" clusters cannot be used for sessions even if they exist.
+	readyEscalations := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
+	for _, e := range escalations {
+		if e.IsReady() {
+			readyEscalations = append(readyEscalations, e)
+		}
+	}
+	if len(readyEscalations) == 0 {
+		reqLog.Warnw("Requested escalation exists but is not ready", "cluster", cug.Clustername, "group", cug.GroupName)
+		apiresponses.RespondForbidden(c, "requested cluster/escalation is not ready")
+		return nil, false
+	}
+	escalations = readyEscalations
+
 	reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(escalations))
 	return escalations, true
 }
@@ -169,6 +185,11 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 
 	for i := range possibleEscals {
 		p := &possibleEscals[i]
+		if !p.IsReady() {
+			reqLog.Debugw("Skipping unready escalation during approver resolution", "escalationName", p.Name)
+			continue
+		}
+
 		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
 		reqLog.Debugw("Processing escalation for approver resolution",
 			"escalationName", p.Name,
@@ -177,7 +198,8 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
 		// Always check if this is the matched escalation first (needed for deny policies)
-		isMatchedEscalation := p.Spec.EscalatedGroup == requestedGroup && result.matchedEscalation == nil
+		// Only consider the escalation if it's in a "Ready" state.
+		isMatchedEscalation := p.Spec.EscalatedGroup == requestedGroup && result.matchedEscalation == nil && p.IsReady()
 		if isMatchedEscalation {
 			result.matchedEscalation = p
 			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)

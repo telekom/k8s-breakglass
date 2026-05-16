@@ -278,7 +278,7 @@ async function onDrop(bg: Breakglass) {
 
     <LoadingState v-if="state.loading" message="Loading escalations..." />
     <div v-else-if="state.breakglasses.length > 0">
-      <div class="breakglass-toolbar" data-testid="breakglass-toolbar">
+      <div class="breakglass-toolbar ui-toolbar" data-testid="breakglass-toolbar">
         <div class="breakglass-toolbar__field">
           <scale-text-field
             id="breakglass-search"
@@ -304,7 +304,7 @@ async function onDrop(bg: Breakglass) {
             <scale-icon-action-refresh></scale-icon-action-refresh>
           </scale-button>
         </div>
-        <div class="toolbar-info" data-testid="toolbar-info">
+        <div class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
           Showing {{ filteredBreakglasses.length }} of {{ dedupedBreakglasses.length }} escalations
         </div>
       </div>
@@ -352,14 +352,7 @@ async function onDrop(bg: Breakglass) {
 }
 
 .breakglass-toolbar {
-  align-items: flex-end;
   margin-bottom: var(--space-lg);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  padding: var(--space-md);
-  border-radius: var(--radius-md);
 }
 
 .breakglass-toolbar__field {
@@ -379,7 +372,7 @@ async function onDrop(bg: Breakglass) {
 }
 
 .toolbar-info {
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   margin-left: auto;
   font-size: 0.9rem;
   align-self: center;

@@ -63,6 +63,7 @@ config/                        Kustomize overlays
 8. **CHANGELOG mandatory**: Update `CHANGELOG.md` for user-facing changes.
 9. **E2E sessions**: Use API helpers (`e2e/helpers/api.go`), not direct K8s client creation.
 10. **Fuzz tests**: Exist at `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`, and `pkg/breakglass/debug/fuzz_test.go`.
+11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
 
 ## Build Tags
 

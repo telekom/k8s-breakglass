@@ -81,9 +81,9 @@ func (c *EscalationAPIClient) doRequest(ctx context.Context, method, path string
 	return c.HTTPClient.Do(req)
 }
 
-// ListEscalations lists all escalations
+// ListEscalations lists all escalations (defaults to activeOnly=true)
 func (c *EscalationAPIClient) ListEscalations(ctx context.Context, t *testing.T) ([]breakglassv1alpha1.BreakglassEscalation, int, error) {
-	return c.ListEscalationsWithOptions(ctx, t, "", false, false)
+	return c.ListEscalationsWithOptions(ctx, t, "", false, true)
 }
 
 // ListEscalationsWithOptions lists escalations with filtering options
@@ -93,12 +93,8 @@ func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t 
 	if cluster != "" {
 		params = append(params, "cluster="+cluster)
 	}
-	if includeHidden {
-		params = append(params, "includeHidden=true")
-	}
-	if activeOnly {
-		params = append(params, "activeOnly=true")
-	}
+	params = append(params, fmt.Sprintf("includeHidden=%v", includeHidden))
+	params = append(params, fmt.Sprintf("activeOnly=%v", activeOnly))
 	if len(params) > 0 {
 		path += "?"
 		for i, p := range params {
@@ -133,19 +129,14 @@ func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t 
 	return escalations, resp.StatusCode, nil
 }
 
-// ListEscalationsForCluster lists all escalations for a specific cluster
+// ListEscalationsForCluster lists all escalations for a specific cluster (defaults to activeOnly=true)
 func (c *EscalationAPIClient) ListEscalationsForCluster(ctx context.Context, t *testing.T, cluster string) ([]breakglassv1alpha1.BreakglassEscalation, int, error) {
-	return c.ListEscalationsWithOptions(ctx, t, cluster, false, false)
+	return c.ListEscalationsWithOptions(ctx, t, cluster, false, true)
 }
 
-// isEscalationActive returns true if the escalation has Ready=True condition (or no conditions)
+// isEscalationActive returns true if the escalation has Ready=True condition
 func isEscalationActive(e *breakglassv1alpha1.BreakglassEscalation) bool {
-	// Default to active if no Ready condition exists
-	cond := e.GetCondition("Ready")
-	if cond == nil {
-		return true
-	}
-	return cond.Status == "True"
+	return e.IsReady()
 }
 
 // =============================================================================
@@ -236,12 +227,11 @@ func TestEscalationAPIList(t *testing.T) {
 	})
 
 	t.Run("FilterByCluster", func(t *testing.T) {
-		// Note: The API returns escalations based on user group membership, not cluster filters.
-		// The query parameter is sent but the current API implementation does not filter by it.
+		// Verify that the API correctly filters by cluster query parameter.
 		escalations, status, err := apiClient.ListEscalationsForCluster(ctx, t, clusterName)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, status)
-		t.Logf("Found %d escalations (note: API does not filter by cluster)", len(escalations))
+		t.Logf("Found %d escalations for cluster %s", len(escalations), clusterName)
 
 		var foundVisible bool
 		for _, e := range escalations {
@@ -253,14 +243,15 @@ func TestEscalationAPIList(t *testing.T) {
 		assert.True(t, foundVisible, "Should find escalation for cluster: %s", clusterName)
 	})
 
-	t.Run("APIIgnoresClusterFilterParameter", func(t *testing.T) {
-		// Note: The current API implementation does not filter by cluster query parameter.
-		// This test documents current behavior - escalations are returned based on user groups.
+	t.Run("APIFiltersByClusterParameter", func(t *testing.T) {
+		// Verify that filtering with a nonexistent cluster returns only wildcard escalations.
 		escalations, status, err := apiClient.ListEscalationsForCluster(ctx, t, "nonexistent-cluster-xyz")
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, status)
-		// Current API behavior: returns all escalations for user's groups regardless of cluster param
-		t.Logf("API returned %d escalations (cluster parameter is not implemented)", len(escalations))
+		for _, e := range escalations {
+			assert.Contains(t, e.Spec.ClusterConfigRefs, "*",
+				"Only wildcard escalations should match nonexistent cluster, got: %s", e.Name)
+		}
 	})
 
 	t.Run("EscalationsReturnedForUserGroups", func(t *testing.T) {
@@ -306,6 +297,7 @@ func TestEscalationAPIEscalationProperties(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Get auth token
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
@@ -368,6 +360,7 @@ func TestEscalationAPIActiveStatus(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Get auth token
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
@@ -380,7 +373,8 @@ func TestEscalationAPIActiveStatus(t *testing.T) {
 	time.Sleep(helpers.CachePropagationDelay)
 
 	t.Run("EscalationIsListed", func(t *testing.T) {
-		// Escalations should be listed when created
+		// Escalations should be listed when created (if controller has made them ready)
+		// Note: In E2E tests, the controller usually reconciles and sets Ready=True quickly.
 		escalations, status, err := apiClient.ListEscalations(ctx, t)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, status)
@@ -393,15 +387,15 @@ func TestEscalationAPIActiveStatus(t *testing.T) {
 			}
 		}
 
-		require.NotNil(t, found, "Should find escalation in list")
-		// IsActive depends on whether the controller has set Ready condition
-		// Log the actual values for debugging
-		isActive := isEscalationActive(found)
-		t.Logf("Found escalation: %s (isActive=%v)", found.Name, isActive)
+		// It might take a moment for the controller to set the Ready condition.
+		// If not found yet, we might need a retry, but for now we assert it's found
+		// assuming cache propagation delay was sufficient.
+		require.NotNil(t, found, "Should find escalation in list (activeOnly=true)")
+		assert.True(t, found.IsReady(), "Escalation should be ready")
 	})
 
 	t.Run("EscalationPropertiesAreCorrect", func(t *testing.T) {
-		// Note: The API does not filter by activeOnly - this parameter is not implemented
+		// The API now filters by activeOnly=true by default.
 		escalations, status, err := apiClient.ListEscalations(ctx, t)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, status)
@@ -518,5 +512,99 @@ func TestEscalationAPIUnauthorized(t *testing.T) {
 		_, status, err := invalidClient.ListEscalations(ctx, t)
 		require.Error(t, err)
 		assert.Equal(t, http.StatusUnauthorized, status)
+	})
+}
+
+// TestEscalationAPIReadinessFiltering tests that unready escalations are filtered by default
+func TestEscalationAPIReadinessFiltering(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	clusterName := helpers.GetTestClusterName()
+
+	// Create escalation that we will keep unready
+	unreadyEscName := helpers.GenerateUniqueName("e2e-unready-esc")
+	unreadyEsc := helpers.NewEscalationBuilder(unreadyEscName, namespace).
+		WithAllowedClusters(clusterName).
+		WithEscalatedGroup("system:unready-admins").
+		WithLabels(helpers.E2ELabelsWithFeature("escalation-readiness-test")).
+		Build()
+	// Add an invalid IDP reference to force Readiness to be False
+	unreadyEsc.Spec.AllowedIdentityProviders = []string{"non-existent-idp"}
+	cleanup.Add(unreadyEsc)
+	require.NoError(t, cli.Create(ctx, unreadyEsc))
+
+	// Get auth token
+	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
+	token := tc.OIDCProvider().GetToken(t, ctx, helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password)
+	require.NotEmpty(t, token)
+
+	apiClient := NewEscalationAPIClient(token)
+
+	// Poll until the escalation is visible via the API (cache synced)
+	require.Eventually(t, func() bool {
+		escalations, _, err := apiClient.ListEscalationsWithOptions(ctx, t, "", false, false)
+		if err != nil {
+			return false
+		}
+		for _, e := range escalations {
+			if e.Name == unreadyEscName {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 1*time.Second, "Unready escalation never appeared in API listing")
+
+	t.Run("UnreadyEscalationFilteredByDefault", func(t *testing.T) {
+		escalations, _, err := apiClient.ListEscalations(ctx, t)
+		require.NoError(t, err)
+
+		for _, e := range escalations {
+			assert.NotEqual(t, unreadyEscName, e.Name, "Unready escalation should be filtered out by default")
+		}
+	})
+
+	t.Run("UnreadyEscalationVisibleWithActiveOnlyFalse", func(t *testing.T) {
+		escalations, _, err := apiClient.ListEscalationsWithOptions(ctx, t, "", false, false)
+		require.NoError(t, err)
+
+		found := false
+		for _, e := range escalations {
+			if e.Name == unreadyEscName {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Unready escalation should be visible when activeOnly=false")
+	})
+
+	t.Run("UnreadyEscalationCannotBeRequested", func(t *testing.T) {
+		// Attempt to create a session for the unready escalation
+		reqBody := map[string]string{
+			"cluster": clusterName,
+			"user":    helpers.TestUsers.Requester.Email,
+			"group":   "system:unready-admins", // The group from our unready escalation
+			"reason":  "E2E test requesting unready escalation",
+		}
+		jsonBody, _ := json.Marshal(reqBody)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, helpers.GetAPIBaseURL()+"/api/breakglassSessions", bytes.NewBuffer(jsonBody))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := helpers.DefaultHTTPClient().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, "Requesting an unready escalation should be forbidden")
+
+		body, _ := io.ReadAll(resp.Body)
+		assert.Contains(t, string(body), "user not authorized for requested group", "Unready escalation should be hidden from authorization layer")
 	})
 }

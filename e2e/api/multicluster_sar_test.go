@@ -133,9 +133,7 @@ func TestCrossClusterSARAuthorization(t *testing.T) {
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation for multi-cluster SAR test")
-
-	// Give the escalation time to be indexed
-	time.Sleep(helpers.CachePropagationDelay)
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	t.Run("SARForActiveSession", func(t *testing.T) {
 		// Create session via API using the escalation's group
@@ -243,6 +241,7 @@ func TestEscalationClusterConfigRefs(t *testing.T) {
 		cleanup.Add(escalation)
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create multi-cluster escalation")
+		helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 		var fetched breakglassv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &fetched)

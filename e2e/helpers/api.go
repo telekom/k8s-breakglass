@@ -146,11 +146,12 @@ const sessionsBasePath = "/api/breakglassSessions"
 // the real session controller which sets proper status, sends notifications, etc.
 // If CleanupClient is set and a 409 conflict occurs, it will automatically expire
 // the conflicting session and retry up to 3 times.
-// It also retries on transient 403 errors ("no escalation found" or "user not
-// authorized for requested group") caused by informer cache propagation delay
-// after creating an escalation resource.
+// It also retries on transient 403 errors ("no escalation found", "user not
+// authorized for requested group", or "escalation is not ready") caused by
+// informer cache propagation delay or controller reconciliation lag after
+// creating an escalation resource.
 func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req SessionRequest) (*breakglassv1alpha1.BreakglassSession, error) {
-	const maxRetries = 3
+	const maxRetries = 15
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -186,11 +187,24 @@ func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req Session
 			// Retry on "no escalation found" — transient during informer cache sync
 			if isEscalationNotFound(err) {
 				if t != nil {
-					t.Logf("CreateSession: escalation not yet in cache (attempt %d/%d), retrying in 2s for user=%s, group=%s",
+					t.Logf("CreateSession: escalation not yet in cache (attempt %d/%d), retrying in 3s for user=%s, group=%s",
 						attempt+1, maxRetries, req.User, req.Group)
 				}
 				lastErr = err
-				if !sleepOrCancel(ctx, 2*time.Second) {
+				if !sleepOrCancel(ctx, 3*time.Second) {
+					return nil, ctx.Err()
+				}
+				continue
+			}
+
+			// Retry on "escalation is not ready" — transient during controller reconciliation
+			if isEscalationNotReady(err) {
+				if t != nil {
+					t.Logf("CreateSession: escalation not yet ready (attempt %d/%d), retrying in 3s for user=%s, group=%s",
+						attempt+1, maxRetries, req.User, req.Group)
+				}
+				lastErr = err
+				if !sleepOrCancel(ctx, 3*time.Second) {
 					return nil, ctx.Err()
 				}
 				continue
@@ -223,6 +237,17 @@ func isEscalationNotFound(err error) bool {
 	}
 	return strings.Contains(msg, "no escalation found") ||
 		strings.Contains(msg, "user not authorized for requested group")
+}
+
+// isEscalationNotReady checks if an error is a transient 403 caused by the
+// controller not yet having reconciled the escalation to Ready state.
+func isEscalationNotReady(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "status=403") &&
+		strings.Contains(msg, "is not ready")
 }
 
 // isTemplateNotFound checks if an error is a transient 400 caused by informer
