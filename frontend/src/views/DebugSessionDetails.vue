@@ -791,7 +791,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               placeholder="sh"
               helper-text="Command to run in the container (space-separated)"
             />
-            <div class="form-actions">
+            <div class="modal-actions">
               <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
                 Cancel
               </scale-button>
@@ -830,7 +830,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               placeholder="Leave empty to use original image"
               helper-text="Replace container image with a debug image"
             />
-            <div class="form-actions">
+            <div class="modal-actions">
               <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
                 Cancel
               </scale-button>
@@ -850,7 +850,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               placeholder="worker-node-1"
               helper-text="The name of the node to debug"
             />
-            <div class="form-actions">
+            <div class="modal-actions">
               <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
                 Cancel
               </scale-button>
@@ -876,7 +876,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
           {{ opt.label }}
         </scale-dropdown-select-item>
       </scale-dropdown-select>
-      <div slot="action" class="dialog-actions">
+      <div slot="action" class="modal-actions">
         <scale-button variant="secondary" @click="renewDialogOpen = false">Cancel</scale-button>
         <scale-button variant="primary" @click="confirmRenew">Renew</scale-button>
       </div>
@@ -896,7 +896,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
         placeholder="Enter reason..."
         data-testid="reject-reason-input"
       ></scale-text-field>
-      <div slot="action" class="dialog-actions">
+      <div slot="action" class="modal-actions">
         <scale-button variant="secondary" @click="rejectDialogOpen = false">Cancel</scale-button>
         <scale-button variant="primary" @click="confirmReject">Reject</scale-button>
       </div>
@@ -1048,7 +1048,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .left-marker {
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--tone-chip-danger-text);
 }
 
 .pod-header {
@@ -1071,7 +1071,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .pod-item.pod-has-issues {
-  border-left: 3px solid var(--telekom-color-functional-danger-standard);
+  border-left: 3px solid var(--accent-critical);
   padding-left: var(--space-sm);
   margin-left: calc(-1 * var(--space-sm));
 }
@@ -1079,13 +1079,14 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .pod-issues {
   margin-top: var(--space-sm);
   padding: var(--space-sm);
-  background: var(--telekom-color-functional-danger-subtle);
+  background: var(--tone-chip-danger-bg);
   border-radius: var(--radius-sm);
+  border: 1px solid var(--tone-chip-danger-border);
   font-size: 0.75rem;
 }
 
 .issue-detail {
-  color: var(--telekom-color-text-and-icon-functional-danger);
+  color: var(--tone-chip-danger-text);
 }
 
 .issue-detail + .issue-detail {
