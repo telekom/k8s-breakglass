@@ -178,9 +178,6 @@
 
   /* Surface helpers for dark mode sections */
   --surface-card-subtle: #242426;
-
-  /* Fix: Lower contrast for expired text in dark mode — boost to AAA */
-  --tone-chip-neutral-text: #e0e0e0;
 }
 
 /* ============================================
@@ -383,38 +380,7 @@ scale-modal {
 scale-modal::part(body) {
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
-}
-
-scale-modal::part(header) {
-  border-bottom: 1px solid var(--telekom-color-ui-border-standard);
-  margin-bottom: var(--space-md);
-  padding-bottom: var(--space-md);
-}
-
-/* Global modal actions footer pattern */
-.modal-actions {
-  margin-top: var(--space-xl);
-  display: flex;
-  flex-wrap: wrap;
   gap: var(--space-md);
-  justify-content: flex-end;
-  padding: var(--space-lg) 0 var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-.modal-actions scale-button {
-  min-width: 8rem;
-}
-
-@media (max-width: 640px) {
-  .modal-actions {
-    justify-content: stretch;
-    padding: var(--space-md) 0;
-  }
-  .modal-actions > * {
-    width: 100%;
-  }
 }
 
 /* ============================================
@@ -555,11 +521,12 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-lg);
+  padding: var(--card-padding-sm);
+  background-color: var(--surface-toolbar);
+  border-radius: var(--radius-lg);
   border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);
   align-items: center;
-  /* Fix: Standardize toolbar padding per Scale styleguide */
-  padding: var(--space-md) var(--space-lg);
 }
 
 .ui-toolbar input,
@@ -738,11 +705,6 @@ select:focus {
 
 .ui-section p {
   color: var(--telekom-color-text-and-icon-additional);
-}
-
-/* Fix: High Contrast Brand Alignment */
-:root[data-high-contrast="true"] scale-telekom-header::part(app-name-text) {
-  color: var(--telekom-color-text-and-icon-standard) !important;
 }
 
 .ui-link-button {

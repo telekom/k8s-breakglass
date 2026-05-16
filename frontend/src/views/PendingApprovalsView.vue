@@ -8,8 +8,8 @@
     />
 
     <!-- Filter and Sort Controls -->
-    <div class="approvals-toolbar ui-toolbar" data-testid="approvals-toolbar">
-      <div class="approvals-toolbar__control ui-toolbar-field">
+    <div class="approvals-toolbar" data-testid="approvals-toolbar">
+      <div class="approvals-toolbar__control">
         <scale-dropdown-select
           id="sort-select"
           data-testid="sort-select"
@@ -23,7 +23,7 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="approvals-toolbar__control ui-toolbar-field">
+      <div class="approvals-toolbar__control">
         <scale-dropdown-select
           id="urgency-filter"
           data-testid="urgency-filter"
@@ -38,7 +38,7 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
+      <div class="toolbar-info" data-testid="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
       </div>
     </div>
@@ -498,6 +498,29 @@ onMounted(fetchPendingApprovals);
 
 .approvals-toolbar {
   margin-bottom: var(--space-lg);
+  background: var(--surface-elevated);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  align-items: center;
+}
+
+.approvals-toolbar__control {
+  flex: 1 1 200px;
+  min-width: 200px;
+}
+
+.approvals-toolbar__control > * {
+  width: 100%;
+}
+
+.toolbar-info {
+  color: var(--telekom-color-text-and-icon-standard);
+  margin-left: auto;
+  font-size: 0.9rem;
 }
 
 /* Using global .masonry-layout class from base.css for sessions-list */
@@ -566,13 +589,13 @@ onMounted(fetchPendingApprovals);
 }
 
 .timer-panel {
-  background: var(--surface-card-subtle);
+  background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--radius-md);
-  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl) var(--space-xl);
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-md);
 }
 
 .countdown-label {
