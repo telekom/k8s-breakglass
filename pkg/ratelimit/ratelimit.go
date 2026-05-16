@@ -214,7 +214,7 @@ func (rl *IPRateLimiter) MiddlewareWithExclusions(excludedPrefixes []string) gin
 	}
 }
 
-// Stop stops the cleanup goroutine. Safe to call multiple times.
+// Stop stops the cleanup goroutine. Safe to call multiple times concurrently.
 func (rl *IPRateLimiter) Stop() {
 	rl.stopOnce.Do(func() { close(rl.done) })
 }
