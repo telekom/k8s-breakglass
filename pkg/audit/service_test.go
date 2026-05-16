@@ -936,3 +936,43 @@ func TestService_GetStats_WithManager(t *testing.T) {
 
 	_ = svc.Close()
 }
+
+func TestService_Manager_NilBeforeReload(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, logger, "test-namespace")
+	assert.Nil(t, svc.Manager())
+}
+
+func TestService_Manager_NonNilAfterSuccessfulReload(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, logger, "test-namespace")
+
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-manager-config"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	err := svc.Reload(context.Background(), config)
+	require.NoError(t, err)
+	assert.NotNil(t, svc.Manager())
+
+	_ = svc.Close()
+}

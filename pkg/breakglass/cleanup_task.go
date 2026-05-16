@@ -31,7 +31,7 @@ const (
 type CleanupRoutine struct {
 	Log             *zap.SugaredLogger
 	Manager         *SessionManager
-	AuditManager    *audit.Manager
+	AuditService    *audit.Service
 	MailService     MailEnqueuer    // Mail service for sending expiration notifications
 	BrandingName    string          // Branding name for email templates
 	DisableEmail    bool            // Whether to disable email notifications
@@ -348,8 +348,10 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 				}
 
 				// Emit audit event for expired debug session
-				if routine.AuditManager != nil {
-					routine.AuditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+				if routine.AuditService != nil {
+					if m := routine.AuditService.Manager(); m != nil {
+						m.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+					}
 				}
 
 				// Send expiration email notification
@@ -383,8 +385,10 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 				}
 
 				// Emit audit event for approval timeout
-				if routine.AuditManager != nil {
-					routine.AuditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+				if routine.AuditService != nil {
+					if m := routine.AuditService.Manager(); m != nil {
+						m.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+					}
 				}
 
 				deletedCount++
