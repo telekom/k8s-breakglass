@@ -332,9 +332,14 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Predicate to filter events - only reconcile on spec changes, not status updates
 	specChangePredicate := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldEsc := e.ObjectOld.(*breakglassv1alpha1.BreakglassEscalation)
-			newEsc := e.ObjectNew.(*breakglassv1alpha1.BreakglassEscalation)
-			// Only trigger reconcile if spec changed
+			oldEsc, ok := e.ObjectOld.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok {
+				return true
+			}
+			newEsc, ok := e.ObjectNew.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok {
+				return true
+			}
 			return !slicesEqual(oldEsc.Spec.AllowedIdentityProviders, newEsc.Spec.AllowedIdentityProviders) ||
 				oldEsc.DeletionTimestamp != newEsc.DeletionTimestamp
 		},
