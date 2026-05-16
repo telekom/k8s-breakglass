@@ -543,10 +543,19 @@ func TestEscalationAPIReadinessFiltering(t *testing.T) {
 
 	apiClient := NewEscalationAPIClient(token)
 
-	// Wait for cache sync but NOT long enough for controller to necessarily make it ready
-	// (Actually, to be sure it's unready, we'd need to mock the controller or use a specific label to block it,
-	// but for this test we'll assume it's unready initially).
-	time.Sleep(helpers.CachePropagationDelay)
+	// Poll until the escalation is visible via the API (cache synced)
+	require.Eventually(t, func() bool {
+		escalations, _, err := apiClient.ListEscalationsWithOptions(ctx, t, "", false, false)
+		if err != nil {
+			return false
+		}
+		for _, e := range escalations {
+			if e.Name == unreadyEscName {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 1*time.Second, "Unready escalation never appeared in API listing")
 
 	t.Run("UnreadyEscalationFilteredByDefault", func(t *testing.T) {
 		escalations, _, err := apiClient.ListEscalations(ctx, t)
