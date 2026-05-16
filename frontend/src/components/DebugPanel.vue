@@ -193,7 +193,7 @@ const groupsDisplay = computed(() => {
                   <scale-icon-action-success
                     size="16"
                     decorative
-                    style="color: var(--telekom-color-functional-success-standard); vertical-align: middle"
+                    style="color: var(--tone-chip-success-text); vertical-align: middle"
                   />
                   Yes
                 </template>
@@ -201,7 +201,7 @@ const groupsDisplay = computed(() => {
                   <scale-icon-action-circle-close
                     size="16"
                     decorative
-                    style="color: var(--telekom-color-functional-danger-standard); vertical-align: middle"
+                    style="color: var(--tone-chip-danger-text); vertical-align: middle"
                   />
                   No
                 </template>
@@ -391,11 +391,11 @@ const groupsDisplay = computed(() => {
 }
 
 .debug-item .value.groups-list {
-  color: var(--telekom-color-functional-success-standard);
+  color: var(--tone-chip-success-text);
 }
 
 .debug-item .value.mock-indicator {
-  color: var(--telekom-color-functional-warning-standard);
+  color: var(--tone-chip-warning-text);
   font-style: italic;
 }
 
@@ -475,7 +475,7 @@ const groupsDisplay = computed(() => {
 }
 
 .debug-section.error {
-  border-left-color: var(--telekom-color-functional-danger-standard);
+  border-left-color: var(--accent-critical);
   background-color: var(--tone-chip-danger-bg);
   border-color: var(--tone-chip-danger-border);
 }

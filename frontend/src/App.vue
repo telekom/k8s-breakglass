@@ -28,7 +28,7 @@ const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
 
-// Theme handling respects the user's system preference but offers a manual override
+// Theme handling respects the user's system preference without offering a manual toggle
 const theme = ref<"light" | "dark">(getInitialTheme());
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
@@ -83,18 +83,7 @@ function getInitialTheme(): "light" | "dark" {
   if (typeof window === "undefined") {
     return "light";
   }
-  try {
-    const stored = localStorage.getItem("breakglass-theme");
-    if (stored === "light" || stored === "dark") return stored;
-  } catch {}
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function toggleTheme() {
-  theme.value = theme.value === "dark" ? "light" : "dark";
-  try {
-    localStorage.setItem("breakglass-theme", theme.value);
-  } catch {}
 }
 
 function applyTheme(value: "light" | "dark") {
@@ -463,7 +452,7 @@ watch(
               :aria-pressed="highContrast"
               @click="toggleHighContrast"
             >
-              <scale-icon-action-visibility size="20" :decorative="true"></scale-icon-action-visibility>
+              <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
             </button>
           </div>
 
@@ -574,23 +563,12 @@ scale-telekom-header::part(app-name-text) {
   font: var(--telekom-text-style-heading-6);
 }
 
-.header-functions-container {
+.hc-toggle-nav-item {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
 }
 
-.theme-utilities {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 0 var(--space-md);
-  border-right: 1px solid var(--telekom-color-ui-border-standard);
-  margin-right: var(--space-sm);
-}
-
-.hc-toggle-button,
-.theme-toggle-button {
+.hc-toggle-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -604,15 +582,8 @@ scale-telekom-header::part(app-name-text) {
   transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
-.hc-toggle-button:hover,
-.theme-toggle-button:hover {
-  background-color: var(--telekom-color-ui-subtle);
-  transform: translateY(-1px);
-}
-
-.hc-toggle-button:active,
-.theme-toggle-button:active {
-  transform: translateY(0) scale(0.95);
+.hc-toggle-button:hover {
+  background-color: var(--surface-card-subtle);
 }
 
 .hc-toggle-button.hc-active {
@@ -699,9 +670,6 @@ scale-telekom-header::part(app-name-text) {
 @media (max-width: 1039px) {
   .mobile-nav-item {
     display: flex;
-  }
-  .theme-utilities {
-    display: none; /* Hide on mobile header, use flyout menu instead */
   }
 }
 </style>
