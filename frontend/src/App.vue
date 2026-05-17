@@ -505,7 +505,6 @@ watch(
                           <scale-icon-action-light-dark-mode
                             size="24"
                             :decorative="true"
-                            class="mobile-util-icon"
                           ></scale-icon-action-light-dark-mode>
                           <span>{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
                         </button>
@@ -514,11 +513,7 @@ watch(
                           :class="['mobile-util-btn', { active: highContrast }]"
                           @click="toggleHighContrast"
                         >
-                          <scale-icon-action-visibility
-                            size="24"
-                            :decorative="true"
-                            class="mobile-util-icon"
-                          ></scale-icon-action-visibility>
+                          <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
                           <span>High Contrast</span>
                         </button>
                       </div>
@@ -695,12 +690,5 @@ scale-telekom-header::part(app-name-text) {
   .theme-utilities {
     display: none; /* Hide on mobile header, use flyout menu instead */
   }
-}
-
-/* Left-align mobile menu items to match branding */
-scale-telekom-mobile-menu-item::part(link),
-scale-telekom-mobile-menu-item::part(base) {
-  justify-content: flex-start !important;
-  padding-left: var(--space-xl) !important;
 }
 </style>
