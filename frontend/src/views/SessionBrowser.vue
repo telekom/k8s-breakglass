@@ -659,8 +659,8 @@ header p {
   font-weight: 600;
   color: var(--telekom-color-text-and-icon-strong);
   transition:
-    border-color 0.15s,
-    box-shadow 0.15s;
+    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
+    box-shadow var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 .preset-btn small {
@@ -689,8 +689,8 @@ header p {
   background: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-standard);
   transition:
-    border-color 0.15s,
-    background 0.15s;
+    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
+    background var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 .filters-grid :deep(scale-checkbox:hover) {
@@ -720,7 +720,7 @@ header p {
 }
 
 .section-label {
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--session-muted);
@@ -741,8 +741,8 @@ header p {
   background: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-standard);
   transition:
-    border-color 0.15s,
-    background 0.15s;
+    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
+    background var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 /* Override Scale's internal label colour to prevent magenta-on-magenta */
@@ -763,7 +763,7 @@ header p {
   display: inline-flex;
   gap: var(--space-2xs);
   align-items: center;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   background: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-standard);
 }
@@ -778,7 +778,7 @@ header p {
 .text-filters label {
   display: flex;
   flex-direction: column;
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-strong);
   font-weight: 600;
 }
@@ -788,7 +788,7 @@ header p {
   padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--session-border);
   border-radius: var(--radius-sm);
-  font-size: 0.95rem;
+  font: var(--telekom-text-style-caption);
   background: var(--surface-card);
   color: var(--telekom-color-text-and-icon-standard);
 }
@@ -809,13 +809,13 @@ header p {
 }
 
 .filters-meta {
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   color: var(--session-muted);
   line-height: 1.4;
 }
 
 .hint {
-  font-size: 0.8rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-warning);
   margin-top: var(--space-2xs);
 }
@@ -855,7 +855,7 @@ header p {
 }
 
 .session-name {
-  font-size: 1.1rem;
+  font: var(--telekom-text-style-heading-6);
   font-weight: 700;
   color: var(--telekom-color-text-and-icon-strong);
 }
@@ -871,7 +871,7 @@ header p {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-md);
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
   margin-bottom: var(--space-sm);
 }
@@ -885,7 +885,7 @@ header p {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-md);
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   color: var(--session-muted);
   margin-bottom: var(--space-sm);
 }
@@ -896,7 +896,7 @@ header p {
   border-left: 3px solid var(--accent-critical);
   padding: var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--tone-chip-danger-text);
 }
 

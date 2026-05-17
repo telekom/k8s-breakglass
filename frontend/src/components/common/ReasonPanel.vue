@@ -74,7 +74,7 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
 }
 
 .reason-panel__icon {
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .reason-panel__text {

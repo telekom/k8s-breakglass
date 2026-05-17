@@ -396,7 +396,7 @@ onUnmounted(() => {
 }
 
 .error-title {
-  font-size: 1.5rem;
+  font: var(--telekom-text-style-heading-4);
   font-weight: 600;
   margin-bottom: var(--space-xl);
   color: var(--scl-color-danger);
@@ -430,7 +430,7 @@ onUnmounted(() => {
 }
 
 .error-message {
-  font-size: 1rem;
+  font: var(--telekom-text-style-body);
   margin-bottom: var(--space-sm);
 }
 
@@ -441,7 +441,7 @@ onUnmounted(() => {
 }
 
 .meta-info {
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
   margin: var(--space-2xs) 0;
 }
@@ -472,7 +472,7 @@ onUnmounted(() => {
 }
 
 .approval-container h1 {
-  font-size: 2rem;
+  font: var(--telekom-text-style-heading-2);
   margin-bottom: var(--space-sm);
 }
 

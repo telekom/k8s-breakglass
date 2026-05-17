@@ -87,7 +87,7 @@ const scaleIconName = computed(() => {
   justify-content: center;
   padding: var(--space-3xl) var(--space-2xl);
   border-radius: var(--radius-lg);
-  border: 1px dashed var(--telekom-color-ui-border-standard);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   text-align: center;
   background: var(--surface-card-subtle, var(--telekom-color-ui-state-fill-standard));
 }
@@ -97,13 +97,13 @@ const scaleIconName = computed(() => {
 }
 
 .empty-state__icon {
-  font-size: 2.5rem;
+  font: var(--telekom-text-style-heading-2);
   margin-bottom: var(--space-md);
   line-height: 1;
 }
 
 .empty-state--compact .empty-state__icon {
-  font-size: 1.75rem;
+  font: var(--telekom-text-style-heading-3);
   margin-bottom: var(--space-sm);
 }
 

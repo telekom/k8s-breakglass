@@ -189,7 +189,7 @@ function handleNoteChange(ev: Event) {
   border-radius: var(--radius-pill);
   font-weight: 600;
   text-transform: uppercase;
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   background: var(--telekom-color-additional-violet-subtle);
   color: var(--telekom-color-text-and-icon-on-subtle-violet);
   border: 1px solid color-mix(in srgb, var(--telekom-color-additional-violet-standard) 35%, transparent);
@@ -203,7 +203,7 @@ function handleNoteChange(ev: Event) {
 
 .modal-info-row {
   margin-top: var(--space-sm);
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
@@ -222,7 +222,7 @@ function handleNoteChange(ev: Event) {
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-sm);
   white-space: pre-wrap;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .modal-actions {

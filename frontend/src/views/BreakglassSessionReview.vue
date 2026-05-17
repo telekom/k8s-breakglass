@@ -414,7 +414,7 @@ async function onCancel(bg: SessionCR) {
 }
 
 .toolbar-info {
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
 

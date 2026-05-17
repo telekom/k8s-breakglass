@@ -129,6 +129,18 @@ async function initializeApp() {
     await defineCustomElements(window);
   }
 
+  // Override the neutral theme's purple primary (#5300ff) with Telekom magenta.
+  // Injected AFTER Scale CSS loads so it wins the cascade.
+  if (flavour === "oss" || flavour === "neutral") {
+    const style = document.createElement("style");
+    style.textContent = `:root {
+      --telekom-color-primary-standard: #e20074;
+      --telekom-color-primary-hovered: #cb0068;
+      --telekom-color-primary-pressed: #a30054;
+    }`;
+    document.head.appendChild(style);
+  }
+
   // Initialize Vue app
   logger.info("App", "Initializing Vue application");
   const app = createApp(App);
