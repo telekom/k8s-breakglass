@@ -520,7 +520,7 @@ onMounted(fetchPendingApprovals);
 .toolbar-info {
   color: var(--telekom-color-text-and-icon-standard);
   margin-left: auto;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 /* Using global .masonry-layout class from base.css for sessions-list */
@@ -537,7 +537,7 @@ onMounted(fetchPendingApprovals);
 
 .approval-card-shell {
   border-left: 5px solid transparent;
-  transition: border-color 0.2s ease;
+  transition: border-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .approval-card-shell--critical {
@@ -572,7 +572,7 @@ onMounted(fetchPendingApprovals);
   display: flex;
   gap: var(--space-xs);
   align-items: center;
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-standard);
@@ -600,18 +600,18 @@ onMounted(fetchPendingApprovals);
 
 .countdown-label {
   color: var(--telekom-color-text-and-icon-standard);
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
 }
 
 .timer-value {
-  font-size: 1.4rem;
+  font: var(--telekom-text-style-heading-4);
   font-weight: 700;
 }
 
 .timer-absolute {
   color: var(--telekom-color-text-and-icon-standard);
-  font-size: 0.8rem;
+  font: var(--telekom-text-style-small);
 }
 
 .timer-panel__separator {
@@ -634,7 +634,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .countdown-value small {
-  font-size: 0.8rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
@@ -646,8 +646,8 @@ onMounted(fetchPendingApprovals);
 }
 
 .mono-tag {
+  font: var(--telekom-text-style-small);
   font-family: var(--telekom-typography-font-family-mono, monospace);
-  font-size: 0.8em;
 }
 
 .approval-footer {

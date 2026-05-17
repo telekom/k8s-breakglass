@@ -89,12 +89,12 @@ function verticalOffset(index: number) {
 
 .toast-body {
   margin: 0;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .cid {
   display: inline-block;
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   margin-left: 0.35rem;
 }

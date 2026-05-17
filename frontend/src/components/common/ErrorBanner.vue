@@ -74,7 +74,7 @@ function handleRetry() {
 
 .error-banner__details {
   margin: 0.5rem 0 0;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .error-banner__actions {

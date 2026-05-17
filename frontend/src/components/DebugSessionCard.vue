@@ -246,7 +246,7 @@ function handleRenew() {
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-md);
   overflow: hidden;
-  transition: box-shadow 0.2s ease;
+  transition: box-shadow var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -276,7 +276,7 @@ function handleRenew() {
 }
 
 .session-name {
-  font-size: 1rem;
+  font: var(--telekom-text-style-body);
   font-weight: 600;
   margin: 0 0 var(--space-xs);
   word-break: break-word;
@@ -290,7 +290,7 @@ function handleRenew() {
 }
 
 .cluster {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
@@ -305,7 +305,7 @@ function handleRenew() {
   gap: var(--space-xs);
   padding: var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   margin-bottom: var(--space-md);
 }
 
@@ -337,14 +337,14 @@ function handleRenew() {
 }
 
 .info-item .label {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-standard);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .info-item .value {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
 

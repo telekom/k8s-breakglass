@@ -276,7 +276,7 @@ const groupsDisplay = computed(() => {
   position: fixed;
   bottom: var(--space-lg);
   right: var(--space-lg);
-  z-index: 9999;
+  z-index: var(--z-debug-panel);
   font-family: monospace;
 }
 
@@ -295,8 +295,8 @@ const groupsDisplay = computed(() => {
   box-shadow: var(--shadow-card, 0 4px 12px rgba(0, 0, 0, 0.3));
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    transform 0.1s ease;
+    background-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
+    transform var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 .debug-toggle:hover {
@@ -350,7 +350,7 @@ const groupsDisplay = computed(() => {
 .debug-header h3 {
   margin: 0;
   color: var(--telekom-color-text-and-icon-standard);
-  font-size: 1.1rem;
+  font: var(--telekom-text-style-heading-6);
 }
 
 .debug-section {
@@ -365,7 +365,7 @@ const groupsDisplay = computed(() => {
 .debug-section h4 {
   margin: 0 0 var(--space-xs) 0;
   color: var(--telekom-color-text-and-icon-standard);
-  font-size: 0.95rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .debug-item {
@@ -373,7 +373,7 @@ const groupsDisplay = computed(() => {
   justify-content: space-between;
   gap: var(--space-sm);
   margin-bottom: var(--space-xs);
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .debug-item .label {
@@ -429,8 +429,8 @@ const groupsDisplay = computed(() => {
 /* Custom arrow indicator */
 .token-details summary::before {
   content: "▶";
-  font-size: 0.625rem;
-  transition: transform 0.2s ease;
+  font: var(--telekom-text-style-badge);
+  transition: transform var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
   flex-shrink: 0;
 }
 
@@ -450,7 +450,7 @@ const groupsDisplay = computed(() => {
   border-radius: var(--radius-sm);
   overflow: auto;
   max-height: 300px;
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
 

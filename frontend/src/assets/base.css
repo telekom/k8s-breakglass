@@ -20,10 +20,12 @@
   background-color: var(--surface-primary);
   color-scheme: light;
 
-  /* AAA-compliant overrides for Telekom tokens that miss 7:1 on subtle backgrounds.
-   * We previously overrode --telekom-color-text-and-icon-additional here, but 
-   * to stick to native Scale tokens, we instead update the Vue components to use 
-   * --telekom-color-text-and-icon-standard where higher contrast is needed. */
+  /* Override neutral theme's purple primary (#5300ff) with Telekom magenta.
+   * The neutral theme is used for license compliance, but the product identity
+   * requires magenta across all components (checkboxes, radios, progress, nav). */
+  --telekom-color-primary-standard: #e20074;
+  --telekom-color-primary-hovered: #cb0068;
+  --telekom-color-primary-pressed: #a30054;
 
   /* ============================================
    * SEMANTIC SPACING ALIASES
@@ -81,10 +83,12 @@
 
   --focus-outline: var(--telekom-color-functional-focus-standard, #2238df);
 
+  /* Z-index scale */
   --z-skip-link: 99;
-
-  --cta-bg: #8a004f;
-  --cta-bg-hover: #6b003d;
+  --z-auto-logout: 3000;
+  --z-toast: 5000;
+  --z-modal: 7000;
+  --z-debug-panel: 9999;
 
   /* Accent colors using Telekom functional colors */
   --accent-telekom: var(--telekom-color-primary-standard, #e20074);
@@ -251,9 +255,14 @@
  * ============================================ */
 scale-card {
   --background: var(--surface-card);
-  border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+}
+
+scale-card::part(base) {
+  border: none;
+  border-radius: var(--radius-lg);
 }
 
 /* Consistent button styling across all variants - use pill radius */
@@ -372,6 +381,94 @@ scale-tag[variant="primary"]::part(base) {
   color: var(--chip-text) !important;
 }
 
+/* ============================================
+ * NEUTRAL/OSS HEADER FALLBACK
+ * When Scale Telekom components are not registered (neutral package),
+ * provide a functional header, nav, and app shell layout.
+ * :not(:defined) ensures these only apply for unregistered elements.
+ * ============================================ */
+scale-telekom-app-shell:not(:defined) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+scale-telekom-header:not(:defined) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 0 clamp(var(--space-md), 3vw, var(--space-xl));
+  min-height: 56px;
+  background: var(--telekom-color-background-surface);
+  border-bottom: 2px solid var(--telekom-color-primary-standard);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+scale-telekom-header:not(:defined) a {
+  color: var(--telekom-color-text-and-icon-standard);
+  text-decoration: none;
+}
+
+scale-telekom-nav-list:not(:defined) {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+}
+
+scale-telekom-nav-list:not(:defined)[alignment="right"] {
+  justify-content: flex-end;
+}
+
+scale-telekom-nav-item:not(:defined) {
+  display: flex;
+  align-items: center;
+}
+
+scale-telekom-nav-item:not(:defined) > a {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--telekom-color-text-and-icon-standard);
+  text-decoration: none;
+  font: var(--telekom-text-style-body);
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  transition:
+    border-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard),
+    color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
+}
+
+scale-telekom-nav-item:not(:defined) > a:hover {
+  color: var(--telekom-color-primary-standard);
+  border-bottom-color: var(--telekom-color-primary-standard);
+}
+
+scale-telekom-nav-item:not(:defined)[active] > a,
+scale-telekom-nav-item:not(:defined)[aria-current="page"] > a {
+  color: var(--telekom-color-primary-standard);
+  border-bottom-color: var(--telekom-color-primary-standard);
+  font-weight: 700;
+}
+
+:root[data-theme="dark"] scale-telekom-header:not(:defined) {
+  background: var(--telekom-color-background-canvas);
+  border-bottom-color: var(--telekom-color-primary-standard);
+}
+
+scale-telekom-profile-menu:not(:defined),
+scale-telekom-nav-flyout:not(:defined),
+scale-telekom-mobile-flyout-canvas:not(:defined),
+scale-telekom-mobile-menu:not(:defined),
+scale-telekom-mobile-menu-item:not(:defined) {
+  display: none;
+}
+
 /* Modal content spacing consistency */
 scale-modal {
   --spacing-y: var(--space-lg);
@@ -399,10 +496,7 @@ body {
 
 #app {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent-info) 12%, transparent) 0%, transparent 50%),
-    radial-gradient(circle at 15% 15%, color-mix(in srgb, var(--accent-telekom) 8%, transparent) 0%, transparent 40%),
-    var(--surface-primary);
+  background-color: var(--surface-primary);
 }
 
 .app-container {
@@ -687,7 +781,7 @@ select:focus {
   gap: var(--stack-gap-sm);
   padding: var(--space-md);
   border-radius: var(--radius-lg);
-  border: 1px dashed var(--telekom-color-ui-border-standard);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   background-color: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-additional);
 }
@@ -740,7 +834,7 @@ select:focus {
 .empty-state {
   padding: var(--space-2xl);
   border-radius: var(--radius-lg);
-  border: 1px dashed var(--telekom-color-ui-border-standard);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   background-color: var(--surface-elevated);
   color: var(--telekom-color-text-and-icon-additional);
   text-align: center;
@@ -864,9 +958,9 @@ select:focus {
   margin-top: var(--space-md);
   padding: var(--space-md);
   background: var(--telekom-color-background-surface-subtle, #1a1a1a);
-  border: 1px dashed var(--telekom-color-ui-border-standard, #444);
+  border: 1px solid var(--telekom-color-ui-border-standard, #444);
   border-radius: var(--radius-sm, 4px);
-  font-size: 0.8125rem;
+  font: var(--telekom-text-style-small);
   max-height: 400px;
   overflow: hidden;
   display: flex;
@@ -901,7 +995,7 @@ select:focus {
 /* Custom arrow indicator */
 .dev-debug-panel summary::before {
   content: "▶";
-  font-size: 0.625rem;
+  font: var(--telekom-text-style-badge);
   transition: transform var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard, ease);
   flex-shrink: 0;
 }
@@ -920,7 +1014,7 @@ select:focus {
 .dev-debug-panel .debug-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
 }
 
 .dev-debug-panel .debug-table th,
@@ -956,16 +1050,16 @@ select:focus {
 /* Event Log Styles */
 .dev-debug-panel .debug-hint {
   margin: 0 0 var(--space-sm);
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   font-style: italic;
 }
 
 .dev-debug-panel .debug-event-log {
-  font-size: 0.7rem;
+  font: var(--telekom-text-style-badge);
   font-family: monospace;
   background: var(--telekom-color-background-canvas, #0a0a0a);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: var(--space-sm);
   border: 1px solid var(--telekom-color-ui-border-subtle, #333);
 }

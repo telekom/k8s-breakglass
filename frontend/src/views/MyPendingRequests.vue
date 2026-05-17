@@ -260,7 +260,7 @@ onMounted(() => {
 }
 
 .countdown-value small {
-  font-size: 0.8rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
