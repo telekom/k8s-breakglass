@@ -1137,6 +1137,78 @@ func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
 	}
 }
 
+func TestCleanupRoutine_OrphanDeletion_TerminalStatesOnly(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	logger := zaptest.NewLogger(t).Sugar()
+
+	ownerRef := metav1.OwnerReference{
+		APIVersion: "breakglass.telekom.com/v1alpha1",
+		Kind:       "BreakglassEscalation",
+		Name:       "parent",
+		UID:        "uid-1",
+	}
+
+	tests := []struct {
+		name          string
+		state         breakglassv1alpha1.BreakglassSessionState
+		hasOwnerRef   bool
+		expectDeleted bool
+	}{
+		{name: "orphan Approved is preserved", state: breakglassv1alpha1.SessionStateApproved, hasOwnerRef: false, expectDeleted: false},
+		{name: "orphan WaitingForScheduledTime is preserved", state: breakglassv1alpha1.SessionStateWaitingForScheduledTime, hasOwnerRef: false, expectDeleted: false},
+		{name: "orphan Pending is preserved", state: breakglassv1alpha1.SessionStatePending, hasOwnerRef: false, expectDeleted: false},
+		{name: "orphan Expired is deleted", state: breakglassv1alpha1.SessionStateExpired, hasOwnerRef: false, expectDeleted: true},
+		{name: "orphan IdleExpired is deleted", state: breakglassv1alpha1.SessionStateIdleExpired, hasOwnerRef: false, expectDeleted: true},
+		{name: "orphan Rejected is deleted", state: breakglassv1alpha1.SessionStateRejected, hasOwnerRef: false, expectDeleted: true},
+		{name: "orphan Withdrawn is deleted", state: breakglassv1alpha1.SessionStateWithdrawn, hasOwnerRef: false, expectDeleted: true},
+		{name: "orphan ApprovalTimeout is deleted", state: breakglassv1alpha1.SessionStateTimeout, hasOwnerRef: false, expectDeleted: true},
+		{name: "owned Expired is NOT deleted by orphan path", state: breakglassv1alpha1.SessionStateExpired, hasOwnerRef: true, expectDeleted: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ses := breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-session",
+					Namespace: "default",
+				},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster: "test-cluster", User: "user@example.com", GrantedGroup: "cluster-admin",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: tt.state,
+				},
+			}
+			if tt.hasOwnerRef {
+				ses.OwnerReferences = []metav1.OwnerReference{ownerRef}
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(&ses).
+				WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+				Build()
+
+			routine := CleanupRoutine{
+				Log:     logger,
+				Manager: &SessionManager{Client: fakeClient},
+			}
+
+			routine.markCleanupExpiredSession(context.Background())
+
+			var list breakglassv1alpha1.BreakglassSessionList
+			require.NoError(t, fakeClient.List(context.Background(), &list))
+			if tt.expectDeleted {
+				assert.Empty(t, list.Items, "session should have been deleted")
+			} else {
+				require.Len(t, list.Items, 1, "session should still exist")
+				assert.Equal(t, tt.state, list.Items[0].Status.State)
+			}
+		})
+	}
+}
+
 // mockActivityCleaner records Cleanup calls for testing.
 type mockActivityCleaner struct {
 	cleanupCalls []map[types.NamespacedName]bool

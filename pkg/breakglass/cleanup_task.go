@@ -217,6 +217,13 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 	sessions := bsl.Items
 
 	now := time.Now()
+	terminalStates := map[breakglassv1alpha1.BreakglassSessionState]bool{
+		breakglassv1alpha1.SessionStateExpired:     true,
+		breakglassv1alpha1.SessionStateIdleExpired: true,
+		breakglassv1alpha1.SessionStateRejected:    true,
+		breakglassv1alpha1.SessionStateWithdrawn:   true,
+		breakglassv1alpha1.SessionStateTimeout:     true,
+	}
 	for _, ses := range sessions {
 		// Check for context cancellation to allow graceful shutdown
 		select {
@@ -244,10 +251,12 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 
 		// Additionally, clean up sessions that do not have an OwnerReference (orphaned/legacy).
 		// To avoid removing valid active sessions, only delete orphaned sessions when
-		// they have no RetainedUntil set (zero value) and are not pending. Expired
-		// sessions are handled above based on RetainedUntil.
+		// they have no RetainedUntil set (zero value) AND are in a terminal state.
+		// Terminal states are those from which no further transitions are possible:
+		// Expired, IdleExpired, Rejected, Withdrawn, ApprovalTimeout.
+		// Active states (Pending, Approved, WaitingForScheduledTime) are never deleted here.
 		if len(ses.OwnerReferences) == 0 {
-			if ses.Status.RetainedUntil.IsZero() && ses.Status.State != breakglassv1alpha1.SessionStatePending {
+			if ses.Status.RetainedUntil.IsZero() && terminalStates[ses.Status.State] {
 				routine.Log.Infow("Deleting session without OwnerReferences (orphaned/legacy - no RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
 				if err := routine.Manager.DeleteBreakglassSession(ctx, &ses); err != nil {
 					routine.Log.Errorw("error deleting orphaned breakglass session", append(system.NamespacedFields(ses.Name, ses.Namespace), "error", err)...)
@@ -258,7 +267,7 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 				routine.Log.Debugw("Deleted orphaned breakglass session", system.NamespacedFields(ses.Name, ses.Namespace)...)
 				continue
 			}
-			routine.Log.Debugw("Skipping deletion of session without OwnerReferences (either pending or has RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
+			routine.Log.Debugw("Skipping deletion of session without OwnerReferences (non-terminal state or has RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
 		}
 	}
 	routine.Log.Infow("Expired breakglass sessions deletion completed", "deleted", deletedCount)
