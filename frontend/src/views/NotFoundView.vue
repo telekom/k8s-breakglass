@@ -29,7 +29,7 @@
 }
 
 .not-found__card h1 {
-  font-size: 1.75rem;
+  font: var(--telekom-text-style-heading-3);
   margin-bottom: var(--space-sm);
 }
 
@@ -42,14 +42,13 @@
   display: inline-block;
   padding: var(--space-sm) var(--space-lg);
   border-radius: var(--radius-pill);
-  /* AAA contrast: dark magenta on white gives 9.2:1 ratio */
-  background: var(--cta-bg);
+  background: var(--telekom-color-primary-standard);
   color: var(--telekom-color-text-and-icon-white-standard, #fff);
   font-weight: 600;
   text-decoration: none;
 }
 
 .not-found__cta:hover {
-  background: var(--cta-bg-hover);
+  background: var(--telekom-color-primary-hovered);
 }
 </style>

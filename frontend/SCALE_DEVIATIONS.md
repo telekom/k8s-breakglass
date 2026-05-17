@@ -179,6 +179,42 @@ Scale does not enforce this at the component level.
 
 ---
 
+## 13. Neutral Theme Primary Colour Override
+
+The `@telekom/scale-components-neutral` package sets
+`--telekom-color-primary-standard: #5300ff` (purple). Since the product
+identity requires Telekom magenta, `main.ts` injects a `<style>` element
+**after** Scale CSS loads to override three tokens:
+
+- `--telekom-color-primary-standard` → `#e20074`
+- `--telekom-color-primary-hovered` → `#cb0068`
+- `--telekom-color-primary-pressed` → `#a30054`
+
+This is a runtime injection (not a static CSS import) because Scale CSS
+is loaded dynamically based on the `uiFlavour` config value.
+
+---
+
+## 14. Neutral Header/Nav Fallback
+
+The neutral package does not include `scale-telekom-header`,
+`scale-telekom-nav-list`, `scale-telekom-nav-item`, or
+`scale-telekom-app-shell`. These remain undefined custom elements.
+
+CSS `:not(:defined)` rules in `base.css` provide a functional header layout:
+sticky positioning, magenta bottom accent border, horizontal nav links,
+dark mode support, and hidden mobile-only components.
+
+---
+
+## 15. Card Border Reset (`::part(base)`)
+
+`scale-card::part(base)` gets `border: none` to prevent double borders.
+The host element `scale-card` carries the visible border + shadow instead,
+ensuring consistent card appearance in both branded and neutral variants.
+
+---
+
 ## What We Do NOT Override
 
 Everything not listed above follows Scale defaults exactly:

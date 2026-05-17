@@ -639,7 +639,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 }
 
 .group-title {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   font-weight: 600;
   color: var(--telekom-color-text-and-icon-standard);
   margin: 0 0 var(--space-xs) 0;
@@ -659,7 +659,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 }
 
 .multi-select-label {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-standard);
 }
@@ -669,7 +669,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 }
 
 .multi-select-description {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   margin: 0;
 }
@@ -685,7 +685,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 }
 
 .multi-select-error {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-functional-danger-standard);
   margin: 0;
 }
