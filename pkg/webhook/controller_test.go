@@ -214,6 +214,79 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 	}
 }
 
+// TestHandleAuthorize_EscalationDiscoveryUsesSARGroups reproduces a bug where users with no active
+// breakglass session saw zero available escalations despite having Keycloak groups that matched an
+// escalation's Allowed.Groups. The escalation lookup previously used only active-session groups, so
+// any user without a session always got the misleading "no breakglass path" denial message.
+// After the fix, the SAR groups (user's JWT groups) are also included in the escalation lookup.
+func TestHandleAuthorize_EscalationDiscoveryUsesSARGroups(t *testing.T) {
+	// Escalation requires the group "schiff-canary_poweruser" — the user's Keycloak group.
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "canary"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"schiff-canary_poweruser"}, Clusters: []string{"schiff-canary"}},
+			EscalatedGroup: "cluster-admin",
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	for k, fn := range sessionIndexFnsWebhook {
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
+	}
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &escalation.EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+	// RBAC denies: the user has no regular permissions.
+	wc.canDoFn = func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error) {
+		return false, nil
+	}
+
+	// SAR carries the user's Keycloak group — but the user has NO active breakglass session.
+	sar := authorizationv1.SubjectAccessReview{
+		TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			User:               "test.user.schiff@telekom.de",
+			Groups:             []string{"schiff-canary_poweruser"},
+			ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: "default", Verb: "get", Resource: "pods"},
+		},
+	}
+	body, _ := json.Marshal(sar)
+
+	engine := gin.New()
+	_ = wc.Register(engine.Group("/" + wc.BasePath()))
+
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/schiff-canary", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
+	}
+
+	var resp SubjectAccessReviewResponse
+	bodyBytes := new(bytes.Buffer)
+	if _, err := bodyBytes.ReadFrom(w.Result().Body); err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if err := json.Unmarshal(bodyBytes.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v; raw=%s", err, bodyBytes.String())
+	}
+	if resp.Status.Allowed {
+		t.Fatalf("expected Allowed=false (RBAC denied, no active session)")
+	}
+	// The reason must contain a breakglass UI link, proving at least one escalation was found.
+	// Before the fix this was empty / "no breakglass path" because the escalation lookup only
+	// checked session groups (empty when no session exists) and missed the SAR groups.
+	if resp.Status.Reason == "" {
+		t.Fatalf("expected denial reason to reference breakglass (escalation was discoverable via SAR groups), got empty reason")
+	}
+}
+
 // TestHandleAuthorize_ImpersonationError_TreatedAsDenied tests that impersonation/forbidden errors from RBAC
 // checks are treated as denial (not internal server errors), allowing session-based authorization to proceed.
 // This scenario occurs when using OIDC-authenticated ClusterConfigs where the service account may lack

@@ -298,11 +298,13 @@ func groupsMatch(userGroups, allowedGroups, oidcPrefixes []string) bool {
 
 // GetClusterGroupBreakglassEscalations returns escalations for specific cluster and user groups
 func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
-	em.getLogger().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groupCount", len(groups))
+	log := em.getLogger()
+	log.Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groupCount", len(groups))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 
 	// Try index-based lookup first for exact cluster matches and global "*" pattern
 	collected := em.collectClusterEscalations(ctx, cluster)
+	log.Debugw("Cluster index lookup result", "cluster", cluster, "indexHits", len(collected))
 
 	// If index returned nothing, fall back to scanning all escalations for glob patterns
 	if len(collected) == 0 {
@@ -311,6 +313,7 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 			return nil, err
 		}
 		collected = all
+		log.Debugw("Fell back to full escalation scan", "cluster", cluster, "totalEscalations", len(collected))
 	}
 
 	// Filter collected by cluster matching and groups using shared helpers
@@ -318,12 +321,23 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 	out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
 		if !escalationMatchesCluster(be, cluster) {
+			log.Debugw("Escalation skipped: cluster mismatch",
+				"escalation", be.Name,
+				"allowedClusters", be.Spec.Allowed.Clusters,
+				"clusterConfigRefs", be.Spec.ClusterConfigRefs,
+				"requestedCluster", cluster)
 			continue
 		}
 		if groupsMatch(groups, be.Spec.Allowed.Groups, oidcPrefixes) {
 			out = append(out, be)
+		} else {
+			log.Debugw("Escalation skipped: group mismatch",
+				"escalation", be.Name,
+				"allowedGroups", be.Spec.Allowed.Groups,
+				"userGroupCount", len(groups))
 		}
 	}
+	log.Debugw("Cluster-group escalation lookup complete", "cluster", cluster, "matched", len(out), "evaluated", len(collected))
 	return out, nil
 }
 
