@@ -314,21 +314,21 @@ function handleDurationChange(ev: Event) {
 }
 
 .constraint-tag.node-selector {
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--telekom-color-functional-informational-standard, #93c5fd);
-  border: 1px solid rgba(59, 130, 246, 0.4);
+  background: var(--tone-chip-info-bg, color-mix(in srgb, var(--telekom-color-functional-informational-standard) 15%, transparent));
+  color: var(--tone-chip-info-text, var(--telekom-color-functional-informational-standard));
+  border: 1px solid color-mix(in srgb, var(--telekom-color-functional-informational-standard) 40%, transparent);
 }
 
 .constraint-tag.denied-label {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--telekom-color-functional-danger-standard, #fca5a5);
-  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: var(--tone-chip-danger-bg, color-mix(in srgb, var(--telekom-color-functional-danger-standard) 15%, transparent));
+  color: var(--tone-chip-danger-text, var(--telekom-color-functional-danger-standard));
+  border: 1px solid color-mix(in srgb, var(--telekom-color-functional-danger-standard) 40%, transparent);
 }
 
 .constraint-tag.toleration {
-  background: rgba(245, 158, 11, 0.15);
-  color: var(--telekom-color-functional-warning-standard, #fcd34d);
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: var(--tone-chip-warning-bg, color-mix(in srgb, var(--telekom-color-functional-warning-standard) 15%, transparent));
+  color: var(--tone-chip-warning-text, var(--telekom-color-functional-warning-standard));
+  border: 1px solid color-mix(in srgb, var(--telekom-color-functional-warning-standard) 40%, transparent);
 }
 
 .namespace-hints {

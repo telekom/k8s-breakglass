@@ -47,17 +47,18 @@ describe("NotFoundView", () => {
     expect(paragraph.text()).toContain("dashboard");
   });
 
-  it("contains a link to the dashboard", () => {
+  it("contains a button linking to the dashboard", () => {
     const wrapper = createWrapper();
-    const link = wrapper.findComponent(RouterLinkStub);
-    expect(link.exists()).toBe(true);
-    expect(link.props("to")).toBe("/");
+    const button = wrapper.find("scale-button");
+    expect(button.exists()).toBe(true);
+    expect(button.attributes("href")).toBe("/");
+    expect(button.attributes("variant")).toBe("primary");
   });
 
-  it("link text says 'Return to dashboard'", () => {
+  it("button text says 'Return to dashboard'", () => {
     const wrapper = createWrapper();
-    const link = wrapper.find(".not-found__cta");
-    expect(link.text()).toBe("Return to dashboard");
+    const button = wrapper.find("scale-button");
+    expect(button.text()).toBe("Return to dashboard");
   });
 
   it("has proper styling classes", () => {
