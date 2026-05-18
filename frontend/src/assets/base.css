@@ -20,13 +20,6 @@
   background-color: var(--surface-primary);
   color-scheme: light;
 
-  /* Override neutral theme's purple primary (#5300ff) with Telekom magenta.
-   * The neutral theme is used for license compliance, but the product identity
-   * requires magenta across all components (checkboxes, radios, progress, nav). */
-  --telekom-color-primary-standard: #e20074;
-  --telekom-color-primary-hovered: #cb0068;
-  --telekom-color-primary-pressed: #a30054;
-
   /* ============================================
    * SEMANTIC SPACING ALIASES
    * Maps Scale spacing tokens to semantic names
@@ -277,20 +270,18 @@ scale-button::part(base) {
   border-radius: var(--radius-pill) !important;
 }
 
-/* Light mode: darken active nav link to guarantee AAA (7:1) against the Scale
- * header background (white to light-gray).  #e20074 measures 3.06:1 on the
- * Scale-rendered nav active background — fails WCAG AA.  #8e004a achieves
- * 9.34:1 on white and 8.13:1 on #efeff0 (passes AAA in all light/HC-light
- * variants) while remaining visually close to Telekom magenta. */
-scale-telekom-nav-item[aria-current="page"] a,
-[role="menuitem"][aria-current="page"] {
+/* Light mode (branded only): darken active nav link for AAA (7:1) contrast.
+ * Scale's #e20074 measures 3.06:1 on its tinted nav background — fails AA.
+ * #8e004a achieves 9.34:1 on white / 8.13:1 on #efeff0 (AAA all variants). */
+:root:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item[aria-current="page"] a,
+:root:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) [role="menuitem"][aria-current="page"] {
   color: #8e004a !important;
 }
 
-/* Dark mode: use Telekom magenta for active nav link on dark header (#151517).
- * #e20074 on #151517 = 4.59:1 (AA).  Brand colour preserved per product decision. */
-:root[data-theme="dark"] scale-telekom-nav-item[aria-current="page"] a,
-:root[data-theme="dark"] [role="menuitem"][aria-current="page"] {
+/* Dark mode (branded only): Telekom magenta for active nav on dark header.
+ * #e20074 on #151517 = 4.59:1 (AA). */
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item[aria-current="page"] a,
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) [role="menuitem"][aria-current="page"] {
   color: var(--telekom-color-primary-standard, #e20074) !important;
 }
 
@@ -300,15 +291,14 @@ scale-dropdown::part(combobox-label) {
   color: var(--telekom-color-text-and-icon-additional) !important;
 }
 
-/* Enforce Telekom magenta (#e20074) on primary buttons in ALL theme modes.
- * Scale's internal rendering computes a lighter #f61488 background, which
- * only achieves 3.9:1 contrast against white text (fails AA).  By pinning
- * the background to the design-token value we get 4.68:1 (AA compliant)
- * while strictly preserving the Telekom brand colour. */
-scale-button::part(variant-primary),
-:root[data-theme="dark"] scale-button::part(variant-primary),
-:root[data-high-contrast="true"] scale-button::part(variant-primary),
-:root[data-high-contrast="true"][data-theme="dark"] scale-button::part(variant-primary) {
+/* Branded only: pin primary button to #e20074 (Telekom magenta).
+ * Scale internally computes #f61488 which only achieves 3.9:1 against
+ * white text (fails AA). Pinning to #e20074 gives 4.68:1 (AA).
+ * Not applied in neutral/OSS which uses Scale's default purple. */
+:root:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
+:root[data-high-contrast="true"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
+:root[data-high-contrast="true"][data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary) {
   background-color: #e20074 !important;
 }
 
@@ -1032,13 +1022,13 @@ select:focus {
 .dev-debug-panel .debug-table code {
   background: var(--telekom-color-background-canvas);
   padding: 0.125em 0.25em;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   font-family: monospace;
   word-break: break-all;
 }
 
 .dev-debug-panel .debug-invalid {
-  background: rgba(255, 0, 0, 0.1);
+  background: var(--telekom-color-functional-danger-subtle, color-mix(in srgb, var(--telekom-color-functional-danger-standard) 10%, transparent));
 }
 
 .dev-debug-panel .debug-summary {
@@ -1072,15 +1062,15 @@ select:focus {
 .dev-debug-panel .debug-event {
   display: flex;
   gap: var(--space-sm);
-  padding: 2px 0;
+  padding: var(--space-2xs) 0;
   border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
   flex-wrap: wrap;
 }
 
 .dev-debug-panel .debug-event-warning {
-  background: rgba(255, 165, 0, 0.2);
-  padding: 2px 4px;
-  border-radius: 2px;
+  background: var(--telekom-color-functional-warning-subtle, color-mix(in srgb, var(--telekom-color-functional-warning-standard) 20%, transparent));
+  padding: var(--space-2xs) var(--space-xs);
+  border-radius: var(--radius-xs);
 }
 
 .dev-debug-panel .debug-event-time {

@@ -333,7 +333,7 @@ function handleRenew() {
 .info-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-2xs);
 }
 
 .info-item .label {

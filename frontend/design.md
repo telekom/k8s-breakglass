@@ -125,17 +125,9 @@ Five tones (info / success / warning / danger / neutral) each expose three token
 
 Magenta elements target AA (4.5 : 1) rather than AAA to preserve the Telekom brand identity; this is a documented product decision.
 
-### 2.5 Primary Color Override
+### 2.5 Neutral / OSS Theme
 
-The neutral Scale package (`scale-components-neutral`) uses purple `#5300ff` as `--telekom-color-primary-standard`. Because the product identity requires Telekom magenta, `main.ts` injects a `<style>` element **after** Scale CSS loads to override the primary tokens:
-
-| Token | Override |
-|-------|----------|
-| `--telekom-color-primary-standard` | `#e20074` |
-| `--telekom-color-primary-hovered` | `#cb0068` |
-| `--telekom-color-primary-pressed` | `#a30054` |
-
-This ensures all Scale components (buttons, checkboxes, radios, progress bars) render in magenta regardless of which Scale package is loaded.
+The neutral Scale package (`scale-components-neutral`) uses purple `#5300ff` as its primary colour. This is **intentional** — the OSS/neutral flavour is deliberately not Deutsche Telekom branded. No primary colour override is applied; all WCAG contrast overrides (text, chips, tags) still apply since they are independent of brand colour.
 
 ### 2.6 Z-Index Scale
 
@@ -191,7 +183,7 @@ Full details and contrast ratios are in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS
 | 10 | `scale-modal` body uses `flex` + `gap` | Consistent internal spacing without margin hacks |
 | 11 | Forced-colors layer | Scale does not handle `forced-colors` explicitly |
 | 12 | 44 × 44 px touch targets in `[data-high-contrast]` | WCAG SC 2.5.5 AAA; Scale does not enforce this |
-| 13 | Neutral theme primary color override (`#e20074`) injected after CSS load | Neutral package purple `#5300ff` doesn't match product identity |
+| 13 | Neutral/OSS theme keeps purple primary — intentionally unbranded | N/A |
 | 14 | `scale-telekom-*` header/nav fallback styles via `:not(:defined)` | Neutral package lacks Telekom-branded shell components; CSS provides a functional header layout |
 | 15 | `scale-card::part(base)` border reset | Prevents double border (host + shadow DOM) for consistent card appearance |
 
@@ -459,8 +451,8 @@ When adding new backend states, update the `STATE_TONE_MAP` in that file. Do not
 
 | Category | Issues | Score |
 |----------|--------|-------|
-| Token coverage — colors | 0 hardcoded colors; primary override applied at runtime | 10/10 |
-| Token coverage — spacing | All component spacing uses `--space-*` tokens | 10/10 |
+| Token coverage — colors | 0 hardcoded colors; all rgba replaced with functional tokens or `color-mix()` | 10/10 |
+| Token coverage — spacing | 0 hardcoded px gaps/margins/padding; all use `--space-*` or `--scl-spacing-*` | 10/10 |
 | Token coverage — typography | All 103+ `font-size` values replaced with Scale text-style tokens | 10/10 |
 | Token coverage — motion | All transitions use `--telekom-motion-*` tokens | 10/10 |
 | Token coverage — z-index | Full z-index scale in `:root` | 10/10 |
@@ -505,13 +497,29 @@ All `0.15s ease`, `0.2s ease`, `0.3s ease` transitions across App.vue, AutoLogou
 
 Z-index tokens (`--z-skip-link` through `--z-debug-panel`) defined in `:root` and consumed by all components.
 
-#### Primary color — neutral theme purple override
+#### Primary color — neutral/OSS theme
 
-Runtime `<style>` injection in `main.ts` overrides `--telekom-color-primary-standard` from `#5300ff` (neutral purple) to `#e20074` (Telekom magenta) after Scale CSS loads.
+The neutral/OSS flavour intentionally keeps Scale's default purple primary (`#5300ff`). No runtime override is applied — the product is deliberately unbranded in this variant.
 
 #### Selection glow — rgba hardcodes → `color-mix()`
 
 `rgba(226, 0, 116, 0.15)` in ClusterSelectGrid.vue and BindingOptionsGrid.vue replaced with `color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent)` so the glow follows the primary token.
+
+#### Constraint tags — Tailwind-style rgba → Scale functional tokens
+
+SessionConfigForm's node-selector, denied-label, and toleration tags used hardcoded `rgba(59, 130, 246, ...)` / `rgba(239, 68, 68, ...)` / `rgba(245, 158, 11, ...)`. Replaced with `var(--tone-chip-info-*)`, `var(--tone-chip-danger-*)`, `var(--tone-chip-warning-*)` tokens and `color-mix()` for borders.
+
+#### Debug panel — hardcoded rgba and px → tokens
+
+`rgba(255, 0, 0, 0.1)` and `rgba(255, 165, 0, 0.2)` replaced with `var(--telekom-color-functional-danger-subtle)` and `var(--telekom-color-functional-warning-subtle)`. All `2px`/`4px` padding replaced with `var(--space-2xs)`/`var(--space-xs)` tokens.
+
+#### Remaining component spacing — px literals → tokens
+
+Hardcoded `gap: 2px`, `gap: 4px`, `margin-top: 2px`, `margin-top: 4px` in DebugSessionDetails.vue, DebugSessionCard.vue, ClusterSelectGrid.vue, TimelineGrid.vue, and ErrorBanner.vue replaced with `var(--space-2xs)`, `var(--space-xs)`, `var(--space-sm)`, `var(--space-md)` tokens.
+
+#### Neutral theme — removed magenta override
+
+The runtime `<style>` injection in `main.ts` that overrode `--telekom-color-primary-standard` from `#5300ff` to `#e20074` has been removed. The neutral/OSS flavour is intentionally unbranded and should use Scale's default purple primary. The static `:root` override in base.css (which was dead code due to Scale CSS load order) has also been removed.
 
 #### Borders — dashed → solid
 

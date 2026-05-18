@@ -78,9 +78,9 @@ function handleRetry() {
 }
 
 .error-banner__actions {
-  margin-top: 0.75rem;
+  margin-top: var(--space-sm);
   display: flex;
-  gap: 0.5rem;
+  gap: var(--scl-spacing-8, 0.5rem);
   flex-wrap: wrap;
 }
 </style>
