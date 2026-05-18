@@ -113,18 +113,18 @@ function formatValue(value: string | Date | number | null | undefined): string {
 .timeline-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  padding: 0.5rem 0;
+  gap: var(--space-md);
+  padding: var(--scl-spacing-8, 0.5rem) 0;
 }
 
 .timeline-grid--compact {
-  gap: 0.75rem;
+  gap: var(--space-sm);
 }
 
 .timeline-item {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-2xs);
 }
 
 .timeline-item--highlight {

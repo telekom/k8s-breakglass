@@ -179,19 +179,12 @@ Scale does not enforce this at the component level.
 
 ---
 
-## 13. Neutral Theme Primary Colour Override
+## 13. Neutral / OSS Theme
 
-The `@telekom/scale-components-neutral` package sets
-`--telekom-color-primary-standard: #5300ff` (purple). Since the product
-identity requires Telekom magenta, `main.ts` injects a `<style>` element
-**after** Scale CSS loads to override three tokens:
-
-- `--telekom-color-primary-standard` → `#e20074`
-- `--telekom-color-primary-hovered` → `#cb0068`
-- `--telekom-color-primary-pressed` → `#a30054`
-
-This is a runtime injection (not a static CSS import) because Scale CSS
-is loaded dynamically based on the `uiFlavour` config value.
+The `@telekom/scale-components-neutral` package uses its own purple
+primary colour (`#5300ff`). This is **intentional** — the neutral/OSS
+flavour is deliberately not Deutsche Telekom branded. No primary colour
+override is applied.
 
 ---
 

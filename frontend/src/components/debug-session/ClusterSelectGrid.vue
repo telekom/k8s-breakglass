@@ -355,7 +355,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
   width: 100%;
   font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 2px;
+  margin-top: var(--space-2xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -371,7 +371,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 .cluster-extra-info .extra-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
   font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
 }

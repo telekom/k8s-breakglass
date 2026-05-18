@@ -952,7 +952,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .status-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-2xs);
 }
 
 .status-item .label {
@@ -1044,7 +1044,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .participant-meta {
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 2px;
+  margin-top: var(--space-2xs);
 }
 
 .left-marker {
@@ -1067,7 +1067,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   gap: var(--space-md);
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 4px;
+  margin-top: var(--space-xs);
 }
 
 .pod-item.pod-has-issues {
@@ -1089,7 +1089,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .issue-detail + .issue-detail {
-  margin-top: 4px;
+  margin-top: var(--space-xs);
 }
 
 .issue-message {
