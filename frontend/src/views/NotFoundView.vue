@@ -3,7 +3,7 @@
     <div class="not-found__card">
       <h1>Page not found</h1>
       <p>The page you’re looking for doesn’t exist. You can return to the dashboard to continue working.</p>
-      <router-link class="not-found__cta" to="/">Return to dashboard</router-link>
+      <scale-button variant="primary" href="/">Return to dashboard</scale-button>
     </div>
   </section>
 </template>
@@ -29,7 +29,7 @@
 }
 
 .not-found__card h1 {
-  font-size: 1.75rem;
+  font: var(--telekom-text-style-heading-3);
   margin-bottom: var(--space-sm);
 }
 
@@ -38,18 +38,7 @@
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-.not-found__cta {
-  display: inline-block;
-  padding: var(--space-sm) var(--space-lg);
-  border-radius: var(--radius-pill);
-  /* AAA contrast: dark magenta on white gives 9.2:1 ratio */
-  background: var(--cta-bg);
-  color: var(--telekom-color-text-and-icon-white-standard, #fff);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.not-found__cta:hover {
-  background: var(--cta-bg-hover);
+.not-found__card scale-button {
+  margin-top: var(--space-sm);
 }
 </style>

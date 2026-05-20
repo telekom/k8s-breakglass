@@ -113,18 +113,18 @@ function formatValue(value: string | Date | number | null | undefined): string {
 .timeline-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  padding: 0.5rem 0;
+  gap: var(--space-md);
+  padding: var(--scl-spacing-8, 0.5rem) 0;
 }
 
 .timeline-grid--compact {
-  gap: 0.75rem;
+  gap: var(--space-sm);
 }
 
 .timeline-item {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-2xs);
 }
 
 .timeline-item--highlight {
@@ -137,12 +137,12 @@ function formatValue(value: string | Date | number | null | undefined): string {
 }
 
 .timeline-item__icon {
-  font-size: 1rem;
+  font: var(--telekom-text-style-body);
   line-height: 1;
 }
 
 .timeline-item__label {
-  font-size: 0.8rem;
+  font: var(--telekom-text-style-small);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--telekom-color-text-and-icon-additional);
@@ -150,16 +150,16 @@ function formatValue(value: string | Date | number | null | undefined): string {
 }
 
 .timeline-item__value {
-  font-size: 0.95rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
   font-family: "IBM Plex Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .timeline-grid--compact .timeline-item__label {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
 }
 
 .timeline-grid--compact .timeline-item__value {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 </style>

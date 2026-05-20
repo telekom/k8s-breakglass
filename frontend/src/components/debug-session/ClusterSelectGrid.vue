@@ -176,19 +176,19 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
 .form-section h3 {
   margin: 0;
-  font-size: 1.125rem;
+  font: var(--telekom-text-style-heading-6);
   font-weight: 600;
 }
 
 .section-description {
   margin: 0;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .warning-text {
   color: var(--telekom-color-functional-warning-standard);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   margin: 0;
 }
 
@@ -201,7 +201,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .cluster-filter .cluster-count {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   white-space: nowrap;
 }
@@ -219,8 +219,8 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
   border-radius: var(--radius-md);
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    box-shadow 0.15s;
+    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
+    box-shadow var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 .cluster-card:hover {
@@ -234,7 +234,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
 .cluster-card.selected {
   border-color: var(--telekom-color-primary-standard);
-  box-shadow: 0 0 0 3px rgba(226, 0, 116, 0.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
 }
 
 .cluster-header {
@@ -250,7 +250,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .health-badge {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
 }
 
 .health-badge.healthy {
@@ -268,9 +268,9 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .meta-item {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
-  padding: 0.125rem 0.375rem;
+  padding: var(--space-2xs) var(--space-xs);
   background: var(--telekom-color-background-surface-subtle);
   border-radius: var(--radius-xs);
 }
@@ -282,9 +282,9 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 .source-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.6875rem;
-  padding: 0.125rem 0.5rem;
+  gap: var(--space-xs);
+  font: var(--telekom-text-style-badge);
+  padding: var(--space-2xs) var(--space-sm);
   border-radius: var(--radius-xs);
 }
 
@@ -316,8 +316,8 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .constraint {
-  font-size: 0.6875rem;
-  padding: 0.125rem 0.375rem;
+  font: var(--telekom-text-style-badge);
+  padding: var(--space-2xs) var(--space-xs);
   background: var(--telekom-color-ui-subtle);
   border-radius: var(--radius-xs);
   color: var(--telekom-color-text-and-icon-standard);
@@ -348,14 +348,14 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
 .multiple-bindings-indicator strong {
   color: var(--telekom-color-text-and-icon-standard);
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
 }
 
 .multiple-bindings-indicator .bindings-preview {
   width: 100%;
-  font-size: 0.6875rem;
+  font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 2px;
+  margin-top: var(--space-2xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -371,8 +371,8 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 .cluster-extra-info .extra-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.6875rem;
+  gap: var(--space-xs);
+  font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
 }
 </style>
