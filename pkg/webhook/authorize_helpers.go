@@ -17,6 +17,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -573,10 +574,24 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	}
 	s.reqLog.With("activeUserGroupCount", len(activeUserGroups)).Debug("Retrieved user groups from active sessions")
 
+	// Include groups from the incoming SAR (user's JWT/OIDC groups) so escalation discovery
+	// works even when the user has no active session. Without this, users whose Keycloak groups
+	// match an escalation's Allowed.Groups see zero available escalations and a misleading
+	// "no breakglass path" message instead of the correct breakglass UI link.
+	sarGroups := s.sar.Spec.Groups
+	if len(sarGroups) > 0 && len(wc.config.Kubernetes.OIDCPrefixes) > 0 {
+		sarGroups = breakglass.StripOIDCPrefixes(sarGroups, wc.config.Kubernetes.OIDCPrefixes)
+	}
+
 	// Add basic user groups that all authenticated users should have
-	allUserGroups := append(activeUserGroups, "system:authenticated")
+	allUserGroups := append(activeUserGroups, sarGroups...)
+	allUserGroups = append(allUserGroups, "system:authenticated")
 	uniqueGroups := dedupeStrings(allUserGroups)
-	s.reqLog.With("allUserGroupCount", len(uniqueGroups)).Debug("Final user groups including basic authenticated groups")
+	s.reqLog.Debugw("Escalation lookup groups",
+		"cluster", s.clusterName,
+		"sessionGroupCount", len(activeUserGroups),
+		"sarGroupCount", len(sarGroups),
+		"totalUniqueGroupCount", len(uniqueGroups))
 
 	// Check for group-based escalations
 	var escalErr error
