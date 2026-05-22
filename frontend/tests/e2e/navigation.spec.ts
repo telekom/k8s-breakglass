@@ -139,7 +139,7 @@ test.describe("Navigation via URL", () => {
     await page.waitForLoadState("networkidle");
 
     // Should be at review page - verify it loads using page title
-    await expect(page.getByRole("heading", { name: /Review Session/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("heading", { name: /Review Sessions/i })).toBeVisible({ timeout: 10000 });
   });
 });
 

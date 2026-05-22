@@ -162,7 +162,7 @@ type PrimaryNavItem = {
 };
 
 const primaryNavItems: PrimaryNavItem[] = [
-  { id: "home", label: "Home", to: { name: "home" }, matches: ["home"] },
+  { id: "home", label: "Request Access", to: { name: "home" }, matches: ["home"] },
   {
     id: "pending",
     label: "Pending Approvals",
@@ -171,7 +171,7 @@ const primaryNavItems: PrimaryNavItem[] = [
   },
   {
     id: "review",
-    label: "Review Session",
+    label: "Review Sessions",
     to: { name: "breakglassSessionReview" },
     matches: ["breakglassSessionReview"],
   },

@@ -27,14 +27,14 @@ const router = createRouter({
       path: "/",
       name: "home",
       component: BreakglassView,
-      meta: { title: "Home" },
+      meta: { title: "Request Access" },
     },
     {
       path: "/sessions/review",
       alias: "/review",
       name: "breakglassSessionReview",
       component: BreakglassSessionReviewView,
-      meta: { title: "Review Session" },
+      meta: { title: "Review Sessions" },
     },
     {
       path: "/session/:sessionName/approve",
