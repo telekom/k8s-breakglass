@@ -305,7 +305,7 @@ async function onCancel(bg: SessionCR) {
 
 <template>
   <div v-if="authenticated" class="ui-page review-session-page" data-testid="session-review-page">
-    <PageHeader title="Review Session" subtitle="Inspect outstanding sessions and take action when needed." />
+    <PageHeader title="Review Sessions" subtitle="Inspect active sessions and take action when needed." />
 
     <section class="review-toolbar ui-toolbar" aria-label="Session filters">
       <div class="review-toolbar__field ui-toolbar-field">

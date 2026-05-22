@@ -32,7 +32,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 /** Pages to audit with their paths and human-readable names. */
 const PAGES_TO_AUDIT = [
-  { path: "/", name: "Home" },
+  { path: "/", name: "Request Access" },
   { path: "/debug-sessions", name: "Debug Sessions" },
   { path: "/approvals/pending", name: "Pending Approvals" },
   { path: "/debug-sessions/create", name: "Debug Session Create" },

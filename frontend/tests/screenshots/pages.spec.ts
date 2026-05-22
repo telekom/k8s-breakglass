@@ -98,7 +98,7 @@ async function setTheme(page: Page, theme: ThemeMode) {
 
 // Page definitions for screenshot capture
 const pages = [
-  { name: "home", path: "/", title: "Home - Request Access" },
+  { name: "home", path: "/", title: "Request Access" },
   { name: "sessions", path: "/sessions", title: "Session Browser" },
   { name: "pending-approvals", path: "/approvals/pending", title: "Pending Approvals" },
   { name: "my-requests", path: "/requests/mine", title: "My Pending Requests" },

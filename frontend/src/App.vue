@@ -162,7 +162,7 @@ type PrimaryNavItem = {
 };
 
 const primaryNavItems: PrimaryNavItem[] = [
-  { id: "home", label: "Home", to: { name: "home" }, matches: ["home"] },
+  { id: "home", label: "Request Access", to: { name: "home" }, matches: ["home"] },
   {
     id: "pending",
     label: "Pending Approvals",
@@ -171,7 +171,7 @@ const primaryNavItems: PrimaryNavItem[] = [
   },
   {
     id: "review",
-    label: "Review Session",
+    label: "Review Sessions",
     to: { name: "breakglassSessionReview" },
     matches: ["breakglassSessionReview"],
   },
@@ -588,7 +588,7 @@ scale-telekom-header::part(app-name-text) {
   background: transparent;
   color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .hc-toggle-button:hover,
@@ -633,7 +633,7 @@ scale-telekom-header::part(app-name-text) {
   cursor: pointer;
   width: 100%;
   text-align: left;
-  transition: background-color 0.2s ease;
+  transition: background-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .mobile-util-btn:hover {
