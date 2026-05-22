@@ -588,7 +588,7 @@ scale-telekom-header::part(app-name-text) {
   background: transparent;
   color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
-  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
+  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard, ease);
 }
 
 .hc-toggle-button:hover,
@@ -633,7 +633,7 @@ scale-telekom-header::part(app-name-text) {
   cursor: pointer;
   width: 100%;
   text-align: left;
-  transition: background-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
+  transition: background-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard, ease);
 }
 
 .mobile-util-btn:hover {

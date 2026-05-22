@@ -146,7 +146,7 @@ export default {
 
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
+  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard, ease);
 }
 
 .fade-slide-enter-from,
