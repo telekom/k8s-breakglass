@@ -7,6 +7,7 @@
  *
  * Covers:
  * - High-contrast toggle button aria-label and visual state reflect toggle state
+ * - Theme toggle button aria-label, persistence, and high-contrast interaction
  *
  * @vitest-environment jsdom
  */
@@ -28,6 +29,7 @@ const SCALE_STUBS = {
   "scale-telekom-mobile-flyout-canvas": true,
   "scale-telekom-mobile-menu": true,
   "scale-telekom-mobile-menu-item": true,
+  "scale-icon-action-light-dark-mode": true,
   "scale-icon-action-eye": true,
   "scale-icon-action-menu": true,
   "scale-button": true,
@@ -64,11 +66,14 @@ function createMockAuth() {
   };
 }
 
-describe("App — high-contrast toggle", () => {
+describe("App — high-contrast and theme toggles", () => {
   let wrapper: VueWrapper | null = null;
 
   beforeEach(() => {
     localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-mode");
+    document.documentElement.removeAttribute("data-high-contrast");
     vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
@@ -77,6 +82,9 @@ describe("App — high-contrast toggle", () => {
     wrapper = null;
     vi.restoreAllMocks();
     localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-mode");
+    document.documentElement.removeAttribute("data-high-contrast");
   });
 
   function mountApp() {
@@ -124,5 +132,42 @@ describe("App — high-contrast toggle", () => {
 
     expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
     expect(btn.classes()).toContain("hc-active");
+  });
+
+  it("shows the selected theme and persists manual theme changes", async () => {
+    localStorage.setItem("breakglass-theme", "light");
+    wrapper = mountApp();
+
+    const btn = wrapper.find(".theme-toggle-button");
+    expect(btn.exists()).toBe(true);
+    expect(btn.attributes("aria-label")).toBe("Light theme selected. Click to select dark theme.");
+    expect(btn.classes()).not.toContain("theme-dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+
+    await btn.trigger("click");
+
+    expect(btn.attributes("aria-label")).toBe("Dark theme selected. Click to select light theme.");
+    expect(btn.classes()).toContain("theme-dark");
+    expect(localStorage.getItem("breakglass-theme")).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("keeps high contrast on the dark canvas until high contrast is disabled", async () => {
+    localStorage.setItem("breakglass-theme", "dark");
+    localStorage.setItem("breakglass-high-contrast", "true");
+    wrapper = mountApp();
+
+    expect(document.documentElement.getAttribute("data-high-contrast")).toBe("true");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    await wrapper.find(".theme-toggle-button").trigger("click");
+
+    expect(localStorage.getItem("breakglass-theme")).toBe("light");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    await wrapper.find(".hc-toggle-button").trigger("click");
+
+    expect(document.documentElement.hasAttribute("data-high-contrast")).toBe(false);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 });

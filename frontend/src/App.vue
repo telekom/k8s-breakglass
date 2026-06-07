@@ -18,7 +18,7 @@ import { pushWarning } from "@/services/toast";
 
 const auth = inject(AuthKey);
 const user = useUser();
-const authenticated = computed(() => user.value && !user.value?.expired);
+const authenticated = computed(() => Boolean(user.value && !user.value?.expired));
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
 const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
@@ -28,8 +28,9 @@ const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
 
-// Theme handling respects the user's system preference without offering a manual toggle
-const theme = ref<"light" | "dark">(getInitialTheme());
+type Theme = "light" | "dark";
+
+const theme = ref<Theme>(getInitialTheme());
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
 let desktopBreakpointQuery: MediaQueryList | null = null;
@@ -79,14 +80,30 @@ if (typeof document !== "undefined") {
   applyHighContrast(highContrast.value);
 }
 
-function getInitialTheme(): "light" | "dark" {
+function getStoredTheme(): Theme | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const storedTheme = localStorage.getItem("breakglass-theme");
+    return storedTheme === "light" || storedTheme === "dark" ? storedTheme : null;
+  } catch {
+    return null;
+  }
+}
+
+function getSystemTheme(): Theme {
   if (typeof window === "undefined") {
     return "light";
   }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function applyTheme(value: "light" | "dark") {
+function getInitialTheme(): Theme {
+  return getStoredTheme() ?? getSystemTheme();
+}
+
+function applyTheme(value: Theme) {
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", value);
     // Scale Design System uses data-mode for internal token resolution (e.g.
@@ -96,12 +113,24 @@ function applyTheme(value: "light" | "dark") {
   }
 }
 
+function toggleTheme() {
+  theme.value = theme.value === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem("breakglass-theme", theme.value);
+  } catch {
+    // Ignore storage errors (private mode, blocked storage, sandboxed iframes)
+  }
+}
+
 onMounted(() => {
   applyTheme(theme.value);
   applyHighContrast(highContrast.value);
   if (typeof window === "undefined") return;
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
+    if (highContrast.value || getStoredTheme()) {
+      return;
+    }
     theme.value = event.matches ? "dark" : "light";
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
@@ -125,7 +154,9 @@ onBeforeUnmount(() => {
 });
 
 watch(theme, (value) => {
-  applyTheme(value);
+  if (!highContrast.value) {
+    applyTheme(value);
+  }
 });
 
 watch(highContrast, (value) => {
@@ -418,6 +449,21 @@ watch(
         </scale-telekom-nav-list>
 
         <scale-telekom-nav-list slot="functions" variant="functions" alignment="right" class="header-functions">
+          <scale-telekom-nav-item class="theme-toggle-nav-item">
+            <button
+              type="button"
+              :class="['theme-toggle-button', { 'theme-dark': theme === 'dark' }]"
+              :aria-label="
+                theme === 'dark'
+                  ? 'Dark theme selected. Click to select light theme.'
+                  : 'Light theme selected. Click to select dark theme.'
+              "
+              @click="toggleTheme"
+            >
+              <scale-icon-action-light-dark-mode :decorative="true"></scale-icon-action-light-dark-mode>
+            </button>
+          </scale-telekom-nav-item>
+
           <scale-telekom-nav-item class="hc-toggle-nav-item">
             <button
               type="button"
@@ -433,9 +479,8 @@ watch(
             </button>
           </scale-telekom-nav-item>
 
-          <scale-telekom-nav-item class="profile-nav-item">
+          <scale-telekom-nav-item v-if="authenticated" class="profile-nav-item">
             <scale-telekom-profile-menu
-              v-if="authenticated"
               ref="profileMenuRef"
               class="profile-menu"
               data-testid="user-menu"
@@ -513,11 +558,13 @@ scale-telekom-header::part(app-name-text) {
   font-size: 1.17rem;
 }
 
+.theme-toggle-nav-item,
 .hc-toggle-nav-item {
   display: flex;
   align-items: center;
 }
 
+.theme-toggle-button,
 .hc-toggle-button {
   display: inline-flex;
   align-items: center;
@@ -534,10 +581,12 @@ scale-telekom-header::part(app-name-text) {
     border-color 150ms ease;
 }
 
+.theme-toggle-button:hover,
 .hc-toggle-button:hover {
   background-color: var(--surface-card-subtle);
 }
 
+.theme-toggle-button.theme-dark,
 .hc-toggle-button.hc-active {
   background-color: var(--telekom-color-functional-informational-subtle, #d3d7f9);
   border-color: var(--telekom-color-functional-informational-standard, #2238df);
