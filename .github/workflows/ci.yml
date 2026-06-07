@@ -1902,16 +1902,58 @@ jobs:
           
           # Use in-cluster service hostname (accessible via /etc/hosts + port-forward)
           KEYCLOAK_E2E_URL="https://${KEYCLOAK_SERVICE_HOSTNAME}:8443"
+
+          wait_for_keycloak() {
+            local url="$1"
+            local attempts="$2"
+
+            for _ in $(seq 1 "$attempts"); do
+              if curl -skf "$url/realms/master" > /dev/null 2>&1; then
+                return 0
+              fi
+              sleep 1
+            done
+
+            return 1
+          }
+
+          restart_keycloak_port_forward() {
+            echo "Restarting Keycloak port-forward keepalive..."
+            pkill -f "port-forward.*breakglass-keycloak" 2>/dev/null || true
+            pkill -f "port-forward.*keycloak.*8443" 2>/dev/null || true
+            sleep 1
+
+            (
+              set +e
+              PF_PID=""
+              trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
+              while true; do
+                kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
+                PF_PID=$!
+                wait $PF_PID
+                echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
+                sleep 2
+              done
+            ) &
+            echo "Keycloak keepalive restarted (PID: $!)"
+          }
           
           echo "=== Pre-test health checks ==="
           echo "Testing frontend at http://localhost:8080 (controller-served UI)"
           curl -sf "http://localhost:8080" > /dev/null || { echo "ERROR: Frontend not reachable on port 8080"; exit 1; }
           
           echo "Testing Keycloak at $KEYCLOAK_E2E_URL/realms/master"
-          curl -skf "$KEYCLOAK_E2E_URL/realms/master" > /dev/null || { 
+          if ! wait_for_keycloak "$KEYCLOAK_E2E_URL" 5; then
+            echo "Keycloak not reachable at $KEYCLOAK_E2E_URL, restarting port-forward before retry..."
+            restart_keycloak_port_forward
+          fi
+
+          wait_for_keycloak "$KEYCLOAK_E2E_URL" 60 || { 
             echo "ERROR: Keycloak not reachable at $KEYCLOAK_E2E_URL"
             echo "Checking /etc/hosts entry:"
             grep "$KEYCLOAK_SERVICE_HOSTNAME" /etc/hosts || echo "No hosts entry found"
+            echo "Active Keycloak port-forwards:"
+            ps aux | grep "port-forward.*keycloak" | grep -v grep || echo "No keycloak port-forward found"
             echo "Trying localhost fallback..."
             curl -skv "https://localhost:8443/realms/$KEYCLOAK_REALM" 2>&1 | head -50
             exit 1
