@@ -24,6 +24,9 @@ const rejectReason = ref("");
 const showRejectModal = ref(false);
 const showRenewModal = ref(false);
 const renewDuration = ref("1h");
+const sessionDomId = computed(() => props.session.name.replace(/[^A-Za-z0-9_-]+/g, "-") || "session");
+const rejectReasonId = computed(() => `reject-reason-${sessionDomId.value}`);
+const renewDurationId = computed(() => `renew-duration-${sessionDomId.value}`);
 
 const stateVariant = computed(() => {
   switch (props.session.state) {
@@ -200,9 +203,9 @@ function handleRenew() {
     >
       <div class="modal-content">
         <p>Provide a reason for rejecting this debug session request.</p>
-        <label for="reject-reason" class="sr-only">Rejection Reason</label>
+        <label :for="rejectReasonId" class="sr-only">Rejection Reason</label>
         <scale-text-field
-          id="reject-reason"
+          :id="rejectReasonId"
           v-model="rejectReason"
           label="Rejection Reason"
           placeholder="Enter reason..."
@@ -234,9 +237,9 @@ function handleRenew() {
     >
       <div class="modal-content">
         <p>Extend the duration of this debug session.</p>
-        <label for="renew-duration" class="sr-only">Extend By</label>
+        <label :for="renewDurationId" class="sr-only">Extend By</label>
         <scale-dropdown-select
-          id="renew-duration"
+          :id="renewDurationId"
           v-model="renewDuration"
           label="Extend By"
           data-testid="renew-duration-select"

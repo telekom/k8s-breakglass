@@ -18,7 +18,7 @@ import { pushWarning } from "@/services/toast";
 
 const auth = inject(AuthKey);
 const user = useUser();
-const authenticated = computed(() => user.value && !user.value?.expired);
+const authenticated = computed(() => Boolean(user.value && !user.value?.expired));
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
 const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
@@ -28,8 +28,9 @@ const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
 
-// Theme handling respects the user's system preference without offering a manual toggle
-const theme = ref<"light" | "dark">(getInitialTheme());
+type Theme = "light" | "dark";
+
+const theme = ref<Theme>(getInitialTheme());
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
 let desktopBreakpointQuery: MediaQueryList | null = null;
@@ -79,14 +80,30 @@ if (typeof document !== "undefined") {
   applyHighContrast(highContrast.value);
 }
 
-function getInitialTheme(): "light" | "dark" {
+function getStoredTheme(): Theme | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const storedTheme = localStorage.getItem("breakglass-theme");
+    return storedTheme === "light" || storedTheme === "dark" ? storedTheme : null;
+  } catch {
+    return null;
+  }
+}
+
+function getSystemTheme(): Theme {
   if (typeof window === "undefined") {
     return "light";
   }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function applyTheme(value: "light" | "dark") {
+function getInitialTheme(): Theme {
+  return getStoredTheme() ?? getSystemTheme();
+}
+
+function applyTheme(value: Theme) {
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", value);
     // Scale Design System uses data-mode for internal token resolution (e.g.
@@ -96,22 +113,25 @@ function applyTheme(value: "light" | "dark") {
   }
 }
 
+function toggleTheme() {
+  theme.value = theme.value === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem("breakglass-theme", theme.value);
+  } catch {
+    // Ignore storage errors (private mode, blocked storage, sandboxed iframes)
+  }
+}
+
 onMounted(() => {
   applyTheme(theme.value);
   applyHighContrast(highContrast.value);
   if (typeof window === "undefined") return;
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
-    try {
-      if (highContrast.value || localStorage.getItem("breakglass-theme")) {
-        return;
-      }
-      theme.value = event.matches ? "dark" : "light";
-    } catch {
-      if (!highContrast.value) {
-        theme.value = event.matches ? "dark" : "light";
-      }
+    if (highContrast.value || getStoredTheme()) {
+      return;
     }
+    theme.value = event.matches ? "dark" : "light";
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
 
@@ -432,9 +452,13 @@ watch(
           <div class="theme-utilities">
             <button
               type="button"
-              class="theme-toggle-button"
+              :class="['theme-toggle-button', { 'theme-dark': theme === 'dark' }]"
               :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
-              :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              :aria-label="
+                theme === 'dark'
+                  ? 'Dark theme selected. Click to select light theme.'
+                  : 'Light theme selected. Click to select dark theme.'
+              "
               :aria-pressed="theme === 'dark'"
               @click="toggleTheme"
             >
@@ -563,11 +587,13 @@ scale-telekom-header::part(app-name-text) {
   font: var(--telekom-text-style-heading-6);
 }
 
+.theme-toggle-nav-item,
 .hc-toggle-nav-item {
   display: flex;
   align-items: center;
 }
 
+.theme-toggle-button,
 .hc-toggle-button {
   display: inline-flex;
   align-items: center;
@@ -582,10 +608,12 @@ scale-telekom-header::part(app-name-text) {
   transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
+.theme-toggle-button:hover,
 .hc-toggle-button:hover {
   background-color: var(--surface-card-subtle);
 }
 
+.theme-toggle-button.theme-dark,
 .hc-toggle-button.hc-active {
   background-color: var(--telekom-color-primary-standard);
   color: var(--telekom-color-text-and-icon-white);
