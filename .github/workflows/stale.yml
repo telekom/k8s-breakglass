@@ -34,11 +34,11 @@ jobs:
           # PR configuration
           stale-pr-message: >
             This pull request has been automatically marked as stale because it has not had
-            recent activity. It will be closed in 14 days if no further activity occurs.
-            Please update this PR or comment if it's still in progress.
+            recent activity. It will remain open; please update this PR or comment if it's
+            still in progress.
           stale-pr-label: 'stale'
           days-before-pr-stale: 30
-          days-before-pr-close: 14
+          days-before-pr-close: -1
           exempt-pr-labels: 'pinned,work-in-progress,do-not-close'
           # General settings
           operations-per-run: 100
