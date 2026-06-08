@@ -103,7 +103,7 @@ const handleViewSessions = () => {
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
   font: var(--telekom-text-style-caption);
-  font-family: "Courier New", monospace;
+  font-family: var(--telekom-typography-font-family-mono, monospace);
 }
 
 .action-buttons {

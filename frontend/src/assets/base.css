@@ -86,6 +86,9 @@
 
   /* Accent colors using Telekom functional colors */
   --accent-telekom: var(--telekom-color-primary-standard, #e20074);
+  --accent-primary-aaa: color-mix(in srgb, var(--accent-telekom) 55%, black);
+  --accent-primary-aaa-hover: color-mix(in srgb, var(--accent-telekom) 45%, black);
+  --accent-on-primary-aaa: #ffffff;
   --accent-warning: var(--telekom-color-functional-warning-standard, #f97012);
   --accent-success: var(--telekom-color-functional-success-standard, #00b367);
   --accent-info: var(--telekom-color-functional-informational-standard, #2238df);

@@ -46,15 +46,15 @@
   margin-top: var(--space-sm);
   border-radius: var(--radius-pill);
   padding: 0 var(--space-lg);
-  background: #c00065;
-  color: #fff;
+  background: var(--accent-primary-aaa);
+  color: var(--accent-on-primary-aaa);
   font: var(--telekom-text-style-body);
   font-weight: 700;
   text-decoration: none;
 }
 
 .not-found__cta:hover {
-  background: #8e004a;
+  background: var(--accent-primary-aaa-hover);
   text-decoration: none;
 }
 

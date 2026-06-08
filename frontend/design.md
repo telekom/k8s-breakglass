@@ -124,6 +124,7 @@ Five tones (info / success / warning / danger / neutral) each expose three token
 | `--chip-text` | `#8e004a` | `#ff8cc8` |
 
 Magenta elements target AA (4.5 : 1) rather than AAA to preserve the Telekom brand identity; this is a documented product decision.
+Native CTAs that are not covered by Scale component rendering use `--accent-primary-aaa` / `--accent-primary-aaa-hover`, derived from the active primary accent, so they satisfy AAA while preserving the configured brand flavour.
 
 ### 2.5 Neutral / OSS Theme
 
