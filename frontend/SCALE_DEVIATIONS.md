@@ -195,7 +195,7 @@ The neutral package does not include `scale-telekom-header`,
 `scale-telekom-app-shell`. These remain undefined custom elements.
 
 CSS `:not(:defined)` rules in `base.css` provide a functional header layout:
-sticky positioning, magenta bottom accent border, horizontal nav links,
+sticky positioning, primary-colour bottom accent border, horizontal nav links,
 dark mode support, and hidden mobile-only components.
 
 ---
