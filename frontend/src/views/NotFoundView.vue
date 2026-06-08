@@ -1,28 +1,9 @@
-<script setup lang="ts">
-import { useRouter } from "vue-router";
-
-const router = useRouter();
-
-const returnToDashboard = () => {
-  void router.push("/");
-};
-
-const onReturnKeydown = (event: KeyboardEvent) => {
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    returnToDashboard();
-  }
-};
-</script>
-
 <template>
   <section class="not-found">
     <div class="not-found__card">
       <h1>Page not found</h1>
       <p>The page you’re looking for doesn’t exist. You can return to the dashboard to continue working.</p>
-      <scale-button variant="primary" role="link" tabindex="0" @click="returnToDashboard" @keydown="onReturnKeydown">
-        Return to dashboard
-      </scale-button>
+      <RouterLink class="not-found__cta" to="/">Return to dashboard</RouterLink>
     </div>
   </section>
 </template>
@@ -57,7 +38,28 @@ const onReturnKeydown = (event: KeyboardEvent) => {
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-.not-found__card scale-button {
+.not-found__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
   margin-top: var(--space-sm);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-lg);
+  background: var(--telekom-color-primary-standard, #e20074);
+  color: #fff;
+  font: var(--telekom-text-style-body);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.not-found__cta:hover {
+  background: var(--telekom-color-primary-hover, #c00065);
+  text-decoration: none;
+}
+
+.not-found__cta:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
 }
 </style>

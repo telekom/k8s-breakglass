@@ -49,27 +49,17 @@ describe("NotFoundView", () => {
 
   it("navigates to the dashboard with router push", async () => {
     const { wrapper, pushSpy } = createWrapper();
-    const button = wrapper.find("scale-button");
-    expect(button.exists()).toBe(true);
-    expect(button.attributes("href")).toBeUndefined();
-    expect(button.attributes("role")).toBe("link");
-    expect(button.attributes("variant")).toBe("primary");
-    await button.trigger("click");
+    const link = wrapper.find("a.not-found__cta");
+    expect(link.exists()).toBe(true);
+    expect(link.attributes("href")).toBe("/");
+    await link.trigger("click");
     expect(pushSpy).toHaveBeenCalledWith("/");
   });
 
-  it("supports keyboard navigation from the link role", async () => {
-    const { wrapper, pushSpy } = createWrapper();
-    const button = wrapper.find("scale-button");
-
-    await button.trigger("keydown", { key: "Enter" });
-    expect(pushSpy).toHaveBeenCalledWith("/");
-  });
-
-  it("button text says 'Return to dashboard'", () => {
+  it("link text says 'Return to dashboard'", () => {
     const { wrapper } = createWrapper();
-    const button = wrapper.find("scale-button");
-    expect(button.text()).toBe("Return to dashboard");
+    const link = wrapper.find("a.not-found__cta");
+    expect(link.text()).toBe("Return to dashboard");
   });
 
   it("has proper styling classes", () => {

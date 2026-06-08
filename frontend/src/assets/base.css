@@ -77,6 +77,7 @@
   --focus-outline: var(--telekom-color-functional-focus-standard, #2238df);
 
   /* Z-index scale */
+  --z-header: 10;
   --z-skip-link: 99;
   --z-auto-logout: 3000;
   --z-toast: 5000;
@@ -393,7 +394,7 @@ scale-telekom-header:not(:defined) {
   border-bottom: 2px solid var(--telekom-color-primary-standard);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-header);
 }
 
 scale-telekom-header:not(:defined) a {
