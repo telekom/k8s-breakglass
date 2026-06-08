@@ -1853,7 +1853,7 @@ jobs:
             local attempts="$2"
 
             for _ in $(seq 1 "$attempts"); do
-              if curl -skf "$url/realms/master" > /dev/null 2>&1; then
+              if curl -skf --connect-timeout 5 --max-time 10 "$url/realms/master" > /dev/null 2>&1; then
                 return 0
               fi
               sleep 1

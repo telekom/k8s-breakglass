@@ -133,6 +133,7 @@ The neutral Scale package (`scale-components-neutral`) uses purple `#5300ff` as 
 
 | Token | Value | Use |
 |-------|-------|-----|
+| `--z-header` | 10 | Sticky Telekom header fallback |
 | `--z-skip-link` | 99 | Skip-to-content link |
 | `--z-auto-logout` | 3000 | Auto-logout warning overlay |
 | `--z-toast` | 5000 | Toast notifications |
@@ -495,7 +496,7 @@ All `0.15s ease`, `0.2s ease`, `0.3s ease` transitions across App.vue, AutoLogou
 
 #### Z-index — full token scale added
 
-Z-index tokens (`--z-skip-link` through `--z-debug-panel`) defined in `:root` and consumed by all components.
+Z-index tokens (`--z-header` through `--z-debug-panel`) defined in `:root` and consumed by all components.
 
 #### Primary color — neutral/OSS theme
 
