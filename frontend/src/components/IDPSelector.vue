@@ -333,9 +333,9 @@ function handleIDPButtonClick(idpName: string) {
 }
 
 .idp-button-check {
+  font: var(--telekom-text-style-heading-5);
   font-weight: 600;
   display: inline-flex;
-  font: var(--telekom-text-style-heading-5);
 }
 
 .warning {

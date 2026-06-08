@@ -1,9 +1,19 @@
+<script setup lang="ts">
+import { useRouter } from "vue-router";
+
+const router = useRouter();
+
+const returnToDashboard = () => {
+  void router.push("/");
+};
+</script>
+
 <template>
   <section class="not-found">
     <div class="not-found__card">
       <h1>Page not found</h1>
       <p>The page you’re looking for doesn’t exist. You can return to the dashboard to continue working.</p>
-      <scale-button variant="primary" href="/">Return to dashboard</scale-button>
+      <scale-button variant="primary" @click="returnToDashboard">Return to dashboard</scale-button>
     </div>
   </section>
 </template>

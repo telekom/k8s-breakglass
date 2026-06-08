@@ -1863,24 +1863,9 @@ jobs:
           }
 
           restart_keycloak_port_forward() {
-            echo "Restarting Keycloak port-forward keepalive..."
-            pkill -f "port-forward.*breakglass-keycloak" 2>/dev/null || true
-            pkill -f "port-forward.*keycloak.*8443" 2>/dev/null || true
-            sleep 1
-
-            (
-              set +e
-              PF_PID=""
-              trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
-              while true; do
-                kubectl -n breakglass-system port-forward svc/breakglass-keycloak 8443:8443 2>/dev/null &
-                PF_PID=$!
-                wait $PF_PID
-                echo "[keepalive] Keycloak port-forward exited, restarting in 2s..."
-                sleep 2
-              done
-            ) &
-            echo "Keycloak keepalive restarted (PID: $!)"
+            echo "Restarting Keycloak port-forward through existing keepalive..."
+            pkill -f "kubectl.*port-forward.*svc/breakglass-keycloak.*8443:8443" 2>/dev/null || true
+            sleep 3
           }
           
           echo "=== Pre-test health checks ==="

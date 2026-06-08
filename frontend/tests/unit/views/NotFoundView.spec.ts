@@ -4,8 +4,8 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect } from "vitest";
-import { mount, RouterLinkStub } from "@vue/test-utils";
+import { describe, it, expect, vi } from "vitest";
+import { mount } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import NotFoundView from "@/views/NotFoundView.vue";
 
@@ -18,51 +18,53 @@ describe("NotFoundView", () => {
         { path: "/not-found", name: "not-found", component: NotFoundView },
       ],
     });
+    const pushSpy = vi.spyOn(router, "push").mockResolvedValue(undefined);
 
-    return mount(NotFoundView, {
+    const wrapper = mount(NotFoundView, {
       global: {
         plugins: [router],
-        stubs: {
-          RouterLink: RouterLinkStub,
-        },
       },
     });
+
+    return { wrapper, pushSpy };
   };
 
   it("renders the not found page", () => {
-    const wrapper = createWrapper();
+    const { wrapper } = createWrapper();
     expect(wrapper.find(".not-found").exists()).toBe(true);
   });
 
   it("displays 'Page not found' heading", () => {
-    const wrapper = createWrapper();
+    const { wrapper } = createWrapper();
     expect(wrapper.find("h1").text()).toBe("Page not found");
   });
 
   it("displays helpful message to user", () => {
-    const wrapper = createWrapper();
+    const { wrapper } = createWrapper();
     const paragraph = wrapper.find("p");
     // Note: The apostrophe may be a curly quote (') or straight quote (')
     expect(paragraph.text()).toMatch(/doesn.t exist/);
     expect(paragraph.text()).toContain("dashboard");
   });
 
-  it("contains a button linking to the dashboard", () => {
-    const wrapper = createWrapper();
+  it("navigates to the dashboard with router push", async () => {
+    const { wrapper, pushSpy } = createWrapper();
     const button = wrapper.find("scale-button");
     expect(button.exists()).toBe(true);
-    expect(button.attributes("href")).toBe("/");
+    expect(button.attributes("href")).toBeUndefined();
     expect(button.attributes("variant")).toBe("primary");
+    await button.trigger("click");
+    expect(pushSpy).toHaveBeenCalledWith("/");
   });
 
   it("button text says 'Return to dashboard'", () => {
-    const wrapper = createWrapper();
+    const { wrapper } = createWrapper();
     const button = wrapper.find("scale-button");
     expect(button.text()).toBe("Return to dashboard");
   });
 
   it("has proper styling classes", () => {
-    const wrapper = createWrapper();
+    const { wrapper } = createWrapper();
     expect(wrapper.find(".not-found__card").exists()).toBe(true);
   });
 });

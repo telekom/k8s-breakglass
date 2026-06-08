@@ -527,7 +527,7 @@ All `border: 1px dashed` styles in base.css and EmptyState.vue updated to `borde
 
 #### Neutral header fallback
 
-CSS `:not(:defined)` rules provide a fully functional header, nav, and app shell layout when Scale Telekom components aren't registered (neutral/OSS package). Includes sticky positioning, magenta accent border, dark mode support, and mobile responsiveness.
+CSS `:not(:defined)` rules provide a fully functional header, nav, and app shell layout when Scale Telekom components aren't registered (neutral/OSS package). Includes sticky positioning, primary-colour accent border, dark mode support, and mobile responsiveness.
 
 #### Decorative gradient removed
 

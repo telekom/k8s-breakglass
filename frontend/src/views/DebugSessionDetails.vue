@@ -994,9 +994,9 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .info-item dt {
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-additional);
-  font: var(--telekom-text-style-caption);
 }
 
 .info-item dd {
@@ -1009,8 +1009,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .empty-section {
   color: var(--telekom-color-text-and-icon-additional);
-  font-style: italic;
   font: var(--telekom-text-style-caption);
+  font-style: italic;
 }
 
 .participant-list,
@@ -1058,8 +1058,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .pod-name {
-  font-family: monospace;
   font: var(--telekom-text-style-caption);
+  font-family: monospace;
 }
 
 .pod-meta {
@@ -1140,8 +1140,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .operation-name {
-  font-weight: 500;
   font: var(--telekom-text-style-caption);
+  font-weight: 500;
 }
 
 .operation-desc {
