@@ -52,8 +52,17 @@ describe("NotFoundView", () => {
     const button = wrapper.find("scale-button");
     expect(button.exists()).toBe(true);
     expect(button.attributes("href")).toBeUndefined();
+    expect(button.attributes("role")).toBe("link");
     expect(button.attributes("variant")).toBe("primary");
     await button.trigger("click");
+    expect(pushSpy).toHaveBeenCalledWith("/");
+  });
+
+  it("supports keyboard navigation from the link role", async () => {
+    const { wrapper, pushSpy } = createWrapper();
+    const button = wrapper.find("scale-button");
+
+    await button.trigger("keydown", { key: "Enter" });
     expect(pushSpy).toHaveBeenCalledWith("/");
   });
 

@@ -6,6 +6,13 @@ const router = useRouter();
 const returnToDashboard = () => {
   void router.push("/");
 };
+
+const onReturnKeydown = (event: KeyboardEvent) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    returnToDashboard();
+  }
+};
 </script>
 
 <template>
@@ -13,7 +20,9 @@ const returnToDashboard = () => {
     <div class="not-found__card">
       <h1>Page not found</h1>
       <p>The page you’re looking for doesn’t exist. You can return to the dashboard to continue working.</p>
-      <scale-button variant="primary" @click="returnToDashboard">Return to dashboard</scale-button>
+      <scale-button variant="primary" role="link" tabindex="0" @click="returnToDashboard" @keydown="onReturnKeydown">
+        Return to dashboard
+      </scale-button>
     </div>
   </section>
 </template>
