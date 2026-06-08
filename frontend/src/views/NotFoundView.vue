@@ -46,7 +46,7 @@
   margin-top: var(--space-sm);
   border-radius: var(--radius-pill);
   padding: 0 var(--space-lg);
-  background: var(--telekom-color-primary-standard, #e20074);
+  background: #c00065;
   color: #fff;
   font: var(--telekom-text-style-body);
   font-weight: 700;
@@ -54,7 +54,7 @@
 }
 
 .not-found__cta:hover {
-  background: var(--telekom-color-primary-hover, #c00065);
+  background: #8e004a;
   text-decoration: none;
 }
 
