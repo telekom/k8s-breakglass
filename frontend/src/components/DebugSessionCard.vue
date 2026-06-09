@@ -322,7 +322,7 @@ function handleRenew() {
   word-break: break-word;
 }
 
-.info-item .value.expires {
+.ui-info-item .value.expires {
   color: var(--tone-chip-warning-text);
   font-weight: 500;
 }
