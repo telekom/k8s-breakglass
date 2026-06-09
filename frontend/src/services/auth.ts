@@ -897,15 +897,19 @@ export default class AuthService {
     // Token about to expire
     if (typeof events.addAccessTokenExpiring === "function") {
       events.addAccessTokenExpiring(() => {
-        debug("AuthService", "Access token expiring soon, silent renew should trigger");
+        debug("AuthService", "Access token expiring soon, user will need to re-authenticate");
       });
     }
 
-    // Token expired (silent renew didn't work)
+    // Token expired. Automatic silent renewal is disabled, so clear local auth state immediately.
     if (typeof events.addAccessTokenExpired === "function") {
       events.addAccessTokenExpired(() => {
-        warn("AuthService", "Access token expired - silent renew failed or not configured");
+        warn("AuthService", "Access token expired - clearing local session");
         logError("AuthService", "Access token expired, user needs to re-authenticate");
+        user.value = undefined;
+        manager.removeUser().catch((error: unknown) => {
+          logError("AuthService", "Failed to remove expired OIDC user", error);
+        });
       });
     }
 
