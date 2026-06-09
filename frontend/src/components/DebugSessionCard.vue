@@ -337,37 +337,37 @@ function handleRenew() {
   word-break: break-word;
 }
 
-.info-grid {
+.ui-info-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: var(--space-sm);
 }
 
 @media (max-width: 640px) {
-  .info-grid {
+  .ui-info-grid {
     grid-template-columns: 1fr;
   }
 }
 
-.info-item {
+.ui-info-item {
   display: flex;
   flex-direction: column;
   gap: var(--space-2xs);
 }
 
-.info-item .label {
+.ui-info-item .label {
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-standard);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.info-item .value {
+.ui-info-item .value {
   font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
-.info-item .value.expires {
+.ui-info-item .value.expires {
   color: var(--tone-chip-warning-text);
   font-weight: 500;
 }
