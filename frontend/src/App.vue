@@ -410,7 +410,9 @@ watch(
 
 <template>
   <div>
-    <a class="skip-link" href="#main">Skip to content</a>
+    <nav aria-label="Skip links">
+      <a class="skip-link" href="#main">Skip to content</a>
+    </nav>
     <scale-telekom-app-shell>
       <scale-telekom-header
         slot="header"
@@ -526,7 +528,7 @@ watch(
         </div>
       </scale-telekom-header>
 
-      <main id="main" class="app-container">
+      <div id="main" class="app-container">
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
@@ -543,7 +545,7 @@ watch(
         <ErrorBoundary v-if="authenticated" title="Page failed to render">
           <RouterView />
         </ErrorBoundary>
-      </main>
+      </div>
 
       <ErrorToasts />
       <AutoLogoutWarning />
