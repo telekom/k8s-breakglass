@@ -559,7 +559,7 @@ watch(
         </div>
       </scale-telekom-header>
 
-      <div id="main" class="app-container">
+      <main id="main" class="app-container">
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
@@ -576,7 +576,7 @@ watch(
         <ErrorBoundary v-if="authenticated" title="Page failed to render">
           <RouterView />
         </ErrorBoundary>
-      </div>
+      </main>
 
       <ErrorToasts />
       <AutoLogoutWarning />
