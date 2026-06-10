@@ -43,17 +43,6 @@ const loading = ref(false);
 const refreshing = ref(false);
 const error = ref("");
 
-// Renewal duration dialog state
-const renewDialogOpen = ref(false);
-const renewDuration = ref("1h");
-const sessionToRenew = ref<DebugSessionSummary | null>(null);
-const renewDurationOptions = [
-  { value: "30m", label: "30 minutes" },
-  { value: "1h", label: "1 hour" },
-  { value: "2h", label: "2 hours" },
-  { value: "4h", label: "4 hours" },
-];
-
 const stateOptions = [
   { value: "Active", label: "Active" },
   { value: "Pending", label: "Pending" },
@@ -173,20 +162,10 @@ async function handleTerminate(session: DebugSessionSummary) {
   }
 }
 
-function handleRenew(session: DebugSessionSummary) {
-  sessionToRenew.value = session;
-  renewDuration.value = "1h";
-  renewDialogOpen.value = true;
-}
-
-async function confirmRenew() {
-  if (!sessionToRenew.value) return;
-  const session = sessionToRenew.value;
+async function handleRenew(session: DebugSessionSummary, duration: string) {
   try {
-    await debugSessionService.renewSession(session.name, { extendBy: renewDuration.value });
-    pushSuccess(`Renewed debug session ${session.name} by ${renewDuration.value}`);
-    renewDialogOpen.value = false;
-    sessionToRenew.value = null;
+    await debugSessionService.renewSession(session.name, { extendBy: duration });
+    pushSuccess(`Renewed debug session ${session.name} by ${duration}`);
     await refresh();
   } catch (e: unknown) {
     pushError((e instanceof Error ? e.message : undefined) || "Failed to renew session");
@@ -317,7 +296,7 @@ function onStateToggle(state: string, event: Event) {
         @join="handleJoin(session)"
         @leave="handleLeave(session)"
         @terminate="handleTerminate(session)"
-        @renew="handleRenew(session)"
+        @renew="(duration) => handleRenew(session, duration)"
         @approve="handleApprove(session)"
         @reject="(reason) => handleReject(session, reason)"
         @view-details="handleViewDetails(session)"
@@ -340,19 +319,6 @@ function onStateToggle(state: string, event: Event) {
       Showing {{ filteredSessions.length }} of {{ sessions.length }} sessions
     </div>
 
-    <!-- Renew Duration Dialog -->
-    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scale-close="renewDialogOpen = false">
-      <p>Select how long to extend the session:</p>
-      <scale-dropdown-select v-model="renewDuration" label="Duration" data-testid="renew-duration-select">
-        <scale-dropdown-select-item v-for="opt in renewDurationOptions" :key="opt.value" :value="opt.value">
-          {{ opt.label }}
-        </scale-dropdown-select-item>
-      </scale-dropdown-select>
-      <div slot="action" class="modal-actions">
-        <scale-button variant="secondary" @click="renewDialogOpen = false">Cancel</scale-button>
-        <scale-button variant="primary" @click="confirmRenew">Renew</scale-button>
-      </div>
-    </scale-modal>
   </div>
 </template>
 

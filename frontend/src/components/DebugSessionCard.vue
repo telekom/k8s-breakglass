@@ -14,7 +14,7 @@ const emit = defineEmits<{
   join: [];
   leave: [];
   terminate: [];
-  renew: [];
+  renew: [duration: string];
   approve: [];
   reject: [reason: string];
   viewDetails: [];
@@ -24,9 +24,15 @@ const rejectReason = ref("");
 const showRejectModal = ref(false);
 const showRenewModal = ref(false);
 const renewDuration = ref("1h");
-const sessionDomId = computed(() => props.session.name.replace(/[^A-Za-z0-9_-]+/g, "-") || "session");
+const sessionDomId = computed(() => toDomIdPart(props.session.name));
 const rejectReasonId = computed(() => `reject-reason-${sessionDomId.value}`);
 const renewDurationId = computed(() => `renew-duration-${sessionDomId.value}`);
+
+function toDomIdPart(value: string) {
+  const slug = value.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "session";
+  const encoded = Array.from(value, (char) => char.codePointAt(0)?.toString(36) ?? "0").join("-");
+  return `${slug}-${encoded || "empty"}`;
+}
 
 const stateVariant = computed(() => {
   switch (props.session.state) {
@@ -76,7 +82,7 @@ function handleReject() {
 }
 
 function handleRenew() {
-  emit("renew");
+  emit("renew", renewDuration.value);
   showRenewModal.value = false;
 }
 </script>

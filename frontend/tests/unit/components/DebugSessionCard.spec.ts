@@ -35,8 +35,8 @@ function makeSession(name: string): DebugSessionSummary {
 }
 
 describe("DebugSessionCard", () => {
-  it("uses unique label targets for per-card reject and renew controls", () => {
-    const sessions = [makeSession("session-a"), makeSession("team/session-b")];
+  it("uses collision-safe label targets for per-card reject and renew controls", () => {
+    const sessions = [makeSession("team/session-b"), makeSession("team-session-b")];
     const wrapper = mount(
       {
         components: { DebugSessionCard },
@@ -61,17 +61,16 @@ describe("DebugSessionCard", () => {
     const rejectInputs = wrapper.findAll('[data-testid="reject-reason-input"]');
     const renewInputs = wrapper.findAll('[data-testid="renew-duration-select"]');
 
-    expect(rejectInputs.map((input) => input.attributes("id"))).toEqual([
-      "reject-reason-session-a",
-      "reject-reason-team-session-b",
-    ]);
-    expect(renewInputs.map((input) => input.attributes("id"))).toEqual([
-      "renew-duration-session-a",
-      "renew-duration-team-session-b",
-    ]);
-    expect(wrapper.find('label[for="reject-reason-session-a"]').exists()).toBe(true);
-    expect(wrapper.find('label[for="reject-reason-team-session-b"]').exists()).toBe(true);
-    expect(wrapper.find('label[for="renew-duration-session-a"]').exists()).toBe(true);
-    expect(wrapper.find('label[for="renew-duration-team-session-b"]').exists()).toBe(true);
+    const rejectIds = rejectInputs.map((input) => input.attributes("id"));
+    const renewIds = renewInputs.map((input) => input.attributes("id"));
+
+    expect(new Set(rejectIds).size).toBe(rejectIds.length);
+    expect(new Set(renewIds).size).toBe(renewIds.length);
+    for (const id of rejectIds) {
+      expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
+    }
+    for (const id of renewIds) {
+      expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
+    }
   });
 });
