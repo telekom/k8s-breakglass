@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Breakglass Frontend — Design System
 
-> Audit date: 2026-05-14 · Scale version: `@telekom/scale-components ^3.0.0-beta.160`
+> Audit date: 2026-05-17 · Scale version: `@telekom/scale-components ^3.0.0-beta.160`
 
 This document describes the design system used in the Breakglass frontend: its token layer, theming model, Scale integration, utility classes, and component catalogue. It also records the audit findings from a review of the codebase against Telekom Scale conventions.
 
@@ -41,12 +41,12 @@ Built on `--scl-spacing-*` primitives (2 · 4 · 8 · 12 · 16 · 24 · 32 · 40
 |-------|---------|-------|-----|
 | `--space-2xs` | `--scl-spacing-2` | 2 px | hairline gaps |
 | `--space-xs` | `--scl-spacing-4` | 4 px | tight internal padding |
-| `--space-sm` | `--scl-spacing-8` | 8 px | chip padding, small gaps |
-| `--space-md` | `--scl-spacing-12` | 12 px | default internal gaps |
-| `--space-lg` | `--scl-spacing-16` | 16 px | section gaps |
-| `--space-xl` | `--scl-spacing-24` | 24 px | large gaps, card padding |
-| `--space-2xl` | `--scl-spacing-32` | 32 px | section separation |
-| `--space-3xl` | `--scl-spacing-48` | 48 px | page-level gaps |
+| `--space-sm` | `--scl-spacing-12` | 12 px | chip padding, small gaps |
+| `--space-md` | `--scl-spacing-16` | 16 px | default internal gaps |
+| `--space-lg` | `--scl-spacing-24` | 24 px | section gaps |
+| `--space-xl` | `--scl-spacing-32` | 32 px | large gaps, card padding |
+| `--space-2xl` | `--scl-spacing-48` | 48 px | section separation |
+| `--space-3xl` | `--scl-spacing-64` | 64 px | page-level gaps |
 
 #### Contextual aliases
 
@@ -124,8 +124,24 @@ Five tones (info / success / warning / danger / neutral) each expose three token
 | `--chip-text` | `#8e004a` | `#ff8cc8` |
 
 Magenta elements target AA (4.5 : 1) rather than AAA to preserve the Telekom brand identity; this is a documented product decision.
+Native CTAs that are not covered by Scale component rendering use `--accent-primary-aaa` / `--accent-primary-aaa-hover`, derived from the active primary accent, so they satisfy AAA while preserving the configured brand flavour.
 
-### 2.5 Other Tokens
+### 2.5 Neutral / OSS Theme
+
+The neutral Scale package (`scale-components-neutral`) uses purple `#5300ff` as its primary colour. This is **intentional** — the OSS/neutral flavour is deliberately not Deutsche Telekom branded. No primary colour override is applied; all WCAG contrast overrides (text, chips, tags) still apply since they are independent of brand colour.
+
+### 2.6 Z-Index Scale
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `--z-header` | 10 | Sticky Telekom header fallback |
+| `--z-skip-link` | 99 | Skip-to-content link |
+| `--z-auto-logout` | 3000 | Auto-logout warning overlay |
+| `--z-toast` | 5000 | Toast notifications |
+| `--z-modal` | 7000 | Modal dialogs |
+| `--z-debug-panel` | 9999 | Developer debug panel |
+
+### 2.7 Other Tokens
 
 | Token | Value | Notes |
 |-------|-------|-------|
@@ -169,6 +185,9 @@ Full details and contrast ratios are in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS
 | 10 | `scale-modal` body uses `flex` + `gap` | Consistent internal spacing without margin hacks |
 | 11 | Forced-colors layer | Scale does not handle `forced-colors` explicitly |
 | 12 | 44 × 44 px touch targets in `[data-high-contrast]` | WCAG SC 2.5.5 AAA; Scale does not enforce this |
+| 13 | Neutral/OSS theme keeps purple primary — intentionally unbranded | N/A |
+| 14 | `scale-telekom-*` header/nav fallback styles via `:not(:defined)` | Neutral package lacks Telekom-branded shell components; CSS provides a functional header layout |
+| 15 | `scale-card::part(base)` border reset | Prevents double border (host + shadow DOM) for consistent card appearance |
 
 ---
 
@@ -224,12 +243,12 @@ Tone chips also support session state aliases: `.tone-chip--active` = success, `
 | Class | Description |
 |-------|-------------|
 | `.ui-section` | Flex column with `--stack-gap-sm` |
-| `.ui-matching-summary` | Dashed-border summary box |
+| `.ui-matching-summary` | Bordered summary box |
 | `.ui-link-button` | Inline-flex text link that looks like a link-button |
 | `.ui-link-button.small` | Smaller variant |
 | `.ui-muted` | Additional text colour |
 | `.center` | `text-align: center; width: 100%` |
-| `.loading-state`, `.empty-state` | Dashed-border placeholder areas |
+| `.loading-state`, `.empty-state` | Bordered placeholder areas |
 | `.skip-link` | Accessible skip-to-content link (visible on focus) |
 | `.sr-only` | Visually hidden, screen-reader accessible |
 | `.dev-debug-panel` | Collapsible debug panel (`<details>` element) — dev/test use only |
@@ -434,64 +453,87 @@ When adding new backend states, update the `STATE_TONE_MAP` in that file. Do not
 
 | Category | Issues | Score |
 |----------|--------|-------|
-| Token coverage — colors | 0 | 10/10 |
-| Token coverage — spacing | 14 hardcoded values (debug-session) | 6/10 |
-| Token coverage — typography | 21 hardcoded `font-size` values | 5/10 |
-| Token coverage — motion | 1 hardcoded transition | 9/10 |
-| Token coverage — z-index | 1 hardcoded `z-index: 99` | 9/10 |
-| Naming consistency | Minor `--space-*` vs `--stack-gap-*` overlap | 8/10 |
+| Token coverage — colors | 0 hardcoded colors; all rgba replaced with functional tokens or `color-mix()` | 10/10 |
+| Token coverage — spacing | 0 hardcoded px gaps/margins/padding; all use `--space-*` or `--scl-spacing-*` | 10/10 |
+| Token coverage — typography | All 103+ `font-size` values replaced with Scale text-style tokens | 10/10 |
+| Token coverage — motion | All transitions use `--telekom-motion-*` tokens | 10/10 |
+| Token coverage — z-index | Full z-index scale in `:root` | 10/10 |
+| Naming consistency | Minor `--space-*` vs `--stack-gap-*` overlap remains | 8/10 |
 | Component props/states | Documented via JSDoc; no formal docs page | 7/10 |
-| Scale alignment | All deviations justified and documented | 10/10 |
+| Scale alignment | All deviations justified and documented (15 total) | 10/10 |
 | Accessibility | Full WCAG AAA target with documented ratios | 10/10 |
-| **Overall** | | **82/100** |
+| Neutral theme support | Fallback header/nav for OSS variant | 9/10 |
+| **Overall** | | **96/100** |
 
 ---
 
-### 8.2 Token Coverage
+### 8.2 Completed Remediation (2026-05-17)
 
-#### Typography — 21 hardcoded `font-size` values
+The following issues from the previous audit (2026-05-14) have been resolved:
 
-The `debug-session/` components and `BreakglassSessionCard` use raw `font-size` instead of `--telekom-text-style-*` tokens.
+#### Typography — 103+ hardcoded `font-size` values → 0
 
-| File | Count | Example |
-|------|-------|---------|
-| `SessionConfigForm.vue` | 12 | `font-size: 0.875rem`, `0.75rem`, `0.6875rem`, `1.125rem`, `1rem` |
-| `BindingOptionsGrid.vue` | 8 | `font-size: 0.625rem`, `0.875rem`, `1.125rem` |
-| `BreakglassSessionCard.vue` | 4 | `font-size: 0.8em`, `0.85rem`, `0.75rem`, `0.9rem` |
-| `WithdrawConfirmDialog.vue` | 1 | `font-size: 0.9rem` |
+All hardcoded `font-size` declarations across 26 Vue files replaced with `font: var(--telekom-text-style-*)` tokens:
 
-**Fix:** Replace with the closest Scale text-style token:
+| Raw value range | Scale token |
+|-----------------|-------------|
+| 0.625–0.7 rem | `--telekom-text-style-badge` |
+| 0.75–0.8125 rem | `--telekom-text-style-small` |
+| 0.85–0.95 rem | `--telekom-text-style-caption` |
+| 1 rem | `--telekom-text-style-body` |
+| 1.1–1.17 rem | `--telekom-text-style-heading-6` |
+| 1.25 rem | `--telekom-text-style-heading-5` |
+| 1.4–1.5 rem | `--telekom-text-style-heading-4` |
+| 1.75 rem | `--telekom-text-style-heading-3` |
+| 2–2.5 rem | `--telekom-text-style-heading-2` |
 
-| Raw value | Scale token |
-|-----------|-------------|
-| `0.625rem` / `0.6875rem` / `0.7rem` | `--telekom-text-style-badge` |
-| `0.75rem` | `--telekom-text-style-small` |
-| `0.8125rem` (debug panel) | `--telekom-text-style-small` |
-| `0.875rem` | `--telekom-text-style-caption` |
-| `0.9rem` | `--telekom-text-style-caption` |
-| `1rem` | `--telekom-text-style-body` |
-| `1.125rem` | `--telekom-text-style-heading-6` |
+#### Spacing — hardcoded values in ClusterSelectGrid, BindingOptionsGrid → tokenized
 
-#### Spacing — 14 hardcoded values in debug-session components
+All sub-token spacing values (`0.125rem`, `0.375rem`, `0.25rem`, `0.5rem`) replaced with `--space-2xs`, `--space-xs`, `--space-sm` tokens.
 
-| File | Values |
-|------|--------|
-| `SessionConfigForm.vue` | `gap: 4px`, `gap: 2px`, `margin-top: 6px`, `margin-top: 0.25rem`, `padding: 1px 6px`, `padding: 0.125rem 0.5rem`, `gap: 0.25rem`, `margin-right: 0.25rem` |
-| `BindingOptionsGrid.vue` | `gap: 2px`, `padding: 2px 8px`, `padding: 0.125rem 0.5rem`, `gap: 4px`, `letter-spacing: 0.5px` |
+#### Motion — all hardcoded transitions → Scale motion tokens
 
-Values at or below 4 px (below `--space-xs`) are the main offenders. `--space-2xs` (2 px) and `--space-xs` (4 px) exist and should be used; 1 px hairlines are acceptable as-is.
+All `0.15s ease`, `0.2s ease`, `0.3s ease` transitions across App.vue, AutoLogoutWarning.vue, ClusterSelectGrid.vue, CountdownTimer.vue, DebugPanel.vue, DebugSessionCard.vue, PendingApprovalsView.vue, and SessionBrowser.vue replaced with `var(--telekom-motion-duration-*) var(--telekom-motion-easing-standard)`.
 
-#### Motion — 1 hardcoded transition
+#### Z-index — full token scale added
 
-`base.css:896` inside `.dev-debug-panel`: `transition: transform 0.2s ease`
+Z-index tokens (`--z-header` through `--z-debug-panel`) defined in `:root` and consumed by all components.
 
-Should use `var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard)`.
+#### Primary color — neutral/OSS theme
 
-#### Z-index — 1 hardcoded value
+The neutral/OSS flavour intentionally keeps Scale's default purple primary (`#5300ff`). No runtime override is applied — the product is deliberately unbranded in this variant.
 
-`base.css:468` `.skip-link`: `z-index: 99`
+#### Selection glow — rgba hardcodes → `color-mix()`
 
-Add a `--z-skip-link: 99` token in `base.css :root` block and reference it here. This makes the stacking context explicit for future additions.
+`rgba(226, 0, 116, 0.15)` in ClusterSelectGrid.vue and BindingOptionsGrid.vue replaced with `color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent)` so the glow follows the primary token.
+
+#### Constraint tags — Tailwind-style rgba → Scale functional tokens
+
+SessionConfigForm's node-selector, denied-label, and toleration tags used hardcoded `rgba(59, 130, 246, ...)` / `rgba(239, 68, 68, ...)` / `rgba(245, 158, 11, ...)`. Replaced with `var(--tone-chip-info-*)`, `var(--tone-chip-danger-*)`, `var(--tone-chip-warning-*)` tokens and `color-mix()` for borders.
+
+#### Debug panel — hardcoded rgba and px → tokens
+
+`rgba(255, 0, 0, 0.1)` and `rgba(255, 165, 0, 0.2)` replaced with `var(--telekom-color-functional-danger-subtle)` and `var(--telekom-color-functional-warning-subtle)`. All `2px`/`4px` padding replaced with `var(--space-2xs)`/`var(--space-xs)` tokens.
+
+#### Remaining component spacing — px literals → tokens
+
+Hardcoded `gap: 2px`, `gap: 4px`, `margin-top: 2px`, `margin-top: 4px` in DebugSessionDetails.vue, DebugSessionCard.vue, ClusterSelectGrid.vue, TimelineGrid.vue, and ErrorBanner.vue replaced with `var(--space-2xs)`, `var(--space-xs)`, `var(--space-sm)`, `var(--space-md)` tokens.
+
+#### Neutral theme — removed magenta override
+
+The runtime `<style>` injection in `main.ts` that overrode `--telekom-color-primary-standard` from `#5300ff` to `#e20074` has been removed. The neutral/OSS flavour is intentionally unbranded and should use Scale's default purple primary. The static `:root` override in base.css (which was dead code due to Scale CSS load order) has also been removed.
+
+#### Borders — dashed → solid
+
+All `border: 1px dashed` styles in base.css and EmptyState.vue updated to `border: 1px solid` for a cleaner, more professional appearance.
+
+#### Neutral header fallback
+
+CSS `:not(:defined)` rules provide a fully functional header, nav, and app shell layout when Scale Telekom components aren't registered (neutral/OSS package). Includes sticky positioning, primary-colour accent border, dark mode support, and mobile responsiveness.
+
+#### Decorative gradient removed
+
+`#app` radial-gradient background replaced with flat `background-color: var(--surface-primary)`.
 
 ---
 
@@ -500,31 +542,26 @@ Add a `--z-skip-link: 99` token in `base.css :root` block and reference it here.
 | Issue | Detail | Recommendation |
 |-------|--------|----------------|
 | Dual spacing scales | `--space-*` and `--stack-gap-*` have overlapping values (both include 4, 8, 12, 16, 24 px) | Adopt `--space-*` as the primary scale; deprecate `--stack-gap-*` in a future cleanup pass |
-| `--cta-bg` orphaned token | Defined in `:root` but only consumed by `NotFoundView.vue` | Move into that view's scoped styles or document as a layout-level brand accent |
 | `ui-link-button.small` modifier | Uses a plain `.small` class rather than a BEM modifier `--small` | Rename to `.ui-link-button--small` for consistency |
 
 ---
 
-### 8.4 Missing Tokens
+### 8.4 Remaining Items
 
-| Category | Gap | Suggestion |
-|----------|-----|-----------|
-| Breakpoints | Hardcoded `640px`, `768px`, `1440px` in media queries | Add `--bp-sm`, `--bp-md`, `--bp-xl` CSS custom properties (note: custom properties cannot be used inside `@media`; document them as SCSS/JS constants instead) |
-| Z-index | Only one value exists and it is hardcoded | Create a z-index scale (`--z-skip-link`, `--z-modal`, `--z-toast`) in `:root` |
-| Scale version lock | Package uses `^` (caret) on a beta release | Pin to an exact version (`3.0.0-beta.160`) until Scale reaches a stable release to prevent unexpected breaking changes on install |
+| Category | Detail | Priority |
+|----------|--------|----------|
+| Breakpoints | Hardcoded `640px`, `768px`, `1440px` in media queries | Low — CSS custom properties cannot be used in `@media`; document as constants |
+| Scale version lock | Package uses `^` (caret) on a beta release | Medium — pin to exact version to prevent silent breaking changes |
+| Spacing scale overlap | `--space-*` and `--stack-gap-*` should be unified | Low — both work; clean up in a future pass |
 
 ---
 
 ## 9. Priority Actions
 
-1. **Replace hardcoded `font-size` in debug-session components** — 21 instances across `SessionConfigForm.vue` and `BindingOptionsGrid.vue`; high impact, low risk, pure token substitution.
+1. **Pin Scale to an exact beta version** — swap `^3.0.0-beta.160` → `3.0.0-beta.160` in `package.json` to prevent silent breaking changes.
 
-2. **Replace hardcoded spacing in debug-session components** — 14 instances; use `--space-2xs` / `--space-xs` instead of raw pixel values.
+2. **Unify spacing scale** — collapse `--stack-gap-*` into `--space-*` across all components.
 
-3. **Pin Scale to an exact beta version** — swap `^3.0.0-beta.160` → `3.0.0-beta.160` in `package.json` to prevent silent breaking changes.
-
-4. **Add z-index tokens** — one token needed now; avoids future stacking conflicts as the UI grows.
-
-5. **Audit `BreakglassSessionCard.vue`** — 4 hardcoded font-size values plus the most complex scoped stylesheet in the codebase; a focused review would catch any remaining spacing/colour issues.
+3. **Document breakpoint constants** — add JS/TS constants for `640`, `768`, `1440` px breakpoints used in media queries.
 
 6. **Deprecate `--stack-gap-*` aliases** — they duplicate `--space-*` values and add cognitive overhead. Mark deprecated in a comment, replace usages, then remove in a clean-up PR.

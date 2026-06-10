@@ -74,13 +74,13 @@ function handleRetry() {
 
 .error-banner__details {
   margin: 0.5rem 0 0;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .error-banner__actions {
-  margin-top: 0.75rem;
+  margin-top: var(--space-sm);
   display: flex;
-  gap: 0.5rem;
+  gap: var(--scl-spacing-8, 0.5rem);
   flex-wrap: wrap;
 }
 </style>

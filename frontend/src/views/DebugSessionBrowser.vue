@@ -402,7 +402,7 @@ function onStateToggle(state: string, event: Event) {
 }
 
 .filter-label {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
   margin-right: var(--space-xs);
 }
@@ -423,7 +423,7 @@ function onStateToggle(state: string, event: Event) {
   margin-top: var(--space-lg);
   text-align: center;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .dialog-actions {

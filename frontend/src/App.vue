@@ -410,7 +410,9 @@ watch(
 
 <template>
   <div>
-    <a class="skip-link" href="#main">Skip to content</a>
+    <nav aria-label="Skip links">
+      <a class="skip-link" href="#main">Skip to content</a>
+    </nav>
     <scale-telekom-app-shell>
       <scale-telekom-header
         slot="header"
@@ -526,7 +528,7 @@ watch(
         </div>
       </scale-telekom-header>
 
-      <main id="main" class="app-container">
+      <div id="main" class="app-container">
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
@@ -543,7 +545,7 @@ watch(
         <ErrorBoundary v-if="authenticated" title="Page failed to render">
           <RouterView />
         </ErrorBoundary>
-      </main>
+      </div>
 
       <ErrorToasts />
       <AutoLogoutWarning />
@@ -558,7 +560,7 @@ watch(
 
 <style scoped>
 scale-telekom-header::part(app-name-text) {
-  font-size: 1.17rem;
+  font: var(--telekom-text-style-heading-6);
 }
 
 .header-functions-container {
@@ -588,7 +590,7 @@ scale-telekom-header::part(app-name-text) {
   background: transparent;
   color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .hc-toggle-button:hover,
@@ -633,7 +635,7 @@ scale-telekom-header::part(app-name-text) {
   cursor: pointer;
   width: 100%;
   text-align: left;
-  transition: background-color 0.2s ease;
+  transition: background-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .mobile-util-btn:hover {

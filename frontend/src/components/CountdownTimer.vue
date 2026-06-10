@@ -106,8 +106,8 @@ watch(
   color: var(--telekom-color-text-and-icon-standard);
   margin-left: 0.5em;
   transition:
-    color 0.2s,
-    background 0.2s;
+    color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard),
+    background var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 .countdown.expired {
   color: var(--telekom-color-text-and-icon-additional);

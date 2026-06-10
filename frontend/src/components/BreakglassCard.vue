@@ -705,7 +705,7 @@ function drop() {
 
 .status-detail {
   margin: 0;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-standard);
 }
@@ -724,7 +724,7 @@ function drop() {
   display: flex;
   gap: var(--space-xs);
   align-items: center;
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-standard);
@@ -732,7 +732,7 @@ function drop() {
 
 .session-section--reason h4 {
   margin: 0;
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--telekom-color-text-and-icon-standard);
@@ -775,7 +775,7 @@ function drop() {
 }
 
 .timeline-callout .session-id {
-  font-size: 0.8rem;
+  font: var(--telekom-text-style-small);
   color: inherit;
   word-break: break-all;
   margin-top: var(--space-2xs);
@@ -783,7 +783,7 @@ function drop() {
 
 .eyebrow {
   text-transform: uppercase;
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   letter-spacing: 0.1em;
   color: currentColor;
 }
@@ -817,7 +817,7 @@ function drop() {
 }
 
 .helper {
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
   margin-top: var(--space-2xs);
 }
@@ -839,7 +839,7 @@ function drop() {
   border: 1px solid var(--tone-chip-info-border);
   border-left: 3px solid var(--telekom-color-functional-informational-standard);
   margin-top: var(--space-xs);
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--tone-chip-info-text);
 }
 
@@ -854,7 +854,7 @@ function drop() {
 
 .schedule-intro {
   margin-top: 0;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
@@ -869,7 +869,7 @@ function drop() {
   margin-top: var(--space-md);
   padding-top: var(--space-xs);
   border-top: 1px solid var(--telekom-color-ui-border-standard);
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .modal-actions {

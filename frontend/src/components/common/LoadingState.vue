@@ -66,11 +66,7 @@ withDefaults(
 }
 
 .loading-state__message {
-  font-size: 0.95rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
-}
-
-.loading-state--small .loading-state__message {
-  font-size: 0.875rem;
 }
 </style>

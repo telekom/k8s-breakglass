@@ -88,7 +88,7 @@ const handleViewSessions = () => {
 }
 
 .error-title {
-  font-size: 1.75rem;
+  font: var(--telekom-text-style-heading-3);
   font-weight: 600;
   margin-bottom: var(--space-xl);
   color: var(--scl-color-danger);
@@ -102,8 +102,8 @@ const handleViewSessions = () => {
   background-color: var(--surface-card-subtle, rgba(0, 0, 0, 0.1));
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
-  font-family: "Courier New", monospace;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
+  font-family: var(--telekom-typography-font-family-mono, monospace);
 }
 
 .action-buttons {

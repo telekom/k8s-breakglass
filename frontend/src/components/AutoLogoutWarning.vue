@@ -123,7 +123,7 @@ export default {
   position: fixed;
   bottom: var(--space-lg);
   right: var(--space-lg);
-  z-index: 3000;
+  z-index: var(--z-auto-logout);
   max-width: 400px;
   width: 100%;
 }
@@ -146,7 +146,7 @@ export default {
 
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: all 0.3s ease;
+  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .fade-slide-enter-from,

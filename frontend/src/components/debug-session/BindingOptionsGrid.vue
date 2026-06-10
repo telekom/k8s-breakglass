@@ -189,7 +189,7 @@ const emit = defineEmits<{
 
 .binding-option-card.selected {
   border-color: var(--telekom-color-primary-standard);
-  box-shadow: 0 0 0 3px rgba(226, 0, 116, 0.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
   background: var(--telekom-color-background-surface-highlight);
 }
 

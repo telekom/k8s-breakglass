@@ -314,21 +314,21 @@ function handleDurationChange(ev: Event) {
 }
 
 .constraint-tag.node-selector {
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--telekom-color-functional-informational-standard, #93c5fd);
-  border: 1px solid rgba(59, 130, 246, 0.4);
+  background: var(--tone-chip-info-bg);
+  color: var(--tone-chip-info-text);
+  border: 1px solid var(--tone-chip-info-border);
 }
 
 .constraint-tag.denied-label {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--telekom-color-functional-danger-standard, #fca5a5);
-  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: var(--tone-chip-danger-bg);
+  color: var(--tone-chip-danger-text);
+  border: 1px solid var(--tone-chip-danger-border);
 }
 
 .constraint-tag.toleration {
-  background: rgba(245, 158, 11, 0.15);
-  color: var(--telekom-color-functional-warning-standard, #fcd34d);
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: var(--tone-chip-warning-bg);
+  color: var(--tone-chip-warning-text);
+  border: 1px solid var(--tone-chip-warning-border);
 }
 
 .namespace-hints {

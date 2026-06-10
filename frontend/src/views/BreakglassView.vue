@@ -381,7 +381,7 @@ async function onDrop(bg: Breakglass) {
 .toolbar-info {
   color: var(--telekom-color-text-and-icon-standard);
   margin-left: auto;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   align-self: center;
 }
 

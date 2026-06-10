@@ -705,7 +705,7 @@ function handleTemplateChange(ev: Event) {
   background: var(--telekom-color-text-and-icon-additional);
   color: var(--telekom-color-text-and-icon-inverted);
   font-weight: 600;
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .step.active .step-number {
@@ -717,7 +717,7 @@ function handleTemplateChange(ev: Event) {
 }
 
 .step-label {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
 }
 
@@ -739,7 +739,7 @@ function handleTemplateChange(ev: Event) {
 }
 
 .summary-label {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
@@ -767,14 +767,14 @@ function handleTemplateChange(ev: Event) {
 
 .form-section h3 {
   margin: 0;
-  font-size: 1.125rem;
+  font: var(--telekom-text-style-heading-6);
   font-weight: 600;
 }
 
 .section-description {
   margin: 0;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .template-info {
@@ -785,7 +785,7 @@ function handleTemplateChange(ev: Event) {
 
 .template-description {
   margin: 0 0 var(--space-sm);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .template-details {
@@ -795,7 +795,7 @@ function handleTemplateChange(ev: Event) {
 }
 
 .template-details .detail {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
@@ -805,7 +805,7 @@ function handleTemplateChange(ev: Event) {
 
 .warning-text {
   color: var(--telekom-color-functional-warning-standard);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   margin: 0;
 }
 
@@ -840,7 +840,7 @@ function handleTemplateChange(ev: Event) {
 .no-templates-message p {
   margin: 0;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   line-height: 1.5;
 }
 
@@ -853,6 +853,6 @@ function handleTemplateChange(ev: Event) {
 }
 
 .unavailable-templates-notice small {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
 }
 </style>
