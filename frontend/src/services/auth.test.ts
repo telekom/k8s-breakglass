@@ -12,7 +12,7 @@ vi.mock("@/services/logger", () => ({
 }));
 
 import AuthService, { useUser, AuthRedirect, AuthSilentRedirect } from "./auth";
-import { User } from "oidc-client-ts";
+import type { User, UserManager } from "oidc-client-ts";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 import type { MultiIDPConfig } from "@/services/multiIDP";
 import type Config from "@/model/config";
@@ -59,8 +59,13 @@ describe("AuthService", () => {
       expect(authService.userManager.settings.userStore).toBeDefined();
     });
 
-    it("should enable automatic silent renew", () => {
-      expect(authService.userManager.settings.automaticSilentRenew).toBe(true);
+    it("should disable automatic silent renew for security", () => {
+      expect(authService.userManager.settings.automaticSilentRenew).toBe(false);
+    });
+
+    it("should not include offline_access in scope", () => {
+      expect(authService.userManager.settings.scope).toBeDefined();
+      expect(authService.userManager.settings.scope).not.toContain("offline_access");
     });
   });
 
@@ -358,6 +363,51 @@ describe("AuthService", () => {
       expect(userRef).toBeDefined();
       // userRef.value is initially undefined until user logs in
       expect(userRef.value === undefined || typeof userRef.value === "object").toBe(true);
+    });
+  });
+
+  describe("OIDC user manager events", () => {
+    it("clears reactive and persisted user state when the access token expires", async () => {
+      const userRef = useUser();
+      const loadedUser = {
+        profile: {
+          email: "test@example.com",
+          sub: "12345",
+          iss: "https://example.com",
+          aud: "test-client",
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          iat: Math.floor(Date.now() / 1000),
+        },
+        access_token: "access-token",
+        expired: false,
+      } as User;
+      let expiredHandler: (() => void) | undefined;
+      const removeUser = vi.fn().mockResolvedValue(undefined);
+      const manager = {
+        removeUser,
+        events: {
+          addUserLoaded: (handler: (loaded: User) => void) => handler(loadedUser),
+          addUserUnloaded: vi.fn(),
+          addAccessTokenExpiring: vi.fn(),
+          addAccessTokenExpired: (handler: () => void) => {
+            expiredHandler = handler;
+          },
+          addSilentRenewError: vi.fn(),
+          addUserSignedOut: vi.fn(),
+        },
+      } as unknown as UserManager;
+
+      (
+        authService as unknown as {
+          registerUserManagerEvents: (manager: UserManager) => void;
+        }
+      ).registerUserManagerEvents(manager);
+      expect(userRef.value).toStrictEqual(loadedUser);
+
+      expiredHandler?.();
+
+      expect(userRef.value).toBeUndefined();
+      await vi.waitFor(() => expect(removeUser).toHaveBeenCalledTimes(1));
     });
   });
 

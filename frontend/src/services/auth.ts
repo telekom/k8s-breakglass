@@ -47,9 +47,7 @@ const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   },
 };
 
-const resolvedNodeEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env
-  ?.NODE_ENV;
-const isProdBuild = resolvedNodeEnv === "production";
+const isProdBuild = import.meta.env.PROD;
 
 type UserLoadedHandler = (loadedUser: User) => void;
 
@@ -167,6 +165,12 @@ function getOIDCStorage(): Storage {
   }
   const prefersPersistent = getTokenPersistenceMode() === "persistent";
   if (prefersPersistent && typeof window.localStorage !== "undefined") {
+    if (!isProdBuild) {
+      warn(
+        "AuthService",
+        "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
+      );
+    }
     return window.localStorage;
   }
   return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
@@ -833,13 +837,14 @@ export default class AuthService {
       redirect_uri: this.baseURL + AuthRedirect,
       silent_redirect_uri: this.baseURL + AuthSilentRedirect,
       response_type: "code",
-      // Include offline_access to get refresh tokens for CSP-blocked iframe fallback
-      scope: "openid profile email offline_access",
+      // offline_access intentionally omitted: breakglass tokens are short-lived emergency credentials; silent refresh would allow sessions to outlive their intended window
+      // automaticSilentRenew is also disabled to prevent iframe-based silent session extension
+      scope: "openid profile email",
       post_logout_redirect_uri: this.baseURL,
       filterProtocolClaims: true,
-      automaticSilentRenew: true,
+      automaticSilentRenew: false,
       accessTokenExpiringNotificationTimeInSeconds: 60,
-      // Prefer refresh tokens over iframe when available (works around CSP frame-ancestors issues)
+      // Revoke provider-side tokens during sign-out when supported by the IdP
       revokeTokensOnSignout: true,
     };
 
@@ -890,15 +895,19 @@ export default class AuthService {
     // Token about to expire
     if (typeof events.addAccessTokenExpiring === "function") {
       events.addAccessTokenExpiring(() => {
-        debug("AuthService", "Access token expiring soon, silent renew should trigger");
+        debug("AuthService", "Access token expiring soon, user will need to re-authenticate");
       });
     }
 
-    // Token expired (silent renew didn't work)
+    // Token expired. Automatic silent renewal is disabled, so clear local auth state immediately.
     if (typeof events.addAccessTokenExpired === "function") {
       events.addAccessTokenExpired(() => {
-        warn("AuthService", "Access token expired - silent renew failed or not configured");
+        warn("AuthService", "Access token expired - clearing local session");
         logError("AuthService", "Access token expired, user needs to re-authenticate");
+        user.value = undefined;
+        manager.removeUser().catch((error: unknown) => {
+          logError("AuthService", "Failed to remove expired OIDC user", error);
+        });
       });
     }
 
