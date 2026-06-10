@@ -90,6 +90,11 @@ function handleRenewDurationChange(event: Event) {
   renewDuration.value = (event.target as HTMLSelectElement).value;
 }
 
+function openRejectModal() {
+  rejectReason.value = "";
+  showRejectModal.value = true;
+}
+
 function openRenewModal() {
   renewDuration.value = "1h";
   showRenewModal.value = true;
@@ -202,7 +207,7 @@ function openRenewModal() {
           variant="secondary"
           size="small"
           data-testid="reject-button"
-          @click="showRejectModal = true"
+          @click="openRejectModal"
         >
           Reject
         </scale-button>
@@ -265,6 +270,7 @@ function openRenewModal() {
           <scale-dropdown-select-item value="30m">30 minutes</scale-dropdown-select-item>
           <scale-dropdown-select-item value="1h">1 hour</scale-dropdown-select-item>
           <scale-dropdown-select-item value="2h">2 hours</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="4h">4 hours</scale-dropdown-select-item>
         </scale-dropdown-select>
       </div>
       <div slot="action" class="modal-actions">

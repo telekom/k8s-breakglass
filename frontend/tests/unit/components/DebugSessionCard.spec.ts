@@ -143,4 +143,43 @@ describe("DebugSessionCard", () => {
     select = wrapper.find('[data-testid="renew-duration-select"]');
     expect(select.attributes("value")).toBe("1h");
   });
+
+  it("offers the same renew durations as the details view", async () => {
+    const wrapper = mount(DebugSessionCard, {
+      props: {
+        session: makeSession("team/session-b", "Active"),
+        isOwner: true,
+      },
+      global: {
+        stubs: SCALE_STUBS,
+      },
+    });
+
+    await wrapper.find('[data-testid="renew-button"]').trigger("click");
+
+    expect(wrapper.find('scale-dropdown-select-item[value="4h"]').exists()).toBe(true);
+  });
+
+  it("resets the reject reason each time the modal opens", async () => {
+    const wrapper = mount(DebugSessionCard, {
+      props: {
+        session: makeSession("team/session-b"),
+      },
+      global: {
+        stubs: SCALE_STUBS,
+      },
+    });
+
+    await wrapper.find('[data-testid="reject-button"]').trigger("click");
+
+    const vm = wrapper.vm as unknown as { rejectReason: string };
+    vm.rejectReason = "needs a clearer business reason";
+    await nextTick();
+    expect(vm.rejectReason).toBe("needs a clearer business reason");
+
+    await wrapper.find('[data-testid="reject-cancel-button"]').trigger("click");
+    await wrapper.find('[data-testid="reject-button"]').trigger("click");
+
+    expect(vm.rejectReason).toBe("");
+  });
 });
