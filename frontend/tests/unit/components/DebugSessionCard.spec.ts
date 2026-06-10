@@ -21,13 +21,13 @@ const SCALE_STUBS = {
   "scale-dropdown-select-item": true,
 };
 
-function makeSession(name: string): DebugSessionSummary {
+function makeSession(name: string, state: DebugSessionSummary["state"] = "PendingApproval"): DebugSessionSummary {
   return {
     name,
     templateRef: "debug-template",
     cluster: "test-cluster",
     requestedBy: "alice",
-    state: "PendingApproval",
+    state,
     participants: 0,
     isParticipant: false,
     allowedPods: 1,
@@ -35,7 +35,7 @@ function makeSession(name: string): DebugSessionSummary {
 }
 
 describe("DebugSessionCard", () => {
-  it("uses collision-safe label targets for per-card reject and renew controls", () => {
+  it("uses collision-safe label targets for per-card reject controls", async () => {
     const sessions = [makeSession("team/session-b"), makeSession("team-session-b")];
     const wrapper = mount(
       {
@@ -58,17 +58,53 @@ describe("DebugSessionCard", () => {
       },
     );
 
-    const rejectInputs = wrapper.findAll('[data-testid="reject-reason-input"]');
-    const renewInputs = wrapper.findAll('[data-testid="renew-duration-select"]');
+    for (const button of wrapper.findAll('[data-testid="reject-button"]')) {
+      await button.trigger("click");
+    }
 
+    const rejectInputs = wrapper.findAll('[data-testid="reject-reason-input"]');
+    expect(rejectInputs).toHaveLength(sessions.length);
     const rejectIds = rejectInputs.map((input) => input.attributes("id"));
-    const renewIds = renewInputs.map((input) => input.attributes("id"));
 
     expect(new Set(rejectIds).size).toBe(rejectIds.length);
-    expect(new Set(renewIds).size).toBe(renewIds.length);
     for (const id of rejectIds) {
       expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
     }
+  });
+
+  it("uses collision-safe label targets for per-card renew controls", async () => {
+    const sessions = [makeSession("team/session-b", "Active"), makeSession("team-session-b", "Active")];
+    const wrapper = mount(
+      {
+        components: { DebugSessionCard },
+        data: () => ({ sessions }),
+        template: `
+          <div>
+            <DebugSessionCard
+              v-for="session in sessions"
+              :key="session.name"
+              :session="session"
+              :is-owner="true"
+            />
+          </div>
+        `,
+      },
+      {
+        global: {
+          stubs: SCALE_STUBS,
+        },
+      },
+    );
+
+    for (const button of wrapper.findAll('[data-testid="renew-button"]')) {
+      await button.trigger("click");
+    }
+
+    const renewInputs = wrapper.findAll('[data-testid="renew-duration-select"]');
+    expect(renewInputs).toHaveLength(sessions.length);
+    const renewIds = renewInputs.map((input) => input.attributes("id"));
+
+    expect(new Set(renewIds).size).toBe(renewIds.length);
     for (const id of renewIds) {
       expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
     }
