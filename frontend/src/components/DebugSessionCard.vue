@@ -85,6 +85,15 @@ function handleRenew() {
   emit("renew", renewDuration.value);
   showRenewModal.value = false;
 }
+
+function handleRenewDurationChange(event: Event) {
+  renewDuration.value = (event.target as HTMLSelectElement).value;
+}
+
+function openRenewModal() {
+  renewDuration.value = "1h";
+  showRenewModal.value = true;
+}
 </script>
 
 <template>
@@ -163,7 +172,7 @@ function handleRenew() {
           variant="secondary"
           size="small"
           data-testid="renew-button"
-          @click="showRenewModal = true"
+          @click="openRenewModal"
         >
           Renew
         </scale-button>
@@ -248,9 +257,10 @@ function handleRenew() {
         <label :for="renewDurationId" class="sr-only">Extend By</label>
         <scale-dropdown-select
           :id="renewDurationId"
-          v-model="renewDuration"
+          :value="renewDuration"
           label="Extend By"
           data-testid="renew-duration-select"
+          @scale-change="handleRenewDurationChange"
         >
           <scale-dropdown-select-item value="30m">30 minutes</scale-dropdown-select-item>
           <scale-dropdown-select-item value="1h">1 hour</scale-dropdown-select-item>
@@ -339,6 +349,7 @@ function handleRenew() {
   padding: var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-subtle);
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: var(--space-sm);
@@ -349,6 +360,7 @@ function handleRenew() {
   gap: var(--space-sm);
   flex-wrap: wrap;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .modal-content {

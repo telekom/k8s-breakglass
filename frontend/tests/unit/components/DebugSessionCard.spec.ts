@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import DebugSessionCard from "@/components/DebugSessionCard.vue";
 import type { DebugSessionSummary } from "@/model/debugSession";
 
@@ -108,5 +109,38 @@ describe("DebugSessionCard", () => {
     for (const id of renewIds) {
       expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
     }
+  });
+
+  it("resets the renew duration each time the modal opens", async () => {
+    const wrapper = mount(DebugSessionCard, {
+      props: {
+        session: makeSession("team/session-b", "Active"),
+        isOwner: true,
+      },
+      global: {
+        stubs: SCALE_STUBS,
+      },
+    });
+
+    await wrapper.find('[data-testid="renew-button"]').trigger("click");
+
+    let select = wrapper.find('[data-testid="renew-duration-select"]');
+    expect(select.attributes("value")).toBe("1h");
+
+    const changeEvent = new CustomEvent("scale-change", {
+      bubbles: true,
+      detail: { value: "2h" },
+    });
+    Object.defineProperty(changeEvent, "target", { value: { value: "2h" } });
+    select.element.dispatchEvent(changeEvent);
+    await nextTick();
+
+    await wrapper.find('[data-testid="renew-confirm-button"]').trigger("click");
+    expect(wrapper.emitted("renew")?.[0]).toEqual(["2h"]);
+
+    await wrapper.find('[data-testid="renew-button"]').trigger("click");
+
+    select = wrapper.find('[data-testid="renew-duration-select"]');
+    expect(select.attributes("value")).toBe("1h");
   });
 });

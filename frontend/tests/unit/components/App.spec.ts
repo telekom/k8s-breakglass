@@ -108,6 +108,7 @@ describe("App — high-contrast and theme toggles", () => {
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.exists()).toBe(true);
     expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.attributes("aria-pressed")).toBe("false");
     expect(btn.classes()).not.toContain("hc-active");
   });
 
@@ -118,12 +119,14 @@ describe("App — high-contrast and theme toggles", () => {
 
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.attributes("aria-pressed")).toBe("true");
     expect(btn.classes()).toContain("hc-active");
 
     const themeBtn = wrapper.find(".theme-toggle-button");
     expect(themeBtn.attributes("aria-label")).toBe(
       "High contrast mode is displaying dark theme. Click to select dark theme preference.",
     );
+    expect(themeBtn.attributes("aria-pressed")).toBe("false");
     expect(themeBtn.classes()).toContain("theme-dark");
   });
 
@@ -133,11 +136,13 @@ describe("App — high-contrast and theme toggles", () => {
 
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.attributes("aria-pressed")).toBe("false");
     expect(btn.classes()).not.toContain("hc-active");
 
     await btn.trigger("click");
 
     expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.attributes("aria-pressed")).toBe("true");
     expect(btn.classes()).toContain("hc-active");
   });
 
@@ -148,12 +153,14 @@ describe("App — high-contrast and theme toggles", () => {
     const btn = wrapper.find(".theme-toggle-button");
     expect(btn.exists()).toBe(true);
     expect(btn.attributes("aria-label")).toBe("Light theme selected. Click to select dark theme.");
+    expect(btn.attributes("aria-pressed")).toBe("false");
     expect(btn.classes()).not.toContain("theme-dark");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
 
     await btn.trigger("click");
 
     expect(btn.attributes("aria-label")).toBe("Dark theme selected. Click to select light theme.");
+    expect(btn.attributes("aria-pressed")).toBe("true");
     expect(btn.classes()).toContain("theme-dark");
     expect(localStorage.getItem("breakglass-theme")).toBe("dark");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
@@ -169,6 +176,7 @@ describe("App — high-contrast and theme toggles", () => {
     expect(wrapper.find(".theme-toggle-button").attributes("aria-label")).toBe(
       "High contrast mode is displaying dark theme. Click to select light theme preference.",
     );
+    expect(wrapper.find(".theme-toggle-button").attributes("aria-pressed")).toBe("true");
 
     await wrapper.find(".theme-toggle-button").trigger("click");
 
@@ -177,6 +185,7 @@ describe("App — high-contrast and theme toggles", () => {
     expect(wrapper.find(".theme-toggle-button").attributes("aria-label")).toBe(
       "High contrast mode is displaying dark theme. Click to select dark theme preference.",
     );
+    expect(wrapper.find(".theme-toggle-button").attributes("aria-pressed")).toBe("false");
     expect(wrapper.find(".theme-toggle-button").classes()).toContain("theme-dark");
 
     await wrapper.find(".hc-toggle-button").trigger("click");
