@@ -352,9 +352,11 @@ jobs:
         if: always()
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: frontend/coverage/coverage-final.json
+          directory: frontend
+          files: coverage/coverage-final.json
           flags: frontend
           fail_ci_if_error: false
+          handle_no_reports_found: true
 
   helm-lint:
     name: Helm Chart Lint
