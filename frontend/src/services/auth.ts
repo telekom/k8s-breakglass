@@ -173,7 +173,7 @@ function getOIDCStorage(): Storage {
   }
   const prefersPersistent = getTokenPersistenceMode() === "persistent";
   if (prefersPersistent && typeof window.localStorage !== "undefined") {
-    if (!isProdBuild) {
+    if (!isProductionBuild()) {
       warn(
         "AuthService",
         "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
@@ -888,7 +888,7 @@ export default class AuthService {
       filterProtocolClaims: true,
       automaticSilentRenew: false,
       accessTokenExpiringNotificationTimeInSeconds: 60,
-      // Prefer refresh tokens over iframe when available (works around CSP frame-ancestors issues)
+      // Revoke provider-side tokens during sign-out when supported by the IdP
       revokeTokensOnSignout: true,
     };
 
