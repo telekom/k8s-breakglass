@@ -69,5 +69,4 @@ withDefaults(
   font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
 }
-
 </style>
