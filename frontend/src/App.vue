@@ -432,7 +432,9 @@ watch(
 
 <template>
   <div>
-    <a class="skip-link" href="#main">Skip to content</a>
+    <nav aria-label="Skip links">
+      <a class="skip-link" href="#main">Skip to content</a>
+    </nav>
     <scale-telekom-app-shell>
       <scale-telekom-header
         slot="header"
@@ -468,6 +470,7 @@ watch(
             >
               <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
             </button>
+
             <button
               type="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
@@ -556,7 +559,7 @@ watch(
         </div>
       </scale-telekom-header>
 
-      <main id="main" class="app-container">
+      <div id="main" class="app-container">
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
@@ -573,7 +576,7 @@ watch(
         <ErrorBoundary v-if="authenticated" title="Page failed to render">
           <RouterView />
         </ErrorBoundary>
-      </main>
+      </div>
 
       <ErrorToasts />
       <AutoLogoutWarning />
@@ -591,10 +594,19 @@ scale-telekom-header::part(app-name-text) {
   font: var(--telekom-text-style-heading-6);
 }
 
-.theme-toggle-nav-item,
-.hc-toggle-nav-item {
+.header-functions-container {
   display: flex;
   align-items: center;
+  gap: var(--space-md);
+}
+
+.theme-utilities {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-md);
+  border-right: 1px solid var(--telekom-color-ui-border-standard);
+  margin-right: var(--space-sm);
 }
 
 .theme-toggle-button,
