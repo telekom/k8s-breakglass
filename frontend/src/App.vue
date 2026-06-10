@@ -34,6 +34,7 @@ const theme = ref<Theme>(getInitialTheme());
 const highContrast = ref(getInitialHighContrast());
 const effectiveTheme = computed<Theme>(() => (highContrast.value ? "dark" : theme.value));
 const nextTheme = computed<Theme>(() => (theme.value === "dark" ? "light" : "dark"));
+const isDarkThemePreference = computed(() => theme.value === "dark");
 const themeToggleAriaLabel = computed(() => {
   if (highContrast.value) {
     return `High contrast mode is displaying dark theme. Click to select ${nextTheme.value} theme preference.`;
@@ -462,7 +463,7 @@ watch(
               :class="['theme-toggle-button', { 'theme-dark': effectiveTheme === 'dark' }]"
               :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
               :aria-label="themeToggleAriaLabel"
-              :aria-pressed="effectiveTheme === 'dark'"
+              :aria-pressed="isDarkThemePreference"
               @click="toggleTheme"
             >
               <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
