@@ -202,6 +202,7 @@ function handleRenew() {
 
     <!-- Reject Modal -->
     <scale-modal
+      v-if="showRejectModal"
       :opened="showRejectModal"
       heading="Reject Debug Session"
       data-testid="reject-modal"
@@ -236,6 +237,7 @@ function handleRenew() {
 
     <!-- Renew Modal -->
     <scale-modal
+      v-if="showRenewModal"
       :opened="showRenewModal"
       heading="Renew Debug Session"
       data-testid="renew-modal"

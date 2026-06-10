@@ -31,12 +31,19 @@ const groupsRef = ref<string[]>([]);
 type Theme = "light" | "dark";
 
 const theme = ref<Theme>(getInitialTheme());
+const highContrast = ref(getInitialHighContrast());
+const effectiveTheme = computed<Theme>(() => (highContrast.value ? "dark" : theme.value));
+const nextTheme = computed<Theme>(() => (theme.value === "dark" ? "light" : "dark"));
+const themeToggleAriaLabel = computed(() => {
+  if (highContrast.value) {
+    return `High contrast mode is displaying dark theme. Click to select ${nextTheme.value} theme preference.`;
+  }
+  return `${theme.value === "dark" ? "Dark" : "Light"} theme selected. Click to select ${nextTheme.value} theme.`;
+});
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
 let desktopBreakpointQuery: MediaQueryList | null = null;
 let desktopBreakpointHandler: ((event: MediaQueryListEvent) => void) | null = null;
-
-const highContrast = ref(getInitialHighContrast());
 
 function getInitialHighContrast(): boolean {
   if (typeof window === "undefined") return false;
@@ -452,14 +459,10 @@ watch(
           <div class="theme-utilities">
             <button
               type="button"
-              :class="['theme-toggle-button', { 'theme-dark': theme === 'dark' }]"
+              :class="['theme-toggle-button', { 'theme-dark': effectiveTheme === 'dark' }]"
               :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
-              :aria-label="
-                theme === 'dark'
-                  ? 'Dark theme selected. Click to select light theme.'
-                  : 'Light theme selected. Click to select dark theme.'
-              "
-              :aria-pressed="theme === 'dark'"
+              :aria-label="themeToggleAriaLabel"
+              :aria-pressed="effectiveTheme === 'dark'"
               @click="toggleTheme"
             >
               <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
