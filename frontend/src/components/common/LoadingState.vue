@@ -70,7 +70,4 @@ withDefaults(
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-.loading-state--small .loading-state__message {
-  font: var(--telekom-text-style-caption);
-}
 </style>
