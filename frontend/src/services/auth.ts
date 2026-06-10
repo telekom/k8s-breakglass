@@ -47,9 +47,7 @@ const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   },
 };
 
-const resolvedNodeEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env
-  ?.NODE_ENV;
-const isProdBuild = resolvedNodeEnv === "production";
+const isProdBuild = import.meta.env.PROD;
 
 type UserLoadedHandler = (loadedUser: User) => void;
 
@@ -846,7 +844,7 @@ export default class AuthService {
       filterProtocolClaims: true,
       automaticSilentRenew: false,
       accessTokenExpiringNotificationTimeInSeconds: 60,
-      // Prefer refresh tokens over iframe when available (works around CSP frame-ancestors issues)
+      // Revoke provider-side tokens during sign-out when supported by the IdP
       revokeTokensOnSignout: true,
     };
 
