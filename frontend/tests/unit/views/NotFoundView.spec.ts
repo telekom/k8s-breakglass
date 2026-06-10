@@ -4,12 +4,20 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import NotFoundView from "@/views/NotFoundView.vue";
 
 describe("NotFoundView", () => {
+  let currentWrapper: ReturnType<typeof mount> | undefined;
+
+  afterEach(() => {
+    currentWrapper?.unmount();
+    currentWrapper = undefined;
+    vi.restoreAllMocks();
+  });
+
   const createWrapper = () => {
     const router = createRouter({
       history: createMemoryHistory(),
@@ -25,6 +33,7 @@ describe("NotFoundView", () => {
         plugins: [router],
       },
     });
+    currentWrapper = wrapper;
 
     return { wrapper, pushSpy };
   };
