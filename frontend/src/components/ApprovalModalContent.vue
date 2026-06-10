@@ -190,9 +190,9 @@ function handleNoteChange(ev: Event) {
   font-weight: 600;
   text-transform: uppercase;
   font-size: 0.85rem;
-  background: var(--telekom-color-additional-violet-subtle);
-  color: var(--telekom-color-text-and-icon-on-subtle-violet);
-  border: 1px solid color-mix(in srgb, var(--telekom-color-additional-violet-standard) 35%, transparent);
+  background: var(--tone-chip-brand-bg);
+  color: var(--tone-chip-brand-text);
+  border: 1px solid var(--tone-chip-brand-border);
 }
 
 .modal-pill.tone-info {

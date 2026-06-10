@@ -18,7 +18,7 @@ import { pushWarning } from "@/services/toast";
 
 const auth = inject(AuthKey);
 const user = useUser();
-const authenticated = computed(() => user.value && !user.value?.expired);
+const authenticated = computed(() => Boolean(user.value && !user.value?.expired));
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
 const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
@@ -28,14 +28,23 @@ const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
 
-// Theme handling respects the user's system preference but offers a manual override
-const theme = ref<"light" | "dark">(getInitialTheme());
+type Theme = "light" | "dark";
+
+const theme = ref<Theme>(getInitialTheme());
+const highContrast = ref(getInitialHighContrast());
+const effectiveTheme = computed<Theme>(() => (highContrast.value ? "dark" : theme.value));
+const nextTheme = computed<Theme>(() => (theme.value === "dark" ? "light" : "dark"));
+const isDarkThemePreference = computed(() => theme.value === "dark");
+const themeToggleAriaLabel = computed(() => {
+  if (highContrast.value) {
+    return `High contrast mode is displaying dark theme. Click to select ${nextTheme.value} theme preference.`;
+  }
+  return `${theme.value === "dark" ? "Dark" : "Light"} theme selected. Click to select ${nextTheme.value} theme.`;
+});
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
 let desktopBreakpointQuery: MediaQueryList | null = null;
 let desktopBreakpointHandler: ((event: MediaQueryListEvent) => void) | null = null;
-
-const highContrast = ref(getInitialHighContrast());
 
 function getInitialHighContrast(): boolean {
   if (typeof window === "undefined") return false;
@@ -79,25 +88,30 @@ if (typeof document !== "undefined") {
   applyHighContrast(highContrast.value);
 }
 
-function getInitialTheme(): "light" | "dark" {
+function getStoredTheme(): Theme | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const storedTheme = localStorage.getItem("breakglass-theme");
+    return storedTheme === "light" || storedTheme === "dark" ? storedTheme : null;
+  } catch {
+    return null;
+  }
+}
+
+function getSystemTheme(): Theme {
   if (typeof window === "undefined") {
     return "light";
   }
-  try {
-    const stored = localStorage.getItem("breakglass-theme");
-    if (stored === "light" || stored === "dark") return stored;
-  } catch {}
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function toggleTheme() {
-  theme.value = theme.value === "dark" ? "light" : "dark";
-  try {
-    localStorage.setItem("breakglass-theme", theme.value);
-  } catch {}
+function getInitialTheme(): Theme {
+  return getStoredTheme() ?? getSystemTheme();
 }
 
-function applyTheme(value: "light" | "dark") {
+function applyTheme(value: Theme) {
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", value);
     // Scale Design System uses data-mode for internal token resolution (e.g.
@@ -107,19 +121,25 @@ function applyTheme(value: "light" | "dark") {
   }
 }
 
+function toggleTheme() {
+  theme.value = theme.value === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem("breakglass-theme", theme.value);
+  } catch {
+    // Ignore storage errors (private mode, blocked storage, sandboxed iframes)
+  }
+}
+
 onMounted(() => {
   applyTheme(theme.value);
   applyHighContrast(highContrast.value);
   if (typeof window === "undefined") return;
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
-    try {
-      if (!localStorage.getItem("breakglass-theme")) {
-        theme.value = event.matches ? "dark" : "light";
-      }
-    } catch {
-      theme.value = event.matches ? "dark" : "light";
+    if (highContrast.value || getStoredTheme()) {
+      return;
     }
+    theme.value = event.matches ? "dark" : "light";
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
 
@@ -142,7 +162,9 @@ onBeforeUnmount(() => {
 });
 
 watch(theme, (value) => {
-  applyTheme(value);
+  if (!highContrast.value) {
+    applyTheme(value);
+  }
 });
 
 watch(highContrast, (value) => {
@@ -410,7 +432,9 @@ watch(
 
 <template>
   <div>
-    <a class="skip-link" href="#main">Skip to content</a>
+    <nav aria-label="Skip links">
+      <a class="skip-link" href="#main">Skip to content</a>
+    </nav>
     <scale-telekom-app-shell>
       <scale-telekom-header
         slot="header"
@@ -438,25 +462,26 @@ watch(
           <div class="theme-utilities">
             <button
               type="button"
-              class="theme-toggle-button"
-              :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
-              :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              :class="['theme-toggle-button', { 'theme-dark': effectiveTheme === 'dark' }]"
+              :aria-label="themeToggleAriaLabel"
+              :aria-pressed="isDarkThemePreference"
               @click="toggleTheme"
             >
-              <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
+              <scale-icon-action-light-dark-mode :decorative="true"></scale-icon-action-light-dark-mode>
             </button>
+
             <button
               type="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
-              :title="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
               :aria-label="
                 highContrast
                   ? 'High contrast mode enabled. Click to disable.'
                   : 'High contrast mode disabled. Click to enable.'
               "
+              :aria-pressed="highContrast"
               @click="toggleHighContrast"
             >
-              <scale-icon-action-visibility size="20" :decorative="true"></scale-icon-action-visibility>
+              <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
             </button>
           </div>
 
@@ -497,26 +522,6 @@ watch(
                       <a :href="navHref(item)" @click="handleMobileNavItemClick($event, item)">
                         {{ item.label }}
                       </a>
-                    </scale-telekom-mobile-menu-item>
-                    <!-- Mobile Theme Toggles -->
-                    <scale-telekom-mobile-menu-item class="mobile-theme-item">
-                      <div class="mobile-utilities">
-                        <button type="button" class="mobile-util-btn" @click="toggleTheme">
-                          <scale-icon-action-light-dark-mode
-                            size="24"
-                            :decorative="true"
-                          ></scale-icon-action-light-dark-mode>
-                          <span>{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
-                        </button>
-                        <button
-                          type="button"
-                          :class="['mobile-util-btn', { active: highContrast }]"
-                          @click="toggleHighContrast"
-                        >
-                          <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
-                          <span>High Contrast</span>
-                        </button>
-                      </div>
                     </scale-telekom-mobile-menu-item>
                   </scale-telekom-mobile-menu>
                 </scale-telekom-mobile-flyout-canvas>
@@ -576,8 +581,8 @@ scale-telekom-header::part(app-name-text) {
   margin-right: var(--space-sm);
 }
 
-.hc-toggle-button,
-.theme-toggle-button {
+.theme-toggle-button,
+.hc-toggle-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -588,61 +593,21 @@ scale-telekom-header::part(app-name-text) {
   background: transparent;
   color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
 }
 
-.hc-toggle-button:hover,
-.theme-toggle-button:hover {
-  background-color: var(--telekom-color-ui-subtle);
-  transform: translateY(-1px);
+.theme-toggle-button:hover,
+.hc-toggle-button:hover {
+  background-color: var(--surface-card-subtle);
 }
 
-.hc-toggle-button:active,
-.theme-toggle-button:active {
-  transform: translateY(0) scale(0.95);
-}
-
+.theme-toggle-button.theme-dark,
 .hc-toggle-button.hc-active {
-  background-color: var(--telekom-color-primary-standard);
-  color: var(--telekom-color-text-and-icon-white);
-}
-
-.mobile-theme-item {
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-  margin-top: var(--space-md);
-  padding-top: var(--space-sm);
-  background-color: var(--telekom-color-ui-subtle);
-}
-
-.mobile-utilities {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0;
-}
-
-.mobile-util-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  background: transparent;
-  border: none;
-  color: var(--telekom-color-text-and-icon-standard);
-  font: inherit;
-  padding: var(--space-md);
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
-  transition: background-color 0.2s ease;
-}
-
-.mobile-util-btn:hover {
-  background-color: var(--telekom-color-ui-subtle-hover);
-}
-
-.mobile-util-btn.active {
-  color: var(--telekom-color-primary-standard);
-  font-weight: bold;
+  background-color: var(--telekom-color-functional-informational-subtle, #d3d7f9);
+  border-color: var(--telekom-color-functional-informational-standard, #2238df);
+  color: var(--telekom-color-functional-informational-standard, #2238df);
 }
 
 .center {
@@ -686,9 +651,6 @@ scale-telekom-header::part(app-name-text) {
 @media (max-width: 1039px) {
   .mobile-nav-item {
     display: flex;
-  }
-  .theme-utilities {
-    display: none; /* Hide on mobile header, use flyout menu instead */
   }
 }
 </style>

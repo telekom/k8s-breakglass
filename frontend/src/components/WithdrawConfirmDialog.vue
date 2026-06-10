@@ -31,7 +31,7 @@ const emit = defineEmits<{
   >
     <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
     <p v-if="sessionName" class="withdraw-detail"><strong>Request:</strong> {{ sessionName }}</p>
-    <div slot="action" class="dialog-actions">
+    <div slot="action" class="modal-actions">
       <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="emit('cancel')">
         Cancel
       </scale-button>
@@ -43,13 +43,6 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.dialog-actions {
-  display: flex;
-  gap: var(--space-md);
-  justify-content: flex-end;
-  margin-top: var(--space-lg);
-}
-
 .withdraw-detail {
   margin-top: var(--space-sm);
   font: var(--telekom-text-style-body);

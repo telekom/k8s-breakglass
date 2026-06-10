@@ -14,7 +14,7 @@ const emit = defineEmits<{
   join: [];
   leave: [];
   terminate: [];
-  renew: [];
+  renew: [duration: string];
   approve: [];
   reject: [reason: string];
   viewDetails: [];
@@ -24,6 +24,15 @@ const rejectReason = ref("");
 const showRejectModal = ref(false);
 const showRenewModal = ref(false);
 const renewDuration = ref("1h");
+const sessionDomId = computed(() => toDomIdPart(props.session.name));
+const rejectReasonId = computed(() => `reject-reason-${sessionDomId.value}`);
+const renewDurationId = computed(() => `renew-duration-${sessionDomId.value}`);
+
+function toDomIdPart(value: string) {
+  const slug = value.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "session";
+  const encoded = Array.from(value, (char) => char.codePointAt(0)?.toString(36) ?? "0").join("-");
+  return `${slug}-${encoded || "empty"}`;
+}
 
 const stateVariant = computed(() => {
   switch (props.session.state) {
@@ -73,8 +82,22 @@ function handleReject() {
 }
 
 function handleRenew() {
-  emit("renew");
+  emit("renew", renewDuration.value);
   showRenewModal.value = false;
+}
+
+function handleRenewDurationChange(event: Event) {
+  renewDuration.value = (event.target as HTMLSelectElement).value;
+}
+
+function openRejectModal() {
+  rejectReason.value = "";
+  showRejectModal.value = true;
+}
+
+function openRenewModal() {
+  renewDuration.value = "1h";
+  showRenewModal.value = true;
 }
 </script>
 
@@ -94,35 +117,35 @@ function handleRenew() {
       <!-- Show status message for failed/rejected sessions -->
       <div
         v-if="session.statusMessage && (session.state === 'Failed' || session.state === 'Rejected')"
-        class="status-message error"
+        class="status-message tone-chip tone-chip--danger"
         data-testid="status-message"
       >
-        <scale-icon-alert-error size="16"></scale-icon-alert-error>
+        <scale-icon-alert-error size="16" decorative></scale-icon-alert-error>
         <span>{{ session.statusMessage }}</span>
       </div>
 
-      <div class="info-grid">
-        <div class="info-item">
+      <div class="ui-info-grid">
+        <div class="ui-info-item">
           <span class="label">Template</span>
           <span class="value">{{ session.templateRef || "—" }}</span>
         </div>
-        <div class="info-item">
+        <div class="ui-info-item">
           <span class="label">Requested By</span>
           <span class="value">{{ session.requestedByDisplayName || session.requestedBy || "—" }}</span>
         </div>
-        <div v-if="session.startsAt" class="info-item">
+        <div v-if="session.startsAt" class="ui-info-item">
           <span class="label">Started</span>
           <span class="value">{{ formatDateTime(session.startsAt) }}</span>
         </div>
-        <div v-if="session.expiresAt && session.state === 'Active'" class="info-item">
+        <div v-if="session.expiresAt && session.state === 'Active'" class="ui-info-item">
           <span class="label">Expires</span>
           <span class="value expires">{{ expiresIn }}</span>
         </div>
-        <div class="info-item">
+        <div class="ui-info-item">
           <span class="label">Participants</span>
           <span class="value">{{ session.participants ?? "—" }}</span>
         </div>
-        <div v-if="session.allowedPods > 0" class="info-item">
+        <div v-if="session.allowedPods > 0" class="ui-info-item">
           <span class="label">Debug Pods</span>
           <span class="value">{{ session.allowedPods }}</span>
         </div>
@@ -131,60 +154,69 @@ function handleRenew() {
 
     <div class="card-actions" data-testid="card-actions">
       <scale-button variant="secondary" size="small" data-testid="view-details-button" @click="emit('viewDetails')">
-        View Details
+        Details
       </scale-button>
 
-      <scale-button v-if="canJoin" variant="primary" size="small" data-testid="join-button" @click="emit('join')">
-        Join Session
-      </scale-button>
+      <div class="action-group">
+        <scale-button v-if="canJoin" variant="primary" size="small" data-testid="join-button" @click="emit('join')">
+          Join
+        </scale-button>
 
-      <scale-button v-if="canLeave" variant="secondary" size="small" data-testid="leave-button" @click="emit('leave')">
-        Leave
-      </scale-button>
+        <scale-button
+          v-if="canLeave"
+          variant="secondary"
+          size="small"
+          data-testid="leave-button"
+          @click="emit('leave')"
+        >
+          Leave
+        </scale-button>
 
-      <scale-button
-        v-if="canRenew"
-        variant="secondary"
-        size="small"
-        data-testid="renew-button"
-        @click="showRenewModal = true"
-      >
-        Renew
-      </scale-button>
+        <scale-button
+          v-if="canRenew"
+          variant="secondary"
+          size="small"
+          data-testid="renew-button"
+          @click="openRenewModal"
+        >
+          Renew
+        </scale-button>
 
-      <scale-button
-        v-if="canTerminate"
-        variant="secondary"
-        size="small"
-        data-testid="terminate-button"
-        @click="emit('terminate')"
-      >
-        Terminate
-      </scale-button>
+        <scale-button
+          v-if="canTerminate"
+          variant="secondary"
+          size="small"
+          data-testid="terminate-button"
+          @click="emit('terminate')"
+        >
+          Terminate
+        </scale-button>
 
-      <scale-button
-        v-if="canApprove"
-        variant="primary"
-        size="small"
-        data-testid="approve-button"
-        @click="emit('approve')"
-      >
-        Approve
-      </scale-button>
+        <scale-button
+          v-if="canApprove"
+          variant="primary"
+          size="small"
+          data-testid="approve-button"
+          @click="emit('approve')"
+        >
+          Approve
+        </scale-button>
 
-      <scale-button
-        v-if="canReject"
-        variant="secondary"
-        size="small"
-        data-testid="reject-button"
-        @click="showRejectModal = true"
-      >
-        Reject
-      </scale-button>
+        <scale-button
+          v-if="canReject"
+          variant="secondary"
+          size="small"
+          data-testid="reject-button"
+          @click="openRejectModal"
+        >
+          Reject
+        </scale-button>
+      </div>
     </div>
 
     <!-- Reject Modal -->
     <scale-modal
+      v-if="showRejectModal"
       :opened="showRejectModal"
       heading="Reject Debug Session"
       data-testid="reject-modal"
@@ -192,7 +224,9 @@ function handleRenew() {
     >
       <div class="modal-content">
         <p>Provide a reason for rejecting this debug session request.</p>
+        <label :for="rejectReasonId" class="sr-only">Rejection Reason</label>
         <scale-text-field
+          :id="rejectReasonId"
           v-model="rejectReason"
           label="Rejection Reason"
           placeholder="Enter reason..."
@@ -200,7 +234,7 @@ function handleRenew() {
           data-testid="reject-reason-input"
         ></scale-text-field>
       </div>
-      <div slot="action">
+      <div slot="action" class="modal-actions">
         <scale-button variant="secondary" data-testid="reject-cancel-button" @click="showRejectModal = false"
           >Cancel</scale-button
         >
@@ -217,6 +251,7 @@ function handleRenew() {
 
     <!-- Renew Modal -->
     <scale-modal
+      v-if="showRenewModal"
       :opened="showRenewModal"
       heading="Renew Debug Session"
       data-testid="renew-modal"
@@ -224,13 +259,21 @@ function handleRenew() {
     >
       <div class="modal-content">
         <p>Extend the duration of this debug session.</p>
-        <scale-dropdown-select v-model="renewDuration" label="Extend By" data-testid="renew-duration-select">
+        <label :for="renewDurationId" class="sr-only">Extend By</label>
+        <scale-dropdown-select
+          :id="renewDurationId"
+          :value="renewDuration"
+          label="Extend By"
+          data-testid="renew-duration-select"
+          @scale-change="handleRenewDurationChange"
+        >
           <scale-dropdown-select-item value="30m">30 minutes</scale-dropdown-select-item>
           <scale-dropdown-select-item value="1h">1 hour</scale-dropdown-select-item>
           <scale-dropdown-select-item value="2h">2 hours</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="4h">4 hours</scale-dropdown-select-item>
         </scale-dropdown-select>
       </div>
-      <div slot="action">
+      <div slot="action" class="modal-actions">
         <scale-button variant="secondary" data-testid="renew-cancel-button" @click="showRenewModal = false"
           >Cancel</scale-button
         >
@@ -299,56 +342,11 @@ function handleRenew() {
   flex: 1;
 }
 
-.status-message {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-xs);
-  padding: var(--space-sm);
-  border-radius: var(--radius-sm);
-  font-size: 0.875rem;
-  margin-bottom: var(--space-md);
-}
-
-.status-message.error {
-  background: var(--telekom-color-functional-danger-subtle);
-  color: var(--telekom-color-functional-danger-standard);
-}
-
 .status-message span {
   word-break: break-word;
 }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-sm);
-}
-
-@media (max-width: 640px) {
-  .info-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.info-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.info-item .label {
-  font-size: 0.75rem;
-  color: var(--telekom-color-text-and-icon-standard);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.info-item .value {
-  font-size: 0.875rem;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.info-item .value.expires {
+.ui-info-item .value.expires {
   color: var(--tone-chip-warning-text);
   font-weight: 500;
 }
@@ -358,13 +356,26 @@ function handleRenew() {
   border-top: 1px solid var(--telekom-color-ui-border-subtle);
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
   gap: var(--space-sm);
+}
+
+.action-group {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .modal-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  padding: var(--space-md) 0;
+}
+
+.status-message {
+  width: 100%;
 }
 </style>
