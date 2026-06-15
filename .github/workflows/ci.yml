@@ -1223,7 +1223,11 @@ jobs:
   oidc-comprehensive-e2e:
     name: OIDC Comprehensive E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Setup currently takes about 25 minutes and the suite includes two
+    # intentional 6.5-minute access-token expiry checks. Keep the job timeout
+    # above the Go test timeout so the test process, not the runner, owns
+    # suite-level timeout failures.
+    timeout-minutes: 75
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
