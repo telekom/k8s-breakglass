@@ -39,7 +39,7 @@ updates:
         patterns:
           - "vue*"
           - "@vue/*"
-          - "vite*"
+          - "vite"
           - "@vitejs/*"
       npm-major:
         patterns:
@@ -47,7 +47,7 @@ updates:
         exclude-patterns:
           - "vue*"
           - "@vue/*"
-          - "vite*"
+          - "vite"
           - "@vitejs/*"
         update-types:
           - "major"
@@ -57,7 +57,7 @@ updates:
         exclude-patterns:
           - "vue*"
           - "@vue/*"
-          - "vite*"
+          - "vite"
           - "@vitejs/*"
         update-types:
           - "minor"
