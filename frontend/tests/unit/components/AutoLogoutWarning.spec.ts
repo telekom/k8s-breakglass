@@ -9,6 +9,22 @@ import { mount, VueWrapper } from "@vue/test-utils";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
 import { AuthKey } from "@/keys";
 
+type MockAuth = {
+  login: (state?: { path: string; idpName?: string }) => Promise<void>;
+  logout: () => void;
+  getIdentityProviderName: () => string | undefined;
+  userManager: {
+    settings: {
+      authority: string;
+      client_id: string;
+    };
+  };
+};
+
+type AutoLogoutWarningVm = {
+  reauthenticate: () => Promise<void>;
+};
+
 describe("AutoLogoutWarning", () => {
   let wrapper: VueWrapper | null = null;
 
@@ -17,16 +33,37 @@ describe("AutoLogoutWarning", () => {
     wrapper = null;
     vi.clearAllTimers();
     vi.restoreAllMocks();
+    vi.useRealTimers();
+    sessionStorage.clear();
+    localStorage.clear();
+    window.history.pushState({}, "", "/");
   });
-  const createMockAuth = () => ({
+
+  const mountWithAuth = (auth: MockAuth) =>
+    mount(AutoLogoutWarning, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: auth,
+        },
+        stubs: {
+          transition: false,
+          "scale-notification": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+  const createMockAuth = (overrides: Partial<MockAuth> = {}): MockAuth => ({
     login: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn(),
+    getIdentityProviderName: vi.fn(() => undefined),
     userManager: {
       settings: {
         authority: "https://issuer.example.com",
         client_id: "breakglass-ui",
       },
     },
+    ...overrides,
   });
 
   it("throws a clear error when mounted without auth provider", () => {
@@ -44,19 +81,42 @@ describe("AutoLogoutWarning", () => {
   });
 
   it("mounts successfully when auth provider is present", () => {
-    wrapper = mount(AutoLogoutWarning, {
-      global: {
-        provide: {
-          [AuthKey as symbol]: createMockAuth(),
-        },
-        stubs: {
-          transition: false,
-          "scale-notification": true,
-          "scale-button": true,
-        },
-      },
-    });
+    wrapper = mountWithAuth(createMockAuth());
 
     expect(wrapper.exists()).toBe(true);
+  });
+
+  it("preserves the active identity provider when reauthenticating", async () => {
+    const auth = createMockAuth({
+      getIdentityProviderName: vi.fn(() => "corp"),
+    });
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
+
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
+
+    expect(auth.login).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
+      idpName: "corp",
+    });
+  });
+
+  it("shows the warning for an expiring IDP-specific OIDC user", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    sessionStorage.setItem(
+      "oidc.user:/api/oidc/authority:corp-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(true);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
   });
 });

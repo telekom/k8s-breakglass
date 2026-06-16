@@ -63,12 +63,17 @@ export default {
       auth.logout();
     }
 
+    function getCurrentIdentityProviderName(): string | undefined {
+      return auth.getIdentityProviderName() ?? sessionStorage.getItem("oidc_idp_name") ?? undefined;
+    }
+
     async function reauthenticate() {
       if (!auth || renewing.value) return;
       renewing.value = true;
       try {
         const path = window.location.pathname + window.location.search + window.location.hash;
-        await auth.login({ path });
+        const idpName = getCurrentIdentityProviderName();
+        await auth.login(idpName ? { path, idpName } : { path });
         show.value = false;
         dismissed.value = false;
       } catch (err) {
@@ -83,30 +88,79 @@ export default {
       show.value = false;
     }
 
+    function getAvailableOIDCStorages(): Storage[] {
+      const storages: Storage[] = [];
+      if (typeof window === "undefined") {
+        return storages;
+      }
+      if (typeof window.sessionStorage !== "undefined") {
+        storages.push(window.sessionStorage);
+      }
+      if (typeof window.localStorage !== "undefined") {
+        storages.push(window.localStorage);
+      }
+      return storages;
+    }
+
+    function getStoredOIDCUserValues(): string[] {
+      const defaultStorageKey =
+        "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id;
+      const values: string[] = [];
+      const seenValues = new Set<string>();
+
+      for (const storage of getAvailableOIDCStorages()) {
+        const keys = new Set<string>([defaultStorageKey]);
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          if (key?.startsWith("oidc.user:")) {
+            keys.add(key);
+          }
+        }
+
+        for (const key of keys) {
+          const value = storage.getItem(key);
+          if (value && !seenValues.has(value)) {
+            seenValues.add(value);
+            values.push(value);
+          }
+        }
+      }
+
+      return values;
+    }
+
     function checkExpiring() {
-      const storageKey = "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id;
-      const userStr = sessionStorage.getItem(storageKey) ?? localStorage.getItem(storageKey);
-      if (userStr) {
+      let nearestExpiryMs: number | null = null;
+      for (const userStr of getStoredOIDCUserValues()) {
         try {
-          const parsed = JSON.parse(userStr);
-          if (parsed && parsed.expires_at) {
+          const parsed = JSON.parse(userStr) as { expires_at?: unknown } | null;
+          if (parsed && typeof parsed.expires_at === "number") {
             const expiresIn = parsed.expires_at * 1000 - Date.now();
-            if (expiresIn < WARNING_THRESHOLD_MS && expiresIn > 0 && !dismissed.value) {
-              show.value = true;
-            } else {
-              show.value = false;
-              if (expiresIn > WARNING_THRESHOLD_MS) {
-                dismissed.value = false;
-              }
+            if (expiresIn > 0 && (nearestExpiryMs === null || expiresIn < nearestExpiryMs)) {
+              nearestExpiryMs = expiresIn;
             }
           }
         } catch (e) {
           warn("AutoLogoutWarning", "Failed to parse OIDC user data from browser storage", e);
         }
       }
+
+      if (nearestExpiryMs === null) {
+        show.value = false;
+        return;
+      }
+
+      if (nearestExpiryMs < WARNING_THRESHOLD_MS) {
+        show.value = !dismissed.value;
+        return;
+      }
+
+      show.value = false;
+      dismissed.value = false;
     }
 
     onMounted(() => {
+      checkExpiring();
       timer = window.setInterval(checkExpiring, 5000);
     });
     onUnmounted(() => {
