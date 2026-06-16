@@ -114,13 +114,19 @@ describe("createAuthenticatedApiClient", () => {
 
     const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com" });
     client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
-      throw new AxiosError("Unauthorized", "ERR_BAD_REQUEST", config, {}, {
-        data: {},
-        status: 401,
-        statusText: "Unauthorized",
-        headers: {},
+      throw new AxiosError(
+        "Unauthorized",
+        "ERR_BAD_REQUEST",
         config,
-      });
+        {},
+        {
+          data: {},
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {},
+          config,
+        },
+      );
     };
 
     await expect(client.get("/protected")).rejects.toThrow("Unauthorized");
@@ -138,18 +144,26 @@ describe("createAuthenticatedApiClient", () => {
     client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
       attempts += 1;
       if (attempts === 1) {
-        throw new AxiosError("Unauthorized", "ERR_BAD_REQUEST", config, {}, {
-          data: {},
-          status: 401,
-          statusText: "Unauthorized",
-          headers: {},
+        throw new AxiosError(
+          "Unauthorized",
+          "ERR_BAD_REQUEST",
           config,
-        });
+          {},
+          {
+            data: {},
+            status: 401,
+            statusText: "Unauthorized",
+            headers: {},
+            config,
+          },
+        );
       }
       return {
         data: {
           authorization:
-            typeof config.headers?.get === "function" ? config.headers.get("Authorization") : config.headers?.Authorization,
+            typeof config.headers?.get === "function"
+              ? config.headers.get("Authorization")
+              : config.headers?.Authorization,
         },
         status: 200,
         statusText: "OK",
