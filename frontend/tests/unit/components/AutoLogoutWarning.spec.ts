@@ -33,13 +33,13 @@ describe("AutoLogoutWarning", () => {
     localStorage.clear();
   });
   const createMockAuth = () => ({
+    login: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn(),
     userManager: {
       settings: {
         authority: AUTHORITY,
         client_id: CLIENT_ID,
       },
-      signinSilent: vi.fn().mockResolvedValue(undefined),
     },
   });
 
