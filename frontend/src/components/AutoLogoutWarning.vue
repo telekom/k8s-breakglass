@@ -15,17 +15,17 @@
         @scale-close="dismiss"
       >
         <p class="warning-copy">
-          Your session will expire shortly. Click stay logged in to silently renew, or log out if you are finished.
+          Your session will expire shortly. Re-authenticate to continue, or log out if you are finished.
         </p>
         <div class="warning-actions">
           <scale-button
             variant="primary"
             size="small"
             :loading="renewing"
-            data-testid="stay-logged-in-button"
-            @click="stayLoggedIn"
+            data-testid="reauthenticate-button"
+            @click="reauthenticate"
           >
-            Stay logged in
+            Re-authenticate
           </scale-button>
           <scale-button variant="secondary" size="small" data-testid="dismiss-button" @click="dismiss"
             >Dismiss</scale-button
@@ -63,15 +63,16 @@ export default {
       auth.logout();
     }
 
-    async function stayLoggedIn() {
+    async function reauthenticate() {
       if (!auth || renewing.value) return;
       renewing.value = true;
       try {
-        await auth.userManager.signinSilent();
+        const path = window.location.pathname + window.location.search + window.location.hash;
+        await auth.login({ path });
         show.value = false;
         dismissed.value = false;
       } catch (err) {
-        warn("AutoLogoutWarning", "Silent renew failed", err);
+        warn("AutoLogoutWarning", "Re-authentication failed", err);
       } finally {
         renewing.value = false;
       }
@@ -83,9 +84,8 @@ export default {
     }
 
     function checkExpiring() {
-      const userStr = localStorage.getItem(
-        "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id,
-      );
+      const storageKey = "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id;
+      const userStr = sessionStorage.getItem(storageKey) ?? localStorage.getItem(storageKey);
       if (userStr) {
         try {
           const parsed = JSON.parse(userStr);
@@ -101,7 +101,7 @@ export default {
             }
           }
         } catch (e) {
-          warn("AutoLogoutWarning", "Failed to parse OIDC user data from localStorage", e);
+          warn("AutoLogoutWarning", "Failed to parse OIDC user data from browser storage", e);
         }
       }
     }
@@ -113,7 +113,7 @@ export default {
       if (timer) clearInterval(timer);
     });
 
-    return { show, logout, stayLoggedIn, dismiss, renewing };
+    return { show, logout, reauthenticate, dismiss, renewing };
   },
 };
 </script>

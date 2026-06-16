@@ -5,7 +5,7 @@ import logger from "@/services/logger";
 export interface ApiClientOptions {
   baseURL?: string;
   enableDevTokenLogging?: boolean;
-  /** If true, will attempt silent token renew on 401 and retry the request once */
+  /** If true, attempts silent token renew on 401 and retries the request once. Disabled by default. */
   retryOn401?: boolean;
   /** Request timeout in milliseconds. Defaults to 30000 (30 seconds). */
   timeout?: number;
@@ -72,8 +72,8 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
     async (error) => {
       const config = error.config as InternalAxiosRequestConfig & { [RETRY_FLAG]?: boolean };
 
-      // Handle 401 errors with optional retry after silent renew
-      if (error.response?.status === 401 && options?.retryOn401 !== false && !config?.[RETRY_FLAG]) {
+      // Handle 401 errors with opt-in retry after silent renew.
+      if (error.response?.status === 401 && options?.retryOn401 === true && !config?.[RETRY_FLAG]) {
         logger.debug("HttpClient", "Received 401, attempting silent token renew before retry");
 
         try {

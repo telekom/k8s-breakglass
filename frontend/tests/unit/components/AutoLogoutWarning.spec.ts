@@ -19,13 +19,13 @@ describe("AutoLogoutWarning", () => {
     vi.restoreAllMocks();
   });
   const createMockAuth = () => ({
+    login: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn(),
     userManager: {
       settings: {
         authority: "https://issuer.example.com",
         client_id: "breakglass-ui",
       },
-      signinSilent: vi.fn().mockResolvedValue(undefined),
     },
   });
 

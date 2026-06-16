@@ -71,6 +71,13 @@ describe("AuthService", () => {
     it("does not request offline_access refresh-token scope", () => {
       expect(authService.userManager.settings.scope).toBe("openid profile email");
     });
+
+    it("does not silently renew real OIDC sessions", async () => {
+      const signinSilentSpy = vi.spyOn(authService.userManager, "signinSilent");
+
+      await expect(authService.trySilentRenew()).resolves.toBe(false);
+      expect(signinSilentSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("getUser()", () => {

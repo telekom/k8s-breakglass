@@ -172,14 +172,16 @@ function getOIDCStorage(): Storage {
     return fallbackStorage;
   }
   const prefersPersistent = getTokenPersistenceMode() === "persistent";
-  if (prefersPersistent && typeof window.localStorage !== "undefined") {
-    if (!isProductionBuild()) {
+  if (prefersPersistent) {
+    if (isProductionBuild()) {
+      warn("AuthService", "Persistent OIDC token storage is disabled in production; using sessionStorage");
+    } else if (typeof window.localStorage !== "undefined") {
       warn(
         "AuthService",
         "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
       );
+      return window.localStorage;
     }
-    return window.localStorage;
   }
   return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
 }
@@ -656,12 +658,8 @@ export default class AuthService {
   }
 
   /**
-   * Try to silently renew the token. Returns true if successful.
-   * This can be called manually if the automatic silent renew failed.
-   *
-   * Strategy:
-   * 1. Remove any stale refresh token from previously persisted user state
-   * 2. Try signinSilent(), which falls back to iframe flow when no refresh token is present
+   * Silent renewal is intentionally disabled for breakglass sessions.
+   * Users must explicitly re-authenticate when their short-lived token expires.
    */
   public async trySilentRenew(): Promise<boolean> {
     if (this.mockMode) {
@@ -669,32 +667,8 @@ export default class AuthService {
       return true;
     }
 
-    // First, check if we have a valid user with a refresh token
-    const currentUser = await this.userManager.getUser();
-    if (!currentUser) {
-      warn("AuthService", "No user found for silent renew");
-      return false;
-    }
-    await this.stripAndStoreRefreshToken(this.userManager, currentUser);
-
-    try {
-      debug("AuthService", "Attempting silent renew without refresh-token fallback");
-      const renewedUser = await this.userManager.signinSilent();
-      if (renewedUser) {
-        const sanitizedUser = await this.stripAndStoreRefreshToken(this.userManager, renewedUser);
-        debug("AuthService", "Silent renew successful", {
-          email: renewedUser.profile?.email,
-          expiresAt: renewedUser.expires_at,
-        });
-        user.value = sanitizedUser;
-        return true;
-      }
-      warn("AuthService", "Silent renew returned no user");
-      return false;
-    } catch (iframeError) {
-      warn("AuthService", "Silent renew failed; user must re-authenticate", iframeError);
-      return false;
-    }
+    warn("AuthService", "Silent token renewal is disabled for breakglass sessions");
+    return false;
   }
 
   public async getUserEmail(): Promise<string> {

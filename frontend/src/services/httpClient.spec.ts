@@ -105,6 +105,65 @@ describe("createAuthenticatedApiClient", () => {
       .join(" ");
     expect(authHeaderCallsStringified).not.toContain("dev-token");
   });
+
+  it("does not attempt silent renew on 401 by default", async () => {
+    const auth = {
+      getAccessToken: vi.fn().mockResolvedValue("mock-token"),
+      trySilentRenew: vi.fn().mockResolvedValue(true),
+    } as unknown as AuthService;
+
+    const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com" });
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError("Unauthorized", "ERR_BAD_REQUEST", config, {}, {
+        data: {},
+        status: 401,
+        statusText: "Unauthorized",
+        headers: {},
+        config,
+      });
+    };
+
+    await expect(client.get("/protected")).rejects.toThrow("Unauthorized");
+    expect((auth as unknown as { trySilentRenew: ReturnType<typeof vi.fn> }).trySilentRenew).not.toHaveBeenCalled();
+  });
+
+  it("retries a 401 only when retryOn401 is explicitly enabled", async () => {
+    const auth = {
+      getAccessToken: vi.fn().mockResolvedValueOnce("old-token").mockResolvedValue("new-token"),
+      trySilentRenew: vi.fn().mockResolvedValue(true),
+    } as unknown as AuthService;
+
+    let attempts = 0;
+    const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com", retryOn401: true });
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new AxiosError("Unauthorized", "ERR_BAD_REQUEST", config, {}, {
+          data: {},
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {},
+          config,
+        });
+      }
+      return {
+        data: {
+          authorization:
+            typeof config.headers?.get === "function" ? config.headers.get("Authorization") : config.headers?.Authorization,
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      };
+    };
+
+    const response = await client.get("/protected");
+
+    expect(attempts).toBe(2);
+    expect((auth as unknown as { trySilentRenew: ReturnType<typeof vi.fn> }).trySilentRenew).toHaveBeenCalledTimes(1);
+    expect(response.data.authorization).toBe("Bearer new-token");
+  });
 });
 
 describe("timeout detection", () => {
