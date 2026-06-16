@@ -809,14 +809,6 @@ function handleTemplateChange(ev: Event) {
   margin: 0;
 }
 
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-md);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
-}
-
 .no-templates-message {
   display: flex;
   flex-direction: column;
