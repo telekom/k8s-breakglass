@@ -185,13 +185,11 @@
 
   --tone-chip-neutral-bg: var(--telekom-color-ui-subtle, #1c1c1e);
   --tone-chip-neutral-border: var(--telekom-color-ui-border-standard);
-  --tone-chip-neutral-text: var(--telekom-color-text-and-icon-standard);
+  /* Expired/neutral chip text in dark mode needs AAA contrast. */
+  --tone-chip-neutral-text: #e0e0e0;
 
   /* Surface helpers for dark mode sections */
   --surface-card-subtle: #242426;
-
-  /* Fix: Lower contrast for expired text in dark mode — boost to AAA */
-  --tone-chip-neutral-text: #e0e0e0;
 
   --tone-chip-brand-bg: #3d0026;
   --tone-chip-brand-border: #e20074;
