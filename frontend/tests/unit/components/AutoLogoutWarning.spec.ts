@@ -101,6 +101,31 @@ describe("AutoLogoutWarning", () => {
     });
   });
 
+  it("falls back to default reauthentication when session storage is unavailable", async () => {
+    const auth = createMockAuth();
+    const sessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      get() {
+        throw new Error("storage blocked");
+      },
+    });
+
+    try {
+      wrapper = mountWithAuth(auth);
+
+      await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
+
+      expect(auth.login).toHaveBeenCalledWith({
+        path: "/",
+      });
+    } finally {
+      if (sessionStorageDescriptor) {
+        Object.defineProperty(window, "sessionStorage", sessionStorageDescriptor);
+      }
+    }
+  });
+
   it("shows the warning for an expiring IDP-specific OIDC user", async () => {
     vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
     const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
@@ -118,5 +143,24 @@ describe("AutoLogoutWarning", () => {
 
     expect((wrapper.vm as unknown as { show: boolean }).show).toBe(true);
     expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
+  });
+
+  it("ignores expiring OIDC users from unrelated authorities", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    sessionStorage.setItem(
+      "oidc.user:https://other.example.com:other-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(false);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
   });
 });
