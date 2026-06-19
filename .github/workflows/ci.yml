@@ -679,6 +679,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune -af || true
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Download Docker image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -690,6 +704,9 @@ jobs:
           docker load -i /tmp/image-artifacts/breakglass-e2e.tar
           docker load -i /tmp/image-artifacts/breakglass-tmux-debug.tar
           docker images | grep -E 'breakglass|tmux'
+          rm -rf /tmp/image-artifacts
+          docker image prune -f
+          df -h /
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -1053,7 +1070,7 @@ jobs:
           BREAKGLASS_API_URL: "http://localhost:8080"
 
       - name: Collect comprehensive diagnostics
-        if: always()
+        if: failure()
         run: |
           DIAG_DIR="e2e-diagnostics"
           mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs,resources,mailhog}
@@ -1208,7 +1225,7 @@ jobs:
           du -sh "$DIAG_DIR"
 
       - name: Upload E2E diagnostics artifact
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: single-cluster-e2e-diagnostics
@@ -1233,6 +1250,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune -af || true
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Download Docker image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1244,6 +1275,9 @@ jobs:
           docker load -i /tmp/image-artifacts/breakglass-e2e.tar
           docker load -i /tmp/image-artifacts/breakglass-tmux-debug.tar
           docker images | grep -E 'breakglass|tmux'
+          rm -rf /tmp/image-artifacts
+          docker image prune -f
+          df -h /
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -1449,7 +1483,7 @@ jobs:
           E2E_NAMESPACE: "breakglass-system"
 
       - name: Collect OIDC E2E diagnostics
-        if: always()
+        if: failure()
         run: |
           DIAG_DIR="oidc-e2e-diagnostics"
           mkdir -p "$DIAG_DIR"/{kubernetes,logs,resources}
@@ -1501,7 +1535,7 @@ jobs:
           du -sh "$DIAG_DIR"
 
       - name: Upload OIDC E2E diagnostics
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: oidc-comprehensive-e2e-diagnostics
@@ -1522,6 +1556,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune -af || true
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Download Docker image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1533,6 +1581,9 @@ jobs:
           docker load -i /tmp/image-artifacts/breakglass-e2e.tar
           docker load -i /tmp/image-artifacts/breakglass-tmux-debug.tar
           docker images | grep -E 'breakglass|tmux'
+          rm -rf /tmp/image-artifacts
+          docker image prune -f
+          df -h /
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -1888,7 +1939,7 @@ jobs:
           retention-days: 14
 
       - name: Collect comprehensive diagnostics
-        if: always()
+        if: failure()
         run: |
           DIAG_DIR="e2e-diagnostics"
           mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs,resources,mailhog,frontend,network,keycloak}
@@ -2128,7 +2179,7 @@ jobs:
           du -sh "$DIAG_DIR"
 
       - name: Upload E2E diagnostics artifact
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-e2e-diagnostics
@@ -2157,6 +2208,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune -af || true
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Download Docker image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -2170,6 +2235,9 @@ jobs:
           # Tag as breakglass:dev for compatibility with multi-cluster setup
           docker tag breakglass:e2e breakglass:dev
           docker images | grep -E 'breakglass|tmux'
+          rm -rf /tmp/image-artifacts
+          docker image prune -f
+          df -h /
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -2627,7 +2695,7 @@ jobs:
           KEYCLOAK_CA_FILE: ${{ env.KEYCLOAK_CA_FILE }}
 
       - name: Collect comprehensive diagnostics
-        if: always()
+        if: failure()
         run: |
           DIAG_DIR="e2e-diagnostics"
           mkdir -p "$DIAG_DIR"/{docker,hub,spoke-a,spoke-b,mailhog}
@@ -2921,7 +2989,7 @@ jobs:
           du -sh "$DIAG_DIR"
 
       - name: Upload E2E diagnostics artifact
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: multi-cluster-e2e-diagnostics
