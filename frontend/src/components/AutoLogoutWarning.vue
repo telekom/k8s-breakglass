@@ -64,7 +64,8 @@ export default {
     }
 
     function getCurrentIdentityProviderName(): string | undefined {
-      return auth.getIdentityProviderName() ?? sessionStorage.getItem("oidc_idp_name") ?? undefined;
+      const sessionStorageValue = getStorageItem(getBrowserStorage("sessionStorage"), "oidc_idp_name");
+      return auth.getIdentityProviderName() ?? sessionStorageValue ?? undefined;
     }
 
     async function reauthenticate() {
@@ -88,18 +89,69 @@ export default {
       show.value = false;
     }
 
+    function getBrowserStorage(name: "sessionStorage" | "localStorage"): Storage | undefined {
+      if (typeof window === "undefined") {
+        return undefined;
+      }
+      try {
+        return window[name];
+      } catch (err) {
+        warn("AutoLogoutWarning", `Unable to access browser ${name}`, err);
+        return undefined;
+      }
+    }
+
+    function getStorageItem(storage: Storage | undefined, key: string): string | null {
+      if (!storage) {
+        return null;
+      }
+      try {
+        return storage.getItem(key);
+      } catch (err) {
+        warn("AutoLogoutWarning", "Unable to read browser storage item", err);
+        return null;
+      }
+    }
+
+    function getStorageLength(storage: Storage): number {
+      try {
+        return storage.length;
+      } catch (err) {
+        warn("AutoLogoutWarning", "Unable to enumerate browser storage", err);
+        return 0;
+      }
+    }
+
+    function getStorageKey(storage: Storage, index: number): string | null {
+      try {
+        return storage.key(index);
+      } catch (err) {
+        warn("AutoLogoutWarning", "Unable to read browser storage key", err);
+        return null;
+      }
+    }
+
     function getAvailableOIDCStorages(): Storage[] {
       const storages: Storage[] = [];
-      if (typeof window === "undefined") {
-        return storages;
-      }
-      if (typeof window.sessionStorage !== "undefined") {
-        storages.push(window.sessionStorage);
-      }
-      if (typeof window.localStorage !== "undefined") {
-        storages.push(window.localStorage);
-      }
+      const sessionStorage = getBrowserStorage("sessionStorage");
+      const localStorage = getBrowserStorage("localStorage");
+      if (sessionStorage) storages.push(sessionStorage);
+      if (localStorage) storages.push(localStorage);
       return storages;
+    }
+
+    function getTrustedOIDCUserKeyPrefixes(): string[] {
+      const prefixes = new Set<string>();
+      const configuredAuthority = auth.userManager.settings.authority;
+      if (configuredAuthority) {
+        prefixes.add(`oidc.user:${configuredAuthority}:`);
+      }
+      prefixes.add("oidc.user:/api/oidc/authority:");
+      return Array.from(prefixes);
+    }
+
+    function isTrustedOIDCUserKey(key: string): boolean {
+      return getTrustedOIDCUserKeyPrefixes().some((prefix) => key.startsWith(prefix));
     }
 
     function getStoredOIDCUserValues(): string[] {
@@ -110,15 +162,15 @@ export default {
 
       for (const storage of getAvailableOIDCStorages()) {
         const keys = new Set<string>([defaultStorageKey]);
-        for (let index = 0; index < storage.length; index += 1) {
-          const key = storage.key(index);
-          if (key?.startsWith("oidc.user:")) {
+        for (let index = 0; index < getStorageLength(storage); index += 1) {
+          const key = getStorageKey(storage, index);
+          if (key && isTrustedOIDCUserKey(key)) {
             keys.add(key);
           }
         }
 
         for (const key of keys) {
-          const value = storage.getItem(key);
+          const value = getStorageItem(storage, key);
           if (value && !seenValues.has(value)) {
             seenValues.add(value);
             values.push(value);
