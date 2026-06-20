@@ -277,6 +277,7 @@ describe("AuthService", () => {
 
       expect(fakeManager.signinRedirect).toHaveBeenCalledWith({ state: { path: "/secure", idpName } });
       expect(sessionStorage.getItem("oidc_idp_name")).toBe(idpName);
+      expect(localStorage.getItem("breakglass_current_idp_name")).toBe(idpName);
       expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct.corp");
       expect(authService.getIdentityProviderName()).toBe(idpName);
 
@@ -472,9 +473,21 @@ describe("AuthService", () => {
   describe("logout()", () => {
     it("should call userManager.signoutRedirect", async () => {
       const signoutSpy = vi.spyOn(authService.userManager, "signoutRedirect").mockResolvedValue(undefined);
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      localStorage.setItem("breakglass_current_idp_name", "corp");
 
       await authService.logout();
       expect(signoutSpy).toHaveBeenCalled();
+      expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
+    });
+  });
+
+  describe("getIdentityProviderName()", () => {
+    it("falls back to the persisted identity provider name", () => {
+      localStorage.setItem("breakglass_current_idp_name", "corp");
+
+      expect(authService.getIdentityProviderName()).toBe("corp");
     });
   });
 
