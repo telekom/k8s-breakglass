@@ -65,7 +65,8 @@ export default {
 
     function getCurrentIdentityProviderName(): string | undefined {
       const sessionStorageValue = getStorageItem(getBrowserStorage("sessionStorage"), "oidc_idp_name");
-      return auth.getIdentityProviderName() ?? sessionStorageValue ?? undefined;
+      const localStorageValue = getStorageItem(getBrowserStorage("localStorage"), "breakglass_current_idp_name");
+      return auth.getIdentityProviderName() ?? sessionStorageValue ?? localStorageValue ?? undefined;
     }
 
     async function reauthenticate() {
