@@ -8,6 +8,8 @@ import { debug, info as logInfo, warn, error as logError } from "@/services/logg
 // Store the current direct authority for header injection during OIDC requests
 // We use sessionStorage so it persists across page reloads during OAuth redirect flow
 const DIRECT_AUTHORITY_STORAGE_KEY = "oidc_direct_authority";
+const CURRENT_IDP_SESSION_STORAGE_KEY = "oidc_idp_name";
+const CURRENT_IDP_LOCAL_STORAGE_KEY = "breakglass_current_idp_name";
 const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
 export type TokenPersistenceMode = "session" | "persistent";
 const isBrowser = typeof window !== "undefined";
@@ -219,6 +221,51 @@ function getCurrentDirectAuthority(): string | undefined {
   return window.sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
+function setStoredIdentityProviderName(idpName: string | undefined) {
+  if (!isBrowser) {
+    return;
+  }
+
+  for (const { storageName, key } of [
+    { storageName: "sessionStorage", key: CURRENT_IDP_SESSION_STORAGE_KEY },
+    { storageName: "localStorage", key: CURRENT_IDP_LOCAL_STORAGE_KEY },
+  ] as const) {
+    try {
+      const storage = window[storageName];
+      if (idpName) {
+        storage.setItem(key, idpName);
+      } else {
+        storage.removeItem(key);
+      }
+    } catch (error) {
+      warn("AuthService", "Unable to update stored identity provider name", error);
+    }
+  }
+}
+
+function getStoredIdentityProviderName(): string | undefined {
+  if (!isBrowser) {
+    return undefined;
+  }
+
+  for (const { storageName, key } of [
+    { storageName: "sessionStorage", key: CURRENT_IDP_SESSION_STORAGE_KEY },
+    { storageName: "localStorage", key: CURRENT_IDP_LOCAL_STORAGE_KEY },
+  ] as const) {
+    try {
+      const storage = window[storageName];
+      const storedValue = storage.getItem(key);
+      if (storedValue) {
+        return storedValue;
+      }
+    } catch (error) {
+      warn("AuthService", "Unable to read stored identity provider name", error);
+    }
+  }
+
+  return undefined;
+}
+
 function safeBtoa(value: string): string {
   if (typeof globalThis !== "undefined") {
     const globalAny = globalThis as {
@@ -419,6 +466,7 @@ export default class AuthService {
     }
     this.currentIDPName = state?.idpName;
     currentIDPName.value = state?.idpName;
+    setStoredIdentityProviderName(state?.idpName);
   }
 
   private clearMockSession() {
@@ -429,6 +477,7 @@ export default class AuthService {
     }
     this.currentIDPName = undefined;
     currentIDPName.value = undefined;
+    setStoredIdentityProviderName(undefined);
   }
 
   public async getUser(): Promise<User | null> {
@@ -491,14 +540,11 @@ export default class AuthService {
         // Store the current IDP name for later retrieval
         this.currentIDPName = state.idpName;
         currentIDPName.value = state.idpName;
+        setStoredIdentityProviderName(state.idpName);
 
-        // Also store IDP name in sessionStorage so it survives the OAuth redirect
-        if (state.idpName) {
-          sessionStorage.setItem("oidc_idp_name", state.idpName);
-          debug("AuthService", "Stored IDP name in sessionStorage:", {
-            idpName: state.idpName,
-          });
-        }
+        debug("AuthService", "Stored IDP name for session continuity:", {
+          idpName: state.idpName,
+        });
 
         // Get or create UserManager for this IDP with the proxy authority
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
@@ -533,9 +579,7 @@ export default class AuthService {
     }
 
     debug("AuthService", "Logging in with default IDP (no specific IDP selected)");
-    if (isBrowser) {
-      sessionStorage.removeItem("oidc_idp_name");
-    }
+    setStoredIdentityProviderName(undefined);
     // Clear any previously set direct authority for default login
     setCurrentDirectAuthority(undefined);
     return this.userManager.signinRedirect({ state: resolveState(state) });
@@ -601,7 +645,7 @@ export default class AuthService {
   }
 
   public getIdentityProviderName(): string | undefined {
-    return this.currentIDPName;
+    return this.currentIDPName ?? getStoredIdentityProviderName();
   }
 
   public logout(): Promise<void> {
@@ -613,6 +657,8 @@ export default class AuthService {
     // Clear the current IDP name on logout
     this.currentIDPName = undefined;
     currentIDPName.value = undefined;
+    setStoredIdentityProviderName(undefined);
+    setCurrentDirectAuthority(undefined);
     return this.userManager.signoutRedirect();
   }
 
@@ -814,13 +860,11 @@ export default class AuthService {
           });
         }
 
-        this.currentIDPName = restoredIdpName;
-        currentIDPName.value = restoredIdpName;
-        if (preferredIdpName && isBrowser) {
-          sessionStorage.removeItem("oidc_idp_name");
-        }
+	        this.currentIDPName = restoredIdpName;
+	        currentIDPName.value = restoredIdpName;
+	        setStoredIdentityProviderName(restoredIdpName);
 
-        return result;
+	        return result;
       } catch (error) {
         // Check if this is an authority mismatch error
         const errorMsg = String(error);
@@ -914,6 +958,10 @@ export default class AuthService {
       events.addUserUnloaded(() => {
         debug("AuthService", "User unloaded event - session cleared");
         user.value = undefined;
+        this.currentIDPName = undefined;
+        currentIDPName.value = undefined;
+        setStoredIdentityProviderName(undefined);
+        setCurrentDirectAuthority(undefined);
       });
     }
 
@@ -930,6 +978,10 @@ export default class AuthService {
         warn("AuthService", "Access token expired - clearing local session");
         logError("AuthService", "Access token expired, user needs to re-authenticate");
         user.value = undefined;
+        this.currentIDPName = undefined;
+        currentIDPName.value = undefined;
+        setStoredIdentityProviderName(undefined);
+        setCurrentDirectAuthority(undefined);
         manager.removeUser().catch((error: unknown) => {
           logError("AuthService", "Failed to remove expired OIDC user", error);
         });
@@ -954,6 +1006,10 @@ export default class AuthService {
       events.addUserSignedOut(() => {
         debug("AuthService", "User signed out event (possibly from another tab)");
         user.value = undefined;
+        this.currentIDPName = undefined;
+        currentIDPName.value = undefined;
+        setStoredIdentityProviderName(undefined);
+        setCurrentDirectAuthority(undefined);
       });
     }
   }

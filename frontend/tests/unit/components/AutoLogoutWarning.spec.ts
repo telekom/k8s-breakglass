@@ -101,6 +101,20 @@ describe("AutoLogoutWarning", () => {
     });
   });
 
+  it("uses the persisted identity provider when the in-memory and session hints are absent", async () => {
+    const auth = createMockAuth();
+    localStorage.setItem("breakglass_current_idp_name", "corp");
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
+
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
+
+    expect(auth.login).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
+      idpName: "corp",
+    });
+  });
+
   it("falls back to default reauthentication when session storage is unavailable", async () => {
     const auth = createMockAuth();
     const sessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
