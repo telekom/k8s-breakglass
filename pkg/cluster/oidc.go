@@ -1290,6 +1290,7 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 		MinVersion: tls.VersionTLS12,
 		ServerName: hostname,
 
+		// lgtm[go/disabled-certificate-check]
 		// codeql[go/disabled-certificate-check]
 		InsecureSkipVerify: true, // #nosec G402 -- TOFU requires accepting the first untrusted cert before pin validation
 		VerifyConnection: func(cs tls.ConnectionState) error {
