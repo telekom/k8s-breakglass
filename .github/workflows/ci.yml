@@ -1906,11 +1906,14 @@ jobs:
           wait_for_keycloak() {
             local url="$1"
             local attempts="$2"
+            local connect_timeout="${3:-2}"
+            local max_time="${4:-3}"
 
-            for _ in $(seq 1 "$attempts"); do
-              if curl -skf --connect-timeout 5 --max-time 10 "$url/realms/master" > /dev/null 2>&1; then
+            for attempt in $(seq 1 "$attempts"); do
+              if curl -skf --connect-timeout "$connect_timeout" --max-time "$max_time" "$url/realms/master" > /dev/null 2>&1; then
                 return 0
               fi
+              echo "Keycloak not reachable yet ($attempt/$attempts)"
               sleep 1
             done
 
@@ -1928,12 +1931,12 @@ jobs:
           curl -sf "http://localhost:8080" > /dev/null || { echo "ERROR: Frontend not reachable on port 8080"; exit 1; }
           
           echo "Testing Keycloak at $KEYCLOAK_E2E_URL/realms/master"
-          if ! wait_for_keycloak "$KEYCLOAK_E2E_URL" 5; then
+          if ! wait_for_keycloak "$KEYCLOAK_E2E_URL" 3 1 2; then
             echo "Keycloak not reachable at $KEYCLOAK_E2E_URL, restarting port-forward before retry..."
             restart_keycloak_port_forward
           fi
 
-          wait_for_keycloak "$KEYCLOAK_E2E_URL" 60 || {
+          wait_for_keycloak "$KEYCLOAK_E2E_URL" 20 2 3 || {
             echo "ERROR: Keycloak not reachable at $KEYCLOAK_E2E_URL"
             echo "Checking /etc/hosts entry:"
             grep "$KEYCLOAK_SERVICE_HOSTNAME" /etc/hosts || echo "No hosts entry found"

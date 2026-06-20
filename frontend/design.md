@@ -453,17 +453,17 @@ When adding new backend states, update the `STATE_TONE_MAP` in that file. Do not
 
 | Category | Issues | Score |
 |----------|--------|-------|
-| Token coverage — colors | 0 hardcoded colors; all rgba replaced with functional tokens or `color-mix()` | 10/10 |
-| Token coverage — spacing | 0 hardcoded px gaps/margins/padding; all use `--space-*` or `--scl-spacing-*` | 10/10 |
+| Token coverage — colors | Functional tokens cover product UI; a few fallback literals remain where custom debug/legacy surfaces need a safe value before tokens load | 9/10 |
+| Token coverage — spacing | Product layout uses `--space-*` or `--scl-spacing-*`; isolated compact offsets remain in legacy/debug surfaces | 9/10 |
 | Token coverage — typography | All 103+ `font-size` values replaced with Scale text-style tokens | 10/10 |
-| Token coverage — motion | All transitions use `--telekom-motion-*` tokens | 10/10 |
+| Token coverage — motion | Motion uses `--telekom-motion-*` tokens with local fallback durations where components can render before tokens load | 9/10 |
 | Token coverage — z-index | Full z-index scale in `:root` | 10/10 |
 | Naming consistency | Minor `--space-*` vs `--stack-gap-*` overlap remains | 8/10 |
 | Component props/states | Documented via JSDoc; no formal docs page | 7/10 |
 | Scale alignment | All deviations justified and documented (15 total) | 10/10 |
 | Accessibility | Full WCAG AAA target with documented ratios | 10/10 |
 | Neutral theme support | Fallback header/nav for OSS variant | 9/10 |
-| **Overall** | | **96/100** |
+| **Overall** | | **93/100** |
 
 ---
 
