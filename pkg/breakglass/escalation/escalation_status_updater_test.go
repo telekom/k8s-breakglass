@@ -18,6 +18,7 @@ package escalation
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"testing"
@@ -480,6 +481,17 @@ func TestNewKeycloakGroupMemberResolver_InsecureSkipVerify(t *testing.T) {
 	assert.Equal(t, cfg.BaseURL, resolver.cfg.BaseURL)
 	assert.Equal(t, cfg.Realm, resolver.cfg.Realm)
 	assert.True(t, resolver.cfg.InsecureSkipVerify)
+
+	restyClient := resolver.gocloak.RestyClient()
+	httpClient := restyClient.GetClient()
+	transport, ok := httpClient.Transport.(*http.Transport)
+	if assert.True(t, ok, "transport should be *http.Transport") {
+		tlsCfg := transport.TLSClientConfig
+		if assert.NotNil(t, tlsCfg, "TLS config should be set") {
+			assert.True(t, tlsCfg.InsecureSkipVerify)
+			assert.Equal(t, uint16(tls.VersionTLS12), tlsCfg.MinVersion)
+		}
+	}
 }
 
 // TestNewKeycloakGroupMemberResolver_CertificateAuthority tests that the resolver configures

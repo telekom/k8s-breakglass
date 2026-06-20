@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -417,6 +418,9 @@ IZ+J72v8cfAb
 	}
 	if !tlsConfig.InsecureSkipVerify {
 		t.Fatal("expected InsecureSkipVerify to be true")
+	}
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("expected MinVersion TLS 1.2, got %d", tlsConfig.MinVersion)
 	}
 	if tlsConfig.RootCAs == nil {
 		t.Fatal("expected custom CA to be added to RootCAs")

@@ -1272,7 +1272,7 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 	if err != nil {
 		return nil, fmt.Errorf("invalid API server URL: %w", err)
 	}
-	if u.Scheme != "https" {
+	if !strings.EqualFold(u.Scheme, "https") {
 		return nil, fmt.Errorf("TOFU requires an https API server URL")
 	}
 	hostname := u.Hostname()

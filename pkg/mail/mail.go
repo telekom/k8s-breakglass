@@ -84,7 +84,10 @@ func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName
 
 	if mpConfig.InsecureSkipVerify {
 		log.Warnw("InsecureSkipVerify is enabled for mail TLS connection - not recommended for production")
-		d.TLSConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- explicit mail provider option for test/dev SMTP endpoints
+		d.TLSConfig = &tls.Config{ // #nosec G402 -- explicit mail provider option for test/dev SMTP endpoints
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true,
+		}
 	}
 
 	// Use provider's sender configuration

@@ -1020,6 +1020,12 @@ func TestOIDCTokenProvider_PerformTOFU_RejectsInvalidTargets(t *testing.T) {
 		assert.Contains(t, err.Error(), "TOFU requires an https API server URL")
 	})
 
+	t.Run("uppercase HTTPS scheme", func(t *testing.T) {
+		_, err := provider.performTOFU(context.Background(), "HTTPS://localhost:9999")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to connect to API server for TOFU")
+	})
+
 	t.Run("missing hostname", func(t *testing.T) {
 		_, err := provider.performTOFU(context.Background(), "https:///missing-host")
 		require.Error(t, err)

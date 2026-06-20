@@ -76,6 +76,7 @@ func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakR
 	if cfg.InsecureSkipVerify {
 		restyClient := gc.RestyClient()
 		restyClient.SetTLSClientConfig(&tls.Config{
+			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: true, // #nosec G402 -- explicit test/dev option for self-signed Keycloak endpoints
 		})
 		if log != nil {

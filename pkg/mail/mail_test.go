@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"strings"
@@ -106,6 +107,26 @@ func TestNewSenderFromMailProvider(t *testing.T) {
 			assert.Implements(t, (*Sender)(nil), sender, "Should implement Sender interface")
 		})
 	}
+}
+
+func TestNewSenderFromMailProvider_InsecureTLSUsesMinimumVersion(t *testing.T) {
+	mpConfig := &config.MailProviderConfig{
+		Name:               "insecure-provider",
+		Host:               "smtp.internal.com",
+		Port:               25,
+		InsecureSkipVerify: true,
+		SenderAddress:      "internal@company.com",
+	}
+
+	mailSender, ok := NewSenderFromMailProvider(mpConfig, "").(*sender)
+	if !ok {
+		t.Fatal("expected concrete sender")
+	}
+	if mailSender.dialer.TLSConfig == nil {
+		t.Fatal("expected TLS config")
+	}
+	assert.True(t, mailSender.dialer.TLSConfig.InsecureSkipVerify)
+	assert.Equal(t, uint16(tls.VersionTLS12), mailSender.dialer.TLSConfig.MinVersion)
 }
 
 func TestSender_Send(t *testing.T) {
