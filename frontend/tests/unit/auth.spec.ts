@@ -46,4 +46,44 @@ describe("AuthService mock mode guard", () => {
     expect(sessionStorage.getItem("oidc.probe")).toBe("session-only");
     expect(localStorage.getItem("oidc.probe")).toBeNull();
   });
+
+  it("falls back to in-memory OIDC storage when browser storage is blocked", async () => {
+    vi.stubEnv("PROD", false);
+    vi.resetModules();
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    const sessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("localStorage blocked");
+      },
+    });
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      get() {
+        throw new Error("sessionStorage blocked");
+      },
+    });
+
+    try {
+      const { default: AuthService } = await import("@/services/auth");
+
+      const auth = new AuthService(baseConfig);
+      const userStore = auth.userManager.settings.userStore;
+      if (!userStore) {
+        throw new Error("AuthService did not configure an OIDC user store");
+      }
+
+      await userStore.set("probe", "memory-only");
+
+      await expect(userStore.get("probe")).resolves.toBe("memory-only");
+    } finally {
+      if (localStorageDescriptor) {
+        Object.defineProperty(window, "localStorage", localStorageDescriptor);
+      }
+      if (sessionStorageDescriptor) {
+        Object.defineProperty(window, "sessionStorage", sessionStorageDescriptor);
+      }
+    }
+  });
 });
