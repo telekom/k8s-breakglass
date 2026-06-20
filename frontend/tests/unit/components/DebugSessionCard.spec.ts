@@ -131,7 +131,6 @@ describe("DebugSessionCard", () => {
       bubbles: true,
       detail: { value: "2h" },
     });
-    Object.defineProperty(changeEvent, "target", { value: { value: "2h" } });
     select.element.dispatchEvent(changeEvent);
     await nextTick();
 
@@ -157,7 +156,11 @@ describe("DebugSessionCard", () => {
 
     await wrapper.find('[data-testid="renew-button"]').trigger("click");
 
-    expect(wrapper.find('scale-dropdown-select-item[value="4h"]').exists()).toBe(true);
+    const renewSelect = wrapper.find('[data-testid="renew-duration-select"]');
+    const fourHourOption = renewSelect.find('[value="4h"]');
+
+    expect(fourHourOption.exists()).toBe(true);
+    expect(fourHourOption.text()).toBe("4 hours");
   });
 
   it("resets the reject reason each time the modal opens", async () => {

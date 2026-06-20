@@ -23,7 +23,8 @@ const emit = defineEmits<{
 const rejectReason = ref("");
 const showRejectModal = ref(false);
 const showRenewModal = ref(false);
-const renewDuration = ref("1h");
+const defaultRenewDuration = "1h";
+const renewDuration = ref(defaultRenewDuration);
 const sessionDomId = computed(() => toDomIdPart(props.session.name));
 const rejectReasonId = computed(() => `reject-reason-${sessionDomId.value}`);
 const renewDurationId = computed(() => `renew-duration-${sessionDomId.value}`);
@@ -86,8 +87,28 @@ function handleRenew() {
   showRenewModal.value = false;
 }
 
+function getDetailValue(event: Event): string | undefined {
+  if (!("detail" in event)) {
+    return undefined;
+  }
+  const detail = (event as CustomEvent<unknown>).detail;
+  if (!detail || typeof detail !== "object" || !("value" in detail)) {
+    return undefined;
+  }
+  const value = (detail as { value?: unknown }).value;
+  return typeof value === "string" ? value : undefined;
+}
+
+function getTargetValue(target: EventTarget | null): string | undefined {
+  if (!target || !("value" in target)) {
+    return undefined;
+  }
+  const value = (target as { value?: unknown }).value;
+  return typeof value === "string" ? value : undefined;
+}
+
 function handleRenewDurationChange(event: Event) {
-  renewDuration.value = (event.target as HTMLSelectElement).value;
+  renewDuration.value = getDetailValue(event) ?? getTargetValue(event.target) ?? defaultRenewDuration;
 }
 
 function openRejectModal() {
@@ -96,7 +117,7 @@ function openRejectModal() {
 }
 
 function openRenewModal() {
-  renewDuration.value = "1h";
+  renewDuration.value = defaultRenewDuration;
   showRenewModal.value = true;
 }
 </script>
