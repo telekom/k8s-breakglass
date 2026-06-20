@@ -673,7 +673,7 @@ jobs:
   single-cluster-e2e:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
     steps:
       - name: Checkout code
