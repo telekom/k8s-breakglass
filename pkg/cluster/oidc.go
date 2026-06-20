@@ -1097,7 +1097,7 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 	transport := &http.Transport{}
 
 	if oidc.InsecureSkipTLSVerify {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // User explicitly requested insecure
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- user explicitly requested insecure TLS verification
 	} else if oidc.CertificateAuthority != "" {
 		roots := x509.NewCertPool()
 		if ok := roots.AppendCertsFromPEM([]byte(oidc.CertificateAuthority)); !ok {
@@ -1281,7 +1281,7 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 	hostname := u.Hostname()
 	tlsConfig := &tls.Config{
 		ServerName:         hostname,
-		InsecureSkipVerify: true, //nolint:gosec // TOFU requires accepting untrusted certs on first connection
+		InsecureSkipVerify: true, // #nosec G402 -- TOFU requires accepting the first untrusted cert before pin validation
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			// Even though we skip chain verification (required for TOFU),
 			// we still verify the hostname matches the certificate to prevent

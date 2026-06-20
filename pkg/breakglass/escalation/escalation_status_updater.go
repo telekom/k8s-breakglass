@@ -76,7 +76,7 @@ func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakR
 	if cfg.InsecureSkipVerify {
 		restyClient := gc.RestyClient()
 		restyClient.SetTLSClientConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // This is intentional for E2E testing with self-signed certs
+			InsecureSkipVerify: true, // #nosec G402 -- explicit test/dev option for self-signed Keycloak endpoints
 		})
 		if log != nil {
 			log.Debugw("Keycloak client configured with InsecureSkipVerify=true",

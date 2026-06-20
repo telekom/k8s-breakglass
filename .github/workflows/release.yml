@@ -18,10 +18,26 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require version tag ref
+        run: |
+          case "${GITHUB_REF}" in
+            refs/tags/v*.*.*)
+              echo "Release ref is ${GITHUB_REF}"
+              ;;
+            *)
+              echo "::error::Release workflow must run from a v*.*.* tag, got ${GITHUB_REF}"
+              exit 1
+              ;;
+          esac
+
   # ---------------------------------------------------------------------------
   # Build release manifests, Helm chart package, and bgctl CLI binaries
   # ---------------------------------------------------------------------------
   prepare:
+    needs: [validate-tag]
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -134,6 +150,7 @@ jobs:
   # Build per-architecture container images natively (no QEMU emulation)
   # ---------------------------------------------------------------------------
   build-image:
+    needs: [validate-tag]
     permissions:
       contents: read
       packages: write
@@ -528,6 +545,13 @@ jobs:
         with:
           name: release-chart
           path: chart-dist
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          format: spdx-json
+          output-file: sbom-${{ github.ref_name }}.spdx.json
+          upload-release-assets: false
       - name: Create GitHub Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
@@ -541,36 +565,5 @@ jobs:
             dist/bgctl_*.zip
             dist/bgctl_*.sha256
             dist/bgctl_${{ github.ref_name }}_checksums.txt
+            sbom-${{ github.ref_name }}.spdx.json
           generate_release_notes: true
-      - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-          format: spdx-json
-          artifact-name: sbom-${{ github.ref_name }}.json
-          upload-release-assets: false
-      - name: Upload SBOM to Release (if GH_PUBLISH_TOKEN)
-        run: |
-          SBOM_FILE=sbom-${{ github.ref_name }}.json
-          if [ -n "${{ secrets.GH_PUBLISH_TOKEN }}" ]; then
-            echo "Using GH_PUBLISH_TOKEN to attach SBOM to release"
-            RELEASE_JSON=$(curl -s -H "Authorization: token ${{ secrets.GH_PUBLISH_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}")
-            RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r .id)
-            if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
-              echo "Release for tag '${{ github.ref_name }}' not found."
-              exit 1
-            fi
-            echo "Uploading $SBOM_FILE to release id $RELEASE_ID"
-            curl -s -X POST \
-              -H "Authorization: token ${{ secrets.GH_PUBLISH_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              --data-binary "@$SBOM_FILE" \
-              "https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=$(basename $SBOM_FILE)" || true
-          else
-            echo "GH_PUBLISH_TOKEN not present; uploading SBOM as workflow artifact instead"
-            gh_version=$(gh --version 2>/dev/null || true)
-            if [ -n "$gh_version" ]; then
-              echo "gh CLI found, but we will still upload using actions/upload-artifact in CI as a fallback"
-            fi
-            # fallback: keep sbom in workspace and rely on release assets uploaded elsewhere
-          fi

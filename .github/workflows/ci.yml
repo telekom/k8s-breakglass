@@ -117,8 +117,7 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npm audit --json > ../npm-audit.json || true
-        continue-on-error: true
+          npm audit --audit-level=high --json > ../npm-audit.json
       - name: Upload npm audit results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -594,6 +593,10 @@ jobs:
                 PUSH_DIGEST=$(echo "$RAW_MANIFEST" | sha256sum | awk '{print "sha256:" $1}')
               fi
             fi
+          fi
+          if [ -z "$PUSH_DIGEST" ]; then
+            echo "::error::Could not determine registry digest after a successful push; provenance attestation would be skipped."
+            exit 1
           fi
           echo "Registry digest: ${PUSH_DIGEST}"
           echo "digest=${PUSH_DIGEST}" >> $GITHUB_OUTPUT

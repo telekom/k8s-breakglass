@@ -198,11 +198,11 @@ func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url) //nolint:gosec // G204: opening browser with OIDC callback URL is by design
+		cmd = exec.Command("open", url) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //nolint:gosec // G204: opening browser with OIDC callback URL is by design
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
 	default:
-		cmd = exec.Command("xdg-open", url) //nolint:gosec // G204: opening browser with OIDC callback URL is by design
+		cmd = exec.Command("xdg-open", url) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
 	}
 	if cmd == nil {
 		return errors.New("no browser command available")
@@ -238,7 +238,7 @@ func loadTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: insecure,
+		InsecureSkipVerify: insecure, // #nosec G402 -- explicit CLI config for test/dev OIDC endpoints
 		RootCAs:            certPool,
 	}, nil
 }

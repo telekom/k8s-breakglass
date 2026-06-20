@@ -345,7 +345,7 @@ func (l *MailProviderLoader) InvalidateCache(providerName string) {
 func (c *MailProviderConfig) GetTLSConfig() *tls.Config {
 	tlsConfig := &tls.Config{
 		ServerName:         c.Host,
-		InsecureSkipVerify: c.InsecureSkipVerify,
+		InsecureSkipVerify: c.InsecureSkipVerify, // #nosec G402 -- explicit mail provider option for test/dev SMTP endpoints
 	}
 
 	// Add custom CA certificate if provided
