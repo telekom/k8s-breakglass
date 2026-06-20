@@ -997,8 +997,8 @@ func TestOIDCTokenProvider_TokenExchange_MissingSubjectTokenSecretRef(t *testing
 }
 
 func TestOIDCTokenProvider_PerformTOFU_RejectsInvalidTargets(t *testing.T) {
-	// The TOFU path only accepts HTTPS URLs with a concrete host, and connection
-	// failures must return instead of hanging indefinitely.
+	// The TOFU path accepts only HTTPS URLs with a concrete host. Connection
+	// failures must return with a bounded error instead of hanging indefinitely.
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)

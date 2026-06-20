@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI/release security feedback**: Security CI now fails on enforced Go, filesystem, image, and Helm chart findings while still uploading SARIF/results for review. Tag-based releases now require strict semver tag refs and attach SBOM artifacts to release output.
 - **Strict Readiness Enforcement for Escalations**: Enforced strict cluster readiness constraints across the API and session management workflows. Escalations API now defaults `activeOnly=true`, hiding unready escalations by default. Session creation logic now skips escalations that are not in a `Ready` state. Added `Ready` condition to `BreakglassEscalation` status, populated by the escalation reconciler based on validation results. `IsReady()` helper added to `BreakglassEscalation` CRD for centralized readiness checks.
 - **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.
 - **Frontend: upgrade TypeScript 5.9 → 6.0** (PR #596): Major version bump — TypeScript 6.0 introduces stricter inference and removes some deprecated compiler options. This PR updates the compiler version to `~6.0.2` and `@typescript-eslint/*` to 8.58.0; no source changes were required. The lockfile also updates transitive resolutions for Vite, Vitest, and Rolldown.
