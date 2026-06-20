@@ -150,13 +150,14 @@ export default {
       return Array.from(prefixes);
     }
 
-    function isTrustedOIDCUserKey(key: string): boolean {
-      return getTrustedOIDCUserKeyPrefixes().some((prefix) => key.startsWith(prefix));
+    function isTrustedOIDCUserKey(key: string, trustedPrefixes: readonly string[]): boolean {
+      return trustedPrefixes.some((prefix) => key.startsWith(prefix));
     }
 
     function getStoredOIDCUserValues(): string[] {
       const defaultStorageKey =
         "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id;
+      const trustedPrefixes = getTrustedOIDCUserKeyPrefixes();
       const values: string[] = [];
       const seenValues = new Set<string>();
 
@@ -164,7 +165,7 @@ export default {
         const keys = new Set<string>([defaultStorageKey]);
         for (let index = 0; index < getStorageLength(storage); index += 1) {
           const key = getStorageKey(storage, index);
-          if (key && isTrustedOIDCUserKey(key)) {
+          if (key && isTrustedOIDCUserKey(key, trustedPrefixes)) {
             keys.add(key);
           }
         }
