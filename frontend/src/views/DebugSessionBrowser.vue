@@ -273,7 +273,7 @@ function onStateToggle(state: string, event: Event) {
         <scale-loading-spinner v-if="refreshing" size="small"></scale-loading-spinner>
         <scale-button
           v-else
-          icon-only
+          icon-only="true"
           variant="secondary"
           aria-label="Refresh"
           data-testid="refresh-button"

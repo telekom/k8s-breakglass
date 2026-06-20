@@ -4,13 +4,17 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import NotFoundView from "@/views/NotFoundView.vue";
 
 describe("NotFoundView", () => {
-  const createWrapper = () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const createWrapper = async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -18,6 +22,8 @@ describe("NotFoundView", () => {
         { path: "/not-found", name: "not-found", component: NotFoundView },
       ],
     });
+    await router.push("/not-found");
+    await router.isReady();
     const pushSpy = vi.spyOn(router, "push").mockResolvedValue(undefined);
 
     const wrapper = mount(NotFoundView, {
@@ -30,18 +36,18 @@ describe("NotFoundView", () => {
     return { wrapper, pushSpy };
   };
 
-  it("renders the not found page", () => {
-    const { wrapper } = createWrapper();
+  it("renders the not found page", async () => {
+    const { wrapper } = await createWrapper();
     expect(wrapper.find(".not-found").exists()).toBe(true);
   });
 
-  it("displays 'Page not found' heading", () => {
-    const { wrapper } = createWrapper();
+  it("displays 'Page not found' heading", async () => {
+    const { wrapper } = await createWrapper();
     expect(wrapper.find("h1").text()).toBe("Page not found");
   });
 
-  it("displays helpful message to user", () => {
-    const { wrapper } = createWrapper();
+  it("displays helpful message to user", async () => {
+    const { wrapper } = await createWrapper();
     const paragraph = wrapper.find("p");
     // Note: The apostrophe may be a curly quote (') or straight quote (')
     expect(paragraph.text()).toMatch(/doesn.t exist/);
@@ -49,7 +55,7 @@ describe("NotFoundView", () => {
   });
 
   it("navigates to the dashboard with router push", async () => {
-    const { wrapper, pushSpy } = createWrapper();
+    const { wrapper, pushSpy } = await createWrapper();
     const link = wrapper.find("a.not-found__cta");
     expect(link.exists()).toBe(true);
     expect(link.attributes("href")).toBe("/");
@@ -57,14 +63,14 @@ describe("NotFoundView", () => {
     expect(pushSpy).toHaveBeenCalledWith("/");
   });
 
-  it("link text says 'Return to dashboard'", () => {
-    const { wrapper } = createWrapper();
+  it("link text says 'Return to dashboard'", async () => {
+    const { wrapper } = await createWrapper();
     const link = wrapper.find("a.not-found__cta");
     expect(link.text()).toBe("Return to dashboard");
   });
 
-  it("has proper styling classes", () => {
-    const { wrapper } = createWrapper();
+  it("has proper styling classes", async () => {
+    const { wrapper } = await createWrapper();
     expect(wrapper.find(".not-found__card").exists()).toBe(true);
   });
 });

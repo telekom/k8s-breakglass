@@ -125,6 +125,15 @@ describe("DebugSessionBrowser", () => {
       const wrapper = await createWrapper();
       expect(wrapper.element.tagName).toBeDefined();
     });
+
+    it("renders the refresh button as an accessible icon-only Scale button", async () => {
+      const wrapper = await createWrapper();
+      const refreshButton = wrapper.find('[data-testid="refresh-button"]');
+
+      expect(refreshButton.exists()).toBe(true);
+      expect(refreshButton.attributes("icon-only")).toBe("true");
+      expect(refreshButton.attributes("aria-label")).toBe("Refresh");
+    });
   });
 
   describe("Component Lifecycle", () => {
