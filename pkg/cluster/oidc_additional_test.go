@@ -672,6 +672,61 @@ func TestOIDCTokenProvider_PerformTOFU_WithRealTLSServer(t *testing.T) {
 	assert.NotNil(t, cert.Issuer)
 }
 
+func TestOIDCTokenProvider_CaptureTOFUCA_RejectsHostnameMismatch(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	caCert, caKey, _ := generateTestCACert(t)
+	serverPEM, _ := generateTestServerCert(t, caCert, caKey, "other.example.com")
+	block, _ := pem.Decode(serverPEM)
+	require.NotNil(t, block)
+	serverCert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	_, err = provider.captureTOFUCA("https://api.example.com", "api.example.com", []*x509.Certificate{serverCert, caCert})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TOFU hostname verification failed")
+}
+
+func TestOIDCTokenProvider_CaptureTOFUCA_RejectsExpiredCertificate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	caCert, caKey, _ := generateTestCACert(t)
+	serverKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	server := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject: pkix.Name{
+			Organization: []string{"Expired Server"},
+			CommonName:   "localhost",
+		},
+		NotBefore:   time.Now().Add(-2 * time.Hour),
+		NotAfter:    time.Now().Add(-1 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    []string{"localhost"},
+	}
+
+	serverBytes, err := x509.CreateCertificate(rand.Reader, server, caCert, &serverKey.PublicKey, caKey)
+	require.NoError(t, err)
+	serverCert, err := x509.ParseCertificate(serverBytes)
+	require.NoError(t, err)
+
+	_, err = provider.captureTOFUCA("https://localhost", "localhost", []*x509.Certificate{serverCert, caCert})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TOFU certificate is not currently valid")
+}
+
 func TestOIDCTokenProvider_PerformTOFU_ContextTimeout(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
