@@ -9,6 +9,10 @@ state management.
 - **Node.js** 24.11.0 or newer
 - **npm** ≥ 9
 
+Node.js 24.11.0 is the supported project baseline for the current frontend
+toolchain and CI. Some transitive packages advertise lower engine ranges, but
+the Playwright/Vite test stack is validated on Node.js 24.11.0 or newer.
+
 ## IDE Setup
 
 [VS Code](https://code.visualstudio.com/) with
@@ -109,8 +113,8 @@ Debug session endpoints:
 Edit `frontend/mock-api/data.mjs` if you want to pin additional permutations. The Node `--watch` flag reloads the
 Express server automatically after each save.
 
-> **Node version**: The built-in `node --watch` flag requires Node.js **18.11.0 or newer**. Make sure your local runtime
-> meets that requirement to avoid crashes when running `npm run mock-api` or `npm run dev:mock`.
+> **Node version**: The built-in `node --watch` flag only requires Node.js **18.11.0 or newer**, but this project requires
+> Node.js **24.11.0 or newer**. Use the project baseline when running `npm run mock-api` or `npm run dev:mock`.
 
 ### Type-Check, Compile and Minify for Production
 
