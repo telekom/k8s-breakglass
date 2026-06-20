@@ -6,8 +6,12 @@ state management.
 
 ## Prerequisites
 
-- **Node.js** ≥ 20.19.0
+- **Node.js** 24.11.0 or newer
 - **npm** ≥ 9
+
+Node.js 24.11.0 is the supported project baseline for the current frontend
+toolchain and CI. Some transitive packages advertise lower engine ranges, but
+the Playwright/Vite test stack is validated on Node.js 24.11.0 or newer.
 
 ## IDE Setup
 
@@ -109,8 +113,8 @@ Debug session endpoints:
 Edit `frontend/mock-api/data.mjs` if you want to pin additional permutations. The Node `--watch` flag reloads the
 Express server automatically after each save.
 
-> **Node version**: The built-in `node --watch` flag requires Node.js **18.11.0 or newer**. Make sure your local runtime
-> meets that requirement to avoid crashes when running `npm run mock-api` or `npm run dev:mock`.
+> **Node version**: The built-in `node --watch` flag only requires Node.js **18.11.0 or newer**, but this project requires
+> Node.js **24.11.0 or newer**. Use the project baseline when running `npm run mock-api` or `npm run dev:mock`.
 
 ### Type-Check, Compile and Minify for Production
 
@@ -232,4 +236,3 @@ The frontend should **never** implement its own session validity logic. Instead:
 2. Show all timestamps for audit trail
 3. Let the backend (via `isSessionValid()`) determine if a session is valid
 4. Render UI based on state + backend response codes (e.g., 403 for invalid access)
-
