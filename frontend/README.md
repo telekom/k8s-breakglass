@@ -6,7 +6,7 @@ state management.
 
 ## Prerequisites
 
-- **Node.js** ≥ 20.19.0
+- **Node.js** 22.18.x or ≥ 24.11.0
 - **npm** ≥ 9
 
 ## IDE Setup
@@ -232,4 +232,3 @@ The frontend should **never** implement its own session validity logic. Instead:
 2. Show all timestamps for audit trail
 3. Let the backend (via `isSessionValid()`) determine if a session is valid
 4. Render UI based on state + backend response codes (e.g., 403 for invalid access)
-
