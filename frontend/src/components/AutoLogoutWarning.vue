@@ -42,6 +42,8 @@ import { inject, onMounted, onUnmounted, ref } from "vue";
 import { AuthKey } from "@/keys";
 import { warn } from "@/services/logger";
 
+const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
+
 export default {
   name: "AutoLogoutWarning",
   setup() {
@@ -65,7 +67,9 @@ export default {
 
     function getCurrentIdentityProviderName(): string | undefined {
       const sessionStorageValue = getStorageItem(getBrowserStorage("sessionStorage"), "oidc_idp_name");
-      const localStorageValue = getStorageItem(getBrowserStorage("localStorage"), "breakglass_current_idp_name");
+      const localStorageValue = shouldReadLocalOIDCStorage()
+        ? getStorageItem(getBrowserStorage("localStorage"), "breakglass_current_idp_name")
+        : undefined;
       return auth.getIdentityProviderName() ?? sessionStorageValue ?? localStorageValue ?? undefined;
     }
 
@@ -132,12 +136,21 @@ export default {
       }
     }
 
+    function shouldReadLocalOIDCStorage(): boolean {
+      if (import.meta.env.PROD) {
+        return false;
+      }
+      return getStorageItem(getBrowserStorage("localStorage"), TOKEN_PERSISTENCE_KEY) === "persistent";
+    }
+
     function getAvailableOIDCStorages(): Storage[] {
       const storages: Storage[] = [];
       const sessionStorage = getBrowserStorage("sessionStorage");
-      const localStorage = getBrowserStorage("localStorage");
       if (sessionStorage) storages.push(sessionStorage);
-      if (localStorage) storages.push(localStorage);
+      if (shouldReadLocalOIDCStorage()) {
+        const localStorage = getBrowserStorage("localStorage");
+        if (localStorage) storages.push(localStorage);
+      }
       return storages;
     }
 

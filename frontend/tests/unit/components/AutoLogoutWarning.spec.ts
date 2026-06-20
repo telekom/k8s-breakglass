@@ -101,8 +101,9 @@ describe("AutoLogoutWarning", () => {
     });
   });
 
-  it("uses the persisted identity provider when the in-memory and session hints are absent", async () => {
+  it("uses the local persisted identity provider when persistent storage is active", async () => {
     const auth = createMockAuth();
+    localStorage.setItem("breakglass_oidc_token_persistence", "persistent");
     localStorage.setItem("breakglass_current_idp_name", "corp");
     window.history.pushState({}, "", "/sessions?cluster=prod#approval");
     wrapper = mountWithAuth(auth);
@@ -112,6 +113,19 @@ describe("AutoLogoutWarning", () => {
     expect(auth.login).toHaveBeenCalledWith({
       path: "/sessions?cluster=prod#approval",
       idpName: "corp",
+    });
+  });
+
+  it("ignores stale local persisted identity provider names by default", async () => {
+    const auth = createMockAuth();
+    localStorage.setItem("breakglass_current_idp_name", "corp");
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
+
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
+
+    expect(auth.login).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
     });
   });
 
@@ -176,5 +190,44 @@ describe("AutoLogoutWarning", () => {
 
     expect((wrapper.vm as unknown as { show: boolean }).show).toBe(false);
     expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+  });
+
+  it("ignores stale localStorage OIDC users unless persistent storage is active", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    localStorage.setItem(
+      "oidc.user:/api/oidc/authority:corp-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(false);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+  });
+
+  it("uses localStorage OIDC users when non-production persistent storage is active", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    localStorage.setItem("breakglass_oidc_token_persistence", "persistent");
+    localStorage.setItem(
+      "oidc.user:/api/oidc/authority:corp-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(true);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
   });
 });

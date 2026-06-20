@@ -279,3 +279,28 @@ describe("Logger Service", () => {
     });
   });
 });
+
+describe("Logger Service storage guards", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("loads when localStorage getter throws", async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("localStorage blocked");
+      },
+    });
+
+    try {
+      await expect(import("@/services/logger")).resolves.toBeDefined();
+    } finally {
+      if (localStorageDescriptor) {
+        Object.defineProperty(window, "localStorage", localStorageDescriptor);
+      }
+    }
+  });
+});

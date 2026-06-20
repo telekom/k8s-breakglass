@@ -154,19 +154,54 @@ class MemoryStorage implements Storage {
 
 const fallbackStorage: Storage = new MemoryStorage();
 
-function getTokenPersistenceMode(): TokenPersistenceMode {
-  if (!isBrowser || typeof window.localStorage === "undefined") {
-    return "session";
+function getBrowserStorage(name: "localStorage" | "sessionStorage"): Storage | undefined {
+  if (!isBrowser) {
+    return undefined;
   }
-  const stored = window.localStorage.getItem(TOKEN_PERSISTENCE_KEY);
+  try {
+    return window[name];
+  } catch (error) {
+    warn("AuthService", `Unable to access browser ${name}`, error);
+    return undefined;
+  }
+}
+
+function getBrowserStorageItem(name: "localStorage" | "sessionStorage", key: string): string | null {
+  const storage = getBrowserStorage(name);
+  if (!storage) {
+    return null;
+  }
+  try {
+    return storage.getItem(key);
+  } catch (error) {
+    warn("AuthService", `Unable to read browser ${name}`, error);
+    return null;
+  }
+}
+
+function setBrowserStorageItem(name: "localStorage" | "sessionStorage", key: string, value: string | undefined): void {
+  const storage = getBrowserStorage(name);
+  if (!storage) {
+    return;
+  }
+  try {
+    if (value) {
+      storage.setItem(key, value);
+    } else {
+      storage.removeItem(key);
+    }
+  } catch (error) {
+    warn("AuthService", `Unable to update browser ${name}`, error);
+  }
+}
+
+function getTokenPersistenceMode(): TokenPersistenceMode {
+  const stored = getBrowserStorageItem("localStorage", TOKEN_PERSISTENCE_KEY);
   return stored === "persistent" ? "persistent" : "session";
 }
 
 function setTokenPersistencePreference(mode: TokenPersistenceMode) {
-  if (!isBrowser || typeof window.localStorage === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(TOKEN_PERSISTENCE_KEY, mode);
+  setBrowserStorageItem("localStorage", TOKEN_PERSISTENCE_KEY, mode);
 }
 
 function getOIDCStorage(): Storage {
@@ -177,15 +212,18 @@ function getOIDCStorage(): Storage {
   if (prefersPersistent) {
     if (isProductionBuild()) {
       warn("AuthService", "Persistent OIDC token storage is disabled in production; using sessionStorage");
-    } else if (typeof window.localStorage !== "undefined") {
+    } else {
+      const localStorage = getBrowserStorage("localStorage");
       warn(
         "AuthService",
         "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
       );
-      return window.localStorage;
+      if (localStorage) {
+        return localStorage;
+      }
     }
   }
-  return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
+  return getBrowserStorage("sessionStorage") ?? fallbackStorage;
 }
 
 /**
@@ -195,19 +233,11 @@ function getOIDCStorage(): Storage {
  * Stored in sessionStorage to survive page reloads during OAuth redirects.
  */
 function setCurrentDirectAuthority(authority: string | undefined) {
-  if (!isBrowser || typeof window.sessionStorage === "undefined") {
-    return;
-  }
   debug("AuthService", "Setting current direct authority for header injection:", {
     newAuthority: authority,
     previousAuthority: getCurrentDirectAuthority(),
   });
-  const storage = window.sessionStorage;
-  if (authority) {
-    storage.setItem(DIRECT_AUTHORITY_STORAGE_KEY, authority);
-  } else {
-    storage.removeItem(DIRECT_AUTHORITY_STORAGE_KEY);
-  }
+  setBrowserStorageItem("sessionStorage", DIRECT_AUTHORITY_STORAGE_KEY, authority);
 }
 
 /**
@@ -215,51 +245,26 @@ function setCurrentDirectAuthority(authority: string | undefined) {
  * This survives page reloads during OAuth redirect flow
  */
 function getCurrentDirectAuthority(): string | undefined {
-  if (!isBrowser || typeof window.sessionStorage === "undefined") {
-    return undefined;
-  }
-  return window.sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
+  return getBrowserStorageItem("sessionStorage", DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
 function setStoredIdentityProviderName(idpName: string | undefined) {
-  if (!isBrowser) {
-    return;
-  }
-
   for (const { storageName, key } of [
     { storageName: "sessionStorage", key: CURRENT_IDP_SESSION_STORAGE_KEY },
     { storageName: "localStorage", key: CURRENT_IDP_LOCAL_STORAGE_KEY },
   ] as const) {
-    try {
-      const storage = window[storageName];
-      if (idpName) {
-        storage.setItem(key, idpName);
-      } else {
-        storage.removeItem(key);
-      }
-    } catch (error) {
-      warn("AuthService", "Unable to update stored identity provider name", error);
-    }
+    setBrowserStorageItem(storageName, key, idpName);
   }
 }
 
 function getStoredIdentityProviderName(): string | undefined {
-  if (!isBrowser) {
-    return undefined;
-  }
-
   for (const { storageName, key } of [
     { storageName: "sessionStorage", key: CURRENT_IDP_SESSION_STORAGE_KEY },
     { storageName: "localStorage", key: CURRENT_IDP_LOCAL_STORAGE_KEY },
   ] as const) {
-    try {
-      const storage = window[storageName];
-      const storedValue = storage.getItem(key);
-      if (storedValue) {
-        return storedValue;
-      }
-    } catch (error) {
-      warn("AuthService", "Unable to read stored identity provider name", error);
+    const storedValue = getBrowserStorageItem(storageName, key);
+    if (storedValue) {
+      return storedValue;
     }
   }
 
@@ -588,7 +593,7 @@ export default class AuthService {
   public async handleSilentSigninCallback() {
     if (this.mockMode) return;
 
-    const preferredIdpName = isBrowser ? sessionStorage.getItem("oidc_idp_name") || undefined : undefined;
+    const preferredIdpName = getBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY) || undefined;
     const directAuthority = getCurrentDirectAuthority();
 
     if (preferredIdpName || directAuthority) {
@@ -763,7 +768,7 @@ export default class AuthService {
       hasIssuer: !!issuerParam,
     });
 
-    const preferredIdpName = isBrowser ? sessionStorage.getItem("oidc_idp_name") || undefined : undefined;
+    const preferredIdpName = getBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY) || undefined;
     const candidateManagers: Array<{ manager: UserManager; idpName?: string; directAuthority?: string }> = [];
     const seenManagers = new Set<UserManager>();
 
@@ -860,11 +865,11 @@ export default class AuthService {
           });
         }
 
-	        this.currentIDPName = restoredIdpName;
-	        currentIDPName.value = restoredIdpName;
-	        setStoredIdentityProviderName(restoredIdpName);
+        this.currentIDPName = restoredIdpName;
+        currentIDPName.value = restoredIdpName;
+        setStoredIdentityProviderName(restoredIdpName);
 
-	        return result;
+        return result;
       } catch (error) {
         // Check if this is an authority mismatch error
         const errorMsg = String(error);
@@ -892,8 +897,10 @@ export default class AuthService {
   }
 
   private buildUserManager(authority: string, clientID: string): UserManager {
+    const oidcStorage = getOIDCStorage();
     const settings: UserManagerSettingsWithFetch = {
-      userStore: new WebStorageStateStore({ store: getOIDCStorage() }),
+      stateStore: new WebStorageStateStore({ store: oidcStorage }),
+      userStore: new WebStorageStateStore({ store: oidcStorage }),
       authority,
       client_id: clientID,
       redirect_uri: this.baseURL + AuthRedirect,
