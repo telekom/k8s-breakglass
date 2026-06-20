@@ -1271,16 +1271,24 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 	if err != nil {
 		return nil, fmt.Errorf("invalid API server URL: %w", err)
 	}
-
-	host := u.Host
-	if u.Port() == "" {
-		host = u.Host + ":443"
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("TOFU requires an https API server URL")
 	}
+	hostname := u.Hostname()
+	if hostname == "" {
+		return nil, fmt.Errorf("TOFU requires an API server hostname")
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	host := net.JoinHostPort(hostname, port)
 
 	var caPEM []byte
-	hostname := u.Hostname()
 	tlsConfig := &tls.Config{
-		ServerName:         hostname,
+		MinVersion: tls.VersionTLS12,
+		ServerName: hostname,
+		// codeql[go/disabled-certificate-check]: TOFU must accept the first untrusted certificate, then VerifyConnection validates hostname and records the CA for future verified connections.
 		InsecureSkipVerify: true, // #nosec G402 -- TOFU requires accepting the first untrusted cert before pin validation
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			// Even though we skip chain verification (required for TOFU),
@@ -1295,6 +1303,10 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 			// Verify hostname matches the certificate's DNS names or IP addresses
 			if err := leaf.VerifyHostname(hostname); err != nil {
 				return fmt.Errorf("TOFU hostname verification failed: %w", err)
+			}
+			now := time.Now()
+			if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+				return fmt.Errorf("TOFU certificate is not currently valid")
 			}
 
 			// Find the root CA (last cert in chain) or self-signed cert

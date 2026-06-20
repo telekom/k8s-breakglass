@@ -1016,6 +1016,18 @@ func TestOIDCTokenProvider_PerformTOFU_UsesVerifyPeerCertificate(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid API server URL")
 	})
 
+	t.Run("non-https URL", func(t *testing.T) {
+		_, err := provider.performTOFU(context.Background(), "http://localhost:8443")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TOFU requires an https API server URL")
+	})
+
+	t.Run("missing hostname", func(t *testing.T) {
+		_, err := provider.performTOFU(context.Background(), "https:///missing-host")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TOFU requires an API server hostname")
+	})
+
 	t.Run("connection failure", func(t *testing.T) {
 		// Use a non-routable IP to ensure connection fails
 		_, err := provider.performTOFU(context.Background(), "https://192.0.2.1:6443")
