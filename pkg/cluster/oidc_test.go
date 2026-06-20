@@ -996,11 +996,9 @@ func TestOIDCTokenProvider_TokenExchange_MissingSubjectTokenSecretRef(t *testing
 	assert.Contains(t, err.Error(), "subjectTokenSecretRef")
 }
 
-func TestOIDCTokenProvider_PerformTOFU_UsesVerifyPeerCertificate(t *testing.T) {
-	// This test verifies that performTOFU uses VerifyPeerCertificate callback
-	// instead of InsecureSkipVerify, addressing the CodeQL security finding.
-	// Since we can't easily mock TLS connections, this test verifies the
-	// function gracefully handles invalid URLs and connection failures.
+func TestOIDCTokenProvider_PerformTOFU_RejectsInvalidTargets(t *testing.T) {
+	// The TOFU path only accepts HTTPS URLs with a concrete host, and connection
+	// failures must return instead of hanging indefinitely.
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)

@@ -59,14 +59,19 @@ func NewHTTPClient(cfg HTTPClientConfig) *http.Client {
 	transport := &http.Transport{}
 
 	if cfg.InsecureSkipVerify {
-		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-		}
+		transport.TLSClientConfig = insecureE2ETLSConfig()
 	}
 
 	return &http.Client{
 		Timeout:   cfg.Timeout,
 		Transport: transport,
+	}
+}
+
+func insecureE2ETLSConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, // #nosec G402 -- E2E tests use locally generated self-signed certificates.
 	}
 }
 

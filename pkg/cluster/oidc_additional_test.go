@@ -730,7 +730,9 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_InsecureSkipVerify(t *testing.T)
 	require.NotNil(t, httpClient)
 
 	transport := httpClient.Transport.(*http.Transport)
+	require.NotNil(t, transport.TLSClientConfig)
 	assert.True(t, transport.TLSClientConfig.InsecureSkipVerify)
+	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
 }
 
 func TestOIDCTokenProvider_CreateOIDCHTTPClient_WithCertificateAuthority(t *testing.T) {
@@ -755,6 +757,7 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_WithCertificateAuthority(t *test
 	transport := httpClient.Transport.(*http.Transport)
 	require.NotNil(t, transport.TLSClientConfig)
 	require.NotNil(t, transport.TLSClientConfig.RootCAs)
+	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
 }
 
 func TestOIDCTokenProvider_CreateOIDCHTTPClient_InvalidCertificateAuthority(t *testing.T) {
@@ -804,6 +807,7 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_UsesCachedIssuerTOFU(t *testing.
 	transport := httpClient.Transport.(*http.Transport)
 	require.NotNil(t, transport.TLSClientConfig)
 	require.NotNil(t, transport.TLSClientConfig.RootCAs)
+	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
 }
 
 // ============================================================================

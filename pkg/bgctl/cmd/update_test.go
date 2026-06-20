@@ -227,6 +227,7 @@ func TestExtractTarGz(t *testing.T) {
 	content, err := os.ReadFile(outPath)
 	require.NoError(t, err)
 	assert.Equal(t, "binary", string(content))
+	assertExecutableMode(t, outPath)
 }
 
 func TestExtractTarGzNoBinary(t *testing.T) {
@@ -255,6 +256,7 @@ func TestExtractTarGzHandlesTraversalName(t *testing.T) {
 	content, err := os.ReadFile(outPath)
 	require.NoError(t, err)
 	assert.Equal(t, "binary", string(content))
+	assertExecutableMode(t, outPath)
 }
 
 func TestExtractZip(t *testing.T) {
@@ -270,6 +272,7 @@ func TestExtractZip(t *testing.T) {
 	content, err := os.ReadFile(outPath)
 	require.NoError(t, err)
 	assert.Equal(t, "binary", string(content))
+	assertExecutableMode(t, outPath)
 }
 
 func TestExtractZipExe(t *testing.T) {
@@ -328,6 +331,7 @@ func TestReplaceBinary(t *testing.T) {
 	content, err := os.ReadFile(target)
 	require.NoError(t, err)
 	assert.Equal(t, "new", string(content))
+	assertExecutableMode(t, target)
 
 	_, err = os.Stat(target + ".old")
 	require.NoError(t, err)
@@ -389,6 +393,7 @@ func TestExtractTarGzAllowsValidArchive(t *testing.T) {
 	result, err := extractTarGz(archivePath, outDir)
 	require.NoError(t, err)
 	assert.Contains(t, result, "bgctl")
+	assertExecutableMode(t, result)
 }
 
 func TestExtractZipAllowsValidArchive(t *testing.T) {
@@ -402,6 +407,30 @@ func TestExtractZipAllowsValidArchive(t *testing.T) {
 	result, err := extractZip(archivePath, outDir)
 	require.NoError(t, err)
 	assert.Contains(t, result, "bgctl")
+	assertExecutableMode(t, result)
+}
+
+func TestCopyFileWritesExecutableAfterSuccessfulCopy(t *testing.T) {
+	tmpDir := t.TempDir()
+	source := filepath.Join(tmpDir, "bgctl.new")
+	target := filepath.Join(tmpDir, "bgctl")
+
+	require.NoError(t, os.WriteFile(source, []byte("new binary"), 0o600))
+
+	require.NoError(t, copyFile(source, target))
+
+	content, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "new binary", string(content))
+	assertExecutableMode(t, target)
+}
+
+func assertExecutableMode(t *testing.T, path string) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
 }
 
 func writeTarGz(path string, files map[string]string) error {

@@ -1097,13 +1097,16 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 	transport := &http.Transport{}
 
 	if oidc.InsecureSkipTLSVerify {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- user explicitly requested insecure TLS verification
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true, // #nosec G402 -- user explicitly requested insecure TLS verification
+		}
 	} else if oidc.CertificateAuthority != "" {
 		roots := x509.NewCertPool()
 		if ok := roots.AppendCertsFromPEM([]byte(oidc.CertificateAuthority)); !ok {
 			return nil, fmt.Errorf("failed to parse certificateAuthority")
 		}
-		transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+		transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	} else if oidc.AllowTOFU {
 		// Check if we have a cached TOFU CA for this issuer
 		issuerKey := oidc.IssuerURL
@@ -1114,7 +1117,7 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 		if hasCachedCA {
 			roots := x509.NewCertPool()
 			if ok := roots.AppendCertsFromPEM(cachedCA); ok {
-				transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+				transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 				p.log.Debugw("Using cached TOFU CA for OIDC issuer", "issuer", issuerKey)
 			}
 		} else {
@@ -1132,7 +1135,7 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 
 			roots := x509.NewCertPool()
 			if ok := roots.AppendCertsFromPEM(ca); ok {
-				transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+				transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 				p.log.Infow("TOFU: captured and cached OIDC issuer CA", "issuer", issuerKey)
 			}
 		}
@@ -1254,18 +1257,16 @@ func (p *OIDCTokenProvider) oidcHTTPClientCacheKey(oidc *breakglassv1alpha1.OIDC
 // performTOFU performs Trust On First Use for the API server certificate.
 // It connects to the server, captures the presented certificate chain, and returns the CA.
 //
-// Security Note - InsecureSkipVerify usage:
-// This function intentionally uses InsecureSkipVerify=true for Trust On First Use (TOFU).
-// This is REQUIRED because:
+// Security Note - trust bootstrap:
+// Trust On First Use (TOFU) has to connect to an API server whose CA is not
+// trusted yet. That first connection is constrained to HTTPS URLs, checks the
+// presented certificate host name and validity period, logs the trusted CA
+// fingerprint, and stores the CA for fully verified future connections.
+//
+// The initial handshake still has to bypass chain verification because:
 //  1. TOFU by definition connects to a server whose CA is not yet trusted
 //  2. Go's standard TLS verification would reject the connection before we can capture the CA
-//  3. We mitigate the risk by: (a) verifying hostname matches the certificate,
-//     (b) logging the certificate fingerprint for audit, (c) persisting the CA for all future
-//     connections which then use full TLS verification
-//  4. This pattern is standard for TOFU implementations (similar to SSH's known_hosts)
-//  5. After first use, the captured CA is stored and all subsequent connections are fully verified
-//
-// codeql[go/disabled-certificate-check]: Intentional for TOFU - see above security note
+//  3. After first use, the captured CA is stored and all subsequent connections are fully verified
 func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string) ([]byte, error) {
 	u, err := url.Parse(apiServerURL)
 	if err != nil {
@@ -1288,7 +1289,8 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		ServerName: hostname,
-		// codeql[go/disabled-certificate-check]: TOFU must accept the first untrusted certificate, then VerifyConnection validates hostname and records the CA for future verified connections.
+
+		// codeql[go/disabled-certificate-check]
 		InsecureSkipVerify: true, // #nosec G402 -- TOFU requires accepting the first untrusted cert before pin validation
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			// Even though we skip chain verification (required for TOFU),
