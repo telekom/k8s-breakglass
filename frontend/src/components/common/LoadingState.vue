@@ -71,6 +71,6 @@ withDefaults(
 }
 
 .loading-state--small .loading-state__message {
-  font: var(--telekom-text-style-caption);
+  font: var(--telekom-text-style-small);
 }
 </style>

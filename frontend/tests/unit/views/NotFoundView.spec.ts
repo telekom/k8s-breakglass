@@ -25,6 +25,7 @@ describe("NotFoundView", () => {
         plugins: [router],
       },
     });
+    pushSpy.mockClear();
 
     return { wrapper, pushSpy };
   };
