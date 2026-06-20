@@ -6,7 +6,7 @@ state management.
 
 ## Prerequisites
 
-- **Node.js** 22.18.x or ≥ 24.11.0
+- **Node.js** 24.11.0 or newer
 - **npm** ≥ 9
 
 ## IDE Setup
