@@ -537,17 +537,18 @@ func writeExecutableFile(dst string, src io.Reader, maxBytes int64) error {
 	} else {
 		_, copyErr = io.Copy(output, src)
 	}
-	closeErr := output.Close()
 	if copyErr != nil {
+		_ = output.Close()
 		_ = os.Remove(dst)
 		return copyErr
 	}
-	if closeErr != nil {
-		_ = os.Remove(dst)
-		return closeErr
-	}
 	// #nosec G302 -- bgctl update writes executable binaries after a successful private copy.
-	if err := os.Chmod(dst, 0o755); err != nil {
+	if err := output.Chmod(0o755); err != nil {
+		_ = output.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := output.Close(); err != nil {
 		_ = os.Remove(dst)
 		return err
 	}
