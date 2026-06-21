@@ -5,6 +5,7 @@ import { createAuthenticatedApiClient } from "@/services/httpClient";
 import type AuthService from "@/services/auth";
 import type {
   DebugSession,
+  DebugSessionSummary,
   DebugSessionDetailResponse,
   DebugSessionListResponse,
   DebugSessionTemplateListResponse,
@@ -25,6 +26,23 @@ import type {
   CreateNodeDebugPodResponse,
   TemplateClustersResponse,
 } from "@/model/debugSession";
+
+function normalizeDebugSessionListResponse(value: unknown): DebugSessionListResponse {
+  if (Array.isArray(value)) {
+    return { sessions: value as DebugSessionSummary[], total: value.length };
+  }
+
+  if (!value || typeof value !== "object") {
+    return { sessions: [], total: 0 };
+  }
+
+  const response = value as Partial<DebugSessionListResponse>;
+  const sessions = Array.isArray(response.sessions) ? response.sessions : [];
+  return {
+    sessions,
+    total: typeof response.total === "number" ? response.total : sessions.length,
+  };
+}
 
 export default class DebugSessionService {
   private client: AxiosInstance;
@@ -49,8 +67,8 @@ export default class DebugSessionService {
       if (params?.user) queryParams.user = params.user;
       if (params?.mine !== undefined) queryParams.mine = params.mine;
 
-      const response = await this.client.get<DebugSessionListResponse>("/debugSessions", { params: queryParams });
-      return response.data;
+      const response = await this.client.get<unknown>("/debugSessions", { params: queryParams });
+      return normalizeDebugSessionListResponse(response.data);
     } catch (e) {
       handleAxiosError("DebugSessionService.listSessions", e, "Failed to list debug sessions");
       throw e;

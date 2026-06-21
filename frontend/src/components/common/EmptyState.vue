@@ -120,7 +120,7 @@ const scaleIconName = computed(() => {
 .empty-state__description {
   margin: var(--space-sm) 0 0;
   font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-additional);
+  color: var(--telekom-color-text-and-icon-standard);
   max-width: 400px;
 }
 

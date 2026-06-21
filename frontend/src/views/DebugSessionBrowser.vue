@@ -74,7 +74,7 @@ async function fetchSessions() {
     // For simplicity, we fetch all and filter client-side
 
     const result = await debugSessionService.listSessions(params);
-    sessions.value = result.sessions;
+    sessions.value = Array.isArray(result.sessions) ? result.sessions : [];
   } catch (e: unknown) {
     error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug sessions";
     pushError(error.value);
@@ -104,7 +104,7 @@ const statePriority: Record<string, number> = {
 };
 
 const filteredSessions = computed(() => {
-  let result = sessions.value;
+  let result = Array.isArray(sessions.value) ? sessions.value : [];
 
   // Filter by states
   if (filters.states.length > 0) {
