@@ -1022,6 +1022,8 @@ load_image_into_kind "nicolaka/netshoot"
 load_image_into_kind "$TMUX_DEBUG_IMAGE"
 # Preload busybox for debug session tests (used by test-basic-debug template)
 load_image_into_kind "busybox:latest"
+# Preload the audit webhook receiver image so E2E setup does not depend on Docker Hub pulls.
+load_image_into_kind "python:3.11-slim"
 # Load Kafka image for audit sink testing
 load_image_into_kind "apache/kafka:3.7.0"
 
@@ -1940,7 +1942,7 @@ for i in {1..40}; do
     KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc -l app=keycloak -n "$DEV_NS" -o wide 2>&1 || true
     log "--- Testing Keycloak connectivity via netshoot pod ---"
     # Use a temporary netshoot pod to test connectivity (controller image is distroless)
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL run keycloak-test-$i --rm -i --restart=Never --image=nicolaka/netshoot:latest \
+    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL run keycloak-test-$i --rm -i --restart=Never --image=nicolaka/netshoot --image-pull-policy=IfNotPresent \
       --namespace="$DEV_NS" -- curl -sk --max-time 5 \
       "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e/.well-known/openid-configuration" 2>&1 | head -10 || \
       log "Keycloak connectivity test via netshoot failed"
@@ -2309,4 +2311,3 @@ log "  - MailHog:             http://localhost:${MAILHOG_UI_PORT}"
 log "  - Audit Webhook Recv:  http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}"
 log ""
 log "To stop port-forwards: kill \$(cat $PF_FILE)"
-
