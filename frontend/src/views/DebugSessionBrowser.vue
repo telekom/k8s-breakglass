@@ -250,9 +250,15 @@ function onStateToggle(state: string, event: Event) {
       </div>
 
       <div class="ui-toolbar-actions" style="margin-left: auto">
-        <scale-loading-spinner v-if="refreshing" size="small" aria-label="Refreshing..."></scale-loading-spinner>
+        <scale-loading-spinner
+          v-if="refreshing"
+          class="ui-toolbar-icon-control"
+          size="small"
+          aria-label="Refreshing..."
+        ></scale-loading-spinner>
         <scale-button
           v-else
+          class="ui-toolbar-icon-control"
           icon-only="true"
           variant="secondary"
           aria-label="Refresh"

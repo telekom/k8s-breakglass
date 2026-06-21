@@ -722,6 +722,11 @@ select:focus {
   min-width: 140px;
 }
 
+.ui-toolbar-actions > .ui-toolbar-icon-control {
+  flex: 0 0 auto;
+  min-width: auto;
+}
+
 .ui-toolbar-info {
   display: flex;
   gap: var(--space-sm);
