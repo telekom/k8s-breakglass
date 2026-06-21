@@ -430,6 +430,10 @@ func assertExecutableMode(t *testing.T, path string) {
 
 	info, err := os.Stat(path)
 	require.NoError(t, err)
+	if runtime.GOOS == "windows" {
+		assert.False(t, info.IsDir())
+		return
+	}
 	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
 }
 
