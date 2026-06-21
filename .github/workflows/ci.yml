@@ -588,15 +588,16 @@ jobs:
             echo "::warning::Could not extract digest from docker push output"
             FIRST_TAG=$(echo "$TAGS" | head -n1)
             if [ -n "$FIRST_TAG" ]; then
-              echo "Polling manifest for fallback digest calculation of ${FIRST_TAG}..."
+              echo "Polling manifest for fallback registry digest of ${FIRST_TAG}..."
               for i in $(seq 1 30); do
-                RAW_MANIFEST=$(docker buildx imagetools inspect "$FIRST_TAG" --raw 2>/dev/null) || true
-                if [ -n "$RAW_MANIFEST" ]; then
-                  PUSH_DIGEST=$(printf '%s' "$RAW_MANIFEST" | sha256sum | awk '{print "sha256:" $1}')
-                  echo "Manifest digest calculated after ${i} attempt(s)"
+                INSPECT_OUTPUT=$(docker buildx imagetools inspect "$FIRST_TAG" 2>/dev/null) || true
+                INSPECT_DIGEST=$(printf '%s\n' "$INSPECT_OUTPUT" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')
+                if [ -n "$INSPECT_DIGEST" ]; then
+                  PUSH_DIGEST="$INSPECT_DIGEST"
+                  echo "Registry digest resolved after ${i} attempt(s)"
                   break
                 fi
-                echo "Attempt ${i}/30: manifest not yet available for digest calculation, retrying in 10s..."
+                echo "Attempt ${i}/30: registry digest not yet available, retrying in 10s..."
                 sleep 10
               done
             fi
