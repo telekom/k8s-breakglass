@@ -1799,6 +1799,7 @@ export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET="breakglass-group-sync-secret"
 # For E2E tests: Use in-cluster service name so controller can access Keycloak
 # Frontend will need DNS resolution to make this hostname work via port-forward
 KEYCLOAK_SERVICE_HOSTNAME="breakglass-keycloak.breakglass-system.svc.cluster.local"
+KEYCLOAK_CA_INLINE=$(sed 's/^/      /' "$TLS_DIR/ca.crt")
 
 cat <<YAML | apply_stdin_with_retry 5 5
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -1818,8 +1819,9 @@ spec:
     authority: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
     # OIDC client ID (must match realm configuration)
     clientID: "breakglass-ui"
-    # Skip TLS verification for self-signed test certificates (NOT for production!)
-    insecureSkipVerify: true
+    # Trust the generated Keycloak CA for self-signed E2E certificates.
+    certificateAuthority: |
+$KEYCLOAK_CA_INLINE
   # Enable Keycloak group sync for resolving group memberships
   groupSyncProvider: Keycloak
   keycloak:
@@ -1833,7 +1835,8 @@ spec:
       key: "client-secret"
     cacheTTL: "5m"
     requestTimeout: "10s"
-    insecureSkipVerify: true
+    certificateAuthority: |
+$KEYCLOAK_CA_INLINE
 YAML
 
 # Wait for IdentityProvider to be reconciled and ready

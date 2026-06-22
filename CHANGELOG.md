@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Frontend dependency audit fixes**: Updated vulnerable Babel and brace-expansion transitive dependencies in the frontend lockfile, deduplicated Babel parser/types resolutions, and raised the frontend Node.js minimum plus CI runtime baseline to 24.11.0.
+- **IdentityProvider TLS hardening**: JWT/JWKS validation and the OIDC proxy now fail closed when `spec.oidc.insecureSkipVerify` or `spec.keycloak.insecureSkipVerify` is enabled. Configure `certificateAuthority` for private or self-signed identity provider certificates. The single-cluster E2E setup now injects the generated Keycloak CA instead of disabling TLS verification, and TOFU handshakes are bounded by a fallback deadline.
 - **Per-user rate limiting on session creation**: `POST /api/breakglassSessions` now enforces a per-user rate limit (10 requests/minute, burst of 1) keyed on the authenticated user's email. Requests exceeding the limit receive `429 Too Many Requests` with a `Retry-After` header indicating when to retry. A valid `email` claim is required; requests without one are rejected.
 
 ### Added

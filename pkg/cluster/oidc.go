@@ -1257,7 +1257,8 @@ func (p *OIDCTokenProvider) oidcHTTPClientCacheKey(oidc *breakglassv1alpha1.OIDC
 }
 
 // performTOFU performs Trust On First Use for the API server certificate.
-// It connects to the server, captures the presented certificate chain, and returns the CA.
+// It opens a bounded TLS handshake, captures the presented certificate chain,
+// and returns the CA when the only verification failure is an unknown/private CA.
 //
 // Security Note - trust bootstrap:
 // Trust On First Use (TOFU) has to connect to an API server whose CA is not
@@ -1265,7 +1266,8 @@ func (p *OIDCTokenProvider) oidcHTTPClientCacheKey(oidc *breakglassv1alpha1.OIDC
 // presented certificate host name and validity period, logs the trusted CA
 // fingerprint, and stores the CA for fully verified future connections.
 //
-// The initial handshake allows one trust-bootstrap verification failure because:
+// The initial handshake uses Go's normal verifier and allows one
+// trust-bootstrap verification failure because:
 //  1. TOFU by definition connects to a server whose CA is not yet trusted
 //  2. Go returns the presented certificate chain in CertificateVerificationError
 //  3. After first use, the captured CA is stored and all subsequent connections are fully verified

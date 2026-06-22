@@ -88,7 +88,9 @@ type OIDCConfig struct {
 	// +kubebuilder:validation:Pattern=`^\S+$`
 	ExpectedAudience string `json:"expectedAudience,omitempty"`
 
-	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
+	// InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
+	// Runtime auth and OIDC proxy paths reject this setting; configure
+	// certificateAuthority for private or self-signed issuer certificates.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 
@@ -130,7 +132,9 @@ type KeycloakGroupSync struct {
 	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
 	RequestTimeout string `json:"requestTimeout,omitempty"`
 
-	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
+	// InsecureSkipVerify skips TLS verification for Keycloak group synchronization only.
+	// Runtime OIDC/JWKS auth and OIDC proxy paths reject IdentityProviders with this
+	// setting enabled; configure certificateAuthority instead.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 
@@ -280,10 +284,10 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj *IdentityPr
 	// Collect warnings for insecure settings
 	var warnings admission.Warnings
 	if obj.Spec.OIDC.InsecureSkipVerify {
-		warnings = append(warnings, "OIDC insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
+		warnings = append(warnings, "OIDC insecureSkipVerify is enabled but IdentityProvider JWT/JWKS auth and the OIDC proxy reject this setting; configure certificateAuthority instead")
 	}
 	if obj.Spec.Keycloak != nil && obj.Spec.Keycloak.InsecureSkipVerify {
-		warnings = append(warnings, "Keycloak insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
+		warnings = append(warnings, "Keycloak insecureSkipVerify is enabled but IdentityProvider JWT/JWKS auth and the OIDC proxy reject this setting; configure certificateAuthority instead")
 	}
 
 	if len(allErrs) == 0 {

@@ -29,12 +29,10 @@ spec:
     # Example: https://auth.example.com/.well-known/jwks.json
     # jwksEndpoint: "https://auth.example.com/.well-known/jwks.json"
 
-    # InsecureSkipVerify allows skipping TLS certificate verification
-    # WARNING: Only use in development/testing environments!
-    # insecureSkipVerify: false
-
     # CertificateAuthority (optional) contains a PEM-encoded CA certificate
     # for validating the TLS certificate presented by the OIDC provider
+    # Use this for private or self-signed issuer certificates; OIDC/JWKS
+    # authentication and the OIDC proxy reject insecureSkipVerify.
     # certificateAuthority: |
     #   -----BEGIN CERTIFICATE-----
     #   MIIDXTCCAkWgAwIBAgIJAJXuYv...
@@ -81,4 +79,3 @@ spec:
   # This provider is not the default but is enabled for users to choose
   primary: false
   displayName: "Backup OIDC Provider"
-

@@ -977,7 +977,6 @@ spec:
     authority: https://keycloak.example.com/realms/breakglass-e2e
     clientID: breakglass-ui           # Public client for UI auth
     jwksEndpoint: ""                  # Auto-discovered from authority
-    insecureSkipVerify: false         # NEVER true in production
     certificateAuthority: |           # PEM-encoded CA cert
       -----BEGIN CERTIFICATE-----
       ...
@@ -998,7 +997,6 @@ spec:
       key: value
     cacheTTL: 10m                     # Group membership cache duration
     requestTimeout: 10s               # Keycloak API request timeout
-    insecureSkipVerify: false
     certificateAuthority: ""          # Use system trust or embed CA PEM
 
   # Session limits (optional)
@@ -1062,12 +1060,13 @@ Recommended for production. Provide the CA via:
 
 Set `allowTOFU: true` to auto-discover CAs on first connection:
 
-1. Controller connects to the server with `InsecureSkipVerify: true`
-2. During the TLS handshake, `VerifyConnection` captures the certificate chain
-3. Hostname verification is still performed against the leaf certificate
-4. The root/CA certificate is extracted, PEM-encoded, and cached in memory
-5. If `caSecretRef` is configured, the CA is persisted to the Secret (via SSA)
-6. All subsequent connections use the cached CA with full TLS verification
+1. Controller opens an HTTPS connection with a bounded TLS handshake deadline
+2. The TLS handshake first uses normal verification and hostname checks
+3. If the only failure is an unknown/private CA, the presented unverified chain is captured
+4. Hostname and validity checks are repeated against the leaf certificate
+5. The root/CA certificate is extracted, PEM-encoded, and cached in memory
+6. If `caSecretRef` is configured, the CA is persisted to the Secret (via SSA)
+7. All subsequent connections use the cached CA with full TLS verification
 
 **Security properties**:
 - TOFU is vulnerable to MITM on the first connection only
@@ -1082,6 +1081,11 @@ Set `allowTOFU: true` to auto-discover CAs on first connection:
 ### 3. InsecureSkipTLSVerify
 
 For testing only. Set `insecureSkipTLSVerify: true` to disable all TLS verification. The webhook emits a warning when this is used.
+
+This option applies to `ClusterConfig` spoke-cluster authentication. For
+`IdentityProvider` OIDC/JWKS authentication and the OIDC proxy, use
+`certificateAuthority`; `spec.oidc.insecureSkipVerify` and
+`spec.keycloak.insecureSkipVerify` fail closed in those runtime paths.
 
 ---
 
@@ -1272,7 +1276,7 @@ OIDCDiscoveryFailed: OIDC discovery request failed
 
 **Fix**:
 1. Verify the issuer URL is correct and accessible from the controller pod
-2. Check TLS: use `certificateAuthority`, `allowTOFU: true`, or `insecureSkipTLSVerify: true` (test only)
+2. Check TLS: use `certificateAuthority`; for spoke-cluster API server TLS, `allowTOFU: true` or `insecureSkipTLSVerify: true` are available test-only options
 3. For in-cluster Keycloak: ensure DNS resolution works (add to `/etc/hosts` or use a Kubernetes Service)
 
 ### Token Fetch Fails
