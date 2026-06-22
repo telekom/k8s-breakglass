@@ -603,3 +603,45 @@ func TestNewKeycloakGroupMemberResolver_CustomCacheTTL(t *testing.T) {
 	// Cache TTL should be 30 minutes
 	assert.Equal(t, "30m", resolver.cfg.CacheTTL)
 }
+
+func TestSetupResolverReturnsQuietNoopWhenGroupSyncDisabled(t *testing.T) {
+	slog := zap.NewNop().Sugar()
+
+	tests := []struct {
+		name string
+		cfg  *cfgpkg.IdentityProviderConfig
+	}{
+		{
+			name: "no identity provider config",
+			cfg:  nil,
+		},
+		{
+			name: "incomplete keycloak config",
+			cfg: &cfgpkg.IdentityProviderConfig{
+				Keycloak: &cfgpkg.KeycloakRuntimeConfig{
+					BaseURL: "https://keycloak.example.com",
+				},
+			},
+		},
+		{
+			name: "insecure keycloak config",
+			cfg: &cfgpkg.IdentityProviderConfig{
+				Keycloak: &cfgpkg.KeycloakRuntimeConfig{
+					BaseURL:            "https://keycloak.example.com",
+					Realm:              "test",
+					InsecureSkipVerify: true,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver := SetupResolver(tt.cfg, slog)
+			members, err := resolver.Members(t.Context(), "admin-group")
+
+			assert.NoError(t, err)
+			assert.Empty(t, members)
+		})
+	}
+}

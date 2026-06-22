@@ -115,12 +115,16 @@ type AuthHandler struct {
 	log *zap.SugaredLogger
 
 	// IDPLoader for multi-IDP mode
-	idpLoader *config.IdentityProviderLoader
+	idpLoader identityProviderByIssuerLoader
 
 	// defaultHTTPClient is a shared HTTP client for OIDC discovery when no
 	// custom CA is configured. Reusing it avoids per-request allocations and
 	// enables connection pooling.
 	defaultHTTPClient *http.Client
+}
+
+type identityProviderByIssuerLoader interface {
+	LoadIdentityProviderByIssuer(ctx context.Context, issuer string) (*config.IdentityProviderConfig, error)
 }
 
 // defaultOIDCTransport clones http.DefaultTransport to inherit its sensible
@@ -171,6 +175,10 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 
 // WithIdentityProviderLoader sets the IDP loader for multi-IDP support
 func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProviderLoader) *AuthHandler {
+	if loader == nil {
+		a.idpLoader = nil
+		return a
+	}
 	a.idpLoader = loader
 	return a
 }
@@ -313,7 +321,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 
 	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
-		return nil, fmt.Errorf("insecureSkipVerify is not supported for IDP %s; configure certificateAuthority", idpCfg.Name)
+		return nil, errUnknownIdentityProvider
 	}
 
 	// Create JWKS override options for keyfunc/v3

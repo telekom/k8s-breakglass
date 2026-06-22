@@ -44,8 +44,8 @@ func TestAuthHandlerWithIdentityProviderLoader(t *testing.T) {
 	// Verify that WithIdentityProviderLoader returns the auth handler itself (for chaining)
 	assert.Equal(t, auth, result, "WithIdentityProviderLoader should return the auth handler for chaining")
 
-	// Verify that the loader is stored (even though it's nil for this test)
-	assert.Equal(t, loader, auth.idpLoader, "Auth handler should store the provided loader")
+	// Verify that a nil loader leaves multi-IDP mode disabled.
+	assert.Nil(t, auth.idpLoader, "Auth handler should keep nil loaders disabled")
 
 	t.Logf("✅ Auth handler properly accepts IDP loader and supports method chaining")
 }

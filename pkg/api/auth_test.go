@@ -2,6 +2,7 @@ package api
 
 import (
 	"container/list"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -31,6 +32,18 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+type staticIdentityProviderByIssuerLoader struct {
+	cfg *config.IdentityProviderConfig
+	err error
+}
+
+func (s staticIdentityProviderByIssuerLoader) LoadIdentityProviderByIssuer(context.Context, string) (*config.IdentityProviderConfig, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.cfg, nil
+}
 
 func TestAuthHandler_Middleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -749,6 +762,58 @@ func TestGetJWKSForIssuerRejectsInsecureSkipVerifyBeforeCA(t *testing.T) {
 			_, err = loader.LoadIdentityProviderByIssuer(t.Context(), tt.idp.Spec.Issuer)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "insecureSkipVerify is not supported")
+		})
+	}
+}
+
+func TestGetJWKSForIssuerRejectsInsecureRuntimeConfigWithOpaqueError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		cfg  *config.IdentityProviderConfig
+	}{
+		{
+			name: "OIDC insecure flag",
+			cfg: &config.IdentityProviderConfig{
+				Name:               "oidc-insecure",
+				Issuer:             "https://oidc.example.com",
+				Authority:          "https://oidc.example.com",
+				ClientID:           "breakglass-ui",
+				InsecureSkipVerify: true,
+			},
+		},
+		{
+			name: "Keycloak insecure flag",
+			cfg: &config.IdentityProviderConfig{
+				Name:      "keycloak-insecure",
+				Issuer:    "https://keycloak.example.com/realms/test",
+				Authority: "https://keycloak.example.com/realms/test",
+				ClientID:  "breakglass-ui",
+				Keycloak: &config.KeycloakRuntimeConfig{
+					BaseURL:            "https://keycloak.example.com",
+					Realm:              "test",
+					ClientID:           "group-sync",
+					InsecureSkipVerify: true,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth := &AuthHandler{
+				jwksCache:   make(map[string]*list.Element),
+				jwksLRUList: list.New(),
+				log:         zaptest.NewLogger(t).Sugar(),
+				idpLoader:   staticIdentityProviderByIssuerLoader{cfg: tt.cfg},
+			}
+
+			_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), tt.cfg.Issuer)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errUnknownIdentityProvider)
+			assert.NotContains(t, err.Error(), tt.cfg.Name)
+			assert.NotContains(t, err.Error(), "insecureSkipVerify")
 		})
 	}
 }

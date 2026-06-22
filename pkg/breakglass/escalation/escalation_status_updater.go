@@ -38,6 +38,12 @@ type KeycloakGroupMemberResolver struct {
 	tokenLock sync.RWMutex
 }
 
+type noopGroupMemberResolver struct{}
+
+func (noopGroupMemberResolver) Members(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 type kcCache struct {
 	mu    sync.RWMutex
 	items map[string]kcEntry
@@ -865,12 +871,12 @@ func SetupResolver(idpConfig *cfgpkg.IdentityProviderConfig, log *zap.SugaredLog
 			log.Errorw("Keycloak group sync disabled because InsecureSkipVerify=true is not supported",
 				"baseURL", idpConfig.Keycloak.BaseURL,
 				"realm", idpConfig.Keycloak.Realm)
-			return &KeycloakGroupMemberResolver{}
+			return noopGroupMemberResolver{}
 		}
 		resolver = NewKeycloakGroupMemberResolver(log, *idpConfig.Keycloak)
 		log.Infow("Keycloak group sync enabled", "baseURL", idpConfig.Keycloak.BaseURL, "realm", idpConfig.Keycloak.Realm)
 	} else {
-		resolver = &KeycloakGroupMemberResolver{} // no-op
+		resolver = noopGroupMemberResolver{}
 		log.Infow("Keycloak group sync disabled or not fully configured; using no-op resolver")
 	}
 	return resolver
