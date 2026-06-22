@@ -1022,7 +1022,7 @@ load_image_into_kind "nicolaka/netshoot"
 load_image_into_kind "$TMUX_DEBUG_IMAGE"
 # Preload busybox for debug session tests (used by test-basic-debug template)
 load_image_into_kind "busybox:latest"
-# Preload the audit webhook receiver image so E2E setup does not depend on Docker Hub pulls.
+# Preload the audit webhook receiver image so the in-cluster deployment does not pull it.
 ensure_image_exists "python:3.11-slim"
 load_image_into_kind "python:3.11-slim"
 # Load Kafka image for audit sink testing
