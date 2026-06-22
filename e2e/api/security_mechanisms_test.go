@@ -469,6 +469,8 @@ func TestSecurityGroupSyncSecretRequired(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("IDPWithMissingSecretShowsError", func(t *testing.T) {
+		keycloakCA := helpers.GetKeycloakCAFromCluster(ctx, cli, helpers.GetTestNamespace())
+
 		// Create an IDP that references a non-existent secret
 		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
@@ -480,20 +482,20 @@ func TestSecurityGroupSyncSecretRequired(t *testing.T) {
 				Issuer:            "https://auth.example.com/realms/test",
 				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority:          "https://auth.example.com",
-					ClientID:           "test-client",
-					InsecureSkipVerify: true,
+					Authority:            "https://auth.example.com",
+					ClientID:             "test-client",
+					CertificateAuthority: keycloakCA,
 				},
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
-					BaseURL:  "https://auth.example.com",
-					Realm:    "test",
-					ClientID: "group-sync-client",
+					BaseURL:              "https://auth.example.com",
+					Realm:                "test",
+					ClientID:             "group-sync-client",
+					CertificateAuthority: keycloakCA,
 					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      "secret-that-does-not-exist",
 						Namespace: "default",
 						Key:       "client-secret",
 					},
-					InsecureSkipVerify: true,
 				},
 			},
 		}
