@@ -4,7 +4,17 @@
 
 import { defineConfig, devices } from "@playwright/test";
 
-const mockApiPort = Number(process.env.MOCK_API_PORT || 8080);
+const defaultMockApiPort = 8080;
+const parseMockApiPort = (value: string | undefined): number => {
+  if (!value?.trim()) {
+    return defaultMockApiPort;
+  }
+
+  const parsedPort = Number(value);
+  return Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : defaultMockApiPort;
+};
+
+const mockApiPort = parseMockApiPort(process.env.MOCK_API_PORT);
 const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === "true";
 
 export default defineConfig({

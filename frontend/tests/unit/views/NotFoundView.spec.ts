@@ -5,12 +5,16 @@
  */
 
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { mount, type VueWrapper } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import NotFoundView from "@/views/NotFoundView.vue";
 
 describe("NotFoundView", () => {
+  let wrapper: VueWrapper | undefined;
+
   afterEach(() => {
+    wrapper?.unmount();
+    wrapper = undefined;
     vi.restoreAllMocks();
   });
 
@@ -26,7 +30,7 @@ describe("NotFoundView", () => {
     await router.isReady();
     const pushSpy = vi.spyOn(router, "push").mockResolvedValue(undefined);
 
-    const wrapper = mount(NotFoundView, {
+    wrapper = mount(NotFoundView, {
       global: {
         plugins: [router],
       },
