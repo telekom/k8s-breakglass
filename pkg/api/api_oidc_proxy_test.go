@@ -831,6 +831,22 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 		assert.Contains(t, err.Error(), "configure certificateAuthority")
 	})
 
+	t.Run("rejects insecure flag even with certificate authority", func(t *testing.T) {
+		server := &Server{
+			log: logger,
+			idpConfig: &config.IdentityProviderConfig{
+				Name:                 "test",
+				Authority:            "https://keycloak.example.com",
+				CertificateAuthority: testCertificatePEM(t),
+				InsecureSkipVerify:   true,
+			},
+		}
+		client, err := server.newOIDCProxyHTTPClient(true)
+		require.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "insecureSkipVerify is not supported")
+	})
+
 	t.Run("uses provided certificate authority", func(t *testing.T) {
 		server := &Server{
 			log: logger,

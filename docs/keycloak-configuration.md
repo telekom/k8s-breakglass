@@ -1084,8 +1084,8 @@ For testing only. Set `insecureSkipTLSVerify: true` to disable all TLS verificat
 
 This option applies to `ClusterConfig` spoke-cluster authentication. For
 `IdentityProvider` OIDC/JWKS authentication and the OIDC proxy, use
-`certificateAuthority`; `spec.oidc.insecureSkipVerify` and
-`spec.keycloak.insecureSkipVerify` fail closed in those runtime paths.
+`certificateAuthority`; admission and runtime paths reject
+`spec.oidc.insecureSkipVerify` and `spec.keycloak.insecureSkipVerify`.
 
 ---
 

@@ -24,8 +24,8 @@ spec:
     # jwksEndpoint: "https://auth.example.com/.well-known/jwks.json"
 
     # Optional: CA certificate for TLS validation
-    # Use this for private or self-signed issuer certificates; OIDC/JWKS
-    # authentication and the OIDC proxy reject insecureSkipVerify.
+    # Use this for private or self-signed issuer certificates; admission,
+    # OIDC/JWKS authentication, and the OIDC proxy reject insecureSkipVerify.
     # certificateAuthority: |
     #   -----BEGIN CERTIFICATE-----
     #   MIIDXTCCAkWgAwIBAgIJAJXuYv...
@@ -75,8 +75,8 @@ spec:
 
     # CertificateAuthority (optional) contains a PEM-encoded CA certificate
     # for validating the TLS certificate presented by the Keycloak server
-    # OIDC/JWKS authentication and the OIDC proxy reject IdentityProviders with
-    # insecureSkipVerify enabled.
+    # Admission, OIDC/JWKS authentication, and the OIDC proxy reject
+    # IdentityProviders with insecureSkipVerify enabled.
     # certificateAuthority: |
     #   -----BEGIN CERTIFICATE-----
     #   MIIDXTCCAkWgAwIBAgIJAJXuYv...

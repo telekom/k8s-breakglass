@@ -311,6 +311,11 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		return nil, errUnknownIdentityProvider
 	}
 
+	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
+		a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
+		return nil, fmt.Errorf("insecureSkipVerify is not supported for IDP %s; configure certificateAuthority", idpCfg.Name)
+	}
+
 	// Create JWKS override options for keyfunc/v3
 	override := keyfunc.Override{
 		RefreshInterval: time.Hour,
@@ -339,9 +344,6 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		transport := defaultOIDCTransport()
 		transport.TLSClientConfig.RootCAs = pool
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
-	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
-		return nil, fmt.Errorf("insecureSkipVerify is not supported for IDP %s; configure certificateAuthority", idpCfg.Name)
 	}
 
 	// Build JWKS endpoint URL from IDP's configuration

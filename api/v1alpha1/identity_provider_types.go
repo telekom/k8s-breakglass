@@ -89,7 +89,7 @@ type OIDCConfig struct {
 	ExpectedAudience string `json:"expectedAudience,omitempty"`
 
 	// InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
-	// Runtime auth and OIDC proxy paths reject this setting; configure
+	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
 	// certificateAuthority for private or self-signed issuer certificates.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
@@ -133,7 +133,7 @@ type KeycloakGroupSync struct {
 	RequestTimeout string `json:"requestTimeout,omitempty"`
 
 	// InsecureSkipVerify skips TLS verification for Keycloak group synchronization only.
-	// Runtime OIDC/JWKS auth and OIDC proxy paths reject IdentityProviders with this
+	// Admission and runtime OIDC/JWKS auth/OIDC proxy paths reject IdentityProviders with this
 	// setting enabled; configure certificateAuthority instead.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
@@ -281,15 +281,7 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj *IdentityPr
 	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique - requires k8s client)
 	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, obj.Spec.Issuer, obj.Name, field.NewPath("spec").Child("issuer"))...)
 
-	// Collect warnings for insecure settings
 	var warnings admission.Warnings
-	if obj.Spec.OIDC.InsecureSkipVerify {
-		warnings = append(warnings, "OIDC insecureSkipVerify is enabled but IdentityProvider JWT/JWKS auth and the OIDC proxy reject this setting; configure certificateAuthority instead")
-	}
-	if obj.Spec.Keycloak != nil && obj.Spec.Keycloak.InsecureSkipVerify {
-		warnings = append(warnings, "Keycloak insecureSkipVerify is enabled but IdentityProvider JWT/JWKS auth and the OIDC proxy reject this setting; configure certificateAuthority instead")
-	}
-
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}

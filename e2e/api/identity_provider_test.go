@@ -172,14 +172,17 @@ func TestIdentityProviderStatusHealth(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
 
 	t.Run("IDPWithValidIssuerBecomesReady", func(t *testing.T) {
 		// Create IDP pointing to the e2e Keycloak instance
-		keycloakURL := helpers.GetKeycloakURL()
+		keycloakURL := helpers.GetKeycloakInternalURL()
 		require.NotEmpty(t, keycloakURL, "Keycloak URL must be configured - set KEYCLOAK_HOST or KEYCLOAK_URL")
 		// CRD validation requires HTTPS for Authority
 		require.True(t, strings.HasPrefix(keycloakURL, "https://"),
 			"Keycloak URL must use HTTPS for CRD validation (spec.oidc.authority requires ^https://), got: %s", keycloakURL)
+		keycloakCA := helpers.GetKeycloakCAFromCluster(ctx, cli, namespace)
+		require.NotEmpty(t, keycloakCA, "Keycloak CA must be available for secure IdentityProvider TLS")
 
 		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
@@ -190,9 +193,9 @@ func TestIdentityProviderStatusHealth(t *testing.T) {
 				DisplayName: "Health Check IDP",
 				Issuer:      keycloakURL + "/realms/master",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority:          keycloakURL,
-					ClientID:           "breakglass-ui",
-					InsecureSkipVerify: true, // For e2e with self-signed certs
+					Authority:            keycloakURL,
+					ClientID:             "breakglass-ui",
+					CertificateAuthority: keycloakCA,
 				},
 			},
 		}
@@ -209,16 +212,16 @@ func TestIdentityProviderStatusHealth(t *testing.T) {
 			for _, c := range fetched.Status.Conditions {
 				if breakglassv1alpha1.IdentityProviderConditionType(c.Type) == breakglassv1alpha1.IdentityProviderConditionReady {
 					t.Logf("IDP-009: Ready condition - Status=%s, Reason=%s", c.Status, c.Reason)
-					return true, nil
+					return c.Status == metav1.ConditionTrue, nil
 				}
 			}
 			return false, nil
 		}, helpers.WaitForStateTimeout, 1*time.Second)
 
 		if err != nil {
-			t.Logf("IDP-009: Ready condition not set within timeout (may need controller to reconcile)")
+			t.Fatalf("IDP-009: Ready=True condition not set within timeout: %v", err)
 		} else {
-			t.Log("IDP-009: IDP has Ready condition set")
+			t.Log("IDP-009: IDP has Ready=True condition set")
 		}
 	})
 }
@@ -324,11 +327,13 @@ func TestIdentityProviderKeycloakGroupSync(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("CreateIDPWithKeycloakGroupSync", func(t *testing.T) {
-		keycloakURL := helpers.GetKeycloakURL()
+		keycloakURL := helpers.GetKeycloakInternalURL()
 		require.NotEmpty(t, keycloakURL, "Keycloak URL must be configured - set KEYCLOAK_HOST or KEYCLOAK_URL")
 		// CRD validation requires HTTPS for Authority
 		require.True(t, strings.HasPrefix(keycloakURL, "https://"),
 			"Keycloak URL must use HTTPS for CRD validation (spec.oidc.authority requires ^https://), got: %s", keycloakURL)
+		keycloakCA := helpers.GetKeycloakCAFromCluster(ctx, cli, namespace)
+		require.NotEmpty(t, keycloakCA, "Keycloak CA must be available for secure IdentityProvider TLS")
 
 		// First, create a secret for the Keycloak client credentials
 		secret := helpers.CreateKeycloakClientSecret(t, ctx, cli, namespace, "e2e-keycloak-sync-secret")
@@ -348,9 +353,9 @@ func TestIdentityProviderKeycloakGroupSync(t *testing.T) {
 				Issuer:            keycloakURL + "/realms/" + uniqueRealm,
 				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority:          keycloakURL,
-					ClientID:           "breakglass-ui",
-					InsecureSkipVerify: true,
+					Authority:            keycloakURL,
+					ClientID:             "breakglass-ui",
+					CertificateAuthority: keycloakCA,
 				},
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
 					BaseURL:  keycloakURL,
@@ -361,8 +366,8 @@ func TestIdentityProviderKeycloakGroupSync(t *testing.T) {
 						Namespace: namespace,
 						Key:       "client-secret",
 					},
-					CacheTTL:           "10m",
-					InsecureSkipVerify: true,
+					CacheTTL:             "10m",
+					CertificateAuthority: keycloakCA,
 				},
 			},
 		}

@@ -27,6 +27,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -672,6 +673,75 @@ func TestJWKSFetchRateLimiting(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "rate limited",
 		"issuer should not be rate-limited after cooldown expires")
+}
+
+func TestGetJWKSForIssuerRejectsInsecureSkipVerifyBeforeCA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		idp  *breakglassv1alpha1.IdentityProvider
+	}{
+		{
+			name: "OIDC insecure flag with certificate authority",
+			idp: &breakglassv1alpha1.IdentityProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "oidc-insecure"},
+				Spec: breakglassv1alpha1.IdentityProviderSpec{
+					Issuer: "https://oidc.example.com",
+					OIDC: breakglassv1alpha1.OIDCConfig{
+						Authority:            "https://oidc.example.com",
+						ClientID:             "breakglass-ui",
+						CertificateAuthority: testCertificatePEM(t),
+						InsecureSkipVerify:   true,
+					},
+				},
+			},
+		},
+		{
+			name: "Keycloak insecure flag with certificate authority",
+			idp: &breakglassv1alpha1.IdentityProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "keycloak-insecure"},
+				Spec: breakglassv1alpha1.IdentityProviderSpec{
+					Issuer:            "https://keycloak.example.com/realms/test",
+					GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+					OIDC: breakglassv1alpha1.OIDCConfig{
+						Authority:            "https://keycloak.example.com/realms/test",
+						ClientID:             "breakglass-ui",
+						CertificateAuthority: testCertificatePEM(t),
+					},
+					Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+						BaseURL:              "https://keycloak.example.com",
+						Realm:                "test",
+						ClientID:             "group-sync",
+						CertificateAuthority: testCertificatePEM(t),
+						InsecureSkipVerify:   true,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			loader := config.NewIdentityProviderLoader(fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.idp).
+				Build())
+
+			auth := &AuthHandler{
+				jwksCache:   make(map[string]*list.Element),
+				jwksLRUList: list.New(),
+				log:         zaptest.NewLogger(t).Sugar(),
+				idpLoader:   loader,
+			}
+
+			_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), tt.idp.Spec.Issuer)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "insecureSkipVerify is not supported")
+		})
+	}
 }
 
 func TestGetJWKSForIssuer_AudienceRefreshFailureBackoff(t *testing.T) {

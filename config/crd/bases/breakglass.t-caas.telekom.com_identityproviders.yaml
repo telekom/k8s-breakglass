@@ -136,7 +136,7 @@ spec:
                   insecureSkipVerify:
                     description: |-
                       InsecureSkipVerify skips TLS verification for Keycloak group synchronization only.
-                      Runtime OIDC/JWKS auth and OIDC proxy paths reject IdentityProviders with this
+                      Admission and runtime OIDC/JWKS auth/OIDC proxy paths reject IdentityProviders with this
                       setting enabled; configure certificateAuthority instead.
                     type: boolean
                   realm:
@@ -194,7 +194,7 @@ spec:
                   insecureSkipVerify:
                     description: |-
                       InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
-                      Runtime auth and OIDC proxy paths reject this setting; configure
+                      Admission and runtime auth/OIDC proxy paths reject this setting; configure
                       certificateAuthority for private or self-signed issuer certificates.
                     type: boolean
                   jwksEndpoint:

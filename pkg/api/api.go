@@ -1102,6 +1102,14 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 	mode := tlsModeSystemCA
 	var tlsConfig *tls.Config
 
+	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
+		s.log.Sugar().Warnw("refusing insecure TLS verification for identity provider",
+			"idpName", idpCfg.Name,
+			"authority", idpCfg.Authority,
+			"remediation", "configure certificateAuthority for private or self-signed identity provider certificates")
+		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpCfg.Name)
+	}
+
 	switch {
 	case idpCfg.CertificateAuthority != "":
 		roots := x509.NewCertPool()
@@ -1110,12 +1118,6 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		}
 		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 		mode = tlsModeCustomCA
-	case idpCfg.InsecureSkipVerify, idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify:
-		s.log.Sugar().Warnw("refusing insecure TLS verification for identity provider",
-			"idpName", idpCfg.Name,
-			"authority", idpCfg.Authority,
-			"remediation", "configure certificateAuthority for private or self-signed identity provider certificates")
-		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpCfg.Name)
 	default:
 		roots, err := x509.SystemCertPool()
 		if err != nil {

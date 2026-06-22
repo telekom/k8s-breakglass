@@ -46,7 +46,7 @@ spec:
 | `clientID` | string | ✅ Yes | OIDC client ID for the Breakglass UI (frontend). Configured in your OIDC provider. |
 | `expectedAudience` | string | ❌ No | Expected JWT `aud` claim value. When set, tokens must contain this audience. Requires a matching audience protocol mapper in your IDP. If empty, audience validation is skipped. |
 | `jwksEndpoint` | string | ❌ No | JWKS endpoint for key sets. Defaults to `{authority}/.well-known/openid-configuration` |
-| `insecureSkipVerify` | boolean | ❌ No | Deprecated for OIDC/JWKS authentication. Runtime auth and OIDC proxy paths reject this setting. Leave unset/`false` and use `certificateAuthority` for private CAs. |
+| `insecureSkipVerify` | boolean | ❌ No | Deprecated for OIDC/JWKS authentication. Admission and runtime auth/OIDC proxy paths reject this setting. Leave unset/`false` and use `certificateAuthority` for private CAs. |
 | `certificateAuthority` | string | ❌ No | PEM-encoded CA certificate for OIDC issuer TLS validation |
 
 ### Issuer Field (Critical for Multi-IDP)
@@ -171,7 +171,7 @@ When `groupSyncProvider: Keycloak` is set, the `keycloak` section configures how
 | `clientSecretRef` | SecretKeyReference | ✅ Yes | Reference to secret containing admin client secret |
 | `cacheTTL` | string | ❌ No | Cache duration for group memberships (default: `10m`). Format: `5m`, `1h`, etc. |
 | `requestTimeout` | string | ❌ No | API request timeout (default: `10s`). Format: `10s`, `5m`, etc. |
-| `insecureSkipVerify` | boolean | ❌ No | Skip TLS verification for Keycloak group synchronization only. Runtime JWKS auth and OIDC proxy paths reject IdentityProviders with this enabled. |
+| `insecureSkipVerify` | boolean | ❌ No | Deprecated for Keycloak group synchronization. Admission and runtime JWKS auth/OIDC proxy paths reject IdentityProviders with this enabled. |
 | `certificateAuthority` | string | ❌ No | PEM-encoded CA certificate for Keycloak TLS validation |
 
 **Important:** The Keycloak `clientID` in this section is the **admin/service account** client used for API queries (to fetch user groups). This is different from the OIDC `clientID` which is the user-facing client in the `oidc` section above.
@@ -694,8 +694,9 @@ oidc:
     -----END CERTIFICATE-----
 ```
 
-Do not use `spec.oidc.insecureSkipVerify` as a workaround. JWT/JWKS validation
-and the OIDC proxy fail closed when IdentityProvider TLS verification is disabled.
+Do not use `spec.oidc.insecureSkipVerify` as a workaround. Admission,
+JWT/JWKS validation, and the OIDC proxy fail closed when IdentityProvider TLS
+verification is disabled.
 
 ## Multi-IDP Support (New in v0.2.0)
 
