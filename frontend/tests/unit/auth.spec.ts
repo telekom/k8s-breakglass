@@ -33,6 +33,8 @@ describe("AuthService mock mode guard", () => {
     vi.stubEnv("PROD", true);
     vi.resetModules();
     localStorage.setItem("breakglass_oidc_token_persistence", "persistent");
+    localStorage.setItem("oidc.user:https://auth.example.com:breakglass-ui", "legacy-refresh-token");
+    localStorage.setItem("breakglass_current_idp_name", "corp");
     const { default: AuthService } = await import("@/services/auth");
 
     const auth = new AuthService(baseConfig);
@@ -45,6 +47,9 @@ describe("AuthService mock mode guard", () => {
 
     expect(sessionStorage.getItem("oidc.probe")).toBe("session-only");
     expect(localStorage.getItem("oidc.probe")).toBeNull();
+    expect(localStorage.getItem("breakglass_oidc_token_persistence")).toBe("session");
+    expect(localStorage.getItem("oidc.user:https://auth.example.com:breakglass-ui")).toBeNull();
+    expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
   });
 
   it("falls back to in-memory OIDC storage when browser storage is blocked", async () => {
