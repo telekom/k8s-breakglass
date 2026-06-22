@@ -59,6 +59,12 @@ describe("multiIDP service", () => {
   it("normalizes malformed multi-IDP config payloads", async () => {
     mockedAxios.get.mockResolvedValueOnce({
       data: {
+        identityProviders: [
+          { name: "corp", displayName: "Corporate", issuer: "https://idp", enabled: true, oidcClientID: "ui" },
+          null,
+          "invalid",
+          { name: "missing-enabled", displayName: "Missing enabled", issuer: "https://idp" },
+        ],
         escalationIDPMapping: {
           prod: ["corp", 42, null],
           dev: "all",
@@ -69,7 +75,9 @@ describe("multiIDP service", () => {
     const result = await getMultiIDPConfig();
 
     expect(result).toEqual({
-      identityProviders: [],
+      identityProviders: [
+        { name: "corp", displayName: "Corporate", issuer: "https://idp", enabled: true, oidcClientID: "ui" },
+      ],
       escalationIDPMapping: {
         prod: ["corp"],
         dev: [],

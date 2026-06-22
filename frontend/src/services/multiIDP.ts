@@ -66,6 +66,33 @@ function normalizeEscalationIDPMapping(value: unknown): Record<string, string[]>
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeIdentityProvider(value: unknown): IDPInfo | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const { name, displayName, issuer, enabled, oidcAuthority, oidcClientID } = value;
+  if (typeof name !== "string" || typeof displayName !== "string" || typeof issuer !== "string") {
+    return null;
+  }
+  if (typeof enabled !== "boolean") {
+    return null;
+  }
+
+  return {
+    name,
+    displayName,
+    issuer,
+    enabled,
+    ...(typeof oidcAuthority === "string" ? { oidcAuthority } : {}),
+    ...(typeof oidcClientID === "string" ? { oidcClientID } : {}),
+  };
+}
+
 function normalizeMultiIDPConfig(value: unknown): MultiIDPConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return emptyMultiIDPConfig();
@@ -73,7 +100,9 @@ function normalizeMultiIDPConfig(value: unknown): MultiIDPConfig {
 
   const config = value as Partial<MultiIDPConfig>;
   return {
-    identityProviders: Array.isArray(config.identityProviders) ? config.identityProviders : [],
+    identityProviders: Array.isArray(config.identityProviders)
+      ? config.identityProviders.map(normalizeIdentityProvider).filter((idp): idp is IDPInfo => idp !== null)
+      : [],
     escalationIDPMapping: normalizeEscalationIDPMapping(config.escalationIDPMapping),
   };
 }
