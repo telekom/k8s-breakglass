@@ -33,6 +33,8 @@ import (
 // TokenRefreshBuffer is the duration before expiry when we proactively refresh tokens
 const TokenRefreshBuffer = 30 * time.Second
 
+var tofuHandshakeTimeout = 5 * time.Second
+
 // ErrRefreshTokenExpired indicates the offline refresh token is invalid, expired, or revoked.
 // The checker uses this to set the RefreshTokenExpired condition on ClusterConfig.
 var ErrRefreshTokenExpired = errors.New("refresh token expired or revoked")
@@ -1303,11 +1305,15 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 	conn := tls.Client(netConn, tlsConfig)
 	defer func() { _ = conn.Close() }()
 
-	// Perform the TLS handshake with context deadline
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := conn.SetDeadline(deadline); err != nil {
-			return nil, fmt.Errorf("failed to set connection deadline: %w", err)
-		}
+	// Bound the TLS handshake even when callers pass a context without a
+	// deadline. DialContext only covers the TCP connect; a peer can still accept
+	// the socket and then never complete TLS.
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(tofuHandshakeTimeout)
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("failed to set connection deadline: %w", err)
 	}
 	var peerCertificates []*x509.Certificate
 	if err := conn.Handshake(); err != nil {

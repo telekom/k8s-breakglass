@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1045,6 +1046,47 @@ func TestOIDCTokenProvider_PerformTOFU_RejectsInvalidTargets(t *testing.T) {
 		require.Error(t, err)
 		// Should fail to connect (not hanging indefinitely due to proper timeout)
 		assert.Contains(t, err.Error(), "failed to connect to API server for TOFU")
+	})
+
+	t.Run("stalled TLS handshake uses fallback deadline", func(t *testing.T) {
+		originalTimeout := tofuHandshakeTimeout
+		tofuHandshakeTimeout = 50 * time.Millisecond
+		t.Cleanup(func() {
+			tofuHandshakeTimeout = originalTimeout
+		})
+
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = listener.Close()
+		})
+
+		release := make(chan struct{})
+		accepted := make(chan struct{})
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+			close(accepted)
+			<-release
+		}()
+		t.Cleanup(func() {
+			close(release)
+		})
+
+		start := time.Now()
+		_, err = provider.performTOFU(context.Background(), "https://"+listener.Addr().String())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TLS handshake failed for TOFU")
+		assert.Less(t, time.Since(start), time.Second)
+
+		select {
+		case <-accepted:
+		default:
+			t.Fatal("stalled TLS test server did not accept the connection")
+		}
 	})
 }
 
