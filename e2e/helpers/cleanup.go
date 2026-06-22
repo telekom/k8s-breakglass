@@ -1,4 +1,8 @@
 /*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+
 Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,12 +34,19 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 )
 
-// isCleanupDisabled returns true if E2E_SKIP_CLEANUP is set.
-// In CI, we skip cleanup so that resources remain for post-test debugging
-// and resource dump (e.g., kubectl get escalations -o yaml).
-// Each test uses unique names (with random suffixes) to avoid conflicts.
-func isCleanupDisabled() bool {
-	return os.Getenv("E2E_SKIP_CLEANUP") == "true"
+// isCleanupDisabled returns true when cleanup should be skipped for diagnostics.
+// E2E_SKIP_CLEANUP disables cleanup unconditionally. E2E_SKIP_CLEANUP_ON_FAILURE
+// keeps failed-test resources for CI artifact collection without changing the
+// successful-test cleanup path.
+func isCleanupDisabled(t *testing.T) (bool, string) {
+	switch {
+	case os.Getenv("E2E_SKIP_CLEANUP") == "true":
+		return true, "E2E_SKIP_CLEANUP=true"
+	case os.Getenv("E2E_SKIP_CLEANUP_ON_FAILURE") == "true" && t.Failed():
+		return true, "E2E_SKIP_CLEANUP_ON_FAILURE=true and test failed"
+	default:
+		return false, ""
+	}
 }
 
 // Cleanup handles test resource cleanup
@@ -91,11 +102,11 @@ func (c *Cleanup) MustCreateAndRegister(ctx context.Context, cli client.Client, 
 }
 
 // Run executes cleanup of all registered resources.
-// If E2E_SKIP_CLEANUP=true (set in CI), cleanup is skipped to allow
+// If cleanup retention is enabled for this test, cleanup is skipped to allow
 // post-test debugging via resource dumps (kubectl get ... -o yaml).
 func (c *Cleanup) Run() {
-	if isCleanupDisabled() {
-		c.t.Logf("Cleanup skipped: E2E_SKIP_CLEANUP=true (resources remain for debugging)")
+	if skip, reason := isCleanupDisabled(c.t); skip {
+		c.t.Logf("Cleanup skipped: %s (resources remain for debugging)", reason)
 		return
 	}
 	ctx := context.Background()

@@ -112,21 +112,33 @@ load_image_into_kind() {
   # Usage: load_image_into_kind imageName
   # Uses global $CLUSTER_NAME
   local img="$1"
-  ensure_image_exists "$img" || true
+  ensure_image_exists "$img"
   log "Loading image $img into kind cluster $CLUSTER_NAME"
-  
+
   # Try direct load first, fall back to archive method if containerd snapshotter detection fails
-  if $KIND load docker-image "$img" --name "$CLUSTER_NAME" 2>&1 | tee /dev/stderr | grep -q "failed to detect containerd snapshotter"; then
+  local load_output
+  if load_output=$($KIND load docker-image "$img" --name "$CLUSTER_NAME" 2>&1); then
+    printf '%s\n' "$load_output" >&2
+    return 0
+  fi
+  printf '%s\n' "$load_output" >&2
+  if grep -q "failed to detect containerd snapshotter" <<<"$load_output"; then
     log "Direct load failed due to containerd snapshotter issue, using archive method..."
     local tmp_archive
     tmp_archive=$(mktemp --suffix=.tar)
     if docker save "$img" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$CLUSTER_NAME"; then
       log "Successfully loaded $img via archive method"
     else
-      log "WARN: Failed to load image $img via archive method"
+      log "ERROR: Failed to load image $img via archive method"
+      rm -f "$tmp_archive"
+      return 1
     fi
     rm -f "$tmp_archive"
+    return 0
   fi
+
+  log "ERROR: Failed to load image $img into kind cluster $CLUSTER_NAME"
+  return 1
 }
 
 debug_deployment_failure() {
@@ -1841,8 +1853,11 @@ YAML
 
 # Wait for IdentityProvider to be reconciled and ready
 # This ensures the controller has initialized OIDC validation and group sync before tests run
-wait_for_identityprovider_ready "breakglass-e2e-idp" "breakglass-system" 60 || \
-  log "Warning: IdentityProvider may not be fully ready, tests might have authentication issues"
+if ! wait_for_identityprovider_ready "breakglass-e2e-idp" "breakglass-system" 60; then
+  log "ERROR: IdentityProvider breakglass-e2e-idp is not Ready; authentication tests cannot run reliably"
+  debug_cluster_state "IdentityProvider readiness failed"
+  exit 1
+fi
 
 log 'Port-forward controller and keycloak for tests'
 rm -f "$PF_FILE" || true
@@ -1922,6 +1937,11 @@ for i in {1..30}; do
   [ $(( i % 5 )) -eq 0 ] && log "IdentityProvider status attempt $i: $IDP_STATUS"
   sleep 2
 done
+if [ "$IDP_STATUS" != "True" ]; then
+  log "ERROR: IdentityProvider did not become Ready during final readiness check (last status=$IDP_STATUS)"
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get identityprovider breakglass-e2e-idp -o yaml 2>&1 || true
+  exit 1
+fi
 
 # Verify server-side OIDC proxy by calling the proxied discovery endpoint
 PROXY_OK=000
@@ -1955,13 +1975,14 @@ for i in {1..40}; do
   sleep 3
 done
 if [ "${PROXY_OK}" != "200" ]; then
-  log "Warning: OIDC proxy discovery did not return 200 (last=${PROXY_OK}); continuing but login flows may fail"
+  log "ERROR: OIDC proxy discovery did not return 200 (last=${PROXY_OK})"
   log "--- Final debug: Controller logs (last 100 lines) ---"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs -l app=breakglass -n "$DEV_NS" --tail=100 2>&1 || true
   log "--- Final debug: All IdentityProviders ---"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get identityprovider -o yaml 2>&1 || true
   log "--- Final debug: Keycloak logs (last 20 lines) ---"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs -l app=keycloak -n "$DEV_NS" --tail=20 2>&1 || true
+  exit 1
 fi
 
 # Create BreakglassEscalation resources for UI E2E tests

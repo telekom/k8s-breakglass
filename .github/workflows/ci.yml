@@ -812,30 +812,32 @@ jobs:
           # Source the environment variables from setup script
           if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
             echo "Sourcing E2E environment from setup script..."
-            cat e2e/kind-setup-single-tdir/e2e-env.sh
             source e2e/kind-setup-single-tdir/e2e-env.sh
-            
+            if [ -n "${KEYCLOAK_GROUP_SYNC_CLIENT_SECRET:-}" ]; then
+              echo "::add-mask::${KEYCLOAK_GROUP_SYNC_CLIENT_SECRET}"
+            fi
+
             # Export to GITHUB_ENV for subsequent steps
-            echo "E2E_TEST=true" >> $GITHUB_ENV
-            echo "E2E_NAMESPACE=${E2E_NAMESPACE}" >> $GITHUB_ENV
-            echo "E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME}" >> $GITHUB_ENV
-            echo "BREAKGLASS_API_URL=${BREAKGLASS_API_URL}" >> $GITHUB_ENV
-            echo "BREAKGLASS_WEBHOOK_URL=${BREAKGLASS_WEBHOOK_URL}" >> $GITHUB_ENV
-            echo "BREAKGLASS_METRICS_URL=${BREAKGLASS_METRICS_URL}" >> $GITHUB_ENV
-            echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> $GITHUB_ENV
-            echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> $GITHUB_ENV
-            echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> $GITHUB_ENV
-            echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> $GITHUB_ENV
-            echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> $GITHUB_ENV
-            echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> $GITHUB_ENV
-            echo "KEYCLOAK_INTERNAL_URL=${KEYCLOAK_INTERNAL_URL:-}" >> $GITHUB_ENV
-            echo "KEYCLOAK_CA_FILE=${KEYCLOAK_CA_FILE:-}" >> $GITHUB_ENV
-            echo "TLS_DIR=${TLS_DIR:-}" >> $GITHUB_ENV
-            echo "KUBERNETES_API_SERVER=${KUBERNETES_API_SERVER:-}" >> $GITHUB_ENV
-            echo "KUBECONFIG=${KUBECONFIG}" >> $GITHUB_ENV
-            
+            echo "E2E_TEST=true" >> "$GITHUB_ENV"
+            echo "E2E_NAMESPACE=${E2E_NAMESPACE}" >> "$GITHUB_ENV"
+            echo "E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME}" >> "$GITHUB_ENV"
+            echo "BREAKGLASS_API_URL=${BREAKGLASS_API_URL}" >> "$GITHUB_ENV"
+            echo "BREAKGLASS_WEBHOOK_URL=${BREAKGLASS_WEBHOOK_URL}" >> "$GITHUB_ENV"
+            echo "BREAKGLASS_METRICS_URL=${BREAKGLASS_METRICS_URL}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_INTERNAL_URL=${KEYCLOAK_INTERNAL_URL:-}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_CA_FILE=${KEYCLOAK_CA_FILE:-}" >> "$GITHUB_ENV"
+            echo "TLS_DIR=${TLS_DIR:-}" >> "$GITHUB_ENV"
+            echo "KUBERNETES_API_SERVER=${KUBERNETES_API_SERVER:-}" >> "$GITHUB_ENV"
+            echo "KUBECONFIG=${KUBECONFIG}" >> "$GITHUB_ENV"
+
             echo "Environment variables set:"
-            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" || true
+            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" | grep -v "KEYCLOAK_GROUP_SYNC_CLIENT_SECRET=" || true
           else
             echo "ERROR: E2E environment file not found!"
             exit 1
@@ -1029,6 +1031,7 @@ jobs:
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
+          E2E_SKIP_CLEANUP_ON_FAILURE: "true"
           # Enable Kafka audit tests
           KAFKA_TEST: "true"
 
@@ -1039,6 +1042,7 @@ jobs:
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
+          E2E_SKIP_CLEANUP_ON_FAILURE: "true"
           # Enable Kafka audit tests
           KAFKA_TEST: "true"
           # Enable audit webhook tests
@@ -1070,6 +1074,7 @@ jobs:
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
+          E2E_SKIP_CLEANUP_ON_FAILURE: "true"
           # Enable shell tests that use bgctl binary
           RUN_SHELL_TESTS: "true"
           BGCTL_BIN: "./bin/bgctl"
@@ -1248,7 +1253,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          kind delete cluster --name e2e-cluster || true
+          kind delete cluster --name breakglass-hub || true
 
   oidc-comprehensive-e2e:
     name: OIDC Comprehensive E2E Tests
