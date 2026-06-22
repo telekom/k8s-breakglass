@@ -359,7 +359,7 @@ func ValidateIdentityProvider(idp *IdentityProvider) *ValidationResult {
 			keycloakPath := specPath.Child("keycloak")
 			if idp.Spec.Keycloak.InsecureSkipVerify {
 				result.Errors = append(result.Errors, field.Forbidden(keycloakPath.Child("insecureSkipVerify"),
-					"insecureSkipVerify is not supported for IdentityProvider Keycloak/JWKS authentication; configure certificateAuthority"))
+					"insecureSkipVerify is not supported for IdentityProvider Keycloak group synchronization; configure certificateAuthority"))
 			}
 			if idp.Spec.Keycloak.BaseURL == "" {
 				result.Errors = append(result.Errors, field.Required(keycloakPath.Child("baseURL"), "keycloak baseURL is required"))

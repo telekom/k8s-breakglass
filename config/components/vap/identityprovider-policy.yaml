@@ -52,6 +52,14 @@ spec:
       message: "spec.oidc.jwksEndpoint must be an HTTPS URL when specified"
       reason: Invalid
 
+    # OIDC insecureSkipVerify is forbidden; use certificateAuthority for private CAs
+    - expression: >-
+        !has(object.spec.oidc) ||
+        !has(object.spec.oidc.insecureSkipVerify) ||
+        object.spec.oidc.insecureSkipVerify == false
+      message: "spec.oidc.insecureSkipVerify is not supported; configure spec.oidc.certificateAuthority"
+      reason: Forbidden
+
     # Issuer must be HTTPS if specified
     - expression: >-
         !has(object.spec.issuer) ||
@@ -70,6 +78,14 @@ spec:
          has(object.spec.keycloak.clientID) && object.spec.keycloak.clientID.size() > 0)
       message: "spec.keycloak (baseURL, realm, clientID) is required when groupSyncProvider is Keycloak"
       reason: Invalid
+
+    # Keycloak insecureSkipVerify is forbidden; use certificateAuthority for private CAs
+    - expression: >-
+        !has(object.spec.keycloak) ||
+        !has(object.spec.keycloak.insecureSkipVerify) ||
+        object.spec.keycloak.insecureSkipVerify == false
+      message: "spec.keycloak.insecureSkipVerify is not supported; configure spec.keycloak.certificateAuthority"
+      reason: Forbidden
 
     # Keycloak config forbidden when groupSyncProvider is not Keycloak
     - expression: >-

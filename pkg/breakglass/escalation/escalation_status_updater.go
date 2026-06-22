@@ -72,17 +72,12 @@ func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakR
 	gc := gocloak.NewClient(cfg.BaseURL)
 
 	// Configure TLS settings for the gocloak client
-	// This is necessary for self-signed certificates in test/dev environments
 	if cfg.InsecureSkipVerify {
-		restyClient := gc.RestyClient()
-		restyClient.SetTLSClientConfig(&tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: true, // #nosec G402 -- explicit test/dev option for self-signed Keycloak endpoints
-		})
 		if log != nil {
-			log.Debugw("Keycloak client configured with InsecureSkipVerify=true",
+			log.Errorw("Keycloak client rejected InsecureSkipVerify=true; configure CertificateAuthority instead",
 				"baseURL", cfg.BaseURL, "realm", cfg.Realm)
 		}
+		cfg.InsecureSkipVerify = false
 	} else if cfg.CertificateAuthority != "" {
 		// Start from system cert pool so publicly trusted CAs remain valid,
 		// then append the custom CA.
@@ -754,6 +749,13 @@ func (u EscalationStatusUpdater) createResolverForIDP(idpConfig *cfgpkg.Identity
 	if idpConfig.Keycloak == nil {
 		return nil
 	}
+	if idpConfig.Keycloak.InsecureSkipVerify {
+		log.Errorw("Refusing to create Keycloak group sync resolver with InsecureSkipVerify=true",
+			"idp", idpConfig.Name,
+			"baseURL", idpConfig.Keycloak.BaseURL,
+			"realm", idpConfig.Keycloak.Realm)
+		return nil
+	}
 
 	return NewKeycloakGroupMemberResolver(log, *idpConfig.Keycloak)
 }
@@ -859,6 +861,12 @@ func SetupResolver(idpConfig *cfgpkg.IdentityProviderConfig, log *zap.SugaredLog
 	// Setup GroupMemberResolver for escalation approver expansion
 	var resolver breakglass.GroupMemberResolver
 	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" {
+		if idpConfig.Keycloak.InsecureSkipVerify {
+			log.Errorw("Keycloak group sync disabled because InsecureSkipVerify=true is not supported",
+				"baseURL", idpConfig.Keycloak.BaseURL,
+				"realm", idpConfig.Keycloak.Realm)
+			return &KeycloakGroupMemberResolver{}
+		}
 		resolver = NewKeycloakGroupMemberResolver(log, *idpConfig.Keycloak)
 		log.Infow("Keycloak group sync enabled", "baseURL", idpConfig.Keycloak.BaseURL, "realm", idpConfig.Keycloak.Realm)
 	} else {

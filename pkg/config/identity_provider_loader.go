@@ -155,6 +155,11 @@ func (l *IdentityProviderLoader) LoadIdentityProviderByName(ctx context.Context,
 func (l *IdentityProviderLoader) convertToRuntimeConfig(ctx context.Context, idp *breakglassv1alpha1.IdentityProvider) (*IdentityProviderConfig, error) {
 	l.logger.Debugw("Converting IdentityProvider to runtime config", "name", idp.Name)
 
+	validationResult := breakglassv1alpha1.ValidateIdentityProvider(idp)
+	if !validationResult.IsValid() {
+		return nil, fmt.Errorf("invalid IdentityProvider %s: %s", idp.Name, validationResult.ErrorMessage())
+	}
+
 	runtimeConfig := &IdentityProviderConfig{
 		Name:                 idp.Name,
 		Issuer:               idp.Spec.Issuer,

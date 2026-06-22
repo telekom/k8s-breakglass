@@ -97,23 +97,23 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 		t.Logf("GROUPSYNC-002: Created IdentityProvider with RequestTimeout: %v", idp.Spec.Keycloak.RequestTimeout)
 	})
 
-	t.Run("KeycloakGroupSyncWithInsecureSkipVerify", func(t *testing.T) {
+	t.Run("KeycloakGroupSyncWithCertificateAuthority", func(t *testing.T) {
 		idp := &breakglassv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   s.GenerateName("e2e-idp-keycloak-insecure"),
+				Name:   s.GenerateName("e2e-idp-keycloak-ca"),
 				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://keycloak.example.com/realms/insecure-test",
+					Authority: "https://keycloak.example.com/realms/ca-test",
 					ClientID:  "breakglass-ui",
 				},
 				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
-					BaseURL:            "https://keycloak.example.com",
-					Realm:              "insecure-test",
-					ClientID:           "breakglass-client",
-					InsecureSkipVerify: true,
+					BaseURL:              "https://keycloak.example.com",
+					Realm:                "ca-test",
+					ClientID:             "breakglass-client",
+					CertificateAuthority: "-----BEGIN CERTIFICATE-----\n...",
 					ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
 						Name:      "keycloak-secret",
 						Namespace: "breakglass-system",
@@ -124,8 +124,9 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 		}
 		s.MustCreateResource(idp)
 
-		assert.True(t, idp.Spec.Keycloak.InsecureSkipVerify)
-		t.Logf("GROUPSYNC-003: Created IdentityProvider with InsecureSkipVerify=true: %s", idp.Name)
+		assert.Equal(t, "-----BEGIN CERTIFICATE-----\n...", idp.Spec.Keycloak.CertificateAuthority)
+		assert.False(t, idp.Spec.Keycloak.InsecureSkipVerify)
+		t.Logf("GROUPSYNC-003: Created IdentityProvider with Keycloak certificateAuthority: %s", idp.Name)
 	})
 }
 

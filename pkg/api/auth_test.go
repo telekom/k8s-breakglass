@@ -715,6 +715,11 @@ func TestGetJWKSForIssuerRejectsInsecureSkipVerifyBeforeCA(t *testing.T) {
 						ClientID:             "group-sync",
 						CertificateAuthority: testCertificatePEM(t),
 						InsecureSkipVerify:   true,
+						ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+							Name:      "keycloak-secret",
+							Namespace: "breakglass-system",
+							Key:       "client-secret",
+						},
 					},
 				},
 			},
@@ -738,6 +743,10 @@ func TestGetJWKSForIssuerRejectsInsecureSkipVerifyBeforeCA(t *testing.T) {
 			}
 
 			_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), tt.idp.Spec.Issuer)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errUnknownIdentityProvider)
+
+			_, err = loader.LoadIdentityProviderByIssuer(t.Context(), tt.idp.Spec.Issuer)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "insecureSkipVerify is not supported")
 		})
@@ -818,7 +827,11 @@ func TestGetJWKSForIssuer_InvalidAuthorityRejected(t *testing.T) {
 
 	_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), "https://auth.example.com")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid authority URL")
+	assert.ErrorIs(t, err, errUnknownIdentityProvider)
+
+	_, err = auth.idpLoader.LoadIdentityProviderByIssuer(t.Context(), "https://auth.example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only https scheme is allowed")
 }
 
 func TestAuthErrorMessageForJWKSLoad(t *testing.T) {

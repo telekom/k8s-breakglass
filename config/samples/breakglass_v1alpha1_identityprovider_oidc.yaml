@@ -32,7 +32,7 @@ spec:
     # CertificateAuthority (optional) contains a PEM-encoded CA certificate
     # for validating the TLS certificate presented by the OIDC provider
     # Use this for private or self-signed issuer certificates; admission,
-    # OIDC/JWKS authentication, and the OIDC proxy reject insecureSkipVerify.
+    # OIDC/JWKS authentication, the OIDC proxy, and group sync reject insecureSkipVerify.
     # certificateAuthority: |
     #   -----BEGIN CERTIFICATE-----
     #   MIIDXTCCAkWgAwIBAgIJAJXuYv...

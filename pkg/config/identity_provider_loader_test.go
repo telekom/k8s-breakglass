@@ -298,6 +298,70 @@ func TestIdentityProviderLoader_LoadIdentityProviderByName(t *testing.T) {
 	}
 }
 
+func TestIdentityProviderLoader_RejectsInsecureSkipVerify(t *testing.T) {
+	tests := []struct {
+		name string
+		idp  breakglassv1alpha1.IdentityProvider
+	}{
+		{
+			name: "OIDC insecureSkipVerify",
+			idp: breakglassv1alpha1.IdentityProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "insecure-oidc"},
+				Spec: breakglassv1alpha1.IdentityProviderSpec{
+					OIDC: breakglassv1alpha1.OIDCConfig{
+						Authority:          "https://auth.example.com",
+						ClientID:           "breakglass-ui",
+						InsecureSkipVerify: true,
+					},
+				},
+			},
+		},
+		{
+			name: "Keycloak insecureSkipVerify",
+			idp: breakglassv1alpha1.IdentityProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "insecure-keycloak"},
+				Spec: breakglassv1alpha1.IdentityProviderSpec{
+					OIDC: breakglassv1alpha1.OIDCConfig{
+						Authority: "https://auth.example.com",
+						ClientID:  "breakglass-ui",
+					},
+					GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+					Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+						BaseURL:            "https://keycloak.example.com",
+						Realm:              "master",
+						ClientID:           "keycloak-admin",
+						InsecureSkipVerify: true,
+						ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+							Name:      "keycloak-secret",
+							Namespace: "default",
+							Key:       "clientSecret",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(Scheme).
+				WithObjects(&tt.idp).
+				Build()
+			loader := NewIdentityProviderLoader(fakeClient)
+
+			cfg, err := loader.LoadIdentityProviderByName(context.Background(), tt.idp.Name)
+
+			if err == nil {
+				t.Fatalf("expected insecure IdentityProvider to be rejected, got config: %+v", cfg)
+			}
+			if !contains(err.Error(), "insecureSkipVerify") {
+				t.Fatalf("expected insecureSkipVerify error, got %v", err)
+			}
+		})
+	}
+}
+
 // TestIdentityProviderLoader_ValidateIdentityProviderExists tests startup validation
 func TestIdentityProviderLoader_ValidateIdentityProviderExists(t *testing.T) {
 	tests := []struct {
@@ -988,6 +1052,50 @@ func TestLoadAllIdentityProviders_WithConversionError(t *testing.T) {
 
 	if _, ok := result["broken-idp"]; ok {
 		t.Error("Did not expect broken-idp to be present")
+	}
+}
+
+func TestLoadAllIdentityProviders_SkipsInsecureSkipVerify(t *testing.T) {
+	validIDP := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://valid.example.com",
+				ClientID:  "valid",
+			},
+			Issuer: "https://valid.example.com",
+		},
+	}
+	insecureIDP := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "insecure-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority:          "https://insecure.example.com",
+				ClientID:           "insecure",
+				InsecureSkipVerify: true,
+			},
+			Issuer: "https://insecure.example.com",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.IdentityProvider{}).
+		WithObjects(&validIDP, &insecureIDP).
+		Build()
+
+	result, err := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar()).
+		LoadAllIdentityProviders(context.Background())
+
+	if err != nil {
+		t.Fatalf("LoadAllIdentityProviders() unexpected error: %v", err)
+	}
+	if _, ok := result["valid-idp"]; !ok {
+		t.Fatal("expected valid-idp to be loaded")
+	}
+	if _, ok := result["insecure-idp"]; ok {
+		t.Fatal("did not expect insecure-idp to be loaded")
 	}
 }
 

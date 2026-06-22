@@ -18,7 +18,6 @@ package escalation
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"testing"
@@ -457,14 +456,13 @@ func BenchmarkNormalizeMembers(b *testing.B) {
 	}
 }
 
-// TestNewKeycloakGroupMemberResolver_InsecureSkipVerify tests that the resolver is
-// correctly configured with InsecureSkipVerify for E2E testing with self-signed certs
-func TestNewKeycloakGroupMemberResolver_InsecureSkipVerify(t *testing.T) {
+// TestNewKeycloakGroupMemberResolver_InsecureSkipVerifyRejected tests that the resolver
+// does not disable TLS certificate verification when handed an unsafe runtime config.
+func TestNewKeycloakGroupMemberResolver_InsecureSkipVerifyRejected(t *testing.T) {
 	log, _ := zap.NewDevelopment()
 	defer func() { _ = log.Sync() }()
 	slog := log.Sugar()
 
-	// Test with InsecureSkipVerify enabled
 	cfg := cfgpkg.KeycloakRuntimeConfig{
 		BaseURL:            "https://keycloak.example.com:8443",
 		Realm:              "test-realm",
@@ -480,17 +478,12 @@ func TestNewKeycloakGroupMemberResolver_InsecureSkipVerify(t *testing.T) {
 	assert.NotNil(t, resolver.gocloak)
 	assert.Equal(t, cfg.BaseURL, resolver.cfg.BaseURL)
 	assert.Equal(t, cfg.Realm, resolver.cfg.Realm)
-	assert.True(t, resolver.cfg.InsecureSkipVerify)
+	assert.False(t, resolver.cfg.InsecureSkipVerify)
 
 	restyClient := resolver.gocloak.RestyClient()
 	httpClient := restyClient.GetClient()
-	transport, ok := httpClient.Transport.(*http.Transport)
-	if assert.True(t, ok, "transport should be *http.Transport") {
-		tlsCfg := transport.TLSClientConfig
-		if assert.NotNil(t, tlsCfg, "TLS config should be set") {
-			assert.True(t, tlsCfg.InsecureSkipVerify)
-			assert.Equal(t, uint16(tls.VersionTLS12), tlsCfg.MinVersion)
-		}
+	if transport, ok := httpClient.Transport.(*http.Transport); ok && transport.TLSClientConfig != nil {
+		assert.False(t, transport.TLSClientConfig.InsecureSkipVerify)
 	}
 }
 

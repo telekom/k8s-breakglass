@@ -1083,8 +1083,8 @@ Set `allowTOFU: true` to auto-discover CAs on first connection:
 For testing only. Set `insecureSkipTLSVerify: true` to disable all TLS verification. The webhook emits a warning when this is used.
 
 This option applies to `ClusterConfig` spoke-cluster authentication. For
-`IdentityProvider` OIDC/JWKS authentication and the OIDC proxy, use
-`certificateAuthority`; admission and runtime paths reject
+`IdentityProvider` OIDC/JWKS authentication, the OIDC proxy, and Keycloak
+group sync, use `certificateAuthority`; admission and runtime paths reject
 `spec.oidc.insecureSkipVerify` and `spec.keycloak.insecureSkipVerify`.
 
 ---

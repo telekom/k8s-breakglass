@@ -120,9 +120,9 @@ type IdentityProviderConfig struct {
 	// Loaded from spec.oidc.certificateAuthority
 	CertificateAuthority string
 
-	// InsecureSkipVerify is loaded for backwards compatibility. Runtime
-	// JWT/JWKS auth and OIDC proxy paths reject it; admission rejects new usage.
-	// Configure CertificateAuthority.
+	// InsecureSkipVerify is loaded for backwards compatibility. Admission and
+	// runtime auth/OIDC proxy/group sync paths reject it. Configure
+	// CertificateAuthority.
 	InsecureSkipVerify bool
 
 	// Other provider-specific fields (BaseURL for Keycloak, etc.)
@@ -141,9 +141,9 @@ type KeycloakRuntimeConfig struct {
 	ServiceAccountToken string
 	CacheTTL            string
 	RequestTimeout      string
-	// InsecureSkipVerify is loaded for backwards compatibility. Runtime
-	// JWT/JWKS auth and OIDC proxy paths reject it; admission rejects new usage.
-	// Configure CertificateAuthority.
+	// InsecureSkipVerify is loaded for backwards compatibility. Admission and
+	// runtime auth/OIDC proxy/group sync paths reject it. Configure
+	// CertificateAuthority.
 	InsecureSkipVerify   bool
 	CertificateAuthority string
 }

@@ -25,7 +25,7 @@ spec:
 
     # Optional: CA certificate for TLS validation
     # Use this for private or self-signed issuer certificates; admission,
-    # OIDC/JWKS authentication, and the OIDC proxy reject insecureSkipVerify.
+    # OIDC/JWKS authentication, the OIDC proxy, and group sync reject insecureSkipVerify.
     # certificateAuthority: |
     #   -----BEGIN CERTIFICATE-----
     #   MIIDXTCCAkWgAwIBAgIJAJXuYv...
@@ -75,7 +75,7 @@ spec:
 
     # CertificateAuthority (optional) contains a PEM-encoded CA certificate
     # for validating the TLS certificate presented by the Keycloak server
-    # Admission, OIDC/JWKS authentication, and the OIDC proxy reject
+    # Admission, OIDC/JWKS authentication, the OIDC proxy, and group sync reject
     # IdentityProviders with insecureSkipVerify enabled.
     # certificateAuthority: |
     #   -----BEGIN CERTIFICATE-----
