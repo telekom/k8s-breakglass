@@ -1138,7 +1138,7 @@ jobs:
           timeout 15 kubectl describe services -n "$NS" > "$DIAG_DIR/kubernetes/ns-services-describe.txt" 2>&1 || true
           timeout 15 kubectl get configmaps -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-configmaps.yaml" 2>&1 || true
           timeout 15 kubectl get secrets -n "$NS" -o json 2>"$DIAG_DIR/kubernetes/ns-secrets.err" \
-            | jq 'del(.items[].data, .items[].stringData)' > "$DIAG_DIR/kubernetes/ns-secrets-redacted.json" || true
+            | jq '{apiVersion, kind, items: [.items[] | {metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}), ownerReferences: (.metadata.ownerReferences // [])}, type: .type, immutable: .immutable}]}' > "$DIAG_DIR/kubernetes/ns-secrets-redacted.json" || true
           
           # ===========================================
           # CRD RESOURCES (FULL YAML) - run in parallel for speed
@@ -2069,7 +2069,7 @@ jobs:
           timeout 15 kubectl describe services -n "$NS" > "$DIAG_DIR/kubernetes/ns-services-describe.txt" 2>&1 || true
           timeout 15 kubectl get configmaps -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-configmaps.yaml" 2>&1 || true
           timeout 15 kubectl get secrets -n "$NS" -o json 2>"$DIAG_DIR/kubernetes/ns-secrets.err" \
-            | jq 'del(.items[].data, .items[].stringData)' > "$DIAG_DIR/kubernetes/ns-secrets-redacted.json" || true
+            | jq '{apiVersion, kind, items: [.items[] | {metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}), ownerReferences: (.metadata.ownerReferences // [])}, type: .type, immutable: .immutable}]}' > "$DIAG_DIR/kubernetes/ns-secrets-redacted.json" || true
           
           # ===========================================
           # CRD RESOURCES (FULL YAML) - run in parallel for speed
@@ -2881,7 +2881,7 @@ jobs:
               timeout 15 kubectl describe services -n "$NS" > "$OUT_DIR/kubernetes/ns-services-describe.txt" 2>&1 || true
               timeout 15 kubectl get configmaps -n "$NS" -o yaml > "$OUT_DIR/kubernetes/ns-configmaps.yaml" 2>&1 || true
               timeout 15 kubectl get secrets -n "$NS" -o json 2>"$OUT_DIR/kubernetes/ns-secrets.err" \
-                | jq 'del(.items[].data, .items[].stringData)' > "$OUT_DIR/kubernetes/ns-secrets-redacted.json" || true
+                | jq '{apiVersion, kind, items: [.items[] | {metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}), ownerReferences: (.metadata.ownerReferences // [])}, type: .type, immutable: .immutable}]}' > "$OUT_DIR/kubernetes/ns-secrets-redacted.json" || true
               
               # CRD resources (run in parallel for speed)
               timeout 10 kubectl get clusterconfig -A -o yaml > "$OUT_DIR/resources/clusterconfigs.yaml" 2>&1 &
