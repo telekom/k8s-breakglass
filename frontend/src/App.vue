@@ -441,6 +441,7 @@ watch(
               class="theme-toggle-button"
               :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
               :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              :aria-pressed="theme === 'dark'"
               @click="toggleTheme"
             >
               <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
@@ -454,6 +455,7 @@ watch(
                   ? 'High contrast mode enabled. Click to disable.'
                   : 'High contrast mode disabled. Click to enable.'
               "
+              :aria-pressed="highContrast"
               @click="toggleHighContrast"
             >
               <scale-icon-action-visibility size="20" :decorative="true"></scale-icon-action-visibility>

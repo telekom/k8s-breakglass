@@ -6,7 +6,7 @@
  * Tests for App component
  *
  * Covers:
- * - High-contrast toggle button aria-label and visual state reflect toggle state
+ * - Theme/high-contrast toggle buttons expose aria labels and pressed states
  *
  * @vitest-environment jsdom
  */
@@ -28,6 +28,8 @@ const SCALE_STUBS = {
   "scale-telekom-mobile-flyout-canvas": true,
   "scale-telekom-mobile-menu": true,
   "scale-telekom-mobile-menu-item": true,
+  "scale-icon-action-light-dark-mode": true,
+  "scale-icon-action-visibility": true,
   "scale-icon-action-eye": true,
   "scale-icon-action-menu": true,
   "scale-button": true,
@@ -100,6 +102,7 @@ describe("App — high-contrast toggle", () => {
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.exists()).toBe(true);
     expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.attributes("aria-pressed")).toBe("false");
     expect(btn.classes()).not.toContain("hc-active");
   });
 
@@ -109,6 +112,7 @@ describe("App — high-contrast toggle", () => {
 
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.attributes("aria-pressed")).toBe("true");
     expect(btn.classes()).toContain("hc-active");
   });
 
@@ -118,11 +122,58 @@ describe("App — high-contrast toggle", () => {
 
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.attributes("aria-pressed")).toBe("false");
     expect(btn.classes()).not.toContain("hc-active");
 
     await btn.trigger("click");
 
     expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.attributes("aria-pressed")).toBe("true");
     expect(btn.classes()).toContain("hc-active");
+  });
+});
+
+describe("App — theme toggle", () => {
+  let wrapper: VueWrapper | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    wrapper?.unmount();
+    wrapper = null;
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  function mountApp() {
+    const router = createMockRouter();
+    return mount(App, {
+      global: {
+        plugins: [router],
+        provide: {
+          [AuthKey as symbol]: createMockAuth(),
+          [BrandingKey as symbol]: "Test",
+        },
+        stubs: SCALE_STUBS,
+      },
+    });
+  }
+
+  it("exposes aria-pressed for the active theme state", async () => {
+    localStorage.setItem("breakglass-theme", "light");
+    wrapper = mountApp();
+
+    const btn = wrapper.find(".theme-toggle-button");
+    expect(btn.exists()).toBe(true);
+    expect(btn.attributes("aria-label")).toBe("Switch to dark mode");
+    expect(btn.attributes("aria-pressed")).toBe("false");
+
+    await btn.trigger("click");
+
+    expect(btn.attributes("aria-label")).toBe("Switch to light mode");
+    expect(btn.attributes("aria-pressed")).toBe("true");
   });
 });
