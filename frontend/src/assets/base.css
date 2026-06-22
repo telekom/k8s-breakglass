@@ -283,20 +283,20 @@ scale-button::part(base) {
 }
 
 /* Dark mode: use standard text color for AAA nav contrast in every UI flavour. */
-:root[data-theme="dark"] scale-telekom-nav-item a,
-:root[data-theme="dark"] scale-telekom-mobile-menu-item a,
+:root[data-theme="dark"] scale-telekom-nav-item:defined a,
+:root[data-theme="dark"] scale-telekom-mobile-menu-item:defined a,
 :root[data-theme="dark"] [role="menuitem"] {
   color: #ffffff !important;
 }
 
-:root[data-theme="dark"] scale-telekom-nav-item[aria-current="page"] a,
-:root[data-theme="dark"] scale-telekom-mobile-menu-item[aria-current="page"] a,
+:root[data-theme="dark"] scale-telekom-nav-item:defined[aria-current="page"] a,
+:root[data-theme="dark"] scale-telekom-mobile-menu-item:defined[aria-current="page"] a,
 :root[data-theme="dark"] [role="menuitem"][aria-current="page"] {
   color: #ffffff !important;
 }
 
-:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item[active]:not([active="false"]) a,
-:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item[aria-current="page"] a,
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item:defined[active]:not([active="false"]) a,
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item:defined[aria-current="page"] a,
 :root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) [role="menuitem"][aria-current="true"],
 :root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) [role="menuitem"][aria-current="page"] {
   color: #ffffff !important;
