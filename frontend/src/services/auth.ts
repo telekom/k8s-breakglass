@@ -204,6 +204,23 @@ function setTokenPersistencePreference(mode: TokenPersistenceMode) {
   setBrowserStorageItem("localStorage", TOKEN_PERSISTENCE_KEY, mode);
 }
 
+function purgeLegacyLocalOIDCArtifacts(storage: Storage | undefined): void {
+  if (!storage) {
+    return;
+  }
+  try {
+    for (let i = storage.length - 1; i >= 0; i -= 1) {
+      const key = storage.key(i);
+      if (key?.startsWith("oidc.")) {
+        storage.removeItem(key);
+      }
+    }
+    storage.removeItem(CURRENT_IDP_LOCAL_STORAGE_KEY);
+  } catch (error) {
+    warn("AuthService", "Unable to purge legacy localStorage OIDC artifacts", error);
+  }
+}
+
 function getOIDCStorage(): Storage {
   if (!isBrowser) {
     return fallbackStorage;
@@ -212,6 +229,9 @@ function getOIDCStorage(): Storage {
   if (prefersPersistent) {
     if (isProductionBuild()) {
       warn("AuthService", "Persistent OIDC token storage is disabled in production; using sessionStorage");
+      const localStorage = getBrowserStorage("localStorage");
+      setTokenPersistencePreference("session");
+      purgeLegacyLocalOIDCArtifacts(localStorage);
     } else {
       const localStorage = getBrowserStorage("localStorage");
       warn(

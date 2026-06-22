@@ -51,6 +51,7 @@ export default {
     const renewing = ref(false);
     const dismissed = ref(false);
     let timer: number | null = null;
+    const warnedStorageAccess = new Set<"sessionStorage" | "localStorage">();
     const requireAuth = () => {
       const injectedAuth = inject(AuthKey);
       if (!injectedAuth) {
@@ -101,7 +102,10 @@ export default {
       try {
         return window[name];
       } catch (err) {
-        warn("AutoLogoutWarning", `Unable to access browser ${name}`, err);
+        if (!warnedStorageAccess.has(name)) {
+          warnedStorageAccess.add(name);
+          warn("AutoLogoutWarning", `Unable to access browser ${name}`, err);
+        }
         return undefined;
       }
     }
