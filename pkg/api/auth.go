@@ -127,6 +127,19 @@ type identityProviderByIssuerLoader interface {
 	LoadIdentityProviderByIssuer(ctx context.Context, issuer string) (*config.IdentityProviderConfig, error)
 }
 
+func (a *AuthHandler) validateJWKSIdentityProviderConfig(idpCfg *config.IdentityProviderConfig) error {
+	if idpCfg == nil {
+		return errUnknownIdentityProvider
+	}
+	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
+		if a.log != nil {
+			a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
+		}
+		return errUnknownIdentityProvider
+	}
+	return nil
+}
+
 // defaultOIDCTransport clones http.DefaultTransport to inherit its sensible
 // defaults (proxy support, dial/idle timeouts, keep-alives) and layers TLS 1.2
 // minimum on top. If http.DefaultTransport is not a *http.Transport, it falls
@@ -240,6 +253,21 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 				currentEntry.audienceAttemptedAt = now
 
 				if err != nil {
+					if currentEntry.cancel != nil {
+						currentEntry.cancel()
+					}
+					a.jwksFetchLimiter.Delete(issuer)
+					delete(a.jwksCache, issuer)
+					a.jwksLRUList.Remove(currentElem)
+					return nil, errUnknownIdentityProvider
+				}
+				if err := a.validateJWKSIdentityProviderConfig(idpCfg); err != nil {
+					if currentEntry.cancel != nil {
+						currentEntry.cancel()
+					}
+					a.jwksFetchLimiter.Delete(issuer)
+					delete(a.jwksCache, issuer)
+					a.jwksLRUList.Remove(currentElem)
 					return nil, err
 				}
 
@@ -261,6 +289,8 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 				a.jwksMutex.Unlock()
 				return cachedJWKS, refreshedAudience, refreshedIDPName, true, nil
 			}
+			a.log.Warnw("failed to refresh cached IDP config; evicted JWKS cache entry", "issuer", issuer, "error", refreshErr)
+			return nil, "", "", true, refreshErr
 		}
 
 		return cachedJWKS, cachedAudience, cachedIDPName, true, nil
@@ -319,9 +349,8 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		return nil, errUnknownIdentityProvider
 	}
 
-	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
-		return nil, errUnknownIdentityProvider
+	if err := a.validateJWKSIdentityProviderConfig(idpCfg); err != nil {
+		return nil, err
 	}
 
 	// Create JWKS override options for keyfunc/v3
