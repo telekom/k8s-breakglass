@@ -236,6 +236,9 @@ Bearer tokens to API requests. Session storage limits persistence and prevents
 other origins from reading it; it does not protect tokens from compromised
 same-origin scripts. Browser-local cached runtime configuration is bootstrap
 state, not the server's issuer authorization policy.
+Production builds also force session storage when a stale persistent preference is
+present and purge or ignore legacy localStorage OIDC artifacts, including IDP
+name hints used for re-authentication.
 
 CSP restricts script sources and reduces injection opportunities, but cannot
 guarantee that every XSS payload is blocked. Keep access tokens short-lived
