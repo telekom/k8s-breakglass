@@ -182,6 +182,22 @@ start_port_forward() {
   echo $pid
 }
 
+wait_for_local_port() {
+  # Usage: wait_for_local_port port description
+  local port="$1"
+  local description="${2:-localhost:$port}"
+  for i in {1..30}; do
+    if curl -sk --connect-timeout 1 --max-time 2 "https://127.0.0.1:${port}/" >/dev/null 2>&1 || \
+       curl -s --connect-timeout 1 --max-time 2 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+      log "$description is accepting connections"
+      return 0
+    fi
+    sleep 1
+  done
+  log "Warning: $description did not accept connections within 30 seconds"
+  return 1
+}
+
 start_keepalive_port_forward() {
   # Usage: start_keepalive_port_forward namespace svc localPort remotePort
   # Like start_port_forward but wraps kubectl port-forward in a while-true loop
@@ -243,6 +259,13 @@ wait_for_mailprovider_ready() {
     sleep 1
   done
   
+  ready_status=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get mailprovider "$name" -n "$namespace" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+  if [ "$ready_status" = "True" ]; then
+    log "MailProvider $name is Ready"
+    return 0
+  fi
+
   log "Warning: MailProvider $name did not become Ready within $max_attempts seconds"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get mailprovider "$name" -n "$namespace" -o yaml 2>/dev/null || true
   return 1
@@ -536,7 +559,7 @@ apply_e2e_test_crs() {
   
   # Wait for MailProvider to be ready so email notifications work in tests
   # The name becomes breakglass-mailhog after sed prefix transformation
-  wait_for_mailprovider_ready "breakglass-mailhog" "breakglass-system" 60
+  wait_for_mailprovider_ready "breakglass-mailhog" "breakglass-system" 120
   
   log "Finished applying e2e test CRs"
 }
@@ -1327,6 +1350,7 @@ done
 [ -n "$KC_SVC_NAME" ] || { log "Keycloak service not found after wait"; debug_cluster_state "Keycloak service lookup"; exit 1; }
 
 PF=$(start_port_forward "$KC_SVC_NS" "$KC_SVC_NAME" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT})
+wait_for_local_port "${KEYCLOAK_FORWARD_PORT}" "Keycloak port-forward" || true
 JWKS_URL="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
 # Prefer using the generated CA for TLS validation when available; fall back to insecure if not present
 if [ -n "${KEYCLOAK_CA_FILE:-}" ] && [ -f "${KEYCLOAK_CA_FILE}" ]; then
@@ -1338,7 +1362,7 @@ for i in {1..120}; do
     if ! kill -0 $PF 2>/dev/null; then
       log "Port-forward process died; restarting (attempt $i)"
       PF=$(start_port_forward "$KC_SVC_NS" "$KC_SVC_NAME" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT})
-      sleep 2
+      wait_for_local_port "${KEYCLOAK_FORWARD_PORT}" "Keycloak port-forward" || true
     fi
   log "JWKS curl attempt $i: curl $JWKS_URL"
   full_output=$(curl -v "${KC_CURL_CA[@]}" "$JWKS_URL" 2>&1 || true)

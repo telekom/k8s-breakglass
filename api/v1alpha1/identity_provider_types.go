@@ -132,9 +132,9 @@ type KeycloakGroupSync struct {
 	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
 	RequestTimeout string `json:"requestTimeout,omitempty"`
 
-	// InsecureSkipVerify skips TLS verification for Keycloak group synchronization only.
-	// Admission and runtime OIDC/JWKS auth/OIDC proxy paths reject IdentityProviders with this
-	// setting enabled; configure certificateAuthority instead.
+	// InsecureSkipVerify is not supported for Keycloak group synchronization.
+	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
+	// certificateAuthority for private or self-signed Keycloak certificates.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 

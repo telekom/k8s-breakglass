@@ -26,9 +26,9 @@ type KeycloakGroupSyncApplyConfiguration struct {
 	CacheTTL *string `json:"cacheTTL,omitempty"`
 	// RequestTimeout is the timeout for Keycloak API requests (default: 10s)
 	RequestTimeout *string `json:"requestTimeout,omitempty"`
-	// InsecureSkipVerify skips TLS verification for Keycloak group synchronization only.
-	// Admission and runtime OIDC/JWKS auth/OIDC proxy paths reject IdentityProviders with this
-	// setting enabled; configure certificateAuthority instead.
+	// InsecureSkipVerify is not supported for Keycloak group synchronization.
+	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
+	// certificateAuthority for private or self-signed Keycloak certificates.
 	InsecureSkipVerify *bool `json:"insecureSkipVerify,omitempty"`
 	// CertificateAuthority contains a PEM encoded CA certificate for TLS validation
 	CertificateAuthority *string `json:"certificateAuthority,omitempty"`
