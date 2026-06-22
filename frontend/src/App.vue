@@ -114,11 +114,14 @@ onMounted(() => {
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
     try {
-      if (!localStorage.getItem("breakglass-theme")) {
+      if (highContrast.value || localStorage.getItem("breakglass-theme")) {
+        return;
+      }
+      theme.value = event.matches ? "dark" : "light";
+    } catch {
+      if (!highContrast.value) {
         theme.value = event.matches ? "dark" : "light";
       }
-    } catch {
-      theme.value = event.matches ? "dark" : "light";
     }
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
@@ -142,7 +145,9 @@ onBeforeUnmount(() => {
 });
 
 watch(theme, (value) => {
-  applyTheme(value);
+  if (!highContrast.value) {
+    applyTheme(value);
+  }
 });
 
 watch(highContrast, (value) => {
@@ -503,7 +508,12 @@ watch(
                     <!-- Mobile Theme Toggles -->
                     <scale-telekom-mobile-menu-item class="mobile-theme-item">
                       <div class="mobile-utilities">
-                        <button type="button" class="mobile-util-btn" @click="toggleTheme">
+                        <button
+                          type="button"
+                          class="mobile-util-btn"
+                          :aria-pressed="theme === 'dark'"
+                          @click="toggleTheme"
+                        >
                           <scale-icon-action-light-dark-mode
                             size="24"
                             :decorative="true"
@@ -513,6 +523,7 @@ watch(
                         <button
                           type="button"
                           :class="['mobile-util-btn', { active: highContrast }]"
+                          :aria-pressed="highContrast"
                           @click="toggleHighContrast"
                         >
                           <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
