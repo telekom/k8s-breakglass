@@ -1191,9 +1191,10 @@ func TestAuthMiddleware_AudienceValidation(t *testing.T) {
 		// Use an HTTPS issuer that passes isValidIssuerURL validation
 		testIssuer := "https://test-idp.example.com"
 		entry := &jwksCacheEntry{
-			issuer:           testIssuer,
-			expectedAudience: "my-breakglass-client",
-			jwks:             jwks,
+			issuer:              testIssuer,
+			expectedAudience:    "my-breakglass-client",
+			jwks:                jwks,
+			audienceRefreshedAt: time.Now(),
 		}
 		elem := multiAuth.jwksLRUList.PushFront(entry)
 		multiAuth.jwksCache[testIssuer] = elem
@@ -1235,9 +1236,10 @@ func TestAuthMiddleware_AudienceValidation(t *testing.T) {
 
 		testIssuer := "https://test-idp.example.com"
 		entry := &jwksCacheEntry{
-			issuer:           testIssuer,
-			expectedAudience: "my-breakglass-client",
-			jwks:             jwks,
+			issuer:              testIssuer,
+			expectedAudience:    "my-breakglass-client",
+			jwks:                jwks,
+			audienceRefreshedAt: time.Now(),
 		}
 		elem := multiAuth.jwksLRUList.PushFront(entry)
 		multiAuth.jwksCache[testIssuer] = elem

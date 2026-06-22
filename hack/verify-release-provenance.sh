@@ -46,7 +46,7 @@ deny_pattern 'github\.run_started_at' \
 
 require_pattern 'docker buildx imagetools inspect "\$\{IMG\}"' \
   "release workflow must inspect the pushed image through the registry"
-require_pattern 'Digest:\[\[:space:\]\]\+sha256:\[0-9a-f\]\{64\}' \
+require_pattern 'Digest:\[\[:space:\]\][+]sha256:\[0-9a-f\][{]64[}]' \
   "release workflow must parse a strict sha256 registry Digest line"
 require_pattern 'Could not determine registry digest' \
   "release workflow must fail when the registry digest cannot be determined"
