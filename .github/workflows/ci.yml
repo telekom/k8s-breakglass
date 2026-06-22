@@ -2372,7 +2372,10 @@ jobs:
             # Get authorization and authentication config files (critical for debugging)
             docker exec "$container" cat /etc/kubernetes/authorization-config.yaml > "e2e-setup-failure-logs/node-$container/authorization-config.yaml" 2>&1 || echo "No authorization config" > "e2e-setup-failure-logs/node-$container/authorization-config.yaml"
             docker exec "$container" cat /etc/kubernetes/authentication-config.yaml > "e2e-setup-failure-logs/node-$container/authentication-config.yaml" 2>&1 || echo "No authentication config" > "e2e-setup-failure-logs/node-$container/authentication-config.yaml"
-            docker exec "$container" cat /etc/kubernetes/breakglass-webhook.kubeconfig > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig.yaml" 2>&1 || echo "No webhook kubeconfig" > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig.yaml"
+            docker exec "$container" test -f /etc/kubernetes/breakglass-webhook.kubeconfig \
+              > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig-redacted.txt" 2>&1 \
+              && echo "webhook kubeconfig present (redacted)" >> "e2e-setup-failure-logs/node-$container/webhook-kubeconfig-redacted.txt" \
+              || echo "No webhook kubeconfig" > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig-redacted.txt"
             
             # List all files in /etc/kubernetes for visibility
             docker exec "$container" find /etc/kubernetes -type f -ls > "e2e-setup-failure-logs/node-$container/etc-kubernetes-files.txt" 2>&1 || true
@@ -2415,7 +2418,8 @@ jobs:
           if [ -d e2e/kind-setup-multi-tdir ]; then
             mkdir -p e2e-setup-failure-logs/generated-configs
             cp -r e2e/kind-setup-multi-tdir/*.yaml e2e-setup-failure-logs/generated-configs/ 2>/dev/null || true
-            cp -r e2e/kind-setup-multi-tdir/*.kubeconfig e2e-setup-failure-logs/generated-configs/ 2>/dev/null || true
+            find e2e/kind-setup-multi-tdir -maxdepth 1 -name '*.kubeconfig' -printf '%f (redacted)\n' \
+              > e2e-setup-failure-logs/generated-configs/kubeconfigs-redacted.txt 2>/dev/null || true
           fi
           
           echo "Setup failure diagnostics saved to e2e-setup-failure-logs/"
@@ -2790,7 +2794,10 @@ jobs:
             # Get authorization and authentication config files (critical for debugging)
             timeout 5 docker exec "$container" cat /etc/kubernetes/authorization-config.yaml > "$DIAG_DIR/docker/node-$container/authorization-config.yaml" 2>&1 || echo "No authorization config"
             timeout 5 docker exec "$container" cat /etc/kubernetes/authentication-config.yaml > "$DIAG_DIR/docker/node-$container/authentication-config.yaml" 2>&1 || echo "No authentication config"
-            timeout 5 docker exec "$container" cat /etc/kubernetes/breakglass-webhook.kubeconfig > "$DIAG_DIR/docker/node-$container/webhook-kubeconfig.yaml" 2>&1 || echo "No webhook kubeconfig"
+            timeout 5 docker exec "$container" test -f /etc/kubernetes/breakglass-webhook.kubeconfig \
+              > "$DIAG_DIR/docker/node-$container/webhook-kubeconfig-redacted.txt" 2>&1 \
+              && echo "webhook kubeconfig present (redacted)" >> "$DIAG_DIR/docker/node-$container/webhook-kubeconfig-redacted.txt" \
+              || echo "No webhook kubeconfig" > "$DIAG_DIR/docker/node-$container/webhook-kubeconfig-redacted.txt"
             
             # List all files in /etc/kubernetes for visibility
             timeout 10 docker exec "$container" find /etc/kubernetes -type f -ls > "$DIAG_DIR/docker/node-$container/etc-kubernetes-files.txt" 2>&1 || true
@@ -2845,7 +2852,8 @@ jobs:
             echo "--- Copying generated config files ---"
             mkdir -p "$DIAG_DIR/generated-configs"
             cp -r e2e/kind-setup-multi-tdir/*.yaml "$DIAG_DIR/generated-configs/" 2>/dev/null || true
-            cp -r e2e/kind-setup-multi-tdir/*.kubeconfig "$DIAG_DIR/generated-configs/" 2>/dev/null || true
+            find e2e/kind-setup-multi-tdir -maxdepth 1 -name '*.kubeconfig' -printf '%f (redacted)\n' \
+              > "$DIAG_DIR/generated-configs/kubeconfigs-redacted.txt" 2>/dev/null || true
           fi
           
           # ===========================================
@@ -2948,10 +2956,14 @@ jobs:
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp multi-oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           
-          # Copy kubeconfigs (for local debugging)
-          cp "$E2E_HUB_KUBECONFIG" "$DIAG_DIR/hub-kubeconfig.yaml" 2>/dev/null || true
-          cp "$E2E_SPOKE_A_KUBECONFIG" "$DIAG_DIR/spoke-a-kubeconfig.yaml" 2>/dev/null || true
-          cp "$E2E_SPOKE_B_KUBECONFIG" "$DIAG_DIR/spoke-b-kubeconfig.yaml" 2>/dev/null || true
+          # Record kubeconfig availability without uploading client credentials.
+          {
+            for kubeconfig_path in "$E2E_HUB_KUBECONFIG" "$E2E_SPOKE_A_KUBECONFIG" "$E2E_SPOKE_B_KUBECONFIG"; do
+              if [ -f "$kubeconfig_path" ]; then
+                printf '%s (redacted)\n' "$(basename "$kubeconfig_path")"
+              fi
+            done
+          } > "$DIAG_DIR/kubeconfigs-redacted.txt" 2>/dev/null || true
           
           # ===========================================
           # CROSS-REFERENCE SUMMARY
