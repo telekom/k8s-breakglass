@@ -277,7 +277,7 @@ describe("AuthService", () => {
 
       expect(fakeManager.signinRedirect).toHaveBeenCalledWith({ state: { path: "/secure", idpName } });
       expect(sessionStorage.getItem("oidc_idp_name")).toBe(idpName);
-      expect(localStorage.getItem("breakglass_current_idp_name")).toBe(idpName);
+      expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
       expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct.corp");
       expect(authService.getIdentityProviderName()).toBe(idpName);
 
@@ -484,7 +484,20 @@ describe("AuthService", () => {
   });
 
   describe("getIdentityProviderName()", () => {
-    it("falls back to the persisted identity provider name", () => {
+    it("falls back to the session persisted identity provider name", () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+
+      expect(authService.getIdentityProviderName()).toBe("corp");
+    });
+
+    it("ignores stale local persisted identity provider names by default", () => {
+      localStorage.setItem("breakglass_current_idp_name", "corp");
+
+      expect(authService.getIdentityProviderName()).toBeUndefined();
+    });
+
+    it("uses local persisted identity provider names only when persistent storage is active", () => {
+      localStorage.setItem(TOKEN_PERSISTENCE_KEY, "persistent");
       localStorage.setItem("breakglass_current_idp_name", "corp");
 
       expect(authService.getIdentityProviderName()).toBe("corp");

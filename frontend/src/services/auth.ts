@@ -204,6 +204,10 @@ function setTokenPersistencePreference(mode: TokenPersistenceMode) {
   setBrowserStorageItem("localStorage", TOKEN_PERSISTENCE_KEY, mode);
 }
 
+function shouldUseLocalOIDCStorage(): boolean {
+  return !isProductionBuild() && getTokenPersistenceMode() === "persistent";
+}
+
 function purgeLegacyLocalOIDCArtifacts(storage: Storage | undefined): void {
   if (!storage) {
     return;
@@ -225,8 +229,7 @@ function getOIDCStorage(): Storage {
   if (!isBrowser) {
     return fallbackStorage;
   }
-  const prefersPersistent = getTokenPersistenceMode() === "persistent";
-  if (prefersPersistent) {
+  if (getTokenPersistenceMode() === "persistent") {
     if (isProductionBuild()) {
       warn("AuthService", "Persistent OIDC token storage is disabled in production; using sessionStorage");
       const localStorage = getBrowserStorage("localStorage");
@@ -269,23 +272,22 @@ function getCurrentDirectAuthority(): string | undefined {
 }
 
 function setStoredIdentityProviderName(idpName: string | undefined) {
-  for (const { storageName, key } of [
-    { storageName: "sessionStorage", key: CURRENT_IDP_SESSION_STORAGE_KEY },
-    { storageName: "localStorage", key: CURRENT_IDP_LOCAL_STORAGE_KEY },
-  ] as const) {
-    setBrowserStorageItem(storageName, key, idpName);
+  setBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY, idpName);
+  if (shouldUseLocalOIDCStorage()) {
+    setBrowserStorageItem("localStorage", CURRENT_IDP_LOCAL_STORAGE_KEY, idpName);
+  } else {
+    setBrowserStorageItem("localStorage", CURRENT_IDP_LOCAL_STORAGE_KEY, undefined);
   }
 }
 
 function getStoredIdentityProviderName(): string | undefined {
-  for (const { storageName, key } of [
-    { storageName: "sessionStorage", key: CURRENT_IDP_SESSION_STORAGE_KEY },
-    { storageName: "localStorage", key: CURRENT_IDP_LOCAL_STORAGE_KEY },
-  ] as const) {
-    const storedValue = getBrowserStorageItem(storageName, key);
-    if (storedValue) {
-      return storedValue;
-    }
+  const sessionStorageValue = getBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY);
+  if (sessionStorageValue) {
+    return sessionStorageValue;
+  }
+
+  if (shouldUseLocalOIDCStorage()) {
+    return getBrowserStorageItem("localStorage", CURRENT_IDP_LOCAL_STORAGE_KEY) || undefined;
   }
 
   return undefined;

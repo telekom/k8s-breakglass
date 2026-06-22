@@ -191,7 +191,7 @@ If `expectedAudience` is empty (default), audience validation is skipped for bac
 
 ### Token Storage in the Browser
 
-The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`.
+The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`. Production builds also force session storage when a stale persistent preference is present and purge or ignore legacy localStorage OIDC artifacts, including IDP-name hints used for re-authentication.
 
 **Why not `httpOnly` cookies?**
 
