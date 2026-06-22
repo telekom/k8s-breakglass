@@ -7,7 +7,7 @@ const parseMockApiPort = (value: string | undefined): number => {
   }
 
   const parsedPort = Number(value);
-  return Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : defaultMockApiPort;
+  return Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535 ? parsedPort : defaultMockApiPort;
 };
 
 const mockApiPort = parseMockApiPort(process.env.MOCK_API_PORT);
