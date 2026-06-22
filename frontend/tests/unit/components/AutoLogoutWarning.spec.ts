@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { mount, VueWrapper } from "@vue/test-utils";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
+import AuthService from "@/services/auth";
 import { AuthKey } from "@/keys";
 
 type MockAuth = {
@@ -125,6 +126,23 @@ describe("AutoLogoutWarning", () => {
     await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
 
     expect(auth.login).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
+    });
+  });
+
+  it("does not recover stale local persisted identity provider names through AuthService", async () => {
+    const auth = new AuthService({
+      oidcAuthority: "https://issuer.example.com",
+      oidcClientID: "breakglass-ui",
+    });
+    const loginSpy = vi.spyOn(auth, "login").mockResolvedValue(undefined);
+    localStorage.setItem("breakglass_current_idp_name", "corp");
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
+
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
+
+    expect(loginSpy).toHaveBeenCalledWith({
       path: "/sessions?cluster=prod#approval",
     });
   });

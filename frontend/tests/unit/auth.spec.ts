@@ -50,6 +50,18 @@ describe("AuthService mock mode guard", () => {
     expect(localStorage.getItem("breakglass_oidc_token_persistence")).toBe("session");
     expect(localStorage.getItem("oidc.user:https://auth.example.com:breakglass-ui")).toBeNull();
     expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
+    expect(auth.getIdentityProviderName()).toBeUndefined();
+  });
+
+  it("ignores legacy localStorage IDP hints in production", async () => {
+    vi.stubEnv("PROD", true);
+    vi.resetModules();
+    localStorage.setItem("breakglass_current_idp_name", "corp");
+    const { default: AuthService } = await import("@/services/auth");
+
+    const auth = new AuthService(baseConfig);
+
+    expect(auth.getIdentityProviderName()).toBeUndefined();
   });
 
   it("falls back to in-memory OIDC storage when browser storage is blocked", async () => {
