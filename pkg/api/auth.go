@@ -340,12 +340,8 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		transport.TLSClientConfig.RootCAs = pool
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		transport := defaultOIDCTransport()
-
-		// codeql[go/disabled-certificate-check]
-		transport.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 -- operator-opted dev/E2E IDP setting; TLS 1.2+ is enforced by defaultOIDCTransport.
-		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
-		a.log.Warnw("TLS verification disabled for IDP (dev/e2e only)", "idp", idpCfg.Name)
+		a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
+		return nil, fmt.Errorf("insecureSkipVerify is not supported for IDP %s; configure certificateAuthority", idpCfg.Name)
 	}
 
 	// Build JWKS endpoint URL from IDP's configuration

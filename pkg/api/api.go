@@ -1081,7 +1081,6 @@ const (
 	tlsModeHTTP     = "http"
 	tlsModeSystemCA = "system_ca"
 	tlsModeCustomCA = "custom_ca"
-	tlsModeInsecure = "insecure_skip_verify"
 )
 
 func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) {
@@ -1112,19 +1111,11 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 		mode = tlsModeCustomCA
 	case idpCfg.InsecureSkipVerify, idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify:
-		// WARNING: InsecureSkipVerify disables TLS certificate verification.
-		// This is a security risk and should only be used in development/testing.
-		s.log.Sugar().Warnw("SECURITY WARNING: TLS certificate verification is disabled for identity provider",
+		s.log.Sugar().Warnw("refusing insecure TLS verification for identity provider",
 			"idpName", idpCfg.Name,
 			"authority", idpCfg.Authority,
-			"warning", "This setting should NOT be used in production environments")
-		tlsConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-
-			// codeql[go/disabled-certificate-check]
-			InsecureSkipVerify: true, // #nosec G402 -- operator-opted dev/E2E IDP setting; TLS 1.2+ is still enforced.
-		}
-		mode = tlsModeInsecure
+			"remediation", "configure certificateAuthority for private or self-signed identity provider certificates")
+		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpCfg.Name)
 	default:
 		roots, err := x509.SystemCertPool()
 		if err != nil {

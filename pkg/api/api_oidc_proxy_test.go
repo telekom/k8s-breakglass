@@ -43,8 +43,7 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority:          "https://keycloak.example.com/auth/realms/master",
-			InsecureSkipVerify: true,
+			Authority: "https://keycloak.example.com/auth/realms/master",
 		},
 	}
 
@@ -226,8 +225,7 @@ func TestOIDCProxyMultiIDPValidation(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority:          mockKeycloak.URL,
-			InsecureSkipVerify: true,
+			Authority: mockKeycloak.URL,
 		},
 	}
 
@@ -294,7 +292,7 @@ func TestOIDCProxyResponseHeaderAllowlist(t *testing.T) {
 		log:           logger,
 		auth:          &AuthHandler{},
 		config:        config.Config{},
-		idpConfig:     &config.IdentityProviderConfig{Authority: mockAuthority.URL, InsecureSkipVerify: true},
+		idpConfig:     &config.IdentityProviderConfig{Authority: mockAuthority.URL},
 		oidcAuthority: parsed,
 	}
 
@@ -335,8 +333,7 @@ func TestOIDCProxyPathTrustedIDPs(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority:          "https://keycloak.example.com/auth/realms/master",
-			InsecureSkipVerify: true,
+			Authority: "https://keycloak.example.com/auth/realms/master",
 		},
 	}
 
@@ -413,8 +410,7 @@ func TestOIDCProxyPathEncoding(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority:          "https://keycloak.example.com/auth/realms/master",
-			InsecureSkipVerify: true,
+			Authority: "https://keycloak.example.com/auth/realms/master",
 		},
 	}
 
@@ -565,8 +561,7 @@ func TestOIDCProxyLocalhostBinding(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority:          "https://localhost:8443/auth/realms/master",
-			InsecureSkipVerify: true,
+			Authority: "https://localhost:8443/auth/realms/master",
 		},
 	}
 
@@ -638,8 +633,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority:          mockKeycloak.URL + "/auth/realms/schiff",
-			InsecureSkipVerify: true,
+			Authority: mockKeycloak.URL + "/auth/realms/schiff",
 		},
 	}
 
@@ -745,8 +739,7 @@ func TestOIDCProxyRealmPathIntegration(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority:          mockKeycloak.URL + "/auth/realms/production",
-			InsecureSkipVerify: true,
+			Authority: mockKeycloak.URL + "/auth/realms/production",
 		},
 	}
 
@@ -823,7 +816,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 		require.NotNil(t, transport.TLSClientConfig.RootCAs)
 	})
 
-	t.Run("allows insecure flag explicitly", func(t *testing.T) {
+	t.Run("rejects insecure flag", func(t *testing.T) {
 		server := &Server{
 			log: logger,
 			idpConfig: &config.IdentityProviderConfig{
@@ -833,10 +826,9 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 			},
 		}
 		client, err := server.newOIDCProxyHTTPClient(true)
-		require.NoError(t, err)
-		transport := client.Transport.(*http.Transport)
-		require.NotNil(t, transport.TLSClientConfig)
-		assert.True(t, transport.TLSClientConfig.InsecureSkipVerify)
+		require.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "configure certificateAuthority")
 	})
 
 	t.Run("uses provided certificate authority", func(t *testing.T) {
