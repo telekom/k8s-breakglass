@@ -1120,7 +1120,8 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 			"warning", "This setting should NOT be used in production environments")
 		tlsConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
-			// codeql[go/disabled-certificate-check] Explicit operator dev/E2E setting; TLS 1.2+ remains enforced.
+			// Explicit operator dev/E2E setting; TLS 1.2+ remains enforced.
+			// codeql[go/disabled-certificate-check]
 			InsecureSkipVerify: true, // #nosec G402 -- operator-opted dev/E2E IDP setting; TLS 1.2+ is still enforced.
 		}
 		mode = tlsModeInsecure
