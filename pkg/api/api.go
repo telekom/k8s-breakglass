@@ -1118,8 +1118,10 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 			"idpName", idpCfg.Name,
 			"authority", idpCfg.Authority,
 			"warning", "This setting should NOT be used in production environments")
-		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // Operator-opted via InsecureSkipVerify flag
-		tlsConfig.InsecureSkipVerify = true                   //nolint:gosec // Dev/E2E only; enforced TLS 1.2 above
+		tlsConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true, // #nosec G402 -- operator-opted dev/E2E IDP setting; TLS 1.2+ is still enforced.
+		}
 		mode = tlsModeInsecure
 	default:
 		roots, err := x509.SystemCertPool()

@@ -129,6 +129,42 @@ func TestNewSenderFromMailProvider_InsecureTLSUsesMinimumVersion(t *testing.T) {
 	assert.Equal(t, uint16(tls.VersionTLS12), mailSender.dialer.TLSConfig.MinVersion)
 }
 
+func TestNewSenderFromMailProvider_SecureTLSUsesProviderTLSConfig(t *testing.T) {
+	mpConfig := &config.MailProviderConfig{
+		Name:          "secure-provider",
+		Host:          "smtp.internal.com",
+		Port:          587,
+		SenderAddress: "internal@company.com",
+	}
+
+	mailSender, ok := NewSenderFromMailProvider(mpConfig, "").(*sender)
+	if !ok {
+		t.Fatal("expected concrete sender")
+	}
+	if mailSender.dialer.TLSConfig == nil {
+		t.Fatal("expected TLS config")
+	}
+	assert.False(t, mailSender.dialer.TLSConfig.InsecureSkipVerify)
+	assert.Equal(t, uint16(tls.VersionTLS12), mailSender.dialer.TLSConfig.MinVersion)
+	assert.Equal(t, mpConfig.Host, mailSender.dialer.TLSConfig.ServerName)
+}
+
+func TestNewSenderFromMailProvider_DisableTLSDoesNotConfigureTLS(t *testing.T) {
+	mpConfig := &config.MailProviderConfig{
+		Name:          "plain-provider",
+		Host:          "mailhog.local",
+		Port:          1025,
+		DisableTLS:    true,
+		SenderAddress: "noreply@breakglass.local",
+	}
+
+	mailSender, ok := NewSenderFromMailProvider(mpConfig, "").(*sender)
+	if !ok {
+		t.Fatal("expected concrete sender")
+	}
+	assert.Nil(t, mailSender.dialer.TLSConfig)
+}
+
 func TestSender_Send(t *testing.T) {
 	// Create a sender for testing
 	mpConfig := &config.MailProviderConfig{

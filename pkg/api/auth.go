@@ -341,7 +341,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		transport := defaultOIDCTransport()
-		transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // Operator-opted via InsecureSkipVerify flag; TLS 1.2 enforced by defaultOIDCTransport
+		transport.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 -- operator-opted dev/E2E IDP setting; TLS 1.2+ is enforced by defaultOIDCTransport.
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
 		a.log.Warnw("TLS verification disabled for IDP (dev/e2e only)", "idp", idpCfg.Name)
 	}
