@@ -98,7 +98,8 @@ func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakR
 		if ok := certPool.AppendCertsFromPEM([]byte(cfg.CertificateAuthority)); ok {
 			restyClient := gc.RestyClient()
 			restyClient.SetTLSClientConfig(&tls.Config{
-				RootCAs: certPool,
+				MinVersion: tls.VersionTLS12,
+				RootCAs:    certPool,
 			})
 			if log != nil {
 				log.Debugw("Keycloak client configured with custom CA certificate",

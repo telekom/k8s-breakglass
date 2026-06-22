@@ -18,6 +18,7 @@ package escalation
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"testing"
@@ -532,6 +533,7 @@ dEKqR1oJjVFB
 			if assert.NotNil(t, tlsCfg, "TLS config should be set") {
 				assert.NotNil(t, tlsCfg.RootCAs, "custom RootCAs pool should be set for valid CA PEM")
 				assert.False(t, tlsCfg.InsecureSkipVerify, "InsecureSkipVerify should be false")
+				assert.Equal(t, uint16(tls.VersionTLS12), tlsCfg.MinVersion, "minimum TLS version should be TLS 1.2")
 			}
 		}
 	})
