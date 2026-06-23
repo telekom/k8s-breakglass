@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -34,6 +37,47 @@ func BreakglassEscalation(name, namespace string) *BreakglassEscalationApplyConf
 	b.WithKind("BreakglassEscalation")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractBreakglassEscalationFrom extracts the applied configuration owned by fieldManager from
+// breakglassEscalation for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// breakglassEscalation must be a unmodified BreakglassEscalation API object that was retrieved from the Kubernetes API.
+// ExtractBreakglassEscalationFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractBreakglassEscalationFrom(breakglassEscalation *apiv1alpha1.BreakglassEscalation, fieldManager string, subresource string) (*BreakglassEscalationApplyConfiguration, error) {
+	b := &BreakglassEscalationApplyConfiguration{}
+	err := managedfields.ExtractInto(breakglassEscalation, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalation"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(breakglassEscalation.Name)
+	b.WithNamespace(breakglassEscalation.Namespace)
+
+	b.WithKind("BreakglassEscalation")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractBreakglassEscalation extracts the applied configuration owned by fieldManager from
+// breakglassEscalation. If no managedFields are found in breakglassEscalation for fieldManager, a
+// BreakglassEscalationApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// breakglassEscalation must be a unmodified BreakglassEscalation API object that was retrieved from the Kubernetes API.
+// ExtractBreakglassEscalation provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractBreakglassEscalation(breakglassEscalation *apiv1alpha1.BreakglassEscalation, fieldManager string) (*BreakglassEscalationApplyConfiguration, error) {
+	return ExtractBreakglassEscalationFrom(breakglassEscalation, fieldManager, "")
+}
+
+// ExtractBreakglassEscalationStatus extracts the applied configuration owned by fieldManager from
+// breakglassEscalation for the status subresource.
+func ExtractBreakglassEscalationStatus(breakglassEscalation *apiv1alpha1.BreakglassEscalation, fieldManager string) (*BreakglassEscalationApplyConfiguration, error) {
+	return ExtractBreakglassEscalationFrom(breakglassEscalation, fieldManager, "status")
 }
 
 func (b BreakglassEscalationApplyConfiguration) IsApplyConfiguration() {}

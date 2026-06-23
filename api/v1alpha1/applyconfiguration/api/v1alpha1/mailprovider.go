@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -27,13 +30,52 @@ type MailProviderApplyConfiguration struct {
 
 // MailProvider constructs a declarative configuration of the MailProvider type for use with
 // apply.
-func MailProvider(name, namespace string) *MailProviderApplyConfiguration {
+func MailProvider(name string) *MailProviderApplyConfiguration {
 	b := &MailProviderApplyConfiguration{}
 	b.WithName(name)
-	b.WithNamespace(namespace)
 	b.WithKind("MailProvider")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractMailProviderFrom extracts the applied configuration owned by fieldManager from
+// mailProvider for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// mailProvider must be a unmodified MailProvider API object that was retrieved from the Kubernetes API.
+// ExtractMailProviderFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractMailProviderFrom(mailProvider *apiv1alpha1.MailProvider, fieldManager string, subresource string) (*MailProviderApplyConfiguration, error) {
+	b := &MailProviderApplyConfiguration{}
+	err := managedfields.ExtractInto(mailProvider, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.MailProvider"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(mailProvider.Name)
+
+	b.WithKind("MailProvider")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractMailProvider extracts the applied configuration owned by fieldManager from
+// mailProvider. If no managedFields are found in mailProvider for fieldManager, a
+// MailProviderApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// mailProvider must be a unmodified MailProvider API object that was retrieved from the Kubernetes API.
+// ExtractMailProvider provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractMailProvider(mailProvider *apiv1alpha1.MailProvider, fieldManager string) (*MailProviderApplyConfiguration, error) {
+	return ExtractMailProviderFrom(mailProvider, fieldManager, "")
+}
+
+// ExtractMailProviderStatus extracts the applied configuration owned by fieldManager from
+// mailProvider for the status subresource.
+func ExtractMailProviderStatus(mailProvider *apiv1alpha1.MailProvider, fieldManager string) (*MailProviderApplyConfiguration, error) {
+	return ExtractMailProviderFrom(mailProvider, fieldManager, "status")
 }
 
 func (b MailProviderApplyConfiguration) IsApplyConfiguration() {}

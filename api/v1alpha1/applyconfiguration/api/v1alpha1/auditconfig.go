@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -29,13 +32,52 @@ type AuditConfigApplyConfiguration struct {
 
 // AuditConfig constructs a declarative configuration of the AuditConfig type for use with
 // apply.
-func AuditConfig(name, namespace string) *AuditConfigApplyConfiguration {
+func AuditConfig(name string) *AuditConfigApplyConfiguration {
 	b := &AuditConfigApplyConfiguration{}
 	b.WithName(name)
-	b.WithNamespace(namespace)
 	b.WithKind("AuditConfig")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractAuditConfigFrom extracts the applied configuration owned by fieldManager from
+// auditConfig for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// auditConfig must be a unmodified AuditConfig API object that was retrieved from the Kubernetes API.
+// ExtractAuditConfigFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractAuditConfigFrom(auditConfig *apiv1alpha1.AuditConfig, fieldManager string, subresource string) (*AuditConfigApplyConfiguration, error) {
+	b := &AuditConfigApplyConfiguration{}
+	err := managedfields.ExtractInto(auditConfig, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfig"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(auditConfig.Name)
+
+	b.WithKind("AuditConfig")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractAuditConfig extracts the applied configuration owned by fieldManager from
+// auditConfig. If no managedFields are found in auditConfig for fieldManager, a
+// AuditConfigApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// auditConfig must be a unmodified AuditConfig API object that was retrieved from the Kubernetes API.
+// ExtractAuditConfig provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractAuditConfig(auditConfig *apiv1alpha1.AuditConfig, fieldManager string) (*AuditConfigApplyConfiguration, error) {
+	return ExtractAuditConfigFrom(auditConfig, fieldManager, "")
+}
+
+// ExtractAuditConfigStatus extracts the applied configuration owned by fieldManager from
+// auditConfig for the status subresource.
+func ExtractAuditConfigStatus(auditConfig *apiv1alpha1.AuditConfig, fieldManager string) (*AuditConfigApplyConfiguration, error) {
+	return ExtractAuditConfigFrom(auditConfig, fieldManager, "status")
 }
 
 func (b AuditConfigApplyConfiguration) IsApplyConfiguration() {}

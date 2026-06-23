@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -28,13 +31,52 @@ type DebugSessionTemplateApplyConfiguration struct {
 
 // DebugSessionTemplate constructs a declarative configuration of the DebugSessionTemplate type for use with
 // apply.
-func DebugSessionTemplate(name, namespace string) *DebugSessionTemplateApplyConfiguration {
+func DebugSessionTemplate(name string) *DebugSessionTemplateApplyConfiguration {
 	b := &DebugSessionTemplateApplyConfiguration{}
 	b.WithName(name)
-	b.WithNamespace(namespace)
 	b.WithKind("DebugSessionTemplate")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractDebugSessionTemplateFrom extracts the applied configuration owned by fieldManager from
+// debugSessionTemplate for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// debugSessionTemplate must be a unmodified DebugSessionTemplate API object that was retrieved from the Kubernetes API.
+// ExtractDebugSessionTemplateFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDebugSessionTemplateFrom(debugSessionTemplate *apiv1alpha1.DebugSessionTemplate, fieldManager string, subresource string) (*DebugSessionTemplateApplyConfiguration, error) {
+	b := &DebugSessionTemplateApplyConfiguration{}
+	err := managedfields.ExtractInto(debugSessionTemplate, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplate"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(debugSessionTemplate.Name)
+
+	b.WithKind("DebugSessionTemplate")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractDebugSessionTemplate extracts the applied configuration owned by fieldManager from
+// debugSessionTemplate. If no managedFields are found in debugSessionTemplate for fieldManager, a
+// DebugSessionTemplateApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// debugSessionTemplate must be a unmodified DebugSessionTemplate API object that was retrieved from the Kubernetes API.
+// ExtractDebugSessionTemplate provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDebugSessionTemplate(debugSessionTemplate *apiv1alpha1.DebugSessionTemplate, fieldManager string) (*DebugSessionTemplateApplyConfiguration, error) {
+	return ExtractDebugSessionTemplateFrom(debugSessionTemplate, fieldManager, "")
+}
+
+// ExtractDebugSessionTemplateStatus extracts the applied configuration owned by fieldManager from
+// debugSessionTemplate for the status subresource.
+func ExtractDebugSessionTemplateStatus(debugSessionTemplate *apiv1alpha1.DebugSessionTemplate, fieldManager string) (*DebugSessionTemplateApplyConfiguration, error) {
+	return ExtractDebugSessionTemplateFrom(debugSessionTemplate, fieldManager, "status")
 }
 
 func (b DebugSessionTemplateApplyConfiguration) IsApplyConfiguration() {}

@@ -177,7 +177,7 @@ func PatchApplyBreakglassEscalationStatus(ctx context.Context, c client.Client, 
 // PatchApplyDenyPolicyStatus is the cache-aware replacement for
 // [ApplyDenyPolicyStatus].
 func PatchApplyDenyPolicyStatus(ctx context.Context, c client.Client, policy *breakglassv1alpha1.DenyPolicy) (PatchApplyResult, error) {
-	applyConfig := ac.DenyPolicy(policy.Name, "").
+	applyConfig := ac.DenyPolicy(policy.Name).
 		WithStatus(DenyPolicyStatusFrom(&policy.Status))
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -185,7 +185,7 @@ func PatchApplyDenyPolicyStatus(ctx context.Context, c client.Client, policy *br
 // PatchApplyDebugSessionTemplateStatus is the cache-aware replacement for
 // [ApplyDebugSessionTemplateStatus].
 func PatchApplyDebugSessionTemplateStatus(ctx context.Context, c client.Client, template *breakglassv1alpha1.DebugSessionTemplate) (PatchApplyResult, error) {
-	applyConfig := ac.DebugSessionTemplate(template.Name, "").
+	applyConfig := ac.DebugSessionTemplate(template.Name).
 		WithStatus(DebugSessionTemplateStatusFrom(&template.Status))
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -193,7 +193,7 @@ func PatchApplyDebugSessionTemplateStatus(ctx context.Context, c client.Client, 
 // PatchApplyDebugPodTemplateStatus is the cache-aware replacement for
 // [ApplyDebugPodTemplateStatus].
 func PatchApplyDebugPodTemplateStatus(ctx context.Context, c client.Client, template *breakglassv1alpha1.DebugPodTemplate) (PatchApplyResult, error) {
-	applyConfig := ac.DebugPodTemplate(template.Name, "").
+	applyConfig := ac.DebugPodTemplate(template.Name).
 		WithStatus(DebugPodTemplateStatusFrom(&template.Status))
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -209,7 +209,7 @@ func PatchApplyDebugSessionClusterBindingStatus(ctx context.Context, c client.Cl
 // PatchApplyIdentityProviderStatus is the cache-aware replacement for
 // [ApplyIdentityProviderStatus].
 func PatchApplyIdentityProviderStatus(ctx context.Context, c client.Client, idp *breakglassv1alpha1.IdentityProvider) (PatchApplyResult, error) {
-	applyConfig := ac.IdentityProvider(idp.Name, idp.Namespace).
+	applyConfig := ac.IdentityProvider(idp.Name).
 		WithStatus(IdentityProviderStatusFrom(&idp.Status))
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -225,7 +225,7 @@ func PatchApplyClusterConfigStatus(ctx context.Context, c client.Client, cc *bre
 // PatchApplyMailProviderStatus is the cache-aware replacement for
 // [ApplyMailProviderStatus].
 func PatchApplyMailProviderStatus(ctx context.Context, c client.Client, mp *breakglassv1alpha1.MailProvider) (PatchApplyResult, error) {
-	applyConfig := ac.MailProvider(mp.Name, mp.Namespace).
+	applyConfig := ac.MailProvider(mp.Name).
 		WithStatus(MailProviderStatusFrom(&mp.Status))
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -233,7 +233,7 @@ func PatchApplyMailProviderStatus(ctx context.Context, c client.Client, mp *brea
 // PatchApplyAuditConfigStatus is the cache-aware replacement for
 // [ApplyAuditConfigStatus].
 func PatchApplyAuditConfigStatus(ctx context.Context, c client.Client, auditCfg *breakglassv1alpha1.AuditConfig) (PatchApplyResult, error) {
-	applyConfig := ac.AuditConfig(auditCfg.Name, auditCfg.Namespace).
+	applyConfig := ac.AuditConfig(auditCfg.Name).
 		WithStatus(AuditConfigStatusFrom(&auditCfg.Status))
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }

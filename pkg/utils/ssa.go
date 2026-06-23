@@ -269,64 +269,71 @@ func breakglassEscalationStatusApplyConfig(o *breakglassv1alpha1.BreakglassEscal
 }
 
 func identityProviderToApplyConfig(o *breakglassv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
-	cfg := ac.IdentityProvider(o.Name, "")
+	cfg := ac.IdentityProvider(o.Name)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}
+	cfg.Namespace = nil
 	cfg.Status = nil
 	return cfg, nil
 }
 
 func identityProviderStatusApplyConfig(o *breakglassv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
-	cfg := ac.IdentityProvider(o.Name, "")
+	cfg := ac.IdentityProvider(o.Name)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}
+	cfg.Namespace = nil
 	cfg.Spec = nil
 	return cfg, nil
 }
 
 func mailProviderToApplyConfig(o *breakglassv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
-	cfg := ac.MailProvider(o.Name, "")
+	cfg := ac.MailProvider(o.Name)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}
+	cfg.Namespace = nil
 	cfg.Status = nil
 	return cfg, nil
 }
 
 func mailProviderStatusApplyConfig(o *breakglassv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
-	cfg := ac.MailProvider(o.Name, "")
+	cfg := ac.MailProvider(o.Name)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}
+	cfg.Namespace = nil
 	cfg.Spec = nil
 	return cfg, nil
 }
 
 func denyPolicyToApplyConfig(o *breakglassv1alpha1.DenyPolicy) (*ac.DenyPolicyApplyConfiguration, error) {
-	cfg := ac.DenyPolicy(o.Name, "")
+	cfg := ac.DenyPolicy(o.Name)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}
+	cfg.Namespace = nil
 	cfg.Status = nil
 	return cfg, nil
 }
 
 func debugSessionTemplateToApplyConfig(o *breakglassv1alpha1.DebugSessionTemplate) (*ac.DebugSessionTemplateApplyConfiguration, error) {
-	cfg := ac.DebugSessionTemplate(o.Name, "")
+	cfg := ac.DebugSessionTemplate(o.Name)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}
+	cfg.Namespace = nil
 	cfg.Status = nil
 	return cfg, nil
 }
 
 func debugPodTemplateToApplyConfig(o *breakglassv1alpha1.DebugPodTemplate) (*ac.DebugPodTemplateApplyConfiguration, error) {
-	cfg := ac.DebugPodTemplate(o.Name, "")
+	cfg := ac.DebugPodTemplate(o.Name)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}
+	cfg.Namespace = nil
 	cfg.Status = nil
 	return cfg, nil
 }

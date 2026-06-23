@@ -75,27 +75,24 @@ func ApplyBreakglassEscalationStatus(ctx context.Context, c client.Client, escal
 }
 
 // ApplyDenyPolicyStatus applies a status update to a DenyPolicy using native SSA.
-// Note: DenyPolicy is cluster-scoped, so we pass empty namespace.
 func ApplyDenyPolicyStatus(ctx context.Context, c client.Client, policy *breakglassv1alpha1.DenyPolicy) error {
-	applyConfig := ac.DenyPolicy(policy.Name, "").
+	applyConfig := ac.DenyPolicy(policy.Name).
 		WithStatus(DenyPolicyStatusFrom(&policy.Status))
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
 }
 
 // ApplyDebugSessionTemplateStatus applies a status update to a DebugSessionTemplate using native SSA.
-// Note: DebugSessionTemplate is cluster-scoped, so we pass empty namespace.
 func ApplyDebugSessionTemplateStatus(ctx context.Context, c client.Client, template *breakglassv1alpha1.DebugSessionTemplate) error {
-	applyConfig := ac.DebugSessionTemplate(template.Name, "").
+	applyConfig := ac.DebugSessionTemplate(template.Name).
 		WithStatus(DebugSessionTemplateStatusFrom(&template.Status))
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
 }
 
 // ApplyDebugPodTemplateStatus applies a status update to a DebugPodTemplate using native SSA.
-// Note: DebugPodTemplate is cluster-scoped, so we pass empty namespace.
 func ApplyDebugPodTemplateStatus(ctx context.Context, c client.Client, template *breakglassv1alpha1.DebugPodTemplate) error {
-	applyConfig := ac.DebugPodTemplate(template.Name, "").
+	applyConfig := ac.DebugPodTemplate(template.Name).
 		WithStatus(DebugPodTemplateStatusFrom(&template.Status))
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)

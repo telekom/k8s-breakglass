@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -32,13 +35,52 @@ type IdentityProviderApplyConfiguration struct {
 
 // IdentityProvider constructs a declarative configuration of the IdentityProvider type for use with
 // apply.
-func IdentityProvider(name, namespace string) *IdentityProviderApplyConfiguration {
+func IdentityProvider(name string) *IdentityProviderApplyConfiguration {
 	b := &IdentityProviderApplyConfiguration{}
 	b.WithName(name)
-	b.WithNamespace(namespace)
 	b.WithKind("IdentityProvider")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractIdentityProviderFrom extracts the applied configuration owned by fieldManager from
+// identityProvider for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// identityProvider must be a unmodified IdentityProvider API object that was retrieved from the Kubernetes API.
+// ExtractIdentityProviderFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractIdentityProviderFrom(identityProvider *apiv1alpha1.IdentityProvider, fieldManager string, subresource string) (*IdentityProviderApplyConfiguration, error) {
+	b := &IdentityProviderApplyConfiguration{}
+	err := managedfields.ExtractInto(identityProvider, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProvider"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(identityProvider.Name)
+
+	b.WithKind("IdentityProvider")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractIdentityProvider extracts the applied configuration owned by fieldManager from
+// identityProvider. If no managedFields are found in identityProvider for fieldManager, a
+// IdentityProviderApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// identityProvider must be a unmodified IdentityProvider API object that was retrieved from the Kubernetes API.
+// ExtractIdentityProvider provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractIdentityProvider(identityProvider *apiv1alpha1.IdentityProvider, fieldManager string) (*IdentityProviderApplyConfiguration, error) {
+	return ExtractIdentityProviderFrom(identityProvider, fieldManager, "")
+}
+
+// ExtractIdentityProviderStatus extracts the applied configuration owned by fieldManager from
+// identityProvider for the status subresource.
+func ExtractIdentityProviderStatus(identityProvider *apiv1alpha1.IdentityProvider, fieldManager string) (*IdentityProviderApplyConfiguration, error) {
+	return ExtractIdentityProviderFrom(identityProvider, fieldManager, "status")
 }
 
 func (b IdentityProviderApplyConfiguration) IsApplyConfiguration() {}

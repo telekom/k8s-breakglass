@@ -423,7 +423,7 @@ generate_keycloak_tls() {
 create_kind_config() {
   local cluster_name="$1"
   local config_file="$2"
-  local node_image="${3:-kindest/node:v1.34.0}"
+  local node_image="${3:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
   local extra_port_mappings="${4:-}"
   
   cat > "$config_file" <<EOF

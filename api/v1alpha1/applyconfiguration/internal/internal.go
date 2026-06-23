@@ -29,6 +29,5271 @@ func Parser() *typed.Parser {
 var parserOnce sync.Once
 var parser *typed.Parser
 var schemaYAML = typed.YAMLObject(`types:
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdditionalResourceRef
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: deleted
+      type:
+        scalar: boolean
+    - name: error
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: readinessStatus
+      type:
+        scalar: string
+    - name: ready
+      type:
+        scalar: boolean
+    - name: resourceName
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
+  map:
+    fields:
+    - name: attach
+      type:
+        scalar: boolean
+      default: true
+    - name: exec
+      type:
+        scalar: boolean
+      default: true
+    - name: logs
+      type:
+        scalar: boolean
+      default: false
+    - name: portForward
+      type:
+        scalar: boolean
+      default: true
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodRef
+  map:
+    fields:
+    - name: containerStatus
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodContainerStatus
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: nodeName
+      type:
+        scalar: string
+    - name: phase
+      type:
+        scalar: string
+    - name: ready
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfig
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfigSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfigStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfigSpec
+  map:
+    fields:
+    - name: enabled
+      type:
+        scalar: boolean
+      default: true
+    - name: filtering
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditFilterConfig
+    - name: queue
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditQueueConfig
+    - name: sampling
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSamplingConfig
+    - name: sinks
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSinkConfig
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfigStatus
+  map:
+    fields:
+    - name: activeSinks
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: eventsDropped
+      type:
+        scalar: numeric
+    - name: eventsProcessed
+      type:
+        scalar: numeric
+    - name: lastEventTime
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: observedGeneration
+      type:
+        scalar: numeric
+    - name: sinkStatuses
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSinkStatus
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditDestination
+  map:
+    fields:
+    - name: headers
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: type
+      type:
+        scalar: string
+    - name: url
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditFilterConfig
+  map:
+    fields:
+    - name: excludeEventTypes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: excludeNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: excludeResources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: excludeUsers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: includeEventTypes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: includeNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: includeResources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: includeUsers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditQueueConfig
+  map:
+    fields:
+    - name: dropOnFull
+      type:
+        scalar: boolean
+      default: true
+    - name: size
+      type:
+        scalar: numeric
+      default: 100000
+    - name: workers
+      type:
+        scalar: numeric
+      default: 5
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSamplingConfig
+  map:
+    fields:
+    - name: alwaysCaptureEventTypes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: highVolumeEventTypes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: rate
+      type:
+        scalar: string
+      default: "1.0"
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSinkConfig
+  map:
+    fields:
+    - name: eventTypes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: kafka
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaSinkSpec
+    - name: kubernetes
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesSinkSpec
+    - name: log
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.LogSinkSpec
+    - name: minSeverity
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: type
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSinkType
+    - name: webhook
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookSinkSpec
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSinkStatus
+  map:
+    fields:
+    - name: eventsWritten
+      type:
+        scalar: numeric
+    - name: lastError
+      type:
+        scalar: string
+    - name: lastSuccessTime
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: name
+      type:
+        scalar: string
+    - name: ready
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditSinkType
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AutoApproveConfig
+  map:
+    fields:
+    - name: clusters
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResource
+  map:
+    fields:
+    - name: category
+      type:
+        scalar: string
+    - name: createBefore
+      type:
+        scalar: boolean
+      default: true
+    - name: deleteAfter
+      type:
+        scalar: boolean
+      default: true
+    - name: description
+      type:
+        scalar: string
+    - name: failurePolicy
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResourceFailurePolicy
+      default: fail
+    - name: name
+      type:
+        scalar: string
+    - name: optional
+      type:
+        scalar: boolean
+    - name: template
+      type:
+        namedType: __untyped_atomic_
+    - name: templateString
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResourceFailurePolicy
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResourceStatus
+  map:
+    fields:
+    - name: additionalResources
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdditionalResourceRef
+          elementRelationship: atomic
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: category
+      type:
+        scalar: string
+    - name: created
+      type:
+        scalar: boolean
+    - name: createdAt
+      type:
+        scalar: string
+    - name: deleted
+      type:
+        scalar: boolean
+    - name: deletedAt
+      type:
+        scalar: string
+    - name: error
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: readinessStatus
+      type:
+        scalar: string
+    - name: ready
+      type:
+        scalar: boolean
+    - name: readyAt
+      type:
+        scalar: string
+    - name: resourceName
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BindingReference
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalation
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationAllowed
+  map:
+    fields:
+    - name: clusters
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationApprovers
+  map:
+    fields:
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: hiddenFromUI
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: users
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationSpec
+  map:
+    fields:
+    - name: allowed
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationAllowed
+    - name: allowedApproverDomains
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: allowedIdentityProviders
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: allowedIdentityProvidersForApprovers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: allowedIdentityProvidersForRequests
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: approvalReason
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig
+    - name: approvalTimeout
+      type:
+        scalar: string
+      default: 1h
+    - name: approvers
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationApprovers
+    - name: blockSelfApproval
+      type:
+        scalar: boolean
+    - name: clusterConfigRefs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: denyPolicyRefs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: disableNotifications
+      type:
+        scalar: boolean
+    - name: escalatedGroup
+      type:
+        scalar: string
+    - name: idleTimeout
+      type:
+        scalar: string
+    - name: mailProvider
+      type:
+        scalar: string
+    - name: maxValidFor
+      type:
+        scalar: string
+      default: 1h
+    - name: notificationExclusions
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NotificationExclusions
+    - name: podSecurityOverrides
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityOverrides
+    - name: requestReason
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig
+    - name: retainFor
+      type:
+        scalar: string
+    - name: sessionLimitsOverride
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SessionLimitsOverride
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationStatus
+  map:
+    fields:
+    - name: approverGroupMembers
+      type:
+        map:
+          elementType:
+            list:
+              elementType:
+                scalar: string
+              elementRelationship: atomic
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: idpGroupMemberships
+      type:
+        map:
+          elementType:
+            map:
+              elementType:
+                list:
+                  elementType:
+                    scalar: string
+                  elementRelationship: atomic
+    - name: observedGeneration
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSession
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSessionSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSessionStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSessionSpec
+  map:
+    fields:
+    - name: allowIDPMismatch
+      type:
+        scalar: boolean
+    - name: approvalReasonConfig
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig
+    - name: cluster
+      type:
+        scalar: string
+    - name: clusterConfigRef
+      type:
+        scalar: string
+    - name: denyPolicyRefs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: grantedGroup
+      type:
+        scalar: string
+    - name: identityProviderIssuer
+      type:
+        scalar: string
+    - name: identityProviderName
+      type:
+        scalar: string
+    - name: idleTimeout
+      type:
+        scalar: string
+    - name: maxValidFor
+      type:
+        scalar: string
+      default: 1h
+    - name: requestReason
+      type:
+        scalar: string
+    - name: requestReasonConfig
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig
+    - name: retainFor
+      type:
+        scalar: string
+      default: 720h
+    - name: scheduledStartTime
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: user
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSessionState
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSessionStatus
+  map:
+    fields:
+    - name: activityCount
+      type:
+        scalar: numeric
+    - name: actualStartTime
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: approvalReason
+      type:
+        scalar: string
+    - name: approvedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: approver
+      type:
+        scalar: string
+    - name: approvers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: lastActivity
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: observedGeneration
+      type:
+        scalar: numeric
+    - name: reasonEnded
+      type:
+        scalar: string
+    - name: rejectedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: retainedUntil
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: state
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSessionState
+    - name: timeoutAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: withdrawnAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterAuthType
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfig
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfigSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfigStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfigSpec
+  map:
+    fields:
+    - name: allowedApproverDomains
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: authType
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterAuthType
+      default: Kubeconfig
+    - name: blockSelfApproval
+      type:
+        scalar: boolean
+    - name: burst
+      type:
+        scalar: numeric
+    - name: clusterID
+      type:
+        scalar: string
+    - name: environment
+      type:
+        scalar: string
+    - name: identityProviderRefs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: kubeconfigSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: location
+      type:
+        scalar: string
+    - name: mailProvider
+      type:
+        scalar: string
+    - name: oidcAuth
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCAuthConfig
+    - name: oidcFromIdentityProvider
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCFromIdentityProviderConfig
+    - name: qps
+      type:
+        scalar: numeric
+    - name: site
+      type:
+        scalar: string
+    - name: tenant
+      type:
+        scalar: string
+    - name: userIdentifierClaim
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.UserIdentifierClaimType
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfigStatus
+  map:
+    fields:
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: observedGeneration
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.CopiedPodRef
+  map:
+    fields:
+    - name: copyName
+      type:
+        scalar: string
+    - name: copyNamespace
+      type:
+        scalar: string
+    - name: createdAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: originalNamespace
+      type:
+        scalar: string
+    - name: originalPod
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
+  map:
+    fields:
+    - name: description
+      type:
+        scalar: string
+    - name: mandatory
+      type:
+        scalar: boolean
+      default: false
+    - name: mandatoryForRejection
+      type:
+        scalar: boolean
+      default: true
+    - name: minLength
+      type:
+        scalar: numeric
+      default: 10
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugContainerOverride
+  map:
+    fields:
+    - name: env
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.EnvVar
+          elementRelationship: atomic
+    - name: name
+      type:
+        scalar: string
+    - name: resources
+      type:
+        namedType: io.k8s.api.core.v1.ResourceRequirements
+    - name: securityContext
+      type:
+        namedType: io.k8s.api.core.v1.SecurityContext
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPDBConfig
+  map:
+    fields:
+    - name: enabled
+      type:
+        scalar: boolean
+      default: false
+    - name: maxUnavailable
+      type:
+        scalar: numeric
+    - name: minAvailable
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodMetadata
+  map:
+    fields:
+    - name: annotations
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: labels
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodOverrides
+  map:
+    fields:
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodSpecOverrides
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodSpec
+  map:
+    fields:
+    - name: metadata
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodMetadata
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodSpecInner
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodSpecInner
+  map:
+    fields:
+    - name: affinity
+      type:
+        namedType: io.k8s.api.core.v1.Affinity
+    - name: automountServiceAccountToken
+      type:
+        scalar: boolean
+      default: false
+    - name: containers
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Container
+          elementRelationship: atomic
+    - name: dnsConfig
+      type:
+        namedType: io.k8s.api.core.v1.PodDNSConfig
+    - name: dnsPolicy
+      type:
+        namedType: io.k8s.api.core.v1.DNSPolicy
+    - name: enableServiceLinks
+      type:
+        scalar: boolean
+      default: false
+    - name: hostAliases
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.HostAlias
+          elementRelationship: atomic
+    - name: hostIPC
+      type:
+        scalar: boolean
+      default: false
+    - name: hostNetwork
+      type:
+        scalar: boolean
+      default: false
+    - name: hostPID
+      type:
+        scalar: boolean
+      default: false
+    - name: imagePullSecrets
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.LocalObjectReference
+          elementRelationship: atomic
+    - name: initContainers
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Container
+          elementRelationship: atomic
+    - name: nodeSelector
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: overhead
+      type:
+        namedType: io.k8s.api.core.v1.ResourceList
+    - name: preemptionPolicy
+      type:
+        namedType: io.k8s.api.core.v1.PreemptionPolicy
+    - name: priorityClassName
+      type:
+        scalar: string
+    - name: restartPolicy
+      type:
+        namedType: io.k8s.api.core.v1.RestartPolicy
+      default: Never
+    - name: runtimeClassName
+      type:
+        scalar: string
+    - name: schedulerName
+      type:
+        scalar: string
+    - name: securityContext
+      type:
+        namedType: io.k8s.api.core.v1.PodSecurityContext
+    - name: serviceAccountName
+      type:
+        scalar: string
+    - name: shareProcessNamespace
+      type:
+        scalar: boolean
+      default: false
+    - name: terminationGracePeriodSeconds
+      type:
+        scalar: numeric
+    - name: tolerations
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Toleration
+          elementRelationship: atomic
+    - name: topologySpreadConstraints
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.TopologySpreadConstraint
+          elementRelationship: atomic
+    - name: volumes
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Volume
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodSpecOverrides
+  map:
+    fields:
+    - name: containers
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugContainerOverride
+          elementRelationship: atomic
+    - name: hostIPC
+      type:
+        scalar: boolean
+    - name: hostNetwork
+      type:
+        scalar: boolean
+    - name: hostPID
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplate
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateReference
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateSpec
+  map:
+    fields:
+    - name: description
+      type:
+        scalar: string
+    - name: displayName
+      type:
+        scalar: string
+    - name: template
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodSpec
+    - name: templateString
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateStatus
+  map:
+    fields:
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: lastUsedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: observedGeneration
+      type:
+        scalar: numeric
+    - name: usageCount
+      type:
+        scalar: numeric
+    - name: usedBy
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugRequestReasonConfig
+  map:
+    fields:
+    - name: description
+      type:
+        scalar: string
+    - name: mandatory
+      type:
+        scalar: boolean
+      default: false
+    - name: maxLength
+      type:
+        scalar: numeric
+      default: 1000
+    - name: minLength
+      type:
+        scalar: numeric
+      default: 10
+    - name: suggestedReasons
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugResourceQuotaConfig
+  map:
+    fields:
+    - name: enforceResourceLimits
+      type:
+        scalar: boolean
+      default: true
+    - name: enforceResourceRequests
+      type:
+        scalar: boolean
+      default: true
+    - name: maxCPU
+      type:
+        scalar: string
+    - name: maxMemory
+      type:
+        scalar: string
+    - name: maxPods
+      type:
+        scalar: numeric
+    - name: maxStorage
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSession
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAllowed
+  map:
+    fields:
+    - name: clusterSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+    - name: clusters
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: users
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionApproval
+  map:
+    fields:
+    - name: approvedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: approvedBy
+      type:
+        scalar: string
+    - name: reason
+      type:
+        scalar: string
+    - name: rejectedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: rejectedBy
+      type:
+        scalar: string
+    - name: required
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionApprovers
+  map:
+    fields:
+    - name: autoApproveFor
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AutoApproveConfig
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: users
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAuditConfig
+  map:
+    fields:
+    - name: destinations
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditDestination
+          elementRelationship: atomic
+    - name: enableShellHistory
+      type:
+        scalar: boolean
+      default: true
+    - name: enableTerminalRecording
+      type:
+        scalar: boolean
+      default: false
+    - name: enabled
+      type:
+        scalar: boolean
+      default: true
+    - name: recordingRetention
+      type:
+        scalar: string
+      default: 90d
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBinding
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBindingSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBindingStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBindingSpec
+  map:
+    fields:
+    - name: allowed
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAllowed
+    - name: allowedPodOperations
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
+    - name: annotations
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: approvalReason
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
+    - name: approvers
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionApprovers
+    - name: auxiliaryResourceOverrides
+      type:
+        map:
+          elementType:
+            scalar: boolean
+    - name: clusterSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+    - name: clusters
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: constraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionConstraints
+    - name: description
+      type:
+        scalar: string
+    - name: disabled
+      type:
+        scalar: boolean
+      default: false
+    - name: displayName
+      type:
+        scalar: string
+    - name: displayNamePrefix
+      type:
+        scalar: string
+    - name: effectiveFrom
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: hidden
+      type:
+        scalar: boolean
+      default: false
+    - name: impersonation
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationConfig
+    - name: labels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: maxActiveSessionsPerUser
+      type:
+        scalar: numeric
+    - name: maxActiveSessionsTotal
+      type:
+        scalar: numeric
+    - name: namespaceConstraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceConstraints
+    - name: notification
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
+    - name: priority
+      type:
+        scalar: numeric
+    - name: requestReason
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugRequestReasonConfig
+    - name: requiredAuxiliaryResourceCategories
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: schedulingConstraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingConstraints
+    - name: schedulingOptions
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingOptions
+    - name: templateRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TemplateReference
+    - name: templateSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBindingStatus
+  map:
+    fields:
+    - name: activeByUser
+      type:
+        map:
+          elementType:
+            scalar: numeric
+    - name: activeSessionCount
+      type:
+        scalar: numeric
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: effectiveDisplayName
+      type:
+        scalar: string
+    - name: isActive
+      type:
+        scalar: boolean
+    - name: lastUsed
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: nameCollisions
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NameCollision
+          elementRelationship: atomic
+    - name: observedGeneration
+      type:
+        scalar: numeric
+    - name: pendingSessionCount
+      type:
+        scalar: numeric
+    - name: resolvedClusters
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedClusterRef
+          elementRelationship: atomic
+    - name: resolvedTemplates
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedTemplateRef
+          elementRelationship: atomic
+    - name: totalSessionCount
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionConstraints
+  map:
+    fields:
+    - name: allowRenewal
+      type:
+        scalar: boolean
+    - name: defaultDuration
+      type:
+        scalar: string
+      default: 1h
+    - name: maxConcurrentSessions
+      type:
+        scalar: numeric
+      default: 2
+    - name: maxDuration
+      type:
+        scalar: string
+      default: 4h
+    - name: maxRenewals
+      type:
+        scalar: numeric
+    - name: renewalLimit
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
+  map:
+    fields:
+    - name: additionalRecipients
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: enabled
+      type:
+        scalar: boolean
+      default: true
+    - name: excludedRecipients
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NotificationExclusions
+    - name: notifyOnApproval
+      type:
+        scalar: boolean
+      default: true
+    - name: notifyOnExpiry
+      type:
+        scalar: boolean
+      default: true
+    - name: notifyOnRequest
+      type:
+        scalar: boolean
+      default: true
+    - name: notifyOnTermination
+      type:
+        scalar: boolean
+      default: true
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionParticipant
+  map:
+    fields:
+    - name: displayName
+      type:
+        scalar: string
+    - name: email
+      type:
+        scalar: string
+    - name: joinedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: leftAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: role
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ParticipantRole
+    - name: user
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionSpec
+  map:
+    fields:
+    - name: approvalReasonConfig
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
+    - name: bindingRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.BindingReference
+    - name: cluster
+      type:
+        scalar: string
+    - name: extraDeployValues
+      type:
+        map:
+          elementType:
+            namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: invitedParticipants
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: nodeSelector
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: reason
+      type:
+        scalar: string
+    - name: requestReasonConfig
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugRequestReasonConfig
+    - name: requestedBy
+      type:
+        scalar: string
+    - name: requestedByDisplayName
+      type:
+        scalar: string
+    - name: requestedByEmail
+      type:
+        scalar: string
+    - name: requestedDuration
+      type:
+        scalar: string
+    - name: resolvedSchedulingConstraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingConstraints
+    - name: selectedAuxiliaryResources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: selectedSchedulingOption
+      type:
+        scalar: string
+    - name: targetNamespace
+      type:
+        scalar: string
+    - name: templateRef
+      type:
+        scalar: string
+    - name: userGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionState
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionStatus
+  map:
+    fields:
+    - name: allowedPodOperations
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
+    - name: allowedPods
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodRef
+          elementRelationship: atomic
+    - name: approval
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionApproval
+    - name: auxiliaryResourceStatuses
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResourceStatus
+          elementRelationship: atomic
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: deployedResources
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DeployedResourceRef
+          elementRelationship: atomic
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: kubectlDebugStatus
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugStatus
+    - name: message
+      type:
+        scalar: string
+    - name: observedGeneration
+      type:
+        scalar: numeric
+    - name: participants
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionParticipant
+          elementRelationship: atomic
+    - name: podTemplateResourceStatuses
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodTemplateResourceStatus
+          elementRelationship: atomic
+    - name: renewalCount
+      type:
+        scalar: numeric
+    - name: resolvedBinding
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedBindingRef
+    - name: resolvedTemplate
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
+    - name: startsAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: state
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionState
+    - name: terminalSharing
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplate
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateMode
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
+  map:
+    fields:
+    - name: additionalTolerations
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Toleration
+          elementRelationship: atomic
+    - name: affinityOverrides
+      type:
+        namedType: io.k8s.api.core.v1.Affinity
+    - name: allowed
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAllowed
+    - name: allowedPodOperations
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
+    - name: annotations
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: approvalReason
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
+    - name: approvers
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionApprovers
+    - name: audit
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAuditConfig
+    - name: auxiliaryResourceDefaults
+      type:
+        map:
+          elementType:
+            scalar: boolean
+    - name: auxiliaryResources
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResource
+          elementRelationship: atomic
+    - name: constraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionConstraints
+    - name: deprecated
+      type:
+        scalar: boolean
+      default: false
+    - name: deprecationMessage
+      type:
+        scalar: string
+    - name: description
+      type:
+        scalar: string
+    - name: displayName
+      type:
+        scalar: string
+    - name: expirationBehavior
+      type:
+        scalar: string
+      default: terminate
+    - name: extraDeployVariables
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariable
+          elementRelationship: atomic
+    - name: failMode
+      type:
+        scalar: string
+      default: closed
+    - name: gracePeriodBeforeExpiry
+      type:
+        scalar: string
+      default: 15m
+    - name: hidden
+      type:
+        scalar: boolean
+      default: false
+    - name: impersonation
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationConfig
+    - name: kubectlDebug
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugConfig
+    - name: labels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: mode
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateMode
+      default: workload
+    - name: namespaceConstraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceConstraints
+    - name: notification
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
+    - name: podDisruptionBudget
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPDBConfig
+    - name: podOverrides
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodOverrides
+    - name: podOverridesTemplate
+      type:
+        scalar: string
+    - name: podTemplateRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateReference
+    - name: podTemplateString
+      type:
+        scalar: string
+    - name: priority
+      type:
+        scalar: numeric
+      default: 0
+    - name: replicas
+      type:
+        scalar: numeric
+      default: 1
+    - name: requestReason
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugRequestReasonConfig
+    - name: requiredAuxiliaryResourceCategories
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: resourceQuota
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugResourceQuotaConfig
+    - name: schedulingConstraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingConstraints
+    - name: schedulingOptions
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingOptions
+    - name: targetNamespace
+      type:
+        scalar: string
+      default: breakglass-debug
+    - name: terminalSharing
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingConfig
+    - name: workloadType
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateStatus
+  map:
+    fields:
+    - name: activeSessionCount
+      type:
+        scalar: numeric
+    - name: bindingCount
+      type:
+        scalar: numeric
+    - name: boundClusters
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: lastUsedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: observedGeneration
+      type:
+        scalar: numeric
+    - name: pendingSessionCount
+      type:
+        scalar: numeric
+    - name: podTemplateResolved
+      type:
+        scalar: boolean
+    - name: totalSessionCount
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicy
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicySpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicyStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicyScope
+  map:
+    fields:
+    - name: clusters
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: sessions
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: tenants
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicySpec
+  map:
+    fields:
+    - name: appliesTo
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicyScope
+    - name: podSecurityRules
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityRules
+    - name: precedence
+      type:
+        scalar: numeric
+    - name: rules
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyRule
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicyStatus
+  map:
+    fields:
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: observedGeneration
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyRule
+  map:
+    fields:
+    - name: apiGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: namespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: resourceNames
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: resources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: subresources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: verbs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DeployedResourceRef
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: source
+      type:
+        scalar: string
+    - name: uid
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainerRef
+  map:
+    fields:
+    - name: containerName
+      type:
+        scalar: string
+    - name: image
+      type:
+        scalar: string
+    - name: injectedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: injectedBy
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: podName
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainersConfig
+  map:
+    fields:
+    - name: allowPrivileged
+      type:
+        scalar: boolean
+      default: false
+    - name: allowedImages
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: allowedNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: deniedNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: enabled
+      type:
+        scalar: boolean
+      default: false
+    - name: maxCapabilities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: requireImageDigest
+      type:
+        scalar: boolean
+      default: false
+    - name: requireNonRoot
+      type:
+        scalar: boolean
+      default: true
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployInputType
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariable
+  map:
+    fields:
+    - name: advanced
+      type:
+        scalar: boolean
+    - name: allowedGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: default
+      type:
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: description
+      type:
+        scalar: string
+    - name: displayName
+      type:
+        scalar: string
+    - name: group
+      type:
+        scalar: string
+    - name: inputType
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployInputType
+      default: text
+    - name: name
+      type:
+        scalar: string
+    - name: options
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SelectOption
+          elementRelationship: atomic
+    - name: required
+      type:
+        scalar: boolean
+    - name: validation
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.VariableValidation
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.FallbackPolicy
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.GroupSyncProvider
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HostNamespacesConfig
+  map:
+    fields:
+    - name: hostIPC
+      type:
+        scalar: boolean
+      default: false
+    - name: hostNetwork
+      type:
+        scalar: boolean
+      default: true
+    - name: hostPID
+      type:
+        scalar: boolean
+      default: true
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProvider
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProviderSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProviderStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProviderList
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: items
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProvider
+          elementRelationship: atomic
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProviderSpec
+  map:
+    fields:
+    - name: disabled
+      type:
+        scalar: boolean
+    - name: displayName
+      type:
+        scalar: string
+    - name: groupSyncProvider
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.GroupSyncProvider
+    - name: issuer
+      type:
+        scalar: string
+    - name: keycloak
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KeycloakGroupSync
+    - name: oidc
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCConfig
+    - name: primary
+      type:
+        scalar: boolean
+    - name: sessionLimits
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SessionLimits
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProviderStatus
+  map:
+    fields:
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: observedGeneration
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationConfig
+  map:
+    fields:
+    - name: serviceAccountRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ServiceAccountReference
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaSASLSpec
+  map:
+    fields:
+    - name: credentialsSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeySelector
+    - name: mechanism
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaSinkSpec
+  map:
+    fields:
+    - name: async
+      type:
+        scalar: boolean
+      default: false
+    - name: batchSize
+      type:
+        scalar: numeric
+      default: 100
+    - name: batchTimeoutSeconds
+      type:
+        scalar: numeric
+      default: 1
+    - name: brokers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: compression
+      type:
+        scalar: string
+      default: snappy
+    - name: requiredAcks
+      type:
+        scalar: numeric
+      default: -1
+    - name: sasl
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaSASLSpec
+    - name: tls
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaTLSSpec
+    - name: topic
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaTLSSpec
+  map:
+    fields:
+    - name: caSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeySelector
+    - name: clientCertSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeySelector
+    - name: enabled
+      type:
+        scalar: boolean
+      default: true
+    - name: insecureSkipVerify
+      type:
+        scalar: boolean
+      default: false
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KeycloakGroupSync
+  map:
+    fields:
+    - name: baseURL
+      type:
+        scalar: string
+    - name: cacheTTL
+      type:
+        scalar: string
+    - name: certificateAuthority
+      type:
+        scalar: string
+    - name: clientID
+      type:
+        scalar: string
+    - name: clientSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: insecureSkipVerify
+      type:
+        scalar: boolean
+    - name: realm
+      type:
+        scalar: string
+    - name: requestTimeout
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugConfig
+  map:
+    fields:
+    - name: ephemeralContainers
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainersConfig
+    - name: nodeDebug
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeDebugConfig
+    - name: podCopy
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodCopyConfig
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugStatus
+  map:
+    fields:
+    - name: copiedPods
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CopiedPodRef
+          elementRelationship: atomic
+    - name: ephemeralContainersInjected
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainerRef
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesSinkSpec
+  map:
+    fields:
+    - name: eventTypes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.LogSinkSpec
+  map:
+    fields:
+    - name: format
+      type:
+        scalar: string
+      default: json
+    - name: level
+      type:
+        scalar: string
+      default: info
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.MailProvider
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.MailProviderSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.MailProviderStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.MailProviderSpec
+  map:
+    fields:
+    - name: default
+      type:
+        scalar: boolean
+    - name: disabled
+      type:
+        scalar: boolean
+    - name: displayName
+      type:
+        scalar: string
+    - name: retry
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.RetryConfig
+    - name: sender
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SenderConfig
+    - name: smtp
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SMTPConfig
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.MailProviderStatus
+  map:
+    fields:
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: lastHealthCheck
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: lastSendAttempt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: lastSendError
+      type:
+        scalar: string
+    - name: observedGeneration
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NameCollision
+  map:
+    fields:
+    - name: clusterName
+      type:
+        scalar: string
+    - name: collidingBinding
+      type:
+        scalar: string
+    - name: collidingBindingNamespace
+      type:
+        scalar: string
+    - name: effectiveName
+      type:
+        scalar: string
+    - name: templateName
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceConstraints
+  map:
+    fields:
+    - name: allowUserNamespace
+      type:
+        scalar: boolean
+      default: false
+    - name: allowedNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: createIfNotExists
+      type:
+        scalar: boolean
+      default: false
+    - name: defaultNamespace
+      type:
+        scalar: string
+      default: breakglass-debug
+    - name: deniedNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: namespaceLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+  map:
+    fields:
+    - name: patterns
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: selectorTerms
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceSelectorTerm
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceSelectorOperator
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceSelectorRequirement
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: operator
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceSelectorOperator
+    - name: values
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceSelectorTerm
+  map:
+    fields:
+    - name: matchExpressions
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceSelectorRequirement
+          elementRelationship: atomic
+    - name: matchLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeDebugConfig
+  map:
+    fields:
+    - name: allowedImages
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: enabled
+      type:
+        scalar: boolean
+      default: false
+    - name: hostNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HostNamespacesConfig
+    - name: nodeSelector
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NotificationExclusions
+  map:
+    fields:
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: users
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCAuthConfig
+  map:
+    fields:
+    - name: allowTOFU
+      type:
+        scalar: boolean
+    - name: audience
+      type:
+        scalar: string
+    - name: caSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: certificateAuthority
+      type:
+        scalar: string
+    - name: clientID
+      type:
+        scalar: string
+    - name: clientSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: fallbackPolicy
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.FallbackPolicy
+      default: None
+    - name: insecureSkipTLSVerify
+      type:
+        scalar: boolean
+    - name: issuerURL
+      type:
+        scalar: string
+    - name: refreshTokenSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: rotatedRefreshTokenKey
+      type:
+        scalar: string
+    - name: scopes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: server
+      type:
+        scalar: string
+    - name: tokenExchange
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TokenExchangeConfig
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCConfig
+  map:
+    fields:
+    - name: authority
+      type:
+        scalar: string
+    - name: certificateAuthority
+      type:
+        scalar: string
+    - name: clientID
+      type:
+        scalar: string
+    - name: expectedAudience
+      type:
+        scalar: string
+    - name: insecureSkipVerify
+      type:
+        scalar: boolean
+    - name: jwksEndpoint
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCFromIdentityProviderConfig
+  map:
+    fields:
+    - name: allowTOFU
+      type:
+        scalar: boolean
+    - name: audience
+      type:
+        scalar: string
+    - name: caSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: clientID
+      type:
+        scalar: string
+    - name: clientSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: fallbackPolicy
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.FallbackPolicy
+      default: None
+    - name: insecureSkipTLSVerify
+      type:
+        scalar: boolean
+    - name: name
+      type:
+        scalar: string
+    - name: refreshTokenSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: rotatedRefreshTokenKey
+      type:
+        scalar: string
+    - name: scopes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: server
+      type:
+        scalar: string
+    - name: tokenExchange
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TokenExchangeConfig
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ParticipantRole
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodContainerStatus
+  map:
+    fields:
+    - name: lastTerminationReason
+      type:
+        scalar: string
+    - name: restartCount
+      type:
+        scalar: numeric
+    - name: waitingMessage
+      type:
+        scalar: string
+    - name: waitingReason
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodCopyConfig
+  map:
+    fields:
+    - name: allowedNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: deniedNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: enabled
+      type:
+        scalar: boolean
+      default: false
+    - name: labels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: targetNamespace
+      type:
+        scalar: string
+      default: debug-copies
+    - name: ttl
+      type:
+        scalar: string
+      default: 2h
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityApprovers
+  map:
+    fields:
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: users
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityExemptions
+  map:
+    fields:
+    - name: namespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: podLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityOverrides
+  map:
+    fields:
+    - name: approvers
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityApprovers
+    - name: enabled
+      type:
+        scalar: boolean
+      default: false
+    - name: exemptFactors
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: maxAllowedScore
+      type:
+        scalar: numeric
+    - name: namespaceScope
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: requireApproval
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityRules
+  map:
+    fields:
+    - name: appliesTo
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityScope
+    - name: blockFactors
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: exemptions
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityExemptions
+    - name: failMode
+      type:
+        scalar: string
+      default: closed
+    - name: riskFactors
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.RiskFactors
+    - name: thresholds
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.RiskThreshold
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityScope
+  map:
+    fields:
+    - name: subresources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.PodTemplateResourceStatus
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: created
+      type:
+        scalar: boolean
+    - name: createdAt
+      type:
+        scalar: string
+    - name: deleted
+      type:
+        scalar: boolean
+    - name: deletedAt
+      type:
+        scalar: string
+    - name: error
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: readinessStatus
+      type:
+        scalar: string
+    - name: ready
+      type:
+        scalar: boolean
+    - name: readyAt
+      type:
+        scalar: string
+    - name: resourceName
+      type:
+        scalar: string
+    - name: source
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig
+  map:
+    fields:
+    - name: description
+      type:
+        scalar: string
+    - name: mandatory
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedBindingRef
+  map:
+    fields:
+    - name: displayName
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedClusterRef
+  map:
+    fields:
+    - name: matchedBy
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: ready
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedTemplateRef
+  map:
+    fields:
+    - name: displayName
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: ready
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.RetryConfig
+  map:
+    fields:
+    - name: count
+      type:
+        scalar: numeric
+      default: 3
+    - name: initialBackoffMs
+      type:
+        scalar: numeric
+      default: 100
+    - name: queueSize
+      type:
+        scalar: numeric
+      default: 1000
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.RiskFactors
+  map:
+    fields:
+    - name: capabilities
+      type:
+        map:
+          elementType:
+            scalar: numeric
+    - name: hostIPC
+      type:
+        scalar: numeric
+    - name: hostNetwork
+      type:
+        scalar: numeric
+    - name: hostPID
+      type:
+        scalar: numeric
+    - name: hostPathReadOnly
+      type:
+        scalar: numeric
+    - name: hostPathWritable
+      type:
+        scalar: numeric
+    - name: privilegedContainer
+      type:
+        scalar: numeric
+    - name: runAsRoot
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.RiskThreshold
+  map:
+    fields:
+    - name: action
+      type:
+        scalar: string
+    - name: maxScore
+      type:
+        scalar: numeric
+    - name: reason
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SMTPConfig
+  map:
+    fields:
+    - name: certificateAuthority
+      type:
+        scalar: string
+    - name: disableTLS
+      type:
+        scalar: boolean
+    - name: host
+      type:
+        scalar: string
+    - name: insecureSkipVerify
+      type:
+        scalar: boolean
+    - name: passwordRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: port
+      type:
+        scalar: numeric
+    - name: username
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingConstraints
+  map:
+    fields:
+    - name: deniedNodeLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: deniedNodes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: nodeSelector
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: preferredNodeAffinity
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.PreferredSchedulingTerm
+          elementRelationship: atomic
+    - name: preferredPodAntiAffinity
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.WeightedPodAffinityTerm
+          elementRelationship: atomic
+    - name: requiredNodeAffinity
+      type:
+        namedType: io.k8s.api.core.v1.NodeSelector
+    - name: requiredPodAntiAffinity
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.PodAffinityTerm
+          elementRelationship: atomic
+    - name: tolerations
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Toleration
+          elementRelationship: atomic
+    - name: topologySpreadConstraints
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.TopologySpreadConstraint
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingOption
+  map:
+    fields:
+    - name: allowedGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: allowedUsers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: default
+      type:
+        scalar: boolean
+    - name: description
+      type:
+        scalar: string
+    - name: displayName
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: schedulingConstraints
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingConstraints
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingOptions
+  map:
+    fields:
+    - name: options
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SchedulingOption
+          elementRelationship: atomic
+    - name: required
+      type:
+        scalar: boolean
+      default: false
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeySelector
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SelectOption
+  map:
+    fields:
+    - name: allowedGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: description
+      type:
+        scalar: string
+    - name: disabled
+      type:
+        scalar: boolean
+    - name: displayName
+      type:
+        scalar: string
+    - name: value
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SenderConfig
+  map:
+    fields:
+    - name: address
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ServiceAccountReference
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SessionLimitGroupOverride
+  map:
+    fields:
+    - name: group
+      type:
+        scalar: string
+    - name: maxActiveSessionsPerUser
+      type:
+        scalar: numeric
+    - name: unlimited
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SessionLimits
+  map:
+    fields:
+    - name: groupOverrides
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SessionLimitGroupOverride
+          elementRelationship: atomic
+    - name: maxActiveSessionsPerUser
+      type:
+        scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.SessionLimitsOverride
+  map:
+    fields:
+    - name: maxActiveSessionsPerUser
+      type:
+        scalar: numeric
+    - name: maxActiveSessionsTotal
+      type:
+        scalar: numeric
+    - name: unlimited
+      type:
+        scalar: boolean
+      default: false
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TemplateReference
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingConfig
+  map:
+    fields:
+    - name: enabled
+      type:
+        scalar: boolean
+      default: false
+    - name: maxParticipants
+      type:
+        scalar: numeric
+      default: 5
+    - name: provider
+      type:
+        scalar: string
+      default: tmux
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingStatus
+  map:
+    fields:
+    - name: attachCommand
+      type:
+        scalar: string
+    - name: enabled
+      type:
+        scalar: boolean
+    - name: sessionName
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TokenExchangeConfig
+  map:
+    fields:
+    - name: actorTokenSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: actorTokenType
+      type:
+        scalar: string
+    - name: enabled
+      type:
+        scalar: boolean
+    - name: requestedTokenType
+      type:
+        scalar: string
+    - name: resource
+      type:
+        scalar: string
+    - name: subjectTokenSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: subjectTokenType
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.UserIdentifierClaimType
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.VariableValidation
+  map:
+    fields:
+    - name: max
+      type:
+        scalar: string
+    - name: maxItems
+      type:
+        scalar: numeric
+    - name: maxLength
+      type:
+        scalar: numeric
+    - name: maxStorage
+      type:
+        scalar: string
+    - name: min
+      type:
+        scalar: string
+    - name: minItems
+      type:
+        scalar: numeric
+    - name: minLength
+      type:
+        scalar: numeric
+    - name: minStorage
+      type:
+        scalar: string
+    - name: pattern
+      type:
+        scalar: string
+    - name: patternError
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookSinkSpec
+  map:
+    fields:
+    - name: authSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeySelector
+    - name: batchSize
+      type:
+        scalar: numeric
+      default: 1
+    - name: batchUrl
+      type:
+        scalar: string
+    - name: headers
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: timeoutSeconds
+      type:
+        scalar: numeric
+      default: 5
+    - name: tls
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookTLSSpec
+    - name: url
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookTLSSpec
+  map:
+    fields:
+    - name: caSecretRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeySelector
+    - name: insecureSkipVerify
+      type:
+        scalar: boolean
+      default: false
+- name: io.k8s.api.core.v1.AWSElasticBlockStoreVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: partition
+      type:
+        scalar: numeric
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: volumeID
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.Affinity
+  map:
+    fields:
+    - name: nodeAffinity
+      type:
+        namedType: io.k8s.api.core.v1.NodeAffinity
+    - name: podAffinity
+      type:
+        namedType: io.k8s.api.core.v1.PodAffinity
+    - name: podAntiAffinity
+      type:
+        namedType: io.k8s.api.core.v1.PodAntiAffinity
+- name: io.k8s.api.core.v1.AppArmorProfile
+  map:
+    fields:
+    - name: localhostProfile
+      type:
+        scalar: string
+    - name: type
+      type:
+        namedType: io.k8s.api.core.v1.AppArmorProfileType
+- name: io.k8s.api.core.v1.AppArmorProfileType
+  scalar: string
+- name: io.k8s.api.core.v1.AzureDataDiskCachingMode
+  scalar: string
+- name: io.k8s.api.core.v1.AzureDataDiskKind
+  scalar: string
+- name: io.k8s.api.core.v1.AzureDiskVolumeSource
+  map:
+    fields:
+    - name: cachingMode
+      type:
+        namedType: io.k8s.api.core.v1.AzureDataDiskCachingMode
+    - name: diskName
+      type:
+        scalar: string
+    - name: diskURI
+      type:
+        scalar: string
+    - name: fsType
+      type:
+        scalar: string
+      default: ext4
+    - name: kind
+      type:
+        namedType: io.k8s.api.core.v1.AzureDataDiskKind
+    - name: readOnly
+      type:
+        scalar: boolean
+      default: false
+- name: io.k8s.api.core.v1.AzureFileVolumeSource
+  map:
+    fields:
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretName
+      type:
+        scalar: string
+    - name: shareName
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.CSIVolumeSource
+  map:
+    fields:
+    - name: driver
+      type:
+        scalar: string
+    - name: fsType
+      type:
+        scalar: string
+    - name: nodePublishSecretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: volumeAttributes
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: io.k8s.api.core.v1.Capabilities
+  map:
+    fields:
+    - name: add
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Capability
+          elementRelationship: atomic
+    - name: drop
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Capability
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.Capability
+  scalar: string
+- name: io.k8s.api.core.v1.CephFSVolumeSource
+  map:
+    fields:
+    - name: monitors
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: path
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretFile
+      type:
+        scalar: string
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+    - name: user
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.CinderVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+    - name: volumeID
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.ClusterTrustBundleProjection
+  map:
+    fields:
+    - name: labelSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+    - name: name
+      type:
+        scalar: string
+    - name: optional
+      type:
+        scalar: boolean
+    - name: path
+      type:
+        scalar: string
+    - name: signerName
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.ConfigMapEnvSource
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    - name: optional
+      type:
+        scalar: boolean
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.ConfigMapKeySelector
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    - name: optional
+      type:
+        scalar: boolean
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.ConfigMapProjection
+  map:
+    fields:
+    - name: items
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.KeyToPath
+          elementRelationship: atomic
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    - name: optional
+      type:
+        scalar: boolean
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.ConfigMapVolumeSource
+  map:
+    fields:
+    - name: defaultMode
+      type:
+        scalar: numeric
+    - name: items
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.KeyToPath
+          elementRelationship: atomic
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    - name: optional
+      type:
+        scalar: boolean
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.Container
+  map:
+    fields:
+    - name: args
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: command
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: env
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.EnvVar
+          elementRelationship: associative
+          keys:
+          - name
+    - name: envFrom
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.EnvFromSource
+          elementRelationship: atomic
+    - name: image
+      type:
+        scalar: string
+    - name: imagePullPolicy
+      type:
+        namedType: io.k8s.api.core.v1.PullPolicy
+    - name: lifecycle
+      type:
+        namedType: io.k8s.api.core.v1.Lifecycle
+    - name: livenessProbe
+      type:
+        namedType: io.k8s.api.core.v1.Probe
+    - name: name
+      type:
+        scalar: string
+    - name: ports
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.ContainerPort
+          elementRelationship: associative
+          keys:
+          - containerPort
+          - protocol
+    - name: readinessProbe
+      type:
+        namedType: io.k8s.api.core.v1.Probe
+    - name: resizePolicy
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.ContainerResizePolicy
+          elementRelationship: atomic
+    - name: resources
+      type:
+        namedType: io.k8s.api.core.v1.ResourceRequirements
+    - name: restartPolicy
+      type:
+        namedType: io.k8s.api.core.v1.ContainerRestartPolicy
+    - name: restartPolicyRules
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.ContainerRestartRule
+          elementRelationship: atomic
+    - name: securityContext
+      type:
+        namedType: io.k8s.api.core.v1.SecurityContext
+    - name: startupProbe
+      type:
+        namedType: io.k8s.api.core.v1.Probe
+    - name: stdin
+      type:
+        scalar: boolean
+    - name: stdinOnce
+      type:
+        scalar: boolean
+    - name: terminationMessagePath
+      type:
+        scalar: string
+    - name: terminationMessagePolicy
+      type:
+        namedType: io.k8s.api.core.v1.TerminationMessagePolicy
+    - name: tty
+      type:
+        scalar: boolean
+    - name: volumeDevices
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.VolumeDevice
+          elementRelationship: associative
+          keys:
+          - devicePath
+    - name: volumeMounts
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.VolumeMount
+          elementRelationship: associative
+          keys:
+          - mountPath
+    - name: workingDir
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.ContainerPort
+  map:
+    fields:
+    - name: containerPort
+      type:
+        scalar: numeric
+    - name: hostIP
+      type:
+        scalar: string
+    - name: hostPort
+      type:
+        scalar: numeric
+    - name: name
+      type:
+        scalar: string
+    - name: protocol
+      type:
+        namedType: io.k8s.api.core.v1.Protocol
+      default: TCP
+- name: io.k8s.api.core.v1.ContainerResizePolicy
+  map:
+    fields:
+    - name: resourceName
+      type:
+        namedType: io.k8s.api.core.v1.ResourceName
+    - name: restartPolicy
+      type:
+        namedType: io.k8s.api.core.v1.ResourceResizeRestartPolicy
+- name: io.k8s.api.core.v1.ContainerRestartPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.ContainerRestartRule
+  map:
+    fields:
+    - name: action
+      type:
+        namedType: io.k8s.api.core.v1.ContainerRestartRuleAction
+    - name: exitCodes
+      type:
+        namedType: io.k8s.api.core.v1.ContainerRestartRuleOnExitCodes
+- name: io.k8s.api.core.v1.ContainerRestartRuleAction
+  scalar: string
+- name: io.k8s.api.core.v1.ContainerRestartRuleOnExitCodes
+  map:
+    fields:
+    - name: operator
+      type:
+        namedType: io.k8s.api.core.v1.ContainerRestartRuleOnExitCodesOperator
+    - name: values
+      type:
+        list:
+          elementType:
+            scalar: numeric
+          elementRelationship: associative
+- name: io.k8s.api.core.v1.ContainerRestartRuleOnExitCodesOperator
+  scalar: string
+- name: io.k8s.api.core.v1.DNSPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.DownwardAPIProjection
+  map:
+    fields:
+    - name: items
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.DownwardAPIVolumeFile
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.DownwardAPIVolumeFile
+  map:
+    fields:
+    - name: fieldRef
+      type:
+        namedType: io.k8s.api.core.v1.ObjectFieldSelector
+    - name: mode
+      type:
+        scalar: numeric
+    - name: path
+      type:
+        scalar: string
+    - name: resourceFieldRef
+      type:
+        namedType: io.k8s.api.core.v1.ResourceFieldSelector
+- name: io.k8s.api.core.v1.DownwardAPIVolumeSource
+  map:
+    fields:
+    - name: defaultMode
+      type:
+        scalar: numeric
+    - name: items
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.DownwardAPIVolumeFile
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.EmptyDirVolumeSource
+  map:
+    fields:
+    - name: medium
+      type:
+        namedType: io.k8s.api.core.v1.StorageMedium
+    - name: sizeLimit
+      type:
+        namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
+- name: io.k8s.api.core.v1.EnvFromSource
+  map:
+    fields:
+    - name: configMapRef
+      type:
+        namedType: io.k8s.api.core.v1.ConfigMapEnvSource
+    - name: prefix
+      type:
+        scalar: string
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.SecretEnvSource
+- name: io.k8s.api.core.v1.EnvVar
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: value
+      type:
+        scalar: string
+    - name: valueFrom
+      type:
+        namedType: io.k8s.api.core.v1.EnvVarSource
+- name: io.k8s.api.core.v1.EnvVarSource
+  map:
+    fields:
+    - name: configMapKeyRef
+      type:
+        namedType: io.k8s.api.core.v1.ConfigMapKeySelector
+    - name: fieldRef
+      type:
+        namedType: io.k8s.api.core.v1.ObjectFieldSelector
+    - name: fileKeyRef
+      type:
+        namedType: io.k8s.api.core.v1.FileKeySelector
+    - name: resourceFieldRef
+      type:
+        namedType: io.k8s.api.core.v1.ResourceFieldSelector
+    - name: secretKeyRef
+      type:
+        namedType: io.k8s.api.core.v1.SecretKeySelector
+- name: io.k8s.api.core.v1.EphemeralVolumeSource
+  map:
+    fields:
+    - name: volumeClaimTemplate
+      type:
+        namedType: io.k8s.api.core.v1.PersistentVolumeClaimTemplate
+- name: io.k8s.api.core.v1.ExecAction
+  map:
+    fields:
+    - name: command
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.FCVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: lun
+      type:
+        scalar: numeric
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: targetWWNs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: wwids
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.FileKeySelector
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: optional
+      type:
+        scalar: boolean
+      default: false
+    - name: path
+      type:
+        scalar: string
+    - name: volumeName
+      type:
+        scalar: string
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.FlexVolumeSource
+  map:
+    fields:
+    - name: driver
+      type:
+        scalar: string
+    - name: fsType
+      type:
+        scalar: string
+    - name: options
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+- name: io.k8s.api.core.v1.FlockerVolumeSource
+  map:
+    fields:
+    - name: datasetName
+      type:
+        scalar: string
+    - name: datasetUUID
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.GCEPersistentDiskVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: partition
+      type:
+        scalar: numeric
+    - name: pdName
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+- name: io.k8s.api.core.v1.GRPCAction
+  map:
+    fields:
+    - name: port
+      type:
+        scalar: numeric
+    - name: service
+      type:
+        scalar: string
+      default: ""
+- name: io.k8s.api.core.v1.GitRepoVolumeSource
+  map:
+    fields:
+    - name: directory
+      type:
+        scalar: string
+    - name: repository
+      type:
+        scalar: string
+    - name: revision
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.GlusterfsVolumeSource
+  map:
+    fields:
+    - name: endpoints
+      type:
+        scalar: string
+    - name: path
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+- name: io.k8s.api.core.v1.HTTPGetAction
+  map:
+    fields:
+    - name: host
+      type:
+        scalar: string
+    - name: httpHeaders
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.HTTPHeader
+          elementRelationship: atomic
+    - name: path
+      type:
+        scalar: string
+    - name: port
+      type:
+        namedType: io.k8s.apimachinery.pkg.util.intstr.IntOrString
+    - name: scheme
+      type:
+        namedType: io.k8s.api.core.v1.URIScheme
+- name: io.k8s.api.core.v1.HTTPHeader
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: value
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.HostAlias
+  map:
+    fields:
+    - name: hostnames
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: ip
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.HostPathType
+  scalar: string
+- name: io.k8s.api.core.v1.HostPathVolumeSource
+  map:
+    fields:
+    - name: path
+      type:
+        scalar: string
+    - name: type
+      type:
+        namedType: io.k8s.api.core.v1.HostPathType
+- name: io.k8s.api.core.v1.ISCSIVolumeSource
+  map:
+    fields:
+    - name: chapAuthDiscovery
+      type:
+        scalar: boolean
+    - name: chapAuthSession
+      type:
+        scalar: boolean
+    - name: fsType
+      type:
+        scalar: string
+    - name: initiatorName
+      type:
+        scalar: string
+    - name: iqn
+      type:
+        scalar: string
+    - name: iscsiInterface
+      type:
+        scalar: string
+      default: default
+    - name: lun
+      type:
+        scalar: numeric
+    - name: portals
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+    - name: targetPortal
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.ImageVolumeSource
+  map:
+    fields:
+    - name: pullPolicy
+      type:
+        namedType: io.k8s.api.core.v1.PullPolicy
+    - name: reference
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.KeyToPath
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: mode
+      type:
+        scalar: numeric
+    - name: path
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.Lifecycle
+  map:
+    fields:
+    - name: postStart
+      type:
+        namedType: io.k8s.api.core.v1.LifecycleHandler
+    - name: preStop
+      type:
+        namedType: io.k8s.api.core.v1.LifecycleHandler
+    - name: stopSignal
+      type:
+        namedType: io.k8s.api.core.v1.Signal
+- name: io.k8s.api.core.v1.LifecycleHandler
+  map:
+    fields:
+    - name: exec
+      type:
+        namedType: io.k8s.api.core.v1.ExecAction
+    - name: httpGet
+      type:
+        namedType: io.k8s.api.core.v1.HTTPGetAction
+    - name: sleep
+      type:
+        namedType: io.k8s.api.core.v1.SleepAction
+    - name: tcpSocket
+      type:
+        namedType: io.k8s.api.core.v1.TCPSocketAction
+- name: io.k8s.api.core.v1.LocalObjectReference
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.MountPropagationMode
+  scalar: string
+- name: io.k8s.api.core.v1.NFSVolumeSource
+  map:
+    fields:
+    - name: path
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: server
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.NodeAffinity
+  map:
+    fields:
+    - name: preferredDuringSchedulingIgnoredDuringExecution
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.PreferredSchedulingTerm
+          elementRelationship: atomic
+    - name: requiredDuringSchedulingIgnoredDuringExecution
+      type:
+        namedType: io.k8s.api.core.v1.NodeSelector
+- name: io.k8s.api.core.v1.NodeInclusionPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.NodeSelector
+  map:
+    fields:
+    - name: nodeSelectorTerms
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.NodeSelectorTerm
+          elementRelationship: atomic
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.NodeSelectorOperator
+  scalar: string
+- name: io.k8s.api.core.v1.NodeSelectorRequirement
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: operator
+      type:
+        namedType: io.k8s.api.core.v1.NodeSelectorOperator
+    - name: values
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.NodeSelectorTerm
+  map:
+    fields:
+    - name: matchExpressions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.NodeSelectorRequirement
+          elementRelationship: atomic
+    - name: matchFields
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.NodeSelectorRequirement
+          elementRelationship: atomic
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.ObjectFieldSelector
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: fieldPath
+      type:
+        scalar: string
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.PersistentVolumeAccessMode
+  scalar: string
+- name: io.k8s.api.core.v1.PersistentVolumeClaimSpec
+  map:
+    fields:
+    - name: accessModes
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.PersistentVolumeAccessMode
+          elementRelationship: atomic
+    - name: dataSource
+      type:
+        namedType: io.k8s.api.core.v1.TypedLocalObjectReference
+    - name: dataSourceRef
+      type:
+        namedType: io.k8s.api.core.v1.TypedObjectReference
+    - name: resources
+      type:
+        namedType: io.k8s.api.core.v1.VolumeResourceRequirements
+    - name: selector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+    - name: storageClassName
+      type:
+        scalar: string
+    - name: volumeAttributesClassName
+      type:
+        scalar: string
+    - name: volumeMode
+      type:
+        namedType: io.k8s.api.core.v1.PersistentVolumeMode
+    - name: volumeName
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.PersistentVolumeClaimTemplate
+  map:
+    fields:
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: io.k8s.api.core.v1.PersistentVolumeClaimSpec
+- name: io.k8s.api.core.v1.PersistentVolumeClaimVolumeSource
+  map:
+    fields:
+    - name: claimName
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+- name: io.k8s.api.core.v1.PersistentVolumeMode
+  scalar: string
+- name: io.k8s.api.core.v1.PhotonPersistentDiskVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: pdID
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.PodAffinity
+  map:
+    fields:
+    - name: preferredDuringSchedulingIgnoredDuringExecution
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.WeightedPodAffinityTerm
+          elementRelationship: atomic
+    - name: requiredDuringSchedulingIgnoredDuringExecution
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.PodAffinityTerm
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.PodAffinityTerm
+  map:
+    fields:
+    - name: labelSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+    - name: matchLabelKeys
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: mismatchLabelKeys
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: namespaceSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+    - name: namespaces
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: topologyKey
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.PodAntiAffinity
+  map:
+    fields:
+    - name: preferredDuringSchedulingIgnoredDuringExecution
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.WeightedPodAffinityTerm
+          elementRelationship: atomic
+    - name: requiredDuringSchedulingIgnoredDuringExecution
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.PodAffinityTerm
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.PodCertificateProjection
+  map:
+    fields:
+    - name: certificateChainPath
+      type:
+        scalar: string
+    - name: credentialBundlePath
+      type:
+        scalar: string
+    - name: keyPath
+      type:
+        scalar: string
+    - name: keyType
+      type:
+        scalar: string
+    - name: maxExpirationSeconds
+      type:
+        scalar: numeric
+    - name: signerName
+      type:
+        scalar: string
+    - name: userAnnotations
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: io.k8s.api.core.v1.PodDNSConfig
+  map:
+    fields:
+    - name: nameservers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: options
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.PodDNSConfigOption
+          elementRelationship: atomic
+    - name: searches
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.PodDNSConfigOption
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: value
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.PodFSGroupChangePolicy
+  scalar: string
+- name: io.k8s.api.core.v1.PodSELinuxChangePolicy
+  scalar: string
+- name: io.k8s.api.core.v1.PodSecurityContext
+  map:
+    fields:
+    - name: appArmorProfile
+      type:
+        namedType: io.k8s.api.core.v1.AppArmorProfile
+    - name: fsGroup
+      type:
+        scalar: numeric
+    - name: fsGroupChangePolicy
+      type:
+        namedType: io.k8s.api.core.v1.PodFSGroupChangePolicy
+    - name: runAsGroup
+      type:
+        scalar: numeric
+    - name: runAsNonRoot
+      type:
+        scalar: boolean
+    - name: runAsUser
+      type:
+        scalar: numeric
+    - name: seLinuxChangePolicy
+      type:
+        namedType: io.k8s.api.core.v1.PodSELinuxChangePolicy
+    - name: seLinuxOptions
+      type:
+        namedType: io.k8s.api.core.v1.SELinuxOptions
+    - name: seccompProfile
+      type:
+        namedType: io.k8s.api.core.v1.SeccompProfile
+    - name: supplementalGroups
+      type:
+        list:
+          elementType:
+            scalar: numeric
+          elementRelationship: atomic
+    - name: supplementalGroupsPolicy
+      type:
+        namedType: io.k8s.api.core.v1.SupplementalGroupsPolicy
+    - name: sysctls
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.Sysctl
+          elementRelationship: atomic
+    - name: windowsOptions
+      type:
+        namedType: io.k8s.api.core.v1.WindowsSecurityContextOptions
+- name: io.k8s.api.core.v1.PortworxVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: volumeID
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.PreemptionPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.PreferredSchedulingTerm
+  map:
+    fields:
+    - name: preference
+      type:
+        namedType: io.k8s.api.core.v1.NodeSelectorTerm
+    - name: weight
+      type:
+        scalar: numeric
+- name: io.k8s.api.core.v1.Probe
+  map:
+    fields:
+    - name: exec
+      type:
+        namedType: io.k8s.api.core.v1.ExecAction
+    - name: failureThreshold
+      type:
+        scalar: numeric
+    - name: grpc
+      type:
+        namedType: io.k8s.api.core.v1.GRPCAction
+    - name: httpGet
+      type:
+        namedType: io.k8s.api.core.v1.HTTPGetAction
+    - name: initialDelaySeconds
+      type:
+        scalar: numeric
+    - name: periodSeconds
+      type:
+        scalar: numeric
+    - name: successThreshold
+      type:
+        scalar: numeric
+    - name: tcpSocket
+      type:
+        namedType: io.k8s.api.core.v1.TCPSocketAction
+    - name: terminationGracePeriodSeconds
+      type:
+        scalar: numeric
+    - name: timeoutSeconds
+      type:
+        scalar: numeric
+- name: io.k8s.api.core.v1.ProcMountType
+  scalar: string
+- name: io.k8s.api.core.v1.ProjectedVolumeSource
+  map:
+    fields:
+    - name: defaultMode
+      type:
+        scalar: numeric
+    - name: sources
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.VolumeProjection
+          elementRelationship: atomic
+- name: io.k8s.api.core.v1.Protocol
+  scalar: string
+- name: io.k8s.api.core.v1.PullPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.QuobyteVolumeSource
+  map:
+    fields:
+    - name: group
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: registry
+      type:
+        scalar: string
+    - name: tenant
+      type:
+        scalar: string
+    - name: user
+      type:
+        scalar: string
+    - name: volume
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.RBDVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: image
+      type:
+        scalar: string
+    - name: keyring
+      type:
+        scalar: string
+      default: /etc/ceph/keyring
+    - name: monitors
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: pool
+      type:
+        scalar: string
+      default: rbd
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+    - name: user
+      type:
+        scalar: string
+      default: admin
+- name: io.k8s.api.core.v1.RecursiveReadOnlyMode
+  scalar: string
+- name: io.k8s.api.core.v1.ResourceClaim
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: request
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.ResourceFieldSelector
+  map:
+    fields:
+    - name: containerName
+      type:
+        scalar: string
+    - name: divisor
+      type:
+        namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
+    - name: resource
+      type:
+        scalar: string
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.ResourceList
+  map:
+    elementType:
+      namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
+- name: io.k8s.api.core.v1.ResourceName
+  scalar: string
+- name: io.k8s.api.core.v1.ResourceRequirements
+  map:
+    fields:
+    - name: claims
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.ResourceClaim
+          elementRelationship: associative
+          keys:
+          - name
+    - name: limits
+      type:
+        namedType: io.k8s.api.core.v1.ResourceList
+    - name: requests
+      type:
+        namedType: io.k8s.api.core.v1.ResourceList
+- name: io.k8s.api.core.v1.ResourceResizeRestartPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.RestartPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.SELinuxOptions
+  map:
+    fields:
+    - name: level
+      type:
+        scalar: string
+    - name: role
+      type:
+        scalar: string
+    - name: type
+      type:
+        scalar: string
+    - name: user
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.ScaleIOVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+      default: xfs
+    - name: gateway
+      type:
+        scalar: string
+    - name: protectionDomain
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+    - name: sslEnabled
+      type:
+        scalar: boolean
+    - name: storageMode
+      type:
+        scalar: string
+      default: ThinProvisioned
+    - name: storagePool
+      type:
+        scalar: string
+    - name: system
+      type:
+        scalar: string
+    - name: volumeName
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.SeccompProfile
+  map:
+    fields:
+    - name: localhostProfile
+      type:
+        scalar: string
+    - name: type
+      type:
+        namedType: io.k8s.api.core.v1.SeccompProfileType
+- name: io.k8s.api.core.v1.SeccompProfileType
+  scalar: string
+- name: io.k8s.api.core.v1.SecretEnvSource
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    - name: optional
+      type:
+        scalar: boolean
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.SecretKeySelector
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    - name: optional
+      type:
+        scalar: boolean
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.SecretProjection
+  map:
+    fields:
+    - name: items
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.KeyToPath
+          elementRelationship: atomic
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    - name: optional
+      type:
+        scalar: boolean
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.SecretVolumeSource
+  map:
+    fields:
+    - name: defaultMode
+      type:
+        scalar: numeric
+    - name: items
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.core.v1.KeyToPath
+          elementRelationship: atomic
+    - name: optional
+      type:
+        scalar: boolean
+    - name: secretName
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.SecurityContext
+  map:
+    fields:
+    - name: allowPrivilegeEscalation
+      type:
+        scalar: boolean
+    - name: appArmorProfile
+      type:
+        namedType: io.k8s.api.core.v1.AppArmorProfile
+    - name: capabilities
+      type:
+        namedType: io.k8s.api.core.v1.Capabilities
+    - name: privileged
+      type:
+        scalar: boolean
+    - name: procMount
+      type:
+        namedType: io.k8s.api.core.v1.ProcMountType
+    - name: readOnlyRootFilesystem
+      type:
+        scalar: boolean
+    - name: runAsGroup
+      type:
+        scalar: numeric
+    - name: runAsNonRoot
+      type:
+        scalar: boolean
+    - name: runAsUser
+      type:
+        scalar: numeric
+    - name: seLinuxOptions
+      type:
+        namedType: io.k8s.api.core.v1.SELinuxOptions
+    - name: seccompProfile
+      type:
+        namedType: io.k8s.api.core.v1.SeccompProfile
+    - name: windowsOptions
+      type:
+        namedType: io.k8s.api.core.v1.WindowsSecurityContextOptions
+- name: io.k8s.api.core.v1.ServiceAccountTokenProjection
+  map:
+    fields:
+    - name: audience
+      type:
+        scalar: string
+    - name: expirationSeconds
+      type:
+        scalar: numeric
+    - name: path
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.Signal
+  scalar: string
+- name: io.k8s.api.core.v1.SleepAction
+  map:
+    fields:
+    - name: seconds
+      type:
+        scalar: numeric
+- name: io.k8s.api.core.v1.StorageMedium
+  scalar: string
+- name: io.k8s.api.core.v1.StorageOSVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: secretRef
+      type:
+        namedType: io.k8s.api.core.v1.LocalObjectReference
+    - name: volumeName
+      type:
+        scalar: string
+    - name: volumeNamespace
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.SupplementalGroupsPolicy
+  scalar: string
+- name: io.k8s.api.core.v1.Sysctl
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: value
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.TCPSocketAction
+  map:
+    fields:
+    - name: host
+      type:
+        scalar: string
+    - name: port
+      type:
+        namedType: io.k8s.apimachinery.pkg.util.intstr.IntOrString
+- name: io.k8s.api.core.v1.TaintEffect
+  scalar: string
+- name: io.k8s.api.core.v1.TerminationMessagePolicy
+  scalar: string
+- name: io.k8s.api.core.v1.Toleration
+  map:
+    fields:
+    - name: effect
+      type:
+        namedType: io.k8s.api.core.v1.TaintEffect
+    - name: key
+      type:
+        scalar: string
+    - name: operator
+      type:
+        namedType: io.k8s.api.core.v1.TolerationOperator
+    - name: tolerationSeconds
+      type:
+        scalar: numeric
+    - name: value
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.TolerationOperator
+  scalar: string
+- name: io.k8s.api.core.v1.TopologySpreadConstraint
+  map:
+    fields:
+    - name: labelSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+    - name: matchLabelKeys
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: maxSkew
+      type:
+        scalar: numeric
+    - name: minDomains
+      type:
+        scalar: numeric
+    - name: nodeAffinityPolicy
+      type:
+        namedType: io.k8s.api.core.v1.NodeInclusionPolicy
+    - name: nodeTaintsPolicy
+      type:
+        namedType: io.k8s.api.core.v1.NodeInclusionPolicy
+    - name: topologyKey
+      type:
+        scalar: string
+    - name: whenUnsatisfiable
+      type:
+        namedType: io.k8s.api.core.v1.UnsatisfiableConstraintAction
+- name: io.k8s.api.core.v1.TypedLocalObjectReference
+  map:
+    fields:
+    - name: apiGroup
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    elementRelationship: atomic
+- name: io.k8s.api.core.v1.TypedObjectReference
+  map:
+    fields:
+    - name: apiGroup
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.URIScheme
+  scalar: string
+- name: io.k8s.api.core.v1.UnsatisfiableConstraintAction
+  scalar: string
+- name: io.k8s.api.core.v1.Volume
+  map:
+    fields:
+    - name: awsElasticBlockStore
+      type:
+        namedType: io.k8s.api.core.v1.AWSElasticBlockStoreVolumeSource
+    - name: azureDisk
+      type:
+        namedType: io.k8s.api.core.v1.AzureDiskVolumeSource
+    - name: azureFile
+      type:
+        namedType: io.k8s.api.core.v1.AzureFileVolumeSource
+    - name: cephfs
+      type:
+        namedType: io.k8s.api.core.v1.CephFSVolumeSource
+    - name: cinder
+      type:
+        namedType: io.k8s.api.core.v1.CinderVolumeSource
+    - name: configMap
+      type:
+        namedType: io.k8s.api.core.v1.ConfigMapVolumeSource
+    - name: csi
+      type:
+        namedType: io.k8s.api.core.v1.CSIVolumeSource
+    - name: downwardAPI
+      type:
+        namedType: io.k8s.api.core.v1.DownwardAPIVolumeSource
+    - name: emptyDir
+      type:
+        namedType: io.k8s.api.core.v1.EmptyDirVolumeSource
+    - name: ephemeral
+      type:
+        namedType: io.k8s.api.core.v1.EphemeralVolumeSource
+    - name: fc
+      type:
+        namedType: io.k8s.api.core.v1.FCVolumeSource
+    - name: flexVolume
+      type:
+        namedType: io.k8s.api.core.v1.FlexVolumeSource
+    - name: flocker
+      type:
+        namedType: io.k8s.api.core.v1.FlockerVolumeSource
+    - name: gcePersistentDisk
+      type:
+        namedType: io.k8s.api.core.v1.GCEPersistentDiskVolumeSource
+    - name: gitRepo
+      type:
+        namedType: io.k8s.api.core.v1.GitRepoVolumeSource
+    - name: glusterfs
+      type:
+        namedType: io.k8s.api.core.v1.GlusterfsVolumeSource
+    - name: hostPath
+      type:
+        namedType: io.k8s.api.core.v1.HostPathVolumeSource
+    - name: image
+      type:
+        namedType: io.k8s.api.core.v1.ImageVolumeSource
+    - name: iscsi
+      type:
+        namedType: io.k8s.api.core.v1.ISCSIVolumeSource
+    - name: name
+      type:
+        scalar: string
+    - name: nfs
+      type:
+        namedType: io.k8s.api.core.v1.NFSVolumeSource
+    - name: persistentVolumeClaim
+      type:
+        namedType: io.k8s.api.core.v1.PersistentVolumeClaimVolumeSource
+    - name: photonPersistentDisk
+      type:
+        namedType: io.k8s.api.core.v1.PhotonPersistentDiskVolumeSource
+    - name: portworxVolume
+      type:
+        namedType: io.k8s.api.core.v1.PortworxVolumeSource
+    - name: projected
+      type:
+        namedType: io.k8s.api.core.v1.ProjectedVolumeSource
+    - name: quobyte
+      type:
+        namedType: io.k8s.api.core.v1.QuobyteVolumeSource
+    - name: rbd
+      type:
+        namedType: io.k8s.api.core.v1.RBDVolumeSource
+    - name: scaleIO
+      type:
+        namedType: io.k8s.api.core.v1.ScaleIOVolumeSource
+    - name: secret
+      type:
+        namedType: io.k8s.api.core.v1.SecretVolumeSource
+    - name: storageos
+      type:
+        namedType: io.k8s.api.core.v1.StorageOSVolumeSource
+    - name: vsphereVolume
+      type:
+        namedType: io.k8s.api.core.v1.VsphereVirtualDiskVolumeSource
+- name: io.k8s.api.core.v1.VolumeDevice
+  map:
+    fields:
+    - name: devicePath
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.VolumeMount
+  map:
+    fields:
+    - name: mountPath
+      type:
+        scalar: string
+    - name: mountPropagation
+      type:
+        namedType: io.k8s.api.core.v1.MountPropagationMode
+    - name: name
+      type:
+        scalar: string
+    - name: readOnly
+      type:
+        scalar: boolean
+    - name: recursiveReadOnly
+      type:
+        namedType: io.k8s.api.core.v1.RecursiveReadOnlyMode
+    - name: subPath
+      type:
+        scalar: string
+    - name: subPathExpr
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.VolumeProjection
+  map:
+    fields:
+    - name: clusterTrustBundle
+      type:
+        namedType: io.k8s.api.core.v1.ClusterTrustBundleProjection
+    - name: configMap
+      type:
+        namedType: io.k8s.api.core.v1.ConfigMapProjection
+    - name: downwardAPI
+      type:
+        namedType: io.k8s.api.core.v1.DownwardAPIProjection
+    - name: podCertificate
+      type:
+        namedType: io.k8s.api.core.v1.PodCertificateProjection
+    - name: secret
+      type:
+        namedType: io.k8s.api.core.v1.SecretProjection
+    - name: serviceAccountToken
+      type:
+        namedType: io.k8s.api.core.v1.ServiceAccountTokenProjection
+- name: io.k8s.api.core.v1.VolumeResourceRequirements
+  map:
+    fields:
+    - name: limits
+      type:
+        namedType: io.k8s.api.core.v1.ResourceList
+    - name: requests
+      type:
+        namedType: io.k8s.api.core.v1.ResourceList
+- name: io.k8s.api.core.v1.VsphereVirtualDiskVolumeSource
+  map:
+    fields:
+    - name: fsType
+      type:
+        scalar: string
+    - name: storagePolicyID
+      type:
+        scalar: string
+    - name: storagePolicyName
+      type:
+        scalar: string
+    - name: volumePath
+      type:
+        scalar: string
+- name: io.k8s.api.core.v1.WeightedPodAffinityTerm
+  map:
+    fields:
+    - name: podAffinityTerm
+      type:
+        namedType: io.k8s.api.core.v1.PodAffinityTerm
+    - name: weight
+      type:
+        scalar: numeric
+- name: io.k8s.api.core.v1.WindowsSecurityContextOptions
+  map:
+    fields:
+    - name: gmsaCredentialSpec
+      type:
+        scalar: string
+    - name: gmsaCredentialSpecName
+      type:
+        scalar: string
+    - name: hostProcess
+      type:
+        scalar: boolean
+    - name: runAsUserName
+      type:
+        scalar: string
+- name: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+  scalar: untyped
+  list:
+    elementType:
+      namedType: __untyped_atomic_
+    elementRelationship: atomic
+  map:
+    elementType:
+      namedType: __untyped_deduced_
+    elementRelationship: separable
+- name: io.k8s.apimachinery.pkg.api.resource.Quantity
+  scalar: untyped
+  list:
+    elementType:
+      namedType: __untyped_atomic_
+    elementRelationship: atomic
+  map:
+    elementType:
+      namedType: __untyped_deduced_
+    elementRelationship: separable
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+  map:
+    fields:
+    - name: lastTransitionTime
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: message
+      type:
+        scalar: string
+    - name: observedGeneration
+      type:
+        scalar: numeric
+    - name: reason
+      type:
+        scalar: string
+    - name: status
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ConditionStatus
+    - name: type
+      type:
+        scalar: string
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.ConditionStatus
+  scalar: string
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.FieldsV1
+  map:
+    elementType:
+      scalar: untyped
+      list:
+        elementType:
+          namedType: __untyped_atomic_
+        elementRelationship: atomic
+      map:
+        elementType:
+          namedType: __untyped_deduced_
+        elementRelationship: separable
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+  map:
+    fields:
+    - name: matchExpressions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement
+          elementRelationship: atomic
+    - name: matchLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+    elementRelationship: atomic
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorOperator
+  scalar: string
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: operator
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorOperator
+    - name: values
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta
+  map:
+    fields:
+    - name: continue
+      type:
+        scalar: string
+    - name: remainingItemCount
+      type:
+        scalar: numeric
+    - name: resourceVersion
+      type:
+        scalar: string
+    - name: selfLink
+      type:
+        scalar: string
+    - name: shardInfo
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ShardInfo
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.ManagedFieldsEntry
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: fieldsType
+      type:
+        scalar: string
+    - name: fieldsV1
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.FieldsV1
+    - name: manager
+      type:
+        scalar: string
+    - name: operation
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ManagedFieldsOperationType
+    - name: subresource
+      type:
+        scalar: string
+    - name: time
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.ManagedFieldsOperationType
+  scalar: string
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+  map:
+    fields:
+    - name: annotations
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: creationTimestamp
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: deletionGracePeriodSeconds
+      type:
+        scalar: numeric
+    - name: deletionTimestamp
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: finalizers
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
+    - name: generateName
+      type:
+        scalar: string
+    - name: generation
+      type:
+        scalar: numeric
+    - name: labels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: managedFields
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ManagedFieldsEntry
+          elementRelationship: atomic
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: ownerReferences
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.OwnerReference
+          elementRelationship: associative
+          keys:
+          - uid
+    - name: resourceVersion
+      type:
+        scalar: string
+    - name: selfLink
+      type:
+        scalar: string
+    - name: uid
+      type:
+        namedType: io.k8s.apimachinery.pkg.types.UID
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.OwnerReference
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: blockOwnerDeletion
+      type:
+        scalar: boolean
+    - name: controller
+      type:
+        scalar: boolean
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: uid
+      type:
+        namedType: io.k8s.apimachinery.pkg.types.UID
+    elementRelationship: atomic
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.ShardInfo
+  map:
+    fields:
+    - name: selector
+      type:
+        scalar: string
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+  scalar: untyped
+- name: io.k8s.apimachinery.pkg.runtime.RawExtension
+  map:
+    elementType:
+      scalar: untyped
+      list:
+        elementType:
+          namedType: __untyped_atomic_
+        elementRelationship: atomic
+      map:
+        elementType:
+          namedType: __untyped_deduced_
+        elementRelationship: separable
+- name: io.k8s.apimachinery.pkg.types.UID
+  scalar: string
+- name: io.k8s.apimachinery.pkg.util.intstr.IntOrString
+  scalar: untyped
+  list:
+    elementType:
+      namedType: __untyped_atomic_
+    elementRelationship: atomic
+  map:
+    elementType:
+      namedType: __untyped_deduced_
+    elementRelationship: separable
 - name: __untyped_atomic_
   scalar: untyped
   list:
