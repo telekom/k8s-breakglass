@@ -382,36 +382,6 @@ function openRenewModal() {
   word-break: break-word;
 }
 
-.ui-info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-sm);
-}
-
-@media (max-width: 640px) {
-  .ui-info-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.ui-info-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
-}
-
-.ui-info-item .label {
-  font: var(--telekom-text-style-small);
-  color: var(--telekom-color-text-and-icon-standard);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.ui-info-item .value {
-  font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
 .ui-info-item .value.expires {
   color: var(--tone-chip-warning-text);
   font-weight: 500;

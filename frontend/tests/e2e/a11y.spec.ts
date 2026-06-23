@@ -122,7 +122,6 @@ const MODALS_TO_AUDIT = [
 const THEME_MODES: Array<{
   name: string;
   setup: (page: Page) => Promise<void>;
-  postLogin?: (page: Page) => Promise<void>;
 }> = [
   {
     name: "light",
@@ -133,29 +132,21 @@ const THEME_MODES: Array<{
   {
     name: "dark",
     setup: async (page: Page) => {
-      await page.emulateMedia({ colorScheme: "dark" });
-      await page.waitForTimeout(200);
-    },
-    postLogin: async (page: Page) => {
-      await page.evaluate(() => {
-        document.documentElement.setAttribute("data-theme", "dark");
-        document.documentElement.setAttribute("data-mode", "dark");
+      await page.addInitScript(() => {
+        localStorage.setItem("breakglass-theme", "dark");
       });
+      await page.emulateMedia({ colorScheme: "dark" });
       await page.waitForTimeout(200);
     },
   },
   {
     name: "high-contrast",
     setup: async (page: Page) => {
-      await page.emulateMedia({ colorScheme: "dark" });
-    },
-    postLogin: async (page: Page) => {
-      await page.evaluate(() => {
-        document.documentElement.setAttribute("data-high-contrast", "true");
-        document.documentElement.setAttribute("data-theme", "dark");
-        document.documentElement.setAttribute("data-mode", "dark");
+      await page.addInitScript(() => {
+        localStorage.setItem("breakglass-theme", "dark");
+        localStorage.setItem("breakglass-high-contrast", "true");
       });
-      await page.waitForTimeout(200);
+      await page.emulateMedia({ colorScheme: "dark" });
     },
   },
 ];
@@ -326,7 +317,6 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
           await mode.setup(page);
 
           await performMockLogin(page);
-          await mode.postLogin?.(page);
 
           if (pageInfo.path !== "/") {
             await navigateTo(page, pageInfo.path);
@@ -347,7 +337,6 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
           await mode.setup(page);
 
           await performMockLogin(page);
-          await mode.postLogin?.(page);
 
           await navigateTo(page, errorPage.path);
 
@@ -364,7 +353,6 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
           await mode.setup(page);
 
           await performMockLogin(page);
-          await mode.postLogin?.(page);
 
           if (modal.page !== "/") {
             await navigateTo(page, modal.page);
