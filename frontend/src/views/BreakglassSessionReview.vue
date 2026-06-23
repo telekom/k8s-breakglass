@@ -179,7 +179,7 @@ async function autoOpenSessionModal() {
 
 function openFirstMatchingSession() {
   // Find the session matching the requested name
-  const session = state.breakglasses.find(
+  const session = (Array.isArray(state.breakglasses) ? state.breakglasses : []).find(
     (bg) => bg.metadata?.name === resourceName.value || bg.name === resourceName.value,
   );
   if (session) {
@@ -248,7 +248,7 @@ function matchesSearch(bg: SessionCR, term: string) {
 const normalizedSearch = computed(() => state.search.trim().toLowerCase());
 
 const filteredBreakglasses = computed(() => {
-  let sessions = state.breakglasses;
+  let sessions = Array.isArray(state.breakglasses) ? state.breakglasses : [];
   if (showOnlyActive.value) {
     // Only show sessions in 'active'/'approved' state
     sessions = sessions.filter((bg) => {
@@ -414,7 +414,7 @@ async function onCancel(bg: SessionCR) {
 }
 
 .toolbar-info {
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
 

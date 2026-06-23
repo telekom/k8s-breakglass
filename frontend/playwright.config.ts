@@ -1,5 +1,18 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const defaultMockApiPort = 8080;
+const parseMockApiPort = (value: string | undefined): number => {
+  if (!value?.trim()) {
+    return defaultMockApiPort;
+  }
+
+  const parsedPort = Number(value);
+  return Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535 ? parsedPort : defaultMockApiPort;
+};
+
+const mockApiPort = parseMockApiPort(process.env.MOCK_API_PORT);
+const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === "true";
+
 /**
  * Playwright configuration for UI screenshot testing.
  *
@@ -64,18 +77,19 @@ export default defineConfig({
     {
       // Start the mock API server
       command: "node mock-api/server.mjs",
-      port: 8080,
-      reuseExistingServer: !process.env.CI,
+      port: mockApiPort,
+      reuseExistingServer,
       env: {
-        MOCK_API_PORT: "8080",
+        MOCK_API_PORT: String(mockApiPort),
       },
     },
     {
       // Start the Vite dev server with mock auth
       command: "npm run dev",
       port: 5173,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer,
       env: {
+        MOCK_API_PORT: String(mockApiPort),
         VITE_USE_MOCK_AUTH: "true",
       },
     },

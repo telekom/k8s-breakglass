@@ -3,7 +3,7 @@
     <div class="not-found__card">
       <h1>Page not found</h1>
       <p>The page you’re looking for doesn’t exist. You can return to the dashboard to continue working.</p>
-      <router-link class="not-found__cta" to="/">Return to dashboard</router-link>
+      <RouterLink class="not-found__cta" to="/">Return to dashboard</RouterLink>
     </div>
   </section>
 </template>
@@ -29,7 +29,7 @@
 }
 
 .not-found__card h1 {
-  font-size: 1.75rem;
+  font: var(--telekom-text-style-heading-3);
   margin-bottom: var(--space-sm);
 }
 
@@ -39,17 +39,27 @@
 }
 
 .not-found__cta {
-  display: inline-block;
-  padding: var(--space-sm) var(--space-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  margin-top: var(--space-sm);
   border-radius: var(--radius-pill);
-  /* AAA contrast: dark magenta on white gives 9.2:1 ratio */
-  background: var(--cta-bg);
-  color: var(--telekom-color-text-and-icon-white-standard, #fff);
-  font-weight: 600;
+  padding: 0 var(--space-lg);
+  background: var(--accent-primary-aaa);
+  color: var(--accent-on-primary-aaa);
+  font: var(--telekom-text-style-body);
+  font-weight: 700;
   text-decoration: none;
 }
 
 .not-found__cta:hover {
-  background: var(--cta-bg-hover);
+  background: var(--accent-primary-aaa-hover);
+  text-decoration: none;
+}
+
+.not-found__cta:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
 }
 </style>

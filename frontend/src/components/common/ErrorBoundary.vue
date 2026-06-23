@@ -45,12 +45,12 @@ function retry() {
 
 .error-boundary h3 {
   margin: 0;
-  font-size: 1.25rem;
+  font: var(--telekom-text-style-heading-5);
 }
 
 .error-message {
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   max-width: 500px;
   word-break: break-word;
 }

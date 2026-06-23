@@ -56,6 +56,35 @@ describe("multiIDP service", () => {
     );
   });
 
+  it("normalizes malformed multi-IDP config payloads", async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        identityProviders: [
+          { name: "corp", displayName: "Corporate", issuer: "https://idp", enabled: true, oidcClientID: "ui" },
+          null,
+          "invalid",
+          { name: "missing-enabled", displayName: "Missing enabled", issuer: "https://idp" },
+        ],
+        escalationIDPMapping: {
+          prod: ["corp", 42, null],
+          dev: "all",
+        },
+      },
+    });
+
+    const result = await getMultiIDPConfig();
+
+    expect(result).toEqual({
+      identityProviders: [
+        { name: "corp", displayName: "Corporate", issuer: "https://idp", enabled: true, oidcClientID: "ui" },
+      ],
+      escalationIDPMapping: {
+        prod: ["corp"],
+        dev: [],
+      },
+    });
+  });
+
   it("filters allowed IDPs for a restricted escalation", () => {
     const config: MultiIDPConfig = {
       identityProviders: [

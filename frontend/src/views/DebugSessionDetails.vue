@@ -928,7 +928,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .detail-card h3 {
   margin: 0 0 var(--space-md);
-  font-size: 1rem;
+  font: var(--telekom-text-style-body);
   font-weight: 600;
   border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
   padding-bottom: var(--space-sm);
@@ -952,21 +952,21 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .status-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-2xs);
 }
 
 .status-item .label {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   text-transform: uppercase;
 }
 
 .status-item .value {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .status-item .relative {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
@@ -994,23 +994,23 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .info-item dt {
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
 }
 
 .info-item dd {
   margin: 0;
   text-align: right;
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   max-width: 60%;
   word-break: break-word;
 }
 
 .empty-section {
   color: var(--telekom-color-text-and-icon-additional);
+  font: var(--telekom-text-style-caption);
   font-style: italic;
-  font-size: 0.875rem;
 }
 
 .participant-list,
@@ -1042,9 +1042,9 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .participant-meta {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 2px;
+  margin-top: var(--space-2xs);
 }
 
 .left-marker {
@@ -1058,16 +1058,16 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .pod-name {
+  font: var(--telekom-text-style-caption);
   font-family: monospace;
-  font-size: 0.875rem;
 }
 
 .pod-meta {
   display: flex;
   gap: var(--space-md);
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 4px;
+  margin-top: var(--space-xs);
 }
 
 .pod-item.pod-has-issues {
@@ -1081,7 +1081,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   padding: var(--space-sm);
   background: var(--telekom-color-functional-danger-subtle);
   border-radius: var(--radius-sm);
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
 }
 
 .issue-detail {
@@ -1089,7 +1089,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .issue-detail + .issue-detail {
-  margin-top: 4px;
+  margin-top: var(--space-xs);
 }
 
 .issue-message {
@@ -1110,7 +1110,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   background: var(--telekom-color-background-surface-subtle);
   padding: var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   overflow-x: auto;
   flex: 1;
   min-width: 0;
@@ -1140,12 +1140,12 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .operation-name {
+  font: var(--telekom-text-style-caption);
   font-weight: 500;
-  font-size: 0.875rem;
 }
 
 .operation-desc {
-  font-size: 0.75rem;
+  font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   font-family: var(--telekom-typography-font-family-mono);
 }
@@ -1156,7 +1156,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .card-description {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
   margin: 0 0 var(--space-md);
 }
@@ -1176,11 +1176,11 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .kubectl-debug-form h4 {
   margin: 0 0 var(--space-xs);
-  font-size: 1rem;
+  font: var(--telekom-text-style-body);
 }
 
 .form-description {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
   margin: 0 0 var(--space-md);
 }

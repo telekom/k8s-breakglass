@@ -48,6 +48,65 @@ export interface MultiIDPConfig {
   escalationIDPMapping: Record<string, string[]>;
 }
 
+const emptyMultiIDPConfig = (): MultiIDPConfig => ({
+  identityProviders: [],
+  escalationIDPMapping: {},
+});
+
+function normalizeEscalationIDPMapping(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, idps]) => [
+      key,
+      Array.isArray(idps) ? idps.filter((idp): idp is string => typeof idp === "string") : [],
+    ]),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeIdentityProvider(value: unknown): IDPInfo | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const { name, displayName, issuer, enabled, oidcAuthority, oidcClientID } = value;
+  if (typeof name !== "string" || typeof displayName !== "string" || typeof issuer !== "string") {
+    return null;
+  }
+  if (typeof enabled !== "boolean") {
+    return null;
+  }
+
+  return {
+    name,
+    displayName,
+    issuer,
+    enabled,
+    ...(typeof oidcAuthority === "string" ? { oidcAuthority } : {}),
+    ...(typeof oidcClientID === "string" ? { oidcClientID } : {}),
+  };
+}
+
+function normalizeMultiIDPConfig(value: unknown): MultiIDPConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return emptyMultiIDPConfig();
+  }
+
+  const config = value as Partial<MultiIDPConfig>;
+  return {
+    identityProviders: Array.isArray(config.identityProviders)
+      ? config.identityProviders.map(normalizeIdentityProvider).filter((idp): idp is IDPInfo => idp !== null)
+      : [],
+    escalationIDPMapping: normalizeEscalationIDPMapping(config.escalationIDPMapping),
+  };
+}
+
 /**
  * Fetches multi-IDP configuration from the backend
  * Used during session creation to populate IDP dropdown and show authorization rules
@@ -61,8 +120,8 @@ export interface MultiIDPConfig {
 export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
   try {
     debug("MultiIDP", "Fetching multi-IDP configuration from /api/config/idps");
-    const res = await axios.get<MultiIDPConfig>("/api/config/idps");
-    const config = res.data || { identityProviders: [], escalationIDPMapping: {} };
+    const res = await axios.get<unknown>("/api/config/idps");
+    const config = normalizeMultiIDPConfig(res.data);
     debug("MultiIDP", "Successfully fetched config:", {
       idpCount: config.identityProviders.length,
       idps: config.identityProviders.map((idp) => ({
@@ -76,7 +135,7 @@ export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
   } catch (err) {
     logError("MultiIDPService", "Failed to fetch multi-IDP configuration", err);
     // Return empty config so UI can gracefully handle missing data
-    return { identityProviders: [], escalationIDPMapping: {} };
+    return emptyMultiIDPConfig();
   }
 }
 

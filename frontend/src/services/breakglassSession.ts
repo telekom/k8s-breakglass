@@ -1,10 +1,15 @@
-import type { AxiosInstance } from "axios";
+import type { AxiosInstance, AxiosResponse } from "axios";
 import { handleAxiosError } from "@/services/logger";
 import { createAuthenticatedApiClient } from "@/services/httpClient";
 
 import type AuthService from "@/services/auth";
 import type { ClusterAccessReview } from "@/model/cluster_access";
 import type { BreakglassSessionRequest } from "@/model/breakglassSession";
+import type { SessionCR } from "@/model/breakglass";
+
+function normalizeSessionList(value: unknown): SessionCR[] {
+  return Array.isArray(value) ? (value as SessionCR[]) : [];
+}
 
 export default class BreakglassSessionService {
   private client: AxiosInstance;
@@ -38,7 +43,7 @@ export default class BreakglassSessionService {
     }
   }
 
-  public async getSessionStatus(request: BreakglassSessionRequest) {
+  public async getSessionStatus(request: BreakglassSessionRequest): Promise<AxiosResponse<SessionCR[]>> {
     // RESTful: GET /breakglassSessions?user=...&cluster=...&group=...&name=...
     try {
       const params: Record<string, string | boolean> = {};
@@ -51,7 +56,8 @@ export default class BreakglassSessionService {
       // Default client-side policy: mine defaults to true, approver defaults to false
       params.mine = request.mine === undefined ? true : request.mine;
       params.approver = request.approver === undefined ? false : request.approver;
-      return await this.client.get("/breakglassSessions", { params });
+      const response = await this.client.get<unknown>("/breakglassSessions", { params });
+      return { ...response, data: normalizeSessionList(response.data) };
     } catch (e) {
       handleAxiosError("BreakglassSessionService.getSessionStatus", e, "Failed to fetch session status");
       throw e;

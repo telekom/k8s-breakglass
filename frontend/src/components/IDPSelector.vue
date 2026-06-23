@@ -238,7 +238,7 @@ function handleIDPButtonClick(idpName: string) {
 .idp-single-message {
   margin: 0;
   color: var(--tone-chip-info-text);
-  font-size: 0.95rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .idp-no-available {
@@ -257,7 +257,7 @@ function handleIDPButtonClick(idpName: string) {
 
 .idp-heading {
   margin: 0 auto;
-  font-size: 1.25rem;
+  font: var(--telekom-text-style-heading-5);
   font-weight: 600;
   color: var(--telekom-color-text-and-icon-standard);
   display: flex;
@@ -309,7 +309,7 @@ function handleIDPButtonClick(idpName: string) {
 }
 
 .idp-button-status {
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-disabled);
   line-height: 1.1;
 }
@@ -328,14 +328,14 @@ function handleIDPButtonClick(idpName: string) {
 
 .idp-info-text {
   margin: 0;
-  font-size: 0.9rem;
+  font: var(--telekom-text-style-caption);
   color: var(--tone-chip-info-text);
 }
 
 .idp-button-check {
+  font: var(--telekom-text-style-heading-5);
   font-weight: 600;
   display: inline-flex;
-  font-size: 1.25rem;
 }
 
 .warning {

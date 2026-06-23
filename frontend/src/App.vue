@@ -114,11 +114,14 @@ onMounted(() => {
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
     try {
-      if (!localStorage.getItem("breakglass-theme")) {
+      if (highContrast.value || localStorage.getItem("breakglass-theme")) {
+        return;
+      }
+      theme.value = event.matches ? "dark" : "light";
+    } catch {
+      if (!highContrast.value) {
         theme.value = event.matches ? "dark" : "light";
       }
-    } catch {
-      theme.value = event.matches ? "dark" : "light";
     }
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
@@ -142,7 +145,9 @@ onBeforeUnmount(() => {
 });
 
 watch(theme, (value) => {
-  applyTheme(value);
+  if (!highContrast.value) {
+    applyTheme(value);
+  }
 });
 
 watch(highContrast, (value) => {
@@ -441,6 +446,7 @@ watch(
               class="theme-toggle-button"
               :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
               :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              :aria-pressed="theme === 'dark'"
               @click="toggleTheme"
             >
               <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
@@ -454,6 +460,7 @@ watch(
                   ? 'High contrast mode enabled. Click to disable.'
                   : 'High contrast mode disabled. Click to enable.'
               "
+              :aria-pressed="highContrast"
               @click="toggleHighContrast"
             >
               <scale-icon-action-visibility size="20" :decorative="true"></scale-icon-action-visibility>
@@ -501,7 +508,12 @@ watch(
                     <!-- Mobile Theme Toggles -->
                     <scale-telekom-mobile-menu-item class="mobile-theme-item">
                       <div class="mobile-utilities">
-                        <button type="button" class="mobile-util-btn" @click="toggleTheme">
+                        <button
+                          type="button"
+                          class="mobile-util-btn"
+                          :aria-pressed="theme === 'dark'"
+                          @click="toggleTheme"
+                        >
                           <scale-icon-action-light-dark-mode
                             size="24"
                             :decorative="true"
@@ -511,6 +523,7 @@ watch(
                         <button
                           type="button"
                           :class="['mobile-util-btn', { active: highContrast }]"
+                          :aria-pressed="highContrast"
                           @click="toggleHighContrast"
                         >
                           <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
@@ -558,7 +571,7 @@ watch(
 
 <style scoped>
 scale-telekom-header::part(app-name-text) {
-  font-size: 1.17rem;
+  font: var(--telekom-text-style-heading-6);
 }
 
 .header-functions-container {
@@ -588,7 +601,7 @@ scale-telekom-header::part(app-name-text) {
   background: transparent;
   color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .hc-toggle-button:hover,
@@ -633,7 +646,7 @@ scale-telekom-header::part(app-name-text) {
   cursor: pointer;
   width: 100%;
   text-align: left;
-  transition: background-color 0.2s ease;
+  transition: background-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
 }
 
 .mobile-util-btn:hover {

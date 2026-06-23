@@ -74,7 +74,7 @@ async function fetchSessions() {
     // For simplicity, we fetch all and filter client-side
 
     const result = await debugSessionService.listSessions(params);
-    sessions.value = result.sessions;
+    sessions.value = Array.isArray(result.sessions) ? result.sessions : [];
   } catch (e: unknown) {
     error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug sessions";
     pushError(error.value);
@@ -104,7 +104,7 @@ const statePriority: Record<string, number> = {
 };
 
 const filteredSessions = computed(() => {
-  let result = sessions.value;
+  let result = Array.isArray(sessions.value) ? sessions.value : [];
 
   // Filter by states
   if (filters.states.length > 0) {
@@ -273,7 +273,7 @@ function onStateToggle(state: string, event: Event) {
         <scale-loading-spinner v-if="refreshing" size="small"></scale-loading-spinner>
         <scale-button
           v-else
-          icon-only
+          icon-only="true"
           variant="secondary"
           aria-label="Refresh"
           data-testid="refresh-button"
@@ -402,7 +402,7 @@ function onStateToggle(state: string, event: Event) {
 }
 
 .filter-label {
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
   margin-right: var(--space-xs);
 }
@@ -423,7 +423,7 @@ function onStateToggle(state: string, event: Event) {
   margin-top: var(--space-lg);
   text-align: center;
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.875rem;
+  font: var(--telekom-text-style-caption);
 }
 
 .dialog-actions {
