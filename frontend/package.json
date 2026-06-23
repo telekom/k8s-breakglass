@@ -33,7 +33,7 @@
   "dependencies": {
     "@telekom/scale-components": "3.0.0-beta.160",
     "@telekom/scale-components-neutral": "3.0.0-beta.160",
-    "axios": "^1.18.0",
+    "axios": "^1.18.1",
     "humanize-duration": "^3.33.2",
     "jose": "^6.2.3",
     "oidc-client-ts": "^3.5.0",
