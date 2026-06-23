@@ -133,6 +133,7 @@ describe("DebugSessionBrowser", () => {
       expect(refreshButton.exists()).toBe(true);
       expect(refreshButton.attributes("icon-only")).toBe("true");
       expect(refreshButton.attributes("aria-label")).toBe("Refresh");
+      expect(refreshButton.classes()).toContain("ui-toolbar-icon-control");
     });
   });
 

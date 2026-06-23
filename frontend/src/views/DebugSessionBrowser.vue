@@ -43,17 +43,6 @@ const loading = ref(false);
 const refreshing = ref(false);
 const error = ref("");
 
-// Renewal duration dialog state
-const renewDialogOpen = ref(false);
-const renewDuration = ref("1h");
-const sessionToRenew = ref<DebugSessionSummary | null>(null);
-const renewDurationOptions = [
-  { value: "30m", label: "30 minutes" },
-  { value: "1h", label: "1 hour" },
-  { value: "2h", label: "2 hours" },
-  { value: "4h", label: "4 hours" },
-];
-
 const stateOptions = [
   { value: "Active", label: "Active" },
   { value: "Pending", label: "Pending" },
@@ -173,20 +162,10 @@ async function handleTerminate(session: DebugSessionSummary) {
   }
 }
 
-function handleRenew(session: DebugSessionSummary) {
-  sessionToRenew.value = session;
-  renewDuration.value = "1h";
-  renewDialogOpen.value = true;
-}
-
-async function confirmRenew() {
-  if (!sessionToRenew.value) return;
-  const session = sessionToRenew.value;
+async function handleRenew(session: DebugSessionSummary, duration: string) {
   try {
-    await debugSessionService.renewSession(session.name, { extendBy: renewDuration.value });
-    pushSuccess(`Renewed debug session ${session.name} by ${renewDuration.value}`);
-    renewDialogOpen.value = false;
-    sessionToRenew.value = null;
+    await debugSessionService.renewSession(session.name, { extendBy: duration });
+    pushSuccess(`Renewed debug session ${session.name} by ${duration}`);
     await refresh();
   } catch (e: unknown) {
     pushError((e instanceof Error ? e.message : undefined) || "Failed to renew session");
@@ -247,8 +226,9 @@ function onStateToggle(state: string, event: Event) {
   <div class="ui-page debug-session-browser" data-testid="debug-session-browser">
     <PageHeader title="Debug Sessions" subtitle="Browse and manage debug sessions for temporary cluster access." />
 
-    <div class="toolbar">
-      <div class="toolbar-left">
+    <div class="debug-toolbar ui-toolbar" data-testid="debug-session-toolbar">
+      <div class="ui-toolbar-field">
+        <label for="debug-session-search" class="sr-only">Search debug sessions</label>
         <scale-text-field
           id="debug-session-search"
           data-testid="debug-session-search-input"
@@ -260,19 +240,25 @@ function onStateToggle(state: string, event: Event) {
         ></scale-text-field>
       </div>
 
-      <div class="toolbar-filters">
+      <div class="ui-toolbar-actions">
         <scale-checkbox
           data-testid="my-sessions-filter"
           :checked="filters.mine"
-          label="My Sessions Only"
+          label="My Sessions"
           @scale-change="updateMineFilter"
         ></scale-checkbox>
       </div>
 
-      <div class="toolbar-right">
-        <scale-loading-spinner v-if="refreshing" size="small"></scale-loading-spinner>
+      <div class="ui-toolbar-actions" style="margin-left: auto">
+        <scale-loading-spinner
+          v-if="refreshing"
+          class="ui-toolbar-icon-control"
+          size="small"
+          aria-label="Refreshing..."
+        ></scale-loading-spinner>
         <scale-button
           v-else
+          class="ui-toolbar-icon-control"
           icon-only="true"
           variant="secondary"
           aria-label="Refresh"
@@ -316,7 +302,7 @@ function onStateToggle(state: string, event: Event) {
         @join="handleJoin(session)"
         @leave="handleLeave(session)"
         @terminate="handleTerminate(session)"
-        @renew="handleRenew(session)"
+        @renew="(duration) => handleRenew(session, duration)"
         @approve="handleApprove(session)"
         @reject="(reason) => handleReject(session, reason)"
         @view-details="handleViewDetails(session)"
@@ -335,23 +321,9 @@ function onStateToggle(state: string, event: Event) {
       </template>
     </EmptyState>
 
-    <div v-if="!loading" class="results-info">
+    <div v-if="!loading" class="results-info ui-toolbar-info">
       Showing {{ filteredSessions.length }} of {{ sessions.length }} sessions
     </div>
-
-    <!-- Renew Duration Dialog -->
-    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scale-close="renewDialogOpen = false">
-      <p>Select how long to extend the session:</p>
-      <scale-dropdown-select v-model="renewDuration" label="Duration" data-testid="renew-duration-select">
-        <scale-dropdown-select-item v-for="opt in renewDurationOptions" :key="opt.value" :value="opt.value">
-          {{ opt.label }}
-        </scale-dropdown-select-item>
-      </scale-dropdown-select>
-      <div slot="action" class="dialog-actions">
-        <scale-button variant="secondary" @click="renewDialogOpen = false">Cancel</scale-button>
-        <scale-button variant="primary" @click="confirmRenew">Renew</scale-button>
-      </div>
-    </scale-modal>
   </div>
 </template>
 
@@ -360,45 +332,19 @@ function onStateToggle(state: string, event: Event) {
   padding-bottom: clamp(2.5rem, 5vw, 4.5rem);
 }
 
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-md);
+.debug-toolbar {
   margin-bottom: var(--space-md);
-  padding: var(--space-md);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--radius-md);
-}
-
-.toolbar-left {
-  flex: 1 1 280px;
-  min-width: 200px;
-}
-
-.toolbar-left > * {
-  width: 100%;
-}
-
-.toolbar-filters {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-}
-
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  margin-left: auto;
 }
 
 .state-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-md);
   margin-bottom: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--surface-card-subtle);
+  border-radius: var(--radius-md);
 }
 
 .filter-label {
@@ -424,12 +370,7 @@ function onStateToggle(state: string, event: Event) {
   text-align: center;
   color: var(--telekom-color-text-and-icon-additional);
   font: var(--telekom-text-style-caption);
-}
-
-.dialog-actions {
   display: flex;
-  gap: var(--space-md);
-  justify-content: flex-end;
-  margin-top: var(--space-lg);
+  justify-content: center;
 }
 </style>

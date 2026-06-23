@@ -8,11 +8,10 @@ import AxeBuilder from "@axe-core/playwright";
 /**
  * Accessibility E2E tests using axe-core.
  *
- * Runs automated WCAG 2.1 AA + AAA checks against key pages in four theme modes:
+ * Runs automated WCAG 2.1 AA + AAA checks against key pages in three reachable theme modes:
  * - Light mode (default)
  * - Dark mode (prefers-color-scheme: dark)
- * - High Contrast mode (data-high-contrast="true")
- * - High Contrast Dark mode (data-high-contrast="true" + data-theme="dark")
+ * - High Contrast mode (data-high-contrast="true" + forced dark data-theme/data-mode)
  *
  * Coverage includes:
  * - All primary authenticated pages
@@ -123,7 +122,6 @@ const MODALS_TO_AUDIT = [
 const THEME_MODES: Array<{
   name: string;
   setup: (page: Page) => Promise<void>;
-  postLogin?: (page: Page) => Promise<void>;
 }> = [
   {
     name: "light",
@@ -134,41 +132,21 @@ const THEME_MODES: Array<{
   {
     name: "dark",
     setup: async (page: Page) => {
-      await page.emulateMedia({ colorScheme: "dark" });
-      await page.waitForTimeout(200);
-    },
-    postLogin: async (page: Page) => {
-      await page.evaluate(() => {
-        document.documentElement.setAttribute("data-theme", "dark");
-        document.documentElement.setAttribute("data-mode", "dark");
+      await page.addInitScript(() => {
+        localStorage.setItem("breakglass-theme", "dark");
       });
+      await page.emulateMedia({ colorScheme: "dark" });
       await page.waitForTimeout(200);
     },
   },
   {
     name: "high-contrast",
     setup: async (page: Page) => {
-      await page.emulateMedia({ colorScheme: "light" });
-    },
-    postLogin: async (page: Page) => {
-      await page.evaluate(() => {
-        document.documentElement.setAttribute("data-high-contrast", "true");
+      await page.addInitScript(() => {
+        localStorage.setItem("breakglass-theme", "dark");
+        localStorage.setItem("breakglass-high-contrast", "true");
       });
-      await page.waitForTimeout(200);
-    },
-  },
-  {
-    name: "high-contrast-dark",
-    setup: async (page: Page) => {
       await page.emulateMedia({ colorScheme: "dark" });
-    },
-    postLogin: async (page: Page) => {
-      await page.evaluate(() => {
-        document.documentElement.setAttribute("data-high-contrast", "true");
-        document.documentElement.setAttribute("data-theme", "dark");
-        document.documentElement.setAttribute("data-mode", "dark");
-      });
-      await page.waitForTimeout(200);
     },
   },
 ];
@@ -303,8 +281,11 @@ async function assertNoA11yViolations(page: Page, context: string, mode: string)
       nodes: v.nodes.filter((n) => {
         if (isScaleShadowDomNode(n)) return false;
         // Exempt Telekom brand colours ONLY from the enhanced contrast rule (AAA)
-        // They must still pass standard color-contrast (AA)
-        if (v.id === "color-contrast-enhanced" && isBrandColorContrastNode(n)) return false;
+        // in standard light/dark themes. High-contrast mode must not leak brand
+        // magenta because users opted into maximum contrast.
+        if (mode !== "high-contrast" && v.id === "color-contrast-enhanced" && isBrandColorContrastNode(n)) {
+          return false;
+        }
         return true;
       }),
     }))
@@ -336,7 +317,6 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
           await mode.setup(page);
 
           await performMockLogin(page);
-          await mode.postLogin?.(page);
 
           if (pageInfo.path !== "/") {
             await navigateTo(page, pageInfo.path);
@@ -357,7 +337,6 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
           await mode.setup(page);
 
           await performMockLogin(page);
-          await mode.postLogin?.(page);
 
           await navigateTo(page, errorPage.path);
 
@@ -374,7 +353,6 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
           await mode.setup(page);
 
           await performMockLogin(page);
-          await mode.postLogin?.(page);
 
           if (modal.page !== "/") {
             await navigateTo(page, modal.page);

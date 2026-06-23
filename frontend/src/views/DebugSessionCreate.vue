@@ -576,7 +576,7 @@ function handleTemplateChange(ev: Event) {
         </div>
       </div>
 
-      <div class="form-actions">
+      <div class="modal-actions">
         <scale-button variant="secondary" data-testid="cancel-button" @click="handleCancel"> Cancel </scale-button>
         <scale-button variant="primary" :disabled="!form.templateRef" data-testid="next-button" @click="goToStep2">
           Next: Select Cluster →
@@ -646,7 +646,7 @@ function handleTemplateChange(ev: Event) {
         @update:show-advanced-options="form.showAdvancedOptions = $event"
       />
 
-      <div class="form-actions">
+      <div class="modal-actions">
         <scale-button variant="secondary" data-testid="back-button" @click="goBackToStep1"> ← Back </scale-button>
         <scale-button
           variant="primary"
@@ -709,11 +709,11 @@ function handleTemplateChange(ev: Event) {
 }
 
 .step.active .step-number {
-  background: var(--telekom-color-primary-standard);
+  background: var(--accent-telekom);
 }
 
 .step.completed .step-number {
-  background: var(--telekom-color-functional-success-standard);
+  background: var(--accent-success);
 }
 
 .step-label {
@@ -796,7 +796,7 @@ function handleTemplateChange(ev: Event) {
 
 .template-details .detail {
   font: var(--telekom-text-style-small);
-  color: var(--telekom-color-text-and-icon-standard);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .template-details .detail strong {
@@ -807,14 +807,6 @@ function handleTemplateChange(ev: Event) {
   color: var(--telekom-color-functional-warning-standard);
   font: var(--telekom-text-style-caption);
   margin: 0;
-}
-
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-md);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
 }
 
 .no-templates-message {

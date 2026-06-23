@@ -40,6 +40,8 @@ and re-declares the variable on `:root`.
 | Element | Scale Default | Our Override | Reason |
 |---------|---------------|--------------|--------|
 | `scale-button::part(variant-primary)` | `#f61488` (Scale computed) | `#e20074` (design token) | Scale's internal rendering produces a lighter #f61488 which only achieves 3.9:1 contrast against white text (fails AA). Pinning to the design-token value #e20074 yields 4.68:1 (AA compliant) while preserving the Telekom brand colour. |
+| `[data-high-contrast="true"] scale-button::part(variant-primary)` | Brand colour | Black on light high-contrast, white on dark high-contrast | High-contrast mode prioritizes maximum foreground/background contrast over brand colour while preserving the primary-button affordance. |
+| `[data-high-contrast="true"] scale-button[variant="primary"] > *`, plus default-primary `scale-button:not([variant]) > *` | Inherited page text colour | White on light high-contrast, black on dark high-contrast | Custom slotted labels are outside Scale's shadow part styling, so they must explicitly match the high-contrast primary-button foreground. |
 
 ---
 
@@ -154,6 +156,8 @@ propagated.
 |----------|---------------|--------------|--------|
 | `--spacing-y` | Scale default | `var(--space-lg)` = `16px` | Consistent internal spacing with the rest of our UI. |
 | `::part(body)` layout | Block | `flex` column with `gap: var(--space-md)` | Ensures body content is evenly spaced without margin hacks. |
+| `::part(header)` separator | No app-level separator | Standard border plus bottom spacing | Keeps modal titles visually connected to the body while matching card and form section boundaries. |
+| `.modal-actions`, `.dialog-actions`, `.form-actions` | Per-component ad hoc alignment | Wrapped right-aligned action bar, stacked on narrow screens | Keeps action placement consistent across modals and forms and prevents button overflow on mobile. |
 
 ---
 
