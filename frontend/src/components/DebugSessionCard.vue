@@ -441,7 +441,4 @@ function openRenewModal() {
   gap: var(--space-md);
 }
 
-.status-message {
-  width: 100%;
-}
 </style>

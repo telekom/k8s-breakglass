@@ -238,8 +238,7 @@
   /* Stronger focus indicator */
   --focus-outline: #000000;
 
-  /* Fix: Blue links on black in HC mode have poor contrast (~4.5:1).
-   * Use a darker blue for HC light to ensure readability on subtle gray backgrounds. */
+  /* Use a darker blue for HC light to ensure readability on subtle gray backgrounds. */
   --telekom-color-text-and-icon-link-standard: #0055cc;
 
   /* Strictly high-contrast buttons for HC mode */
