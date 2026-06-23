@@ -5,6 +5,18 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+
+const loggerMocks = vi.hoisted(() => ({
+  warn: vi.fn(),
+}));
+
+vi.mock("@/services/logger", () => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: loggerMocks.warn,
+  error: vi.fn(),
+}));
+
 import { mount, VueWrapper } from "@vue/test-utils";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
 import AuthService from "@/services/auth";
@@ -35,6 +47,7 @@ describe("AutoLogoutWarning", () => {
     wrapper = null;
     vi.clearAllTimers();
     vi.restoreAllMocks();
+    loggerMocks.warn.mockReset();
     vi.useRealTimers();
     sessionStorage.clear();
     localStorage.clear();
@@ -285,5 +298,57 @@ describe("AutoLogoutWarning", () => {
 
     expect((wrapper.vm as unknown as { show: boolean }).show).toBe(false);
     expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+  });
+
+  it("warns once per storage item when OIDC user storage reads fail repeatedly", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const originalSessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    const throwingStorage = {
+      get length() {
+        return 0;
+      },
+      clear: vi.fn(),
+      getItem: vi.fn(() => {
+        throw new Error("storage read blocked");
+      }),
+      key: vi.fn(() => null),
+      removeItem: vi.fn(),
+      setItem: vi.fn(),
+    } satisfies Storage;
+
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: throwingStorage,
+    });
+
+    try {
+      wrapper = mountWithAuth(createMockAuth());
+
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      const readWarnings = loggerMocks.warn.mock.calls.filter(
+        ([tag, message]) => tag === "AutoLogoutWarning" && message === "Unable to read browser storage item",
+      );
+      expect(readWarnings).toHaveLength(1);
+    } finally {
+      if (originalSessionStorageDescriptor) {
+        Object.defineProperty(window, "sessionStorage", originalSessionStorageDescriptor);
+      }
+    }
+  });
+
+  it("warns once per malformed OIDC user value when parsing fails repeatedly", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    sessionStorage.setItem("oidc.user:https://issuer.example.com:breakglass-ui", "{not-json");
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    const parseWarnings = loggerMocks.warn.mock.calls.filter(
+      ([tag, message]) =>
+        tag === "AutoLogoutWarning" && message === "Failed to parse OIDC user data from browser storage",
+    );
+    expect(parseWarnings).toHaveLength(1);
   });
 });
