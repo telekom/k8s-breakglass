@@ -88,7 +88,9 @@ type OIDCConfig struct {
 	// +kubebuilder:validation:Pattern=`^\S+$`
 	ExpectedAudience string `json:"expectedAudience,omitempty"`
 
-	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
+	// InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
+	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
+	// certificateAuthority for private or self-signed issuer certificates.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 
@@ -130,7 +132,9 @@ type KeycloakGroupSync struct {
 	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
 	RequestTimeout string `json:"requestTimeout,omitempty"`
 
-	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
+	// InsecureSkipVerify is not supported for Keycloak group synchronization.
+	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
+	// certificateAuthority for private or self-signed Keycloak certificates.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 
@@ -277,15 +281,7 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj *IdentityPr
 	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique - requires k8s client)
 	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, obj.Spec.Issuer, obj.Name, field.NewPath("spec").Child("issuer"))...)
 
-	// Collect warnings for insecure settings
 	var warnings admission.Warnings
-	if obj.Spec.OIDC.InsecureSkipVerify {
-		warnings = append(warnings, "OIDC insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
-	}
-	if obj.Spec.Keycloak != nil && obj.Spec.Keycloak.InsecureSkipVerify {
-		warnings = append(warnings, "Keycloak insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
-	}
-
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}

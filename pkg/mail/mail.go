@@ -2,7 +2,6 @@ package mail
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"math"
 	"net"
@@ -82,9 +81,11 @@ func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName
 
 	d := gomail.NewDialer(mpConfig.Host, mpConfig.Port, mpConfig.Username, mpConfig.Password)
 
-	if mpConfig.InsecureSkipVerify {
-		log.Warnw("InsecureSkipVerify is enabled for mail TLS connection - not recommended for production")
-		d.TLSConfig = &tls.Config{InsecureSkipVerify: true}
+	if !mpConfig.DisableTLS {
+		d.TLSConfig = mpConfig.GetTLSConfig()
+		if mpConfig.InsecureSkipVerify {
+			log.Warnw("InsecureSkipVerify is enabled for mail TLS connection - not recommended for production")
+		}
 	}
 
 	// Use provider's sender configuration

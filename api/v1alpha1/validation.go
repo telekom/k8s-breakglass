@@ -332,6 +332,11 @@ func ValidateIdentityProvider(idp *IdentityProvider) *ValidationResult {
 		result.Errors = append(result.Errors, validateIdentifierFormat(idp.Spec.OIDC.ClientID, oidcPath.Child("clientID"))...)
 	}
 
+	if idp.Spec.OIDC.InsecureSkipVerify {
+		result.Errors = append(result.Errors, field.Forbidden(oidcPath.Child("insecureSkipVerify"),
+			"insecureSkipVerify is not supported for IdentityProvider OIDC/JWKS authentication; configure certificateAuthority"))
+	}
+
 	// Validate JWKS endpoint if provided
 	if idp.Spec.OIDC.JWKSEndpoint != "" {
 		jwksPath := oidcPath.Child("jwksEndpoint")
@@ -352,6 +357,10 @@ func ValidateIdentityProvider(idp *IdentityProvider) *ValidationResult {
 			result.Errors = append(result.Errors, field.Required(specPath.Child("keycloak"), "keycloak configuration is required when groupSyncProvider is Keycloak"))
 		} else {
 			keycloakPath := specPath.Child("keycloak")
+			if idp.Spec.Keycloak.InsecureSkipVerify {
+				result.Errors = append(result.Errors, field.Forbidden(keycloakPath.Child("insecureSkipVerify"),
+					"insecureSkipVerify is not supported for IdentityProvider Keycloak group synchronization; configure certificateAuthority"))
+			}
 			if idp.Spec.Keycloak.BaseURL == "" {
 				result.Errors = append(result.Errors, field.Required(keycloakPath.Child("baseURL"), "keycloak baseURL is required"))
 			} else {

@@ -68,6 +68,10 @@ lint-new: golangci-lint ## Run golangci-lint only on new/changed code (requires 
 lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friendly).
 	$(GOLANGCI_LINT) run --timeout 10m
 
+.PHONY: verify-release-provenance
+verify-release-provenance: ## Verify release image provenance signs the registry digest.
+	bash hack/verify-release-provenance.sh
+
 .PHONY: vulncheck
 vulncheck: ## Run govulncheck to check for known vulnerabilities.
 	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
@@ -115,7 +119,7 @@ validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass G
 	@echo "Fixture validation passed"
 
 .PHONY: verify
-verify: fmt vet lint-strict test vulncheck ## Run all verification checks (fmt, vet, lint, test, vulncheck).
+verify: fmt vet lint-strict test verify-release-provenance vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
 	go build ./...
 	@echo "All verification checks passed!"
 

@@ -30,7 +30,9 @@ type OIDCConfigApplyConfiguration struct {
 	// that adds this value to the aud claim in issued tokens.
 	// If empty, audience validation is skipped.
 	ExpectedAudience *string `json:"expectedAudience,omitempty"`
-	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
+	// InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
+	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
+	// certificateAuthority for private or self-signed issuer certificates.
 	InsecureSkipVerify *bool `json:"insecureSkipVerify,omitempty"`
 	// CertificateAuthority contains a PEM encoded CA certificate for TLS validation
 	CertificateAuthority *string `json:"certificateAuthority,omitempty"`

@@ -123,7 +123,7 @@ func loadTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
 		// This is a security risk and should only be used in development/testing.
 		fmt.Fprintln(os.Stderr, "WARNING: TLS certificate verification is disabled. This is insecure and should not be used in production.")
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecure}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecure} // #nosec G402 -- explicit CLI flag for test/dev endpoints
 	if caFile == "" {
 		return tlsConfig, nil
 	}

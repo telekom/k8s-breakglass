@@ -18,6 +18,7 @@ package escalation
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"testing"
@@ -456,14 +457,13 @@ func BenchmarkNormalizeMembers(b *testing.B) {
 	}
 }
 
-// TestNewKeycloakGroupMemberResolver_InsecureSkipVerify tests that the resolver is
-// correctly configured with InsecureSkipVerify for E2E testing with self-signed certs
-func TestNewKeycloakGroupMemberResolver_InsecureSkipVerify(t *testing.T) {
+// TestNewKeycloakGroupMemberResolver_InsecureSkipVerifyRejected tests that the resolver
+// does not disable TLS certificate verification when handed an unsafe runtime config.
+func TestNewKeycloakGroupMemberResolver_InsecureSkipVerifyRejected(t *testing.T) {
 	log, _ := zap.NewDevelopment()
 	defer func() { _ = log.Sync() }()
 	slog := log.Sugar()
 
-	// Test with InsecureSkipVerify enabled
 	cfg := cfgpkg.KeycloakRuntimeConfig{
 		BaseURL:            "https://keycloak.example.com:8443",
 		Realm:              "test-realm",
@@ -479,7 +479,13 @@ func TestNewKeycloakGroupMemberResolver_InsecureSkipVerify(t *testing.T) {
 	assert.NotNil(t, resolver.gocloak)
 	assert.Equal(t, cfg.BaseURL, resolver.cfg.BaseURL)
 	assert.Equal(t, cfg.Realm, resolver.cfg.Realm)
-	assert.True(t, resolver.cfg.InsecureSkipVerify)
+	assert.False(t, resolver.cfg.InsecureSkipVerify)
+
+	restyClient := resolver.gocloak.RestyClient()
+	httpClient := restyClient.GetClient()
+	if transport, ok := httpClient.Transport.(*http.Transport); ok && transport.TLSClientConfig != nil {
+		assert.False(t, transport.TLSClientConfig.InsecureSkipVerify)
+	}
 }
 
 // TestNewKeycloakGroupMemberResolver_CertificateAuthority tests that the resolver configures
@@ -527,6 +533,7 @@ dEKqR1oJjVFB
 			if assert.NotNil(t, tlsCfg, "TLS config should be set") {
 				assert.NotNil(t, tlsCfg.RootCAs, "custom RootCAs pool should be set for valid CA PEM")
 				assert.False(t, tlsCfg.InsecureSkipVerify, "InsecureSkipVerify should be false")
+				assert.Equal(t, uint16(tls.VersionTLS12), tlsCfg.MinVersion, "minimum TLS version should be TLS 1.2")
 			}
 		}
 	})
@@ -597,4 +604,46 @@ func TestNewKeycloakGroupMemberResolver_CustomCacheTTL(t *testing.T) {
 	assert.NotNil(t, resolver.cache)
 	// Cache TTL should be 30 minutes
 	assert.Equal(t, "30m", resolver.cfg.CacheTTL)
+}
+
+func TestSetupResolverReturnsQuietNoopWhenGroupSyncDisabled(t *testing.T) {
+	slog := zap.NewNop().Sugar()
+
+	tests := []struct {
+		name string
+		cfg  *cfgpkg.IdentityProviderConfig
+	}{
+		{
+			name: "no identity provider config",
+			cfg:  nil,
+		},
+		{
+			name: "incomplete keycloak config",
+			cfg: &cfgpkg.IdentityProviderConfig{
+				Keycloak: &cfgpkg.KeycloakRuntimeConfig{
+					BaseURL: "https://keycloak.example.com",
+				},
+			},
+		},
+		{
+			name: "insecure keycloak config",
+			cfg: &cfgpkg.IdentityProviderConfig{
+				Keycloak: &cfgpkg.KeycloakRuntimeConfig{
+					BaseURL:            "https://keycloak.example.com",
+					Realm:              "test",
+					InsecureSkipVerify: true,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver := SetupResolver(tt.cfg, slog)
+			members, err := resolver.Members(t.Context(), "admin-group")
+
+			assert.NoError(t, err)
+			assert.Empty(t, members)
+		})
+	}
 }

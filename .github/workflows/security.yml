@@ -36,9 +36,6 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
-        # Informational only — stdlib vulns cannot be fixed in this repo.
-        # Installation failures (above) will still fail the job.
-        continue-on-error: true
         run: govulncheck ./...
 
   gosec:
@@ -63,8 +60,15 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.23.0
 
       - name: Run gosec
-        continue-on-error: true
-        run: gosec -fmt sarif -out gosec-results.sarif ./...
+        run: |
+          gosec \
+            -exclude-generated \
+            -exclude-dir=e2e \
+            -exclude-dir=frontend/node_modules \
+            -exclude=G101,G117,G302,G304,G704 \
+            -fmt sarif \
+            -out gosec-results.sarif \
+            ./...
 
       - name: Upload gosec results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
@@ -78,6 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Build image (local)
+        id: build_image
         run: docker build -t breakglass:scan .
       - name: Trivy scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -87,16 +92,18 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
+          exit-code: '1'
       - name: Upload SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         id: sbom
+        if: ${{ always() && steps.build_image.outcome == 'success' }}
         with:
           image: breakglass:scan
           format: spdx-json
           output-file: sbom-spdx.json
 
       - name: Upload SBOM artifact
-        if: always()
+        if: ${{ always() && hashFiles('sbom-spdx.json') != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: security-sbom
@@ -125,6 +132,10 @@ jobs:
           scan-ref: '.'
           format: 'sarif'
           output: 'trivy-fs-results.sarif'
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
 
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2

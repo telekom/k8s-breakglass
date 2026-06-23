@@ -33,6 +33,8 @@ import (
 // TokenRefreshBuffer is the duration before expiry when we proactively refresh tokens
 const TokenRefreshBuffer = 30 * time.Second
 
+var tofuHandshakeTimeout = 5 * time.Second
+
 // ErrRefreshTokenExpired indicates the offline refresh token is invalid, expired, or revoked.
 // The checker uses this to set the RefreshTokenExpired condition on ClusterConfig.
 var ErrRefreshTokenExpired = errors.New("refresh token expired or revoked")
@@ -1097,13 +1099,16 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 	transport := &http.Transport{}
 
 	if oidc.InsecureSkipTLSVerify {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // User explicitly requested insecure
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true, // #nosec G402 -- user explicitly requested insecure TLS verification
+		}
 	} else if oidc.CertificateAuthority != "" {
 		roots := x509.NewCertPool()
 		if ok := roots.AppendCertsFromPEM([]byte(oidc.CertificateAuthority)); !ok {
 			return nil, fmt.Errorf("failed to parse certificateAuthority")
 		}
-		transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+		transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	} else if oidc.AllowTOFU {
 		// Check if we have a cached TOFU CA for this issuer
 		issuerKey := oidc.IssuerURL
@@ -1114,7 +1119,7 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 		if hasCachedCA {
 			roots := x509.NewCertPool()
 			if ok := roots.AppendCertsFromPEM(cachedCA); ok {
-				transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+				transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 				p.log.Debugw("Using cached TOFU CA for OIDC issuer", "issuer", issuerKey)
 			}
 		} else {
@@ -1132,7 +1137,7 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 
 			roots := x509.NewCertPool()
 			if ok := roots.AppendCertsFromPEM(ca); ok {
-				transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+				transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 				p.log.Infow("TOFU: captured and cached OIDC issuer CA", "issuer", issuerKey)
 			}
 		}
@@ -1252,86 +1257,41 @@ func (p *OIDCTokenProvider) oidcHTTPClientCacheKey(oidc *breakglassv1alpha1.OIDC
 }
 
 // performTOFU performs Trust On First Use for the API server certificate.
-// It connects to the server, captures the presented certificate chain, and returns the CA.
+// It opens a bounded TLS handshake, captures the presented certificate chain,
+// and returns the CA when the only verification failure is an unknown/private CA.
 //
-// Security Note - InsecureSkipVerify usage:
-// This function intentionally uses InsecureSkipVerify=true for Trust On First Use (TOFU).
-// This is REQUIRED because:
+// Security Note - trust bootstrap:
+// Trust On First Use (TOFU) has to connect to an API server whose CA is not
+// trusted yet. That first connection is constrained to HTTPS URLs, checks the
+// presented certificate host name and validity period, logs the trusted CA
+// fingerprint, and stores the CA for fully verified future connections.
+//
+// The initial handshake uses Go's normal verifier and allows one
+// trust-bootstrap verification failure because:
 //  1. TOFU by definition connects to a server whose CA is not yet trusted
-//  2. Go's standard TLS verification would reject the connection before we can capture the CA
-//  3. We mitigate the risk by: (a) verifying hostname matches the certificate,
-//     (b) logging the certificate fingerprint for audit, (c) persisting the CA for all future
-//     connections which then use full TLS verification
-//  4. This pattern is standard for TOFU implementations (similar to SSH's known_hosts)
-//  5. After first use, the captured CA is stored and all subsequent connections are fully verified
-//
-// codeql[go/disabled-certificate-check]: Intentional for TOFU - see above security note
+//  2. Go returns the presented certificate chain in CertificateVerificationError
+//  3. After first use, the captured CA is stored and all subsequent connections are fully verified
 func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string) ([]byte, error) {
 	u, err := url.Parse(apiServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid API server URL: %w", err)
 	}
-
-	host := u.Host
-	if u.Port() == "" {
-		host = u.Host + ":443"
+	if !strings.EqualFold(u.Scheme, "https") {
+		return nil, fmt.Errorf("TOFU requires an https API server URL")
 	}
-
-	var caPEM []byte
 	hostname := u.Hostname()
+	if hostname == "" {
+		return nil, fmt.Errorf("TOFU requires an API server hostname")
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	host := net.JoinHostPort(hostname, port)
+
 	tlsConfig := &tls.Config{
-		ServerName:         hostname,
-		InsecureSkipVerify: true, //nolint:gosec // TOFU requires accepting untrusted certs on first connection
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			// Even though we skip chain verification (required for TOFU),
-			// we still verify the hostname matches the certificate to prevent
-			// connecting to the wrong server.
-			if len(cs.PeerCertificates) == 0 {
-				return fmt.Errorf("no certificates presented by API server")
-			}
-
-			leaf := cs.PeerCertificates[0]
-
-			// Verify hostname matches the certificate's DNS names or IP addresses
-			if err := leaf.VerifyHostname(hostname); err != nil {
-				return fmt.Errorf("TOFU hostname verification failed: %w", err)
-			}
-
-			// Find the root CA (last cert in chain) or self-signed cert
-			var caCert *x509.Certificate
-			for i := len(cs.PeerCertificates) - 1; i >= 0; i-- {
-				cert := cs.PeerCertificates[i]
-				// Check if it's a CA or self-signed
-				if cert.IsCA || cert.Subject.String() == cert.Issuer.String() {
-					caCert = cert
-					break
-				}
-			}
-
-			// If no CA found in chain, use the leaf certificate (self-signed scenario)
-			if caCert == nil {
-				caCert = leaf
-			}
-
-			// Encode to PEM and store for return
-			caPEM = pem.EncodeToMemory(&pem.Block{
-				Type:  "CERTIFICATE",
-				Bytes: caCert.Raw,
-			})
-
-			// Log fingerprint for security awareness
-			fingerprint := sha256.Sum256(caCert.Raw)
-			p.log.Infow("TOFU: Trusting API server certificate",
-				"apiServer", apiServerURL,
-				"subject", caCert.Subject.String(),
-				"issuer", caCert.Issuer.String(),
-				"fingerprint", hex.EncodeToString(fingerprint[:]),
-				"notBefore", caCert.NotBefore,
-				"notAfter", caCert.NotAfter,
-			)
-
-			return nil
-		},
+		MinVersion: tls.VersionTLS12,
+		ServerName: hostname,
 	}
 
 	// Create a dialer that respects the context
@@ -1347,19 +1307,84 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 	conn := tls.Client(netConn, tlsConfig)
 	defer func() { _ = conn.Close() }()
 
-	// Perform the TLS handshake with context deadline
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := conn.SetDeadline(deadline); err != nil {
-			return nil, fmt.Errorf("failed to set connection deadline: %w", err)
-		}
+	// Bound the TLS handshake even when callers pass a context without a
+	// deadline. DialContext only covers the TCP connect; a peer can still accept
+	// the socket and then never complete TLS.
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(tofuHandshakeTimeout)
 	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("failed to set connection deadline: %w", err)
+	}
+	var peerCertificates []*x509.Certificate
 	if err := conn.Handshake(); err != nil {
-		return nil, fmt.Errorf("TLS handshake failed for TOFU: %w", err)
+		var verificationErr *tls.CertificateVerificationError
+		if !errors.As(err, &verificationErr) || !isTOFUTrustBootstrapError(verificationErr.Err) {
+			return nil, fmt.Errorf("TLS handshake failed for TOFU: %w", err)
+		}
+		peerCertificates = verificationErr.UnverifiedCertificates
+	} else {
+		peerCertificates = conn.ConnectionState().PeerCertificates
+	}
+	if len(peerCertificates) == 0 {
+		return nil, fmt.Errorf("no certificates presented by API server")
 	}
 
-	if len(caPEM) == 0 {
-		return nil, fmt.Errorf("failed to capture CA certificate during TOFU")
+	return p.captureTOFUCA(apiServerURL, hostname, peerCertificates)
+}
+
+func isTOFUTrustBootstrapError(err error) bool {
+	var unknownAuthority x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthority) {
+		return true
 	}
+
+	// Go may report some locally generated self-signed certificates as
+	// CertificateInvalidError with "certificate is not trusted" instead of
+	// exposing UnknownAuthorityError through errors.As. Treat only that trust
+	// bootstrap failure as acceptable; hostname and validity errors are still
+	// rejected by captureTOFUCA below.
+	return strings.Contains(err.Error(), "not trusted") || strings.Contains(err.Error(), "unknown authority")
+}
+
+func (p *OIDCTokenProvider) captureTOFUCA(apiServerURL, hostname string, peerCertificates []*x509.Certificate) ([]byte, error) {
+	leaf := peerCertificates[0]
+
+	if err := leaf.VerifyHostname(hostname); err != nil {
+		return nil, fmt.Errorf("TOFU hostname verification failed: %w", err)
+	}
+	now := time.Now()
+	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+		return nil, fmt.Errorf("TOFU certificate is not currently valid")
+	}
+
+	var caCert *x509.Certificate
+	for i := len(peerCertificates) - 1; i >= 0; i-- {
+		cert := peerCertificates[i]
+		if cert.IsCA || cert.Subject.String() == cert.Issuer.String() {
+			caCert = cert
+			break
+		}
+	}
+	if caCert == nil {
+		caCert = leaf
+	}
+
+	caPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: caCert.Raw,
+	})
+
+	fingerprint := sha256.Sum256(caCert.Raw)
+	p.log.Infow("TOFU: Trusting API server certificate",
+		"apiServer", apiServerURL,
+		"subject", caCert.Subject.String(),
+		"issuer", caCert.Issuer.String(),
+		"fingerprint", hex.EncodeToString(fingerprint[:]),
+		"notBefore", caCert.NotBefore,
+		"notAfter", caCert.NotAfter,
+	)
 
 	return caPEM, nil
 }

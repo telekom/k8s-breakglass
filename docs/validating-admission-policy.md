@@ -74,8 +74,10 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 | OIDC authority required + HTTPS | `startsWith('https://')` |
 | OIDC clientID required | Non-empty |
 | JWKS endpoint HTTPS | HTTPS when specified |
+| OIDC insecure TLS forbidden | `insecureSkipVerify == false` |
 | Issuer HTTPS | HTTPS when specified |
 | Keycloak config conditional | Required when `groupSyncProvider == "Keycloak"` |
+| Keycloak insecure TLS forbidden | `insecureSkipVerify == false` |
 | Keycloak config forbidden | Not allowed when `groupSyncProvider != "Keycloak"` |
 
 ### Validations Remaining in Webhook
@@ -127,7 +129,7 @@ Expected output:
 NAME                                       VALIDATIONS   PARAMKIND   MATCHCONDITIONS
 breakglass-clusterconfig-validation        3             <unset>     0
 breakglass-escalation-validation           7             <unset>     0
-breakglass-identityprovider-validation     6             <unset>     0
+breakglass-identityprovider-validation     8             <unset>     0
 breakglass-session-validation              6             <unset>     0
 ```
 

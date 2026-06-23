@@ -18,7 +18,6 @@ package helpers
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -199,9 +198,7 @@ func (p *OIDCTokenProvider) getTokenViaScript(ctx context.Context, username, pas
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-		},
+		TLSClientConfig: insecureE2ETLSConfig(),
 	},
 }
 
@@ -344,9 +341,7 @@ func (p *OIDCTokenProvider) ObtainOfflineRefreshToken(t *testing.T, ctx context.
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-			},
+			TLSClientConfig: insecureE2ETLSConfig(),
 		},
 	}
 
@@ -407,9 +402,7 @@ func (p *OIDCTokenProvider) TryObtainOfflineRefreshToken(ctx context.Context, us
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-			},
+			TLSClientConfig: insecureE2ETLSConfig(),
 		},
 	}
 
@@ -510,9 +503,7 @@ func (p *OIDCTokenProvider) RequireKeycloakReachable(t *testing.T, ctx context.C
 	httpClient := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-			},
+			TLSClientConfig: insecureE2ETLSConfig(),
 		},
 	}
 
@@ -574,9 +565,7 @@ func (p *OIDCTokenProvider) waitForKeycloakPortForward(t *testing.T, ctx context
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-			},
+			TLSClientConfig:   insecureE2ETLSConfig(),
 		},
 	}
 	defer client.CloseIdleConnections()
@@ -653,9 +642,7 @@ func (p *OIDCTokenProvider) ObtainClientCredentialsToken(t *testing.T, ctx conte
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // Required for local dev with self-signed certs
-			},
+			TLSClientConfig: insecureE2ETLSConfig(),
 		},
 	}
 

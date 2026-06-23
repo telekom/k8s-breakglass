@@ -30,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify release provenance workflow
+        run: make verify-release-provenance
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -117,8 +119,7 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npm audit --json > ../npm-audit.json || true
-        continue-on-error: true
+          npm audit --audit-level=high --json > ../npm-audit.json
       - name: Upload npm audit results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -589,11 +590,23 @@ jobs:
             echo "::warning::Could not extract digest from docker push output"
             FIRST_TAG=$(echo "$TAGS" | head -n1)
             if [ -n "$FIRST_TAG" ]; then
-              RAW_MANIFEST=$(docker buildx imagetools inspect "$FIRST_TAG" --raw 2>/dev/null) || true
-              if [ -n "$RAW_MANIFEST" ]; then
-                PUSH_DIGEST=$(echo "$RAW_MANIFEST" | sha256sum | awk '{print "sha256:" $1}')
-              fi
+              echo "Polling manifest for fallback registry digest of ${FIRST_TAG}..."
+              for i in $(seq 1 30); do
+                INSPECT_OUTPUT=$(docker buildx imagetools inspect "$FIRST_TAG" 2>/dev/null) || true
+                INSPECT_DIGEST=$(printf '%s\n' "$INSPECT_OUTPUT" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')
+                if [ -n "$INSPECT_DIGEST" ]; then
+                  PUSH_DIGEST="$INSPECT_DIGEST"
+                  echo "Registry digest resolved after ${i} attempt(s)"
+                  break
+                fi
+                echo "Attempt ${i}/30: registry digest not yet available, retrying in 10s..."
+                sleep 10
+              done
             fi
+          fi
+          if [ -z "$PUSH_DIGEST" ]; then
+            echo "::error::Could not determine registry digest after a successful push; provenance attestation would be skipped."
+            exit 1
           fi
           echo "Registry digest: ${PUSH_DIGEST}"
           echo "digest=${PUSH_DIGEST}" >> $GITHUB_OUTPUT
@@ -799,30 +812,32 @@ jobs:
           # Source the environment variables from setup script
           if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
             echo "Sourcing E2E environment from setup script..."
-            cat e2e/kind-setup-single-tdir/e2e-env.sh
             source e2e/kind-setup-single-tdir/e2e-env.sh
-            
+            if [ -n "${KEYCLOAK_GROUP_SYNC_CLIENT_SECRET:-}" ]; then
+              echo "::add-mask::${KEYCLOAK_GROUP_SYNC_CLIENT_SECRET}"
+            fi
+
             # Export to GITHUB_ENV for subsequent steps
-            echo "E2E_TEST=true" >> $GITHUB_ENV
-            echo "E2E_NAMESPACE=${E2E_NAMESPACE}" >> $GITHUB_ENV
-            echo "E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME}" >> $GITHUB_ENV
-            echo "BREAKGLASS_API_URL=${BREAKGLASS_API_URL}" >> $GITHUB_ENV
-            echo "BREAKGLASS_WEBHOOK_URL=${BREAKGLASS_WEBHOOK_URL}" >> $GITHUB_ENV
-            echo "BREAKGLASS_METRICS_URL=${BREAKGLASS_METRICS_URL}" >> $GITHUB_ENV
-            echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> $GITHUB_ENV
-            echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> $GITHUB_ENV
-            echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> $GITHUB_ENV
-            echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> $GITHUB_ENV
-            echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> $GITHUB_ENV
-            echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> $GITHUB_ENV
-            echo "KEYCLOAK_INTERNAL_URL=${KEYCLOAK_INTERNAL_URL:-}" >> $GITHUB_ENV
-            echo "KEYCLOAK_CA_FILE=${KEYCLOAK_CA_FILE:-}" >> $GITHUB_ENV
-            echo "TLS_DIR=${TLS_DIR:-}" >> $GITHUB_ENV
-            echo "KUBERNETES_API_SERVER=${KUBERNETES_API_SERVER:-}" >> $GITHUB_ENV
-            echo "KUBECONFIG=${KUBECONFIG}" >> $GITHUB_ENV
-            
+            echo "E2E_TEST=true" >> "$GITHUB_ENV"
+            echo "E2E_NAMESPACE=${E2E_NAMESPACE}" >> "$GITHUB_ENV"
+            echo "E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME}" >> "$GITHUB_ENV"
+            echo "BREAKGLASS_API_URL=${BREAKGLASS_API_URL}" >> "$GITHUB_ENV"
+            echo "BREAKGLASS_WEBHOOK_URL=${BREAKGLASS_WEBHOOK_URL}" >> "$GITHUB_ENV"
+            echo "BREAKGLASS_METRICS_URL=${BREAKGLASS_METRICS_URL}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_INTERNAL_URL=${KEYCLOAK_INTERNAL_URL:-}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_CA_FILE=${KEYCLOAK_CA_FILE:-}" >> "$GITHUB_ENV"
+            echo "TLS_DIR=${TLS_DIR:-}" >> "$GITHUB_ENV"
+            echo "KUBERNETES_API_SERVER=${KUBERNETES_API_SERVER:-}" >> "$GITHUB_ENV"
+            echo "KUBECONFIG=${KUBECONFIG}" >> "$GITHUB_ENV"
+
             echo "Environment variables set:"
-            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" || true
+            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" | grep -v "KEYCLOAK_GROUP_SYNC_CLIENT_SECRET=" || true
           else
             echo "ERROR: E2E environment file not found!"
             exit 1
@@ -1016,6 +1031,7 @@ jobs:
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
+          E2E_SKIP_CLEANUP_ON_FAILURE: "true"
           # Enable Kafka audit tests
           KAFKA_TEST: "true"
 
@@ -1026,6 +1042,7 @@ jobs:
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
+          E2E_SKIP_CLEANUP_ON_FAILURE: "true"
           # Enable Kafka audit tests
           KAFKA_TEST: "true"
           # Enable audit webhook tests
@@ -1057,6 +1074,7 @@ jobs:
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
+          E2E_SKIP_CLEANUP_ON_FAILURE: "true"
           # Enable shell tests that use bgctl binary
           RUN_SHELL_TESTS: "true"
           BGCTL_BIN: "./bin/bgctl"
@@ -1119,7 +1137,8 @@ jobs:
           timeout 15 kubectl describe deployments -n "$NS" > "$DIAG_DIR/kubernetes/ns-deployments-describe.txt" 2>&1 || true
           timeout 15 kubectl describe services -n "$NS" > "$DIAG_DIR/kubernetes/ns-services-describe.txt" 2>&1 || true
           timeout 15 kubectl get configmaps -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-configmaps.yaml" 2>&1 || true
-          timeout 15 kubectl get secrets -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-secrets.yaml" 2>&1 || true
+          timeout 15 kubectl get secrets -n "$NS" -o json 2>"$DIAG_DIR/kubernetes/ns-secrets.err" \
+            | jq '{apiVersion, kind, items: [.items[] | {metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}), ownerReferences: (.metadata.ownerReferences // [])}, type: .type, immutable: .immutable}]}' > "$DIAG_DIR/kubernetes/ns-secrets-redacted.json" || true
           
           # ===========================================
           # CRD RESOURCES (FULL YAML) - run in parallel for speed
@@ -1235,7 +1254,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          kind delete cluster --name e2e-cluster || true
+          kind delete cluster --name breakglass-hub || true
 
   oidc-comprehensive-e2e:
     name: OIDC Comprehensive E2E Tests
@@ -2079,7 +2098,8 @@ jobs:
           timeout 15 kubectl describe deployments -n "$NS" > "$DIAG_DIR/kubernetes/ns-deployments-describe.txt" 2>&1 || true
           timeout 15 kubectl describe services -n "$NS" > "$DIAG_DIR/kubernetes/ns-services-describe.txt" 2>&1 || true
           timeout 15 kubectl get configmaps -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-configmaps.yaml" 2>&1 || true
-          timeout 15 kubectl get secrets -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-secrets.yaml" 2>&1 || true
+          timeout 15 kubectl get secrets -n "$NS" -o json 2>"$DIAG_DIR/kubernetes/ns-secrets.err" \
+            | jq '{apiVersion, kind, items: [.items[] | {metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}), ownerReferences: (.metadata.ownerReferences // [])}, type: .type, immutable: .immutable}]}' > "$DIAG_DIR/kubernetes/ns-secrets-redacted.json" || true
           
           # ===========================================
           # CRD RESOURCES (FULL YAML) - run in parallel for speed
@@ -2382,7 +2402,10 @@ jobs:
             # Get authorization and authentication config files (critical for debugging)
             docker exec "$container" cat /etc/kubernetes/authorization-config.yaml > "e2e-setup-failure-logs/node-$container/authorization-config.yaml" 2>&1 || echo "No authorization config" > "e2e-setup-failure-logs/node-$container/authorization-config.yaml"
             docker exec "$container" cat /etc/kubernetes/authentication-config.yaml > "e2e-setup-failure-logs/node-$container/authentication-config.yaml" 2>&1 || echo "No authentication config" > "e2e-setup-failure-logs/node-$container/authentication-config.yaml"
-            docker exec "$container" cat /etc/kubernetes/breakglass-webhook.kubeconfig > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig.yaml" 2>&1 || echo "No webhook kubeconfig" > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig.yaml"
+            docker exec "$container" test -f /etc/kubernetes/breakglass-webhook.kubeconfig \
+              > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig-redacted.txt" 2>&1 \
+              && echo "webhook kubeconfig present (redacted)" >> "e2e-setup-failure-logs/node-$container/webhook-kubeconfig-redacted.txt" \
+              || echo "No webhook kubeconfig" > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig-redacted.txt"
             
             # List all files in /etc/kubernetes for visibility
             docker exec "$container" find /etc/kubernetes -type f -ls > "e2e-setup-failure-logs/node-$container/etc-kubernetes-files.txt" 2>&1 || true
@@ -2425,7 +2448,8 @@ jobs:
           if [ -d e2e/kind-setup-multi-tdir ]; then
             mkdir -p e2e-setup-failure-logs/generated-configs
             cp -r e2e/kind-setup-multi-tdir/*.yaml e2e-setup-failure-logs/generated-configs/ 2>/dev/null || true
-            cp -r e2e/kind-setup-multi-tdir/*.kubeconfig e2e-setup-failure-logs/generated-configs/ 2>/dev/null || true
+            find e2e/kind-setup-multi-tdir -maxdepth 1 -name '*.kubeconfig' -printf '%f (redacted)\n' \
+              > e2e-setup-failure-logs/generated-configs/kubeconfigs-redacted.txt 2>/dev/null || true
           fi
           
           echo "Setup failure diagnostics saved to e2e-setup-failure-logs/"
@@ -2800,7 +2824,10 @@ jobs:
             # Get authorization and authentication config files (critical for debugging)
             timeout 5 docker exec "$container" cat /etc/kubernetes/authorization-config.yaml > "$DIAG_DIR/docker/node-$container/authorization-config.yaml" 2>&1 || echo "No authorization config"
             timeout 5 docker exec "$container" cat /etc/kubernetes/authentication-config.yaml > "$DIAG_DIR/docker/node-$container/authentication-config.yaml" 2>&1 || echo "No authentication config"
-            timeout 5 docker exec "$container" cat /etc/kubernetes/breakglass-webhook.kubeconfig > "$DIAG_DIR/docker/node-$container/webhook-kubeconfig.yaml" 2>&1 || echo "No webhook kubeconfig"
+            timeout 5 docker exec "$container" test -f /etc/kubernetes/breakglass-webhook.kubeconfig \
+              > "$DIAG_DIR/docker/node-$container/webhook-kubeconfig-redacted.txt" 2>&1 \
+              && echo "webhook kubeconfig present (redacted)" >> "$DIAG_DIR/docker/node-$container/webhook-kubeconfig-redacted.txt" \
+              || echo "No webhook kubeconfig" > "$DIAG_DIR/docker/node-$container/webhook-kubeconfig-redacted.txt"
             
             # List all files in /etc/kubernetes for visibility
             timeout 10 docker exec "$container" find /etc/kubernetes -type f -ls > "$DIAG_DIR/docker/node-$container/etc-kubernetes-files.txt" 2>&1 || true
@@ -2855,7 +2882,8 @@ jobs:
             echo "--- Copying generated config files ---"
             mkdir -p "$DIAG_DIR/generated-configs"
             cp -r e2e/kind-setup-multi-tdir/*.yaml "$DIAG_DIR/generated-configs/" 2>/dev/null || true
-            cp -r e2e/kind-setup-multi-tdir/*.kubeconfig "$DIAG_DIR/generated-configs/" 2>/dev/null || true
+            find e2e/kind-setup-multi-tdir -maxdepth 1 -name '*.kubeconfig' -printf '%f (redacted)\n' \
+              > "$DIAG_DIR/generated-configs/kubeconfigs-redacted.txt" 2>/dev/null || true
           fi
           
           # ===========================================
@@ -2890,7 +2918,8 @@ jobs:
               timeout 15 kubectl describe deployments -n "$NS" > "$OUT_DIR/kubernetes/ns-deployments-describe.txt" 2>&1 || true
               timeout 15 kubectl describe services -n "$NS" > "$OUT_DIR/kubernetes/ns-services-describe.txt" 2>&1 || true
               timeout 15 kubectl get configmaps -n "$NS" -o yaml > "$OUT_DIR/kubernetes/ns-configmaps.yaml" 2>&1 || true
-              timeout 15 kubectl get secrets -n "$NS" -o yaml > "$OUT_DIR/kubernetes/ns-secrets.yaml" 2>&1 || true
+              timeout 15 kubectl get secrets -n "$NS" -o json 2>"$OUT_DIR/kubernetes/ns-secrets.err" \
+                | jq '{apiVersion, kind, items: [.items[] | {metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}), ownerReferences: (.metadata.ownerReferences // [])}, type: .type, immutable: .immutable}]}' > "$OUT_DIR/kubernetes/ns-secrets-redacted.json" || true
               
               # CRD resources (run in parallel for speed)
               timeout 10 kubectl get clusterconfig -A -o yaml > "$OUT_DIR/resources/clusterconfigs.yaml" 2>&1 &
@@ -2957,10 +2986,14 @@ jobs:
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp multi-oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           
-          # Copy kubeconfigs (for local debugging)
-          cp "$E2E_HUB_KUBECONFIG" "$DIAG_DIR/hub-kubeconfig.yaml" 2>/dev/null || true
-          cp "$E2E_SPOKE_A_KUBECONFIG" "$DIAG_DIR/spoke-a-kubeconfig.yaml" 2>/dev/null || true
-          cp "$E2E_SPOKE_B_KUBECONFIG" "$DIAG_DIR/spoke-b-kubeconfig.yaml" 2>/dev/null || true
+          # Record kubeconfig availability without uploading client credentials.
+          {
+            for kubeconfig_path in "$E2E_HUB_KUBECONFIG" "$E2E_SPOKE_A_KUBECONFIG" "$E2E_SPOKE_B_KUBECONFIG"; do
+              if [ -f "$kubeconfig_path" ]; then
+                printf '%s (redacted)\n' "$(basename "$kubeconfig_path")"
+              fi
+            done
+          } > "$DIAG_DIR/kubeconfigs-redacted.txt" 2>/dev/null || true
           
           # ===========================================
           # CROSS-REFERENCE SUMMARY

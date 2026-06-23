@@ -120,7 +120,9 @@ type IdentityProviderConfig struct {
 	// Loaded from spec.oidc.certificateAuthority
 	CertificateAuthority string
 
-	// InsecureSkipVerify allows skipping TLS verification for OIDC authority (testing only)
+	// InsecureSkipVerify is loaded for backwards compatibility. Admission and
+	// runtime auth/OIDC proxy/group sync paths reject it. Configure
+	// CertificateAuthority.
 	InsecureSkipVerify bool
 
 	// Other provider-specific fields (BaseURL for Keycloak, etc.)
@@ -132,13 +134,16 @@ type IdentityProviderConfig struct {
 
 // KeycloakRuntimeConfig is Keycloak-specific runtime configuration
 type KeycloakRuntimeConfig struct {
-	BaseURL              string
-	Realm                string
-	ClientID             string
-	ClientSecret         string
-	ServiceAccountToken  string
-	CacheTTL             string
-	RequestTimeout       string
+	BaseURL             string
+	Realm               string
+	ClientID            string
+	ClientSecret        string
+	ServiceAccountToken string
+	CacheTTL            string
+	RequestTimeout      string
+	// InsecureSkipVerify is loaded for backwards compatibility. Admission and
+	// runtime auth/OIDC proxy/group sync paths reject it. Configure
+	// CertificateAuthority.
 	InsecureSkipVerify   bool
 	CertificateAuthority string
 }

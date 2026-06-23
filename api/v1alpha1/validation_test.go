@@ -443,6 +443,16 @@ func TestValidateIdentityProvider(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "https")
 	})
 
+	t.Run("OIDC insecureSkipVerify is forbidden", func(t *testing.T) {
+		idp := validIDP()
+		idp.Spec.OIDC.InsecureSkipVerify = true
+		idp.Spec.OIDC.CertificateAuthority = "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----"
+		result := ValidateIdentityProvider(idp)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "insecureSkipVerify")
+		assert.Contains(t, result.ErrorMessage(), "certificateAuthority")
+	})
+
 	t.Run("valid with optional issuer", func(t *testing.T) {
 		idp := validIDP()
 		idp.Spec.Issuer = "https://issuer.example.com"
@@ -517,6 +527,26 @@ func TestValidateIdentityProvider(t *testing.T) {
 		}
 		result := ValidateIdentityProvider(idp)
 		assert.True(t, result.IsValid())
+	})
+
+	t.Run("Keycloak insecureSkipVerify is forbidden", func(t *testing.T) {
+		idp := validIDP()
+		idp.Spec.GroupSyncProvider = GroupSyncProviderKeycloak
+		idp.Spec.Keycloak = &KeycloakGroupSync{
+			BaseURL:  "https://keycloak.example.com",
+			Realm:    "test-realm",
+			ClientID: "test-client",
+			ClientSecretRef: SecretKeyReference{
+				Name:      "keycloak-secret",
+				Namespace: "test-ns",
+			},
+			InsecureSkipVerify:   true,
+			CertificateAuthority: "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----",
+		}
+		result := ValidateIdentityProvider(idp)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "insecureSkipVerify")
+		assert.Contains(t, result.ErrorMessage(), "certificateAuthority")
 	})
 }
 

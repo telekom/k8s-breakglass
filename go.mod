@@ -1,6 +1,6 @@
 module github.com/telekom/k8s-breakglass
 
-go 1.26.0
+go 1.26.4
 
 require (
 	github.com/Masterminds/sprig/v3 v3.3.0

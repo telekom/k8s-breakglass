@@ -450,7 +450,7 @@ func (s *KafkaSink) Name() string {
 func buildTLSConfig(cfg *KafkaTLSConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: cfg.InsecureSkipVerify, //nolint:gosec // Configurable for testing
+		InsecureSkipVerify: cfg.InsecureSkipVerify, // #nosec G402 -- explicit audit sink option for test/dev Kafka endpoints
 	}
 
 	// Add CA certificate if provided

@@ -1496,15 +1496,15 @@ spec:
   issuer: \"$issuer_url\"
   oidc:
     authority: \"$issuer_url\"
-    clientID: \"breakglass\"
-    insecureSkipVerify: true"
+    clientID: \"breakglass\""
   
   # Add CA if provided
   if [ -n "$ca_pem" ] && [ -f "$ca_pem" ]; then
     local ca_content
-    ca_content=$(cat "$ca_pem" | base64 | tr -d '\n')
+    ca_content=$(sed 's/^/      /' "$ca_pem")
     idp_yaml="$idp_yaml
-    certificateAuthority: \"$ca_content\""
+    certificateAuthority: |
+$ca_content"
   fi
   
   echo "$idp_yaml" | KUBECONFIG="$kubeconfig" $KUBECTL apply -f -

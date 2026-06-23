@@ -115,12 +115,29 @@ type AuthHandler struct {
 	log *zap.SugaredLogger
 
 	// IDPLoader for multi-IDP mode
-	idpLoader *config.IdentityProviderLoader
+	idpLoader identityProviderByIssuerLoader
 
 	// defaultHTTPClient is a shared HTTP client for OIDC discovery when no
 	// custom CA is configured. Reusing it avoids per-request allocations and
 	// enables connection pooling.
 	defaultHTTPClient *http.Client
+}
+
+type identityProviderByIssuerLoader interface {
+	LoadIdentityProviderByIssuer(ctx context.Context, issuer string) (*config.IdentityProviderConfig, error)
+}
+
+func (a *AuthHandler) validateJWKSIdentityProviderConfig(idpCfg *config.IdentityProviderConfig) error {
+	if idpCfg == nil {
+		return errUnknownIdentityProvider
+	}
+	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
+		if a.log != nil {
+			a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
+		}
+		return errUnknownIdentityProvider
+	}
+	return nil
 }
 
 // defaultOIDCTransport clones http.DefaultTransport to inherit its sensible
@@ -171,6 +188,10 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 
 // WithIdentityProviderLoader sets the IDP loader for multi-IDP support
 func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProviderLoader) *AuthHandler {
+	if loader == nil {
+		a.idpLoader = nil
+		return a
+	}
 	a.idpLoader = loader
 	return a
 }
@@ -232,6 +253,21 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 				currentEntry.audienceAttemptedAt = now
 
 				if err != nil {
+					if currentEntry.cancel != nil {
+						currentEntry.cancel()
+					}
+					a.jwksFetchLimiter.Delete(issuer)
+					delete(a.jwksCache, issuer)
+					a.jwksLRUList.Remove(currentElem)
+					return nil, errUnknownIdentityProvider
+				}
+				if err := a.validateJWKSIdentityProviderConfig(idpCfg); err != nil {
+					if currentEntry.cancel != nil {
+						currentEntry.cancel()
+					}
+					a.jwksFetchLimiter.Delete(issuer)
+					delete(a.jwksCache, issuer)
+					a.jwksLRUList.Remove(currentElem)
 					return nil, err
 				}
 
@@ -253,6 +289,8 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 				a.jwksMutex.Unlock()
 				return cachedJWKS, refreshedAudience, refreshedIDPName, true, nil
 			}
+			a.log.Warnw("failed to refresh cached IDP config; evicted JWKS cache entry", "issuer", issuer, "error", refreshErr)
+			return nil, "", "", true, refreshErr
 		}
 
 		return cachedJWKS, cachedAudience, cachedIDPName, true, nil
@@ -311,6 +349,10 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		return nil, errUnknownIdentityProvider
 	}
 
+	if err := a.validateJWKSIdentityProviderConfig(idpCfg); err != nil {
+		return nil, err
+	}
+
 	// Create JWKS override options for keyfunc/v3
 	override := keyfunc.Override{
 		RefreshInterval: time.Hour,
@@ -339,11 +381,6 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 		transport := defaultOIDCTransport()
 		transport.TLSClientConfig.RootCAs = pool
 		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
-	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		transport := defaultOIDCTransport()
-		transport.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // Operator-opted via InsecureSkipVerify flag; TLS 1.2 enforced by defaultOIDCTransport
-		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
-		a.log.Warnw("TLS verification disabled for IDP (dev/e2e only)", "idp", idpCfg.Name)
 	}
 
 	// Build JWKS endpoint URL from IDP's configuration

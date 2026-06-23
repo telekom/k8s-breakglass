@@ -420,16 +420,9 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 		}
 		if safeName == "bgctl" {
 			outPath := filepath.Join(destDir, "bgctl")
-			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
-			if err != nil {
+			if err := writeExecutableFile(outPath, tarReader, maxBinarySize); err != nil {
 				return "", err
 			}
-			if err := limitedCopy(outFile, tarReader, maxBinarySize); err != nil {
-				_ = outFile.Close()
-				_ = os.Remove(outPath)
-				return "", err
-			}
-			_ = outFile.Close()
 			return outPath, nil
 		}
 	}
@@ -484,16 +477,9 @@ func extractZipEntry(file *zip.File, destDir, safeName string) (string, error) {
 		_ = rc.Close()
 	}()
 	outPath := filepath.Join(destDir, safeName)
-	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
-	if err != nil {
+	if err := writeExecutableFile(outPath, rc, maxBinarySize); err != nil {
 		return "", err
 	}
-	if err := limitedCopy(outFile, rc, maxBinarySize); err != nil {
-		_ = outFile.Close()
-		_ = os.Remove(outPath)
-		return "", err
-	}
-	_ = outFile.Close()
 	return outPath, nil
 }
 
@@ -536,13 +522,35 @@ func copyFile(src, dst string) error {
 	defer func() {
 		_ = input.Close()
 	}()
-	output, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755) //nolint:gosec // G302: 0755 is required for executable binaries
+	return writeExecutableFile(dst, input, 0)
+}
+
+func writeExecutableFile(dst string, src io.Reader, maxBytes int64) error {
+	output, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	defer func() {
+
+	var copyErr error
+	if maxBytes > 0 {
+		copyErr = limitedCopy(output, src, maxBytes)
+	} else {
+		_, copyErr = io.Copy(output, src)
+	}
+	if copyErr != nil {
 		_ = output.Close()
-	}()
-	_, err = io.Copy(output, input)
-	return err
+		_ = os.Remove(dst)
+		return copyErr
+	}
+	// #nosec G302 -- bgctl update writes executable binaries after a successful private copy.
+	if err := output.Chmod(0o755); err != nil {
+		_ = output.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := output.Close(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
 }

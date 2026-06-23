@@ -134,8 +134,10 @@ spec:
                     - namespace
                     type: object
                   insecureSkipVerify:
-                    description: InsecureSkipVerify allows skipping TLS verification
-                      (NOT for production!)
+                    description: |-
+                      InsecureSkipVerify is not supported for Keycloak group synchronization.
+                      Admission and runtime auth/OIDC proxy paths reject this setting; configure
+                      certificateAuthority for private or self-signed Keycloak certificates.
                     type: boolean
                   realm:
                     description: Realm is the Keycloak realm name
@@ -190,8 +192,10 @@ spec:
                     pattern: ^\S+$
                     type: string
                   insecureSkipVerify:
-                    description: InsecureSkipVerify allows skipping TLS verification
-                      (NOT for production!)
+                    description: |-
+                      InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
+                      Admission and runtime auth/OIDC proxy paths reject this setting; configure
+                      certificateAuthority for private or self-signed issuer certificates.
                     type: boolean
                   jwksEndpoint:
                     description: |-

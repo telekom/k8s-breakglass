@@ -214,8 +214,8 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 	if !mp.Spec.SMTP.DisableTLS {
 		if !mp.Spec.SMTP.InsecureSkipVerify {
 			tlsConfig := &tls.Config{
-				ServerName:         mp.Spec.SMTP.Host,
-				InsecureSkipVerify: false,
+				MinVersion: tls.VersionTLS12,
+				ServerName: mp.Spec.SMTP.Host,
 			}
 
 			// Add custom CA certificate if provided
@@ -235,8 +235,9 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 		} else {
 			// Only use insecure TLS if explicitly configured
 			tlsConfig := &tls.Config{
+				MinVersion:         tls.VersionTLS12,
 				ServerName:         mp.Spec.SMTP.Host,
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: true, // #nosec G402 -- explicit MailProvider option for test/dev SMTP endpoints
 			}
 			if err := client.StartTLS(tlsConfig); err != nil {
 				log.Debugw("STARTTLS not available or failed (insecure mode)", "error", err)

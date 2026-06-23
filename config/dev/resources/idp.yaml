@@ -10,8 +10,7 @@ spec:
   oidc:
     authority: "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e"
     clientID: "breakglass-ui"
-    # Skip TLS verification for self-signed Keycloak certificate in dev/e2e environment
-    insecureSkipVerify: true
+    # The E2E/dev setup injects the generated Keycloak CA as certificateAuthority.
   # Keycloak group sync enables resolving group members for group-based approvers
   # This is required for notification emails to be sent to group members
   groupSyncProvider: Keycloak
@@ -25,5 +24,4 @@ spec:
       key: client-secret
     # Cache group memberships for 5 minutes
     cacheTTL: "5m"
-    # Skip TLS verification for self-signed Keycloak certificate in dev/e2e environment
-    insecureSkipVerify: true
+    # The E2E/dev setup injects the generated Keycloak CA as certificateAuthority.

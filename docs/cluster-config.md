@@ -635,15 +635,16 @@ The OIDC token provider automatically:
 **TOFU (Trust On First Use):**
 
 If `caSecretRef` is not specified and `insecureSkipTLSVerify` is false, the controller performs TOFU:
-1. Connects to the API server using a custom TLS verification callback
-2. Attempts to verify the certificate against system roots (accepts if valid)
-3. If verification fails (expected for self-signed/private CAs), still captures the certificate
-4. Stores the captured CA certificate in a Secret for future connections
-5. Logs the certificate fingerprint for security auditing
+1. Opens an HTTPS connection with a bounded TLS handshake deadline
+2. Attempts normal TLS verification and hostname checks
+3. If the only failure is an unknown/private CA, captures the presented unverified chain
+4. Re-checks hostname and certificate validity before accepting the CA
+5. Stores the captured CA certificate in a Secret for future connections
+6. Logs the certificate fingerprint for security auditing
 
 This approach is more secure than blanket `InsecureSkipVerify` as it:
 - Accepts already-trusted certificates without requiring TOFU
-- Performs explicit certificate inspection before accepting untrusted certificates
+- Rejects hostname, expiration, and non-trust-bootstrap TLS failures
 - Maintains an audit trail of certificate acceptance decisions
 
 **Token Exchange (RFC 8693):**

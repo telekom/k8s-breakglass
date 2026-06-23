@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -996,11 +997,9 @@ func TestOIDCTokenProvider_TokenExchange_MissingSubjectTokenSecretRef(t *testing
 	assert.Contains(t, err.Error(), "subjectTokenSecretRef")
 }
 
-func TestOIDCTokenProvider_PerformTOFU_UsesVerifyPeerCertificate(t *testing.T) {
-	// This test verifies that performTOFU uses VerifyPeerCertificate callback
-	// instead of InsecureSkipVerify, addressing the CodeQL security finding.
-	// Since we can't easily mock TLS connections, this test verifies the
-	// function gracefully handles invalid URLs and connection failures.
+func TestOIDCTokenProvider_PerformTOFU_RejectsInvalidTargets(t *testing.T) {
+	// The TOFU path accepts only HTTPS URLs with a concrete host. Connection
+	// failures must return with a bounded error instead of hanging indefinitely.
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -1016,6 +1015,24 @@ func TestOIDCTokenProvider_PerformTOFU_UsesVerifyPeerCertificate(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid API server URL")
 	})
 
+	t.Run("non-https URL", func(t *testing.T) {
+		_, err := provider.performTOFU(context.Background(), "http://localhost:8443")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TOFU requires an https API server URL")
+	})
+
+	t.Run("uppercase HTTPS scheme", func(t *testing.T) {
+		_, err := provider.performTOFU(context.Background(), "HTTPS://localhost:9999")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to connect to API server for TOFU")
+	})
+
+	t.Run("missing hostname", func(t *testing.T) {
+		_, err := provider.performTOFU(context.Background(), "https:///missing-host")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TOFU requires an API server hostname")
+	})
+
 	t.Run("connection failure", func(t *testing.T) {
 		// Use a non-routable IP to ensure connection fails
 		_, err := provider.performTOFU(context.Background(), "https://192.0.2.1:6443")
@@ -1029,6 +1046,47 @@ func TestOIDCTokenProvider_PerformTOFU_UsesVerifyPeerCertificate(t *testing.T) {
 		require.Error(t, err)
 		// Should fail to connect (not hanging indefinitely due to proper timeout)
 		assert.Contains(t, err.Error(), "failed to connect to API server for TOFU")
+	})
+
+	t.Run("stalled TLS handshake uses fallback deadline", func(t *testing.T) {
+		originalTimeout := tofuHandshakeTimeout
+		tofuHandshakeTimeout = 50 * time.Millisecond
+		t.Cleanup(func() {
+			tofuHandshakeTimeout = originalTimeout
+		})
+
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = listener.Close()
+		})
+
+		release := make(chan struct{})
+		accepted := make(chan struct{})
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+			close(accepted)
+			<-release
+		}()
+		t.Cleanup(func() {
+			close(release)
+		})
+
+		start := time.Now()
+		_, err = provider.performTOFU(context.Background(), "https://"+listener.Addr().String())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TLS handshake failed for TOFU")
+		assert.Less(t, time.Since(start), time.Second)
+
+		select {
+		case <-accepted:
+		default:
+			t.Fatal("stalled TLS test server did not accept the connection")
+		}
 	})
 }
 

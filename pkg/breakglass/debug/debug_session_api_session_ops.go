@@ -78,7 +78,8 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	if session.Status.ResolvedTemplate != nil &&
 		session.Status.ResolvedTemplate.TerminalSharing != nil &&
 		session.Status.ResolvedTemplate.TerminalSharing.MaxParticipants > 0 {
-		if int32(len(session.Status.Participants)) >= session.Status.ResolvedTemplate.TerminalSharing.MaxParticipants {
+		maxParticipants := int(session.Status.ResolvedTemplate.TerminalSharing.MaxParticipants)
+		if len(session.Status.Participants) >= maxParticipants {
 			apiresponses.RespondForbidden(ctx, "maximum participants reached")
 			return
 		}

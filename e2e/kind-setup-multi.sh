@@ -1142,7 +1142,8 @@ spec:
   oidc:
     authority: "${main_issuer_url}"
     clientID: "breakglass"
-    insecureSkipVerify: true
+    certificateAuthority: |
+$(printf '%s\n' "$keycloak_ca_pem" | sed 's/^/      /')
   issuer: "${main_issuer_url}"
   primary: true
   groupSyncProvider: Keycloak
@@ -1154,7 +1155,8 @@ spec:
       namespace: breakglass-system
       key: client-secret
     clientID: "breakglass-group-sync"
-    insecureSkipVerify: true
+    certificateAuthority: |
+$(printf '%s\n' "$keycloak_ca_pem" | sed 's/^/      /')
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
@@ -1165,7 +1167,8 @@ spec:
   oidc:
     authority: "${contractors_issuer_url}"
     clientID: "breakglass-contractors"
-    insecureSkipVerify: true
+    certificateAuthority: |
+$(printf '%s\n' "$keycloak_ca_pem" | sed 's/^/      /')
   issuer: "${contractors_issuer_url}"
 EOF
 

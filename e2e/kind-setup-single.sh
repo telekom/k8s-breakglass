@@ -112,21 +112,33 @@ load_image_into_kind() {
   # Usage: load_image_into_kind imageName
   # Uses global $CLUSTER_NAME
   local img="$1"
-  ensure_image_exists "$img" || true
+  ensure_image_exists "$img"
   log "Loading image $img into kind cluster $CLUSTER_NAME"
-  
+
   # Try direct load first, fall back to archive method if containerd snapshotter detection fails
-  if $KIND load docker-image "$img" --name "$CLUSTER_NAME" 2>&1 | tee /dev/stderr | grep -q "failed to detect containerd snapshotter"; then
+  local load_output
+  if load_output=$($KIND load docker-image "$img" --name "$CLUSTER_NAME" 2>&1); then
+    printf '%s\n' "$load_output" >&2
+    return 0
+  fi
+  printf '%s\n' "$load_output" >&2
+  if grep -q "failed to detect containerd snapshotter" <<<"$load_output"; then
     log "Direct load failed due to containerd snapshotter issue, using archive method..."
     local tmp_archive
     tmp_archive=$(mktemp --suffix=.tar)
     if docker save "$img" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$CLUSTER_NAME"; then
       log "Successfully loaded $img via archive method"
     else
-      log "WARN: Failed to load image $img via archive method"
+      log "ERROR: Failed to load image $img via archive method"
+      rm -f "$tmp_archive"
+      return 1
     fi
     rm -f "$tmp_archive"
+    return 0
   fi
+
+  log "ERROR: Failed to load image $img into kind cluster $CLUSTER_NAME"
+  return 1
 }
 
 debug_deployment_failure() {
@@ -168,6 +180,22 @@ start_port_forward() {
   [ -n "$PF_FILE" ] && mkdir -p "$(dirname "$PF_FILE")" 2>/dev/null || true
   echo $pid >> "$PF_FILE" 2>/dev/null || true
   echo $pid
+}
+
+wait_for_local_port() {
+  # Usage: wait_for_local_port port description
+  local port="$1"
+  local description="${2:-localhost:$port}"
+  for i in {1..30}; do
+    if curl -sk --connect-timeout 1 --max-time 2 "https://127.0.0.1:${port}/" >/dev/null 2>&1 || \
+       curl -s --connect-timeout 1 --max-time 2 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+      log "$description is accepting connections"
+      return 0
+    fi
+    sleep 1
+  done
+  log "Warning: $description did not accept connections within 30 seconds"
+  return 1
 }
 
 start_keepalive_port_forward() {
@@ -231,6 +259,13 @@ wait_for_mailprovider_ready() {
     sleep 1
   done
   
+  ready_status=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get mailprovider "$name" -n "$namespace" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+  if [ "$ready_status" = "True" ]; then
+    log "MailProvider $name is Ready"
+    return 0
+  fi
+
   log "Warning: MailProvider $name did not become Ready within $max_attempts seconds"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get mailprovider "$name" -n "$namespace" -o yaml 2>/dev/null || true
   return 1
@@ -524,7 +559,7 @@ apply_e2e_test_crs() {
   
   # Wait for MailProvider to be ready so email notifications work in tests
   # The name becomes breakglass-mailhog after sed prefix transformation
-  wait_for_mailprovider_ready "breakglass-mailhog" "breakglass-system" 60
+  wait_for_mailprovider_ready "breakglass-mailhog" "breakglass-system" 120
   
   log "Finished applying e2e test CRs"
 }
@@ -1315,6 +1350,7 @@ done
 [ -n "$KC_SVC_NAME" ] || { log "Keycloak service not found after wait"; debug_cluster_state "Keycloak service lookup"; exit 1; }
 
 PF=$(start_port_forward "$KC_SVC_NS" "$KC_SVC_NAME" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT})
+wait_for_local_port "${KEYCLOAK_FORWARD_PORT}" "Keycloak port-forward" || true
 JWKS_URL="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
 # Prefer using the generated CA for TLS validation when available; fall back to insecure if not present
 if [ -n "${KEYCLOAK_CA_FILE:-}" ] && [ -f "${KEYCLOAK_CA_FILE}" ]; then
@@ -1326,7 +1362,7 @@ for i in {1..120}; do
     if ! kill -0 $PF 2>/dev/null; then
       log "Port-forward process died; restarting (attempt $i)"
       PF=$(start_port_forward "$KC_SVC_NS" "$KC_SVC_NAME" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT})
-      sleep 2
+      wait_for_local_port "${KEYCLOAK_FORWARD_PORT}" "Keycloak port-forward" || true
     fi
   log "JWKS curl attempt $i: curl $JWKS_URL"
   full_output=$(curl -v "${KC_CURL_CA[@]}" "$JWKS_URL" 2>&1 || true)
@@ -1799,6 +1835,7 @@ export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET="breakglass-group-sync-secret"
 # For E2E tests: Use in-cluster service name so controller can access Keycloak
 # Frontend will need DNS resolution to make this hostname work via port-forward
 KEYCLOAK_SERVICE_HOSTNAME="breakglass-keycloak.breakglass-system.svc.cluster.local"
+KEYCLOAK_CA_INLINE=$(sed 's/^/      /' "$TLS_DIR/ca.crt")
 
 cat <<YAML | apply_stdin_with_retry 5 5
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -1818,8 +1855,9 @@ spec:
     authority: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
     # OIDC client ID (must match realm configuration)
     clientID: "breakglass-ui"
-    # Skip TLS verification for self-signed test certificates (NOT for production!)
-    insecureSkipVerify: true
+    # Trust the generated Keycloak CA for self-signed E2E certificates.
+    certificateAuthority: |
+$KEYCLOAK_CA_INLINE
   # Enable Keycloak group sync for resolving group memberships
   groupSyncProvider: Keycloak
   keycloak:
@@ -1833,13 +1871,17 @@ spec:
       key: "client-secret"
     cacheTTL: "5m"
     requestTimeout: "10s"
-    insecureSkipVerify: true
+    certificateAuthority: |
+$KEYCLOAK_CA_INLINE
 YAML
 
 # Wait for IdentityProvider to be reconciled and ready
 # This ensures the controller has initialized OIDC validation and group sync before tests run
-wait_for_identityprovider_ready "breakglass-e2e-idp" "breakglass-system" 60 || \
-  log "Warning: IdentityProvider may not be fully ready, tests might have authentication issues"
+if ! wait_for_identityprovider_ready "breakglass-e2e-idp" "breakglass-system" 60; then
+  log "ERROR: IdentityProvider breakglass-e2e-idp is not Ready; authentication tests cannot run reliably"
+  debug_cluster_state "IdentityProvider readiness failed"
+  exit 1
+fi
 
 log 'Port-forward controller and keycloak for tests'
 rm -f "$PF_FILE" || true
@@ -1919,6 +1961,11 @@ for i in {1..30}; do
   [ $(( i % 5 )) -eq 0 ] && log "IdentityProvider status attempt $i: $IDP_STATUS"
   sleep 2
 done
+if [ "$IDP_STATUS" != "True" ]; then
+  log "ERROR: IdentityProvider did not become Ready during final readiness check (last status=$IDP_STATUS)"
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get identityprovider breakglass-e2e-idp -o yaml 2>&1 || true
+  exit 1
+fi
 
 # Verify server-side OIDC proxy by calling the proxied discovery endpoint
 PROXY_OK=000
@@ -1952,13 +1999,14 @@ for i in {1..40}; do
   sleep 3
 done
 if [ "${PROXY_OK}" != "200" ]; then
-  log "Warning: OIDC proxy discovery did not return 200 (last=${PROXY_OK}); continuing but login flows may fail"
+  log "ERROR: OIDC proxy discovery did not return 200 (last=${PROXY_OK})"
   log "--- Final debug: Controller logs (last 100 lines) ---"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs -l app=breakglass -n "$DEV_NS" --tail=100 2>&1 || true
   log "--- Final debug: All IdentityProviders ---"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get identityprovider -o yaml 2>&1 || true
   log "--- Final debug: Keycloak logs (last 20 lines) ---"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs -l app=keycloak -n "$DEV_NS" --tail=20 2>&1 || true
+  exit 1
 fi
 
 # Create BreakglassEscalation resources for UI E2E tests

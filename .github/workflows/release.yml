@@ -8,7 +8,6 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -18,10 +17,23 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require version tag ref
+        run: |
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release ref is ${GITHUB_REF}"
+          else
+            echo "::error::Release workflow must run from a semver tag like v1.2.3, got ${GITHUB_REF}"
+            exit 1
+          fi
+
   # ---------------------------------------------------------------------------
   # Build release manifests, Helm chart package, and bgctl CLI binaries
   # ---------------------------------------------------------------------------
   prepare:
+    needs: [validate-tag]
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -134,6 +146,7 @@ jobs:
   # Build per-architecture container images natively (no QEMU emulation)
   # ---------------------------------------------------------------------------
   build-image:
+    needs: [validate-tag]
     permissions:
       contents: read
       packages: write
@@ -158,6 +171,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Set build timestamp
+        id: build-time
+        env:
+          HEAD_COMMIT_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+        run: |
+          set -euo pipefail
+          BUILD_DATE="${HEAD_COMMIT_TIMESTAMP:-}"
+          if [ -z "${BUILD_DATE}" ]; then
+            BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          fi
+          echo "build-date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
@@ -173,7 +197,7 @@ jobs:
             org.opencontainers.image.vendor=Deutsche Telekom
             org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.run_started_at }}
+            org.opencontainers.image.created=${{ steps.build-time.outputs.build-date }}
             com.github.repo.branch=${{ github.ref_name }}
             com.github.repo.owner=${{ github.repository_owner }}
             com.buildkit.build.ref=${{ github.ref }}
@@ -192,9 +216,7 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp || github.run_started_at }}
-          # BUILD_DATE: head_commit.timestamp is set for tag pushes; run_started_at
-          # (always available) serves as fallback for workflow_dispatch triggers.
+            BUILD_DATE=${{ steps.build-time.outputs.build-date }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
       - name: Export digest
         id: set-digest
@@ -315,36 +337,29 @@ jobs:
           set -euo pipefail
           IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
 
-          # Extract the top-level digest from the manifest by hashing the raw
-          # manifest JSON.  The --raw flag outputs the exact manifest bytes as
-          # stored in the registry (no pretty-printing or trailing newline), so
-          # sha256sum produces the correct OCI content-addressable digest.
-          # We do not rely on --format due to historical incompatibilities
-          # across Buildx versions.
-          RAW_MANIFEST_DIGEST="sha256:$(docker buildx imagetools inspect "${IMG}" --raw | sha256sum | awk '{print $1}')"
+          INSPECT_OUTPUT=""
+          DIGEST=""
+          for i in $(seq 1 30); do
+            if INSPECT_OUTPUT="$(docker buildx imagetools inspect "${IMG}" 2>/tmp/imagetools-inspect.err)"; then
+              DIGEST="$(printf '%s\n' "${INSPECT_OUTPUT}" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
+              if [ -n "${DIGEST}" ]; then
+                echo "Registry digest resolved after ${i} attempt(s)"
+                break
+              fi
+              echo "Attempt ${i}/30: manifest is available but no registry digest was reported, retrying in 10s..."
+            else
+              echo "Attempt ${i}/30: manifest not available yet, retrying in 10s..."
+              cat /tmp/imagetools-inspect.err || true
+            fi
+            sleep 10
+          done
 
-          # Strictly validate the computed digest format: must be sha256: + 64 hex chars.
-          if ! printf '%s\n' "${RAW_MANIFEST_DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "Error: Computed manifest digest has unexpected format: ${RAW_MANIFEST_DIGEST}" >&2
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::Could not determine registry digest for ${IMG}; provenance signing and attestations would have an unverifiable subject."
             exit 1
           fi
 
-          # Capture the human-readable inspect output once for diagnostics and
-          # cross-checking, avoiding an extra registry round-trip.
-          INSPECT_OUTPUT="$(docker buildx imagetools inspect "${IMG}")"
           echo "${INSPECT_OUTPUT}"
-
-          # Best-effort cross-check against the Digest line reported by
-          # Buildx/registry.  This is warn-only because the human-readable
-          # output format may change across Buildx versions and we do not want
-          # a cosmetic parsing failure to block a release.
-          REGISTRY_DIGEST="$(echo "${INSPECT_OUTPUT}" | awk '/^Digest:/ {print $2; exit}')" || true
-          if [ -n "${REGISTRY_DIGEST}" ] && [ "${REGISTRY_DIGEST}" != "${RAW_MANIFEST_DIGEST}" ]; then
-            echo "::warning::Digest cross-check mismatch: computed=${RAW_MANIFEST_DIGEST} registry=${REGISTRY_DIGEST}"
-          fi
-
-          DIGEST="${RAW_MANIFEST_DIGEST}"
-
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Multi-arch manifest digest: ${DIGEST}"
       - name: Attest provenance
@@ -528,6 +543,13 @@ jobs:
         with:
           name: release-chart
           path: chart-dist
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          format: spdx-json
+          output-file: sbom-${{ github.ref_name }}.spdx.json
+          upload-release-assets: false
       - name: Create GitHub Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
@@ -541,36 +563,5 @@ jobs:
             dist/bgctl_*.zip
             dist/bgctl_*.sha256
             dist/bgctl_${{ github.ref_name }}_checksums.txt
+            sbom-${{ github.ref_name }}.spdx.json
           generate_release_notes: true
-      - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-          format: spdx-json
-          artifact-name: sbom-${{ github.ref_name }}.json
-          upload-release-assets: false
-      - name: Upload SBOM to Release (if GH_PUBLISH_TOKEN)
-        run: |
-          SBOM_FILE=sbom-${{ github.ref_name }}.json
-          if [ -n "${{ secrets.GH_PUBLISH_TOKEN }}" ]; then
-            echo "Using GH_PUBLISH_TOKEN to attach SBOM to release"
-            RELEASE_JSON=$(curl -s -H "Authorization: token ${{ secrets.GH_PUBLISH_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}")
-            RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r .id)
-            if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
-              echo "Release for tag '${{ github.ref_name }}' not found."
-              exit 1
-            fi
-            echo "Uploading $SBOM_FILE to release id $RELEASE_ID"
-            curl -s -X POST \
-              -H "Authorization: token ${{ secrets.GH_PUBLISH_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              --data-binary "@$SBOM_FILE" \
-              "https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=$(basename $SBOM_FILE)" || true
-          else
-            echo "GH_PUBLISH_TOKEN not present; uploading SBOM as workflow artifact instead"
-            gh_version=$(gh --version 2>/dev/null || true)
-            if [ -n "$gh_version" ]; then
-              echo "gh CLI found, but we will still upload using actions/upload-artifact in CI as a fallback"
-            fi
-            # fallback: keep sbom in workspace and rely on release assets uploaded elsewhere
-          fi

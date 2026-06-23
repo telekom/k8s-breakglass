@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Frontend dependency audit fixes**: Updated vulnerable Babel and brace-expansion transitive dependencies in the frontend lockfile, deduplicated Babel parser/types resolutions, and raised the frontend Node.js minimum plus CI runtime baseline to 24.11.0.
+- **IdentityProvider TLS hardening**: Admission, JWT/JWKS validation, the OIDC proxy, and Keycloak group sync now fail closed when `spec.oidc.insecureSkipVerify` or `spec.keycloak.insecureSkipVerify` is enabled. Configure `certificateAuthority` for private or self-signed identity provider certificates. The single-cluster E2E setup now injects the generated Keycloak CA instead of disabling TLS verification, and TOFU handshakes are bounded by a fallback deadline.
 - **Per-user rate limiting on session creation**: `POST /api/breakglassSessions` now enforces a per-user rate limit (10 requests/minute, burst of 1) keyed on the authenticated user's email. Requests exceeding the limit receive `429 Too Many Requests` with a `Retry-After` header indicating when to retry. A valid `email` claim is required; requests without one are rejected.
 
 ### Added
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI/release security feedback**: Security CI now fails on enforced Go, filesystem, image, and Helm chart findings while still uploading SARIF/results for review. Tag-based releases now require strict semver tag refs and attach SBOM artifacts to release output.
 - **Strict Readiness Enforcement for Escalations**: Enforced strict cluster readiness constraints across the API and session management workflows. Escalations API now defaults `activeOnly=true`, hiding unready escalations by default. Session creation logic now skips escalations that are not in a `Ready` state. Added `Ready` condition to `BreakglassEscalation` status, populated by the escalation reconciler based on validation results. `IsReady()` helper added to `BreakglassEscalation` CRD for centralized readiness checks.
 - **Frontend: align UI with Telekom Scale design tokens**: Refined the Scale-based interface across cards, forms, debug-session views, error states, and session views with tokenized spacing, color, focus, and contrast updates for a more consistent accessible experience.
 - **Frontend: upgrade Vite 7 → 8 and @vitejs/plugin-legacy 7 → 8** (PR #562): Major version bumps — Vite 8 replaces Rollup with Rolldown and removes esbuild in favor of Oxc. `@vitejs/plugin-vue` patch bumped to 6.0.5. No breaking changes to the frontend build configuration.
