@@ -596,12 +596,7 @@ watch(
                   {{ item.label }}
                 </a>
                 <div class="mobile-nav-fallback__utilities">
-                  <button
-                    type="button"
-                    class="mobile-util-btn"
-                    :aria-pressed="theme === 'dark'"
-                    @click="toggleTheme"
-                  >
+                  <button type="button" class="mobile-util-btn" :aria-pressed="theme === 'dark'" @click="toggleTheme">
                     <scale-icon-action-light-dark-mode size="24" :decorative="true"></scale-icon-action-light-dark-mode>
                     <span>{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
                   </button>
