@@ -52,6 +52,8 @@ export default {
     const dismissed = ref(false);
     let timer: number | null = null;
     const warnedStorageAccess = new Set<"sessionStorage" | "localStorage">();
+    const warnedStorageItemReads = new Set<string>();
+    const warnedOIDCParseValues = new Set<string>();
     const requireAuth = () => {
       const injectedAuth = inject(AuthKey);
       if (!injectedAuth) {
@@ -67,9 +69,13 @@ export default {
     }
 
     function getCurrentIdentityProviderName(): string | undefined {
-      const sessionStorageValue = getStorageItem(getBrowserStorage("sessionStorage"), "oidc_idp_name");
+      const sessionStorageValue = getStorageItem(
+        getBrowserStorage("sessionStorage"),
+        "oidc_idp_name",
+        "sessionStorage",
+      );
       const localStorageValue = shouldReadLocalOIDCStorage()
-        ? getStorageItem(getBrowserStorage("localStorage"), "breakglass_current_idp_name")
+        ? getStorageItem(getBrowserStorage("localStorage"), "breakglass_current_idp_name", "localStorage")
         : undefined;
       return auth.getIdentityProviderName() ?? sessionStorageValue ?? localStorageValue ?? undefined;
     }
@@ -110,14 +116,18 @@ export default {
       }
     }
 
-    function getStorageItem(storage: Storage | undefined, key: string): string | null {
+    function getStorageItem(storage: Storage | undefined, key: string, storageName: string): string | null {
       if (!storage) {
         return null;
       }
       try {
         return storage.getItem(key);
       } catch (err) {
-        warn("AutoLogoutWarning", "Unable to read browser storage item", err);
+        const warningKey = `${storageName}:${key}`;
+        if (!warnedStorageItemReads.has(warningKey)) {
+          warnedStorageItemReads.add(warningKey);
+          warn("AutoLogoutWarning", "Unable to read browser storage item", err);
+        }
         return null;
       }
     }
@@ -126,18 +136,26 @@ export default {
       if (import.meta.env.PROD) {
         return false;
       }
-      return getStorageItem(getBrowserStorage("localStorage"), TOKEN_PERSISTENCE_KEY) === "persistent";
+      return getStorageItem(getBrowserStorage("localStorage"), TOKEN_PERSISTENCE_KEY, "localStorage") === "persistent";
     }
 
-    function getAvailableOIDCStorages(): Storage[] {
-      const storages: Storage[] = [];
+    function getAvailableOIDCStorages(): Array<{ name: "sessionStorage" | "localStorage"; storage: Storage }> {
+      const storages: Array<{ name: "sessionStorage" | "localStorage"; storage: Storage }> = [];
       const sessionStorage = getBrowserStorage("sessionStorage");
-      if (sessionStorage) storages.push(sessionStorage);
+      if (sessionStorage) storages.push({ name: "sessionStorage", storage: sessionStorage });
       if (shouldReadLocalOIDCStorage()) {
         const localStorage = getBrowserStorage("localStorage");
-        if (localStorage) storages.push(localStorage);
+        if (localStorage) storages.push({ name: "localStorage", storage: localStorage });
       }
       return storages;
+    }
+
+    function fingerprintStoredValue(value: string): string {
+      let hash = 0;
+      for (let index = 0; index < value.length; index += 1) {
+        hash = (hash * 31 + value.charCodeAt(index)) | 0;
+      }
+      return `${value.length}:${hash}`;
     }
 
     function getStoredOIDCUserValues(): string[] {
@@ -145,9 +163,9 @@ export default {
       const seenValues = new Set<string>();
       const activeKeys = auth.getActiveOIDCUserStorageKeys();
 
-      for (const storage of getAvailableOIDCStorages()) {
+      for (const { name, storage } of getAvailableOIDCStorages()) {
         for (const key of activeKeys) {
-          const value = getStorageItem(storage, key);
+          const value = getStorageItem(storage, key, name);
           if (value && !seenValues.has(value)) {
             seenValues.add(value);
             values.push(value);
@@ -170,7 +188,11 @@ export default {
             }
           }
         } catch (e) {
-          warn("AutoLogoutWarning", "Failed to parse OIDC user data from browser storage", e);
+          const warningKey = fingerprintStoredValue(userStr);
+          if (!warnedOIDCParseValues.has(warningKey)) {
+            warnedOIDCParseValues.add(warningKey);
+            warn("AutoLogoutWarning", "Failed to parse OIDC user data from browser storage", e);
+          }
         }
       }
 

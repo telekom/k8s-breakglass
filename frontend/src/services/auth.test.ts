@@ -518,10 +518,7 @@ describe("AuthService", () => {
 
     it("returns the active identity provider key from session state", () => {
       sessionStorage.setItem("oidc_idp_name", "corp");
-      sessionStorage.setItem(
-        "breakglass_active_oidc_user_storage_key",
-        "oidc.user:/api/oidc/authority:corp-ui",
-      );
+      sessionStorage.setItem("breakglass_active_oidc_user_storage_key", "oidc.user:/api/oidc/authority:corp-ui");
 
       expect(authService.getActiveOIDCUserStorageKeys()).toEqual(["oidc.user:/api/oidc/authority:corp-ui"]);
     });
