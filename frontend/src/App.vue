@@ -155,6 +155,13 @@ onMounted(() => {
     }
   };
   desktopBreakpointQuery.addEventListener("change", desktopBreakpointHandler);
+
+  scaleMobileFlyoutDefined.value = isScaleMobileFlyoutDefined();
+  if (!scaleMobileFlyoutDefined.value && typeof customElements !== "undefined" && "whenDefined" in customElements) {
+    void customElements.whenDefined("scale-telekom-nav-flyout").then(() => {
+      scaleMobileFlyoutDefined.value = true;
+    });
+  }
 });
 
 onBeforeUnmount(() => {
@@ -236,6 +243,10 @@ const profileMenuRef = ref<HTMLElement | null>(null);
 type NavFlyoutElement = HTMLElement & { expanded: boolean };
 const mobileNavFlyoutRef = ref<NavFlyoutElement | null>(null);
 const mobileNavOpen = ref(false);
+const scaleMobileFlyoutDefined = ref(false);
+const mobileNavControls = computed(() =>
+  scaleMobileFlyoutDefined.value ? "mobile-nav-flyout" : "mobile-nav-fallback",
+);
 
 const profileMenuLabel = computed(() => userDisplayName.value || userEmail.value || "Account");
 const profileMenuAriaLabel = computed(() => {
@@ -312,7 +323,7 @@ function isScaleMobileFlyoutDefined() {
 }
 
 function toggleMobileNav() {
-  if (isScaleMobileFlyoutDefined()) {
+  if (scaleMobileFlyoutDefined.value) {
     return;
   }
   mobileNavOpen.value = !mobileNavOpen.value;
@@ -546,13 +557,14 @@ watch(
                 type="button"
                 class="mobile-nav-trigger"
                 :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
-                aria-controls="mobile-nav-fallback"
+                :aria-controls="mobileNavControls"
                 :aria-expanded="mobileNavOpen"
                 @click="toggleMobileNav"
               >
                 <scale-icon-action-menu decorative></scale-icon-action-menu>
               </button>
               <scale-telekom-nav-flyout
+                id="mobile-nav-flyout"
                 ref="mobileNavFlyoutRef"
                 variant="mobile"
                 trigger-selector="#mobile-nav-trigger"
@@ -636,7 +648,7 @@ watch(
         </div>
       </scale-telekom-header>
 
-      <div id="main" class="app-container" tabindex="-1">
+      <div id="main" class="app-container" role="main" tabindex="-1">
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
@@ -732,7 +744,7 @@ scale-telekom-header::part(app-name-text) {
 }
 
 .mobile-util-btn.active {
-  color: var(--telekom-color-primary-standard);
+  color: var(--telekom-color-text-and-icon-link-standard);
   font-weight: bold;
 }
 
@@ -831,7 +843,7 @@ scale-telekom-header::part(app-name-text) {
   }
 
   .mobile-nav-fallback__link--active {
-    color: var(--telekom-color-primary-standard);
+    color: var(--telekom-color-text-and-icon-link-standard);
     font-weight: 700;
   }
 

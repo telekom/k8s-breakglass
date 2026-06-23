@@ -290,8 +290,11 @@ async function assertNoA11yViolations(page: Page, context: string, mode: string)
       nodes: v.nodes.filter((n) => {
         if (isScaleShadowDomNode(n)) return false;
         // Exempt Telekom brand colours ONLY from the enhanced contrast rule (AAA)
-        // They must still pass standard color-contrast (AA)
-        if (v.id === "color-contrast-enhanced" && isBrandColorContrastNode(n)) return false;
+        // in standard light/dark themes. High-contrast mode must not leak brand
+        // magenta because users opted into maximum contrast.
+        if (mode !== "high-contrast" && v.id === "color-contrast-enhanced" && isBrandColorContrastNode(n)) {
+          return false;
+        }
         return true;
       }),
     }))

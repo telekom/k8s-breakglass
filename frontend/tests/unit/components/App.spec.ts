@@ -210,6 +210,7 @@ describe("App — high-contrast and theme toggles", () => {
     const trigger = wrapper.find(".mobile-nav-trigger");
     expect(trigger.exists()).toBe(true);
     expect(trigger.attributes("aria-label")).toBe("Open navigation menu");
+    expect(trigger.attributes("aria-controls")).toBe("mobile-nav-fallback");
     expect(trigger.attributes("aria-expanded")).toBe("false");
     const fallbackNav = wrapper.find(".mobile-nav-fallback");
     expect(fallbackNav.element.tagName).toBe("NAV");
@@ -230,5 +231,14 @@ describe("App — high-contrast and theme toggles", () => {
     expect(trigger.attributes("aria-label")).toBe("Open navigation menu");
     expect(trigger.attributes("aria-expanded")).toBe("false");
     expect(wrapper.find(".mobile-nav-fallback").classes()).not.toContain("mobile-nav-fallback--open");
+  });
+
+  it("exposes the app content as the skip-link main landmark", () => {
+    wrapper = mountApp();
+
+    const main = wrapper.find("#main");
+    expect(main.exists()).toBe(true);
+    expect(main.attributes("role")).toBe("main");
+    expect(main.attributes("tabindex")).toBe("-1");
   });
 });

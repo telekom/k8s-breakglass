@@ -240,6 +240,10 @@
 
   /* Use a darker blue for HC light to ensure readability on subtle gray backgrounds. */
   --telekom-color-text-and-icon-link-standard: #0055cc;
+  --telekom-color-primary-standard: #000000;
+  --telekom-color-primary-hover: #1a1a1a;
+  --telekom-color-primary-hovered: #1a1a1a;
+  --telekom-color-primary-pressed: #333333;
 
   /* Strictly high-contrast buttons for HC mode */
   --cta-bg: #000000;
@@ -288,6 +292,10 @@
 
   /* Fix: Blue links in dark HC mode - use lighter blue for AAA on dark bg */
   --telekom-color-text-and-icon-link-standard: #93c5ff;
+  --telekom-color-primary-standard: #ffffff;
+  --telekom-color-primary-hover: #e0e0e0;
+  --telekom-color-primary-hovered: #e0e0e0;
+  --telekom-color-primary-pressed: #c7c7c7;
 
   /* Strictly high-contrast buttons for Dark HC mode */
   --cta-bg: #ffffff;
@@ -336,12 +344,18 @@ scale-button::part(base) {
 :root[data-theme="dark"] scale-telekom-mobile-menu-item:defined a,
 :root[data-theme="dark"] scale-telekom-nav-item:defined[aria-current="page"] a,
 :root[data-theme="dark"] scale-telekom-mobile-menu-item:defined[aria-current="page"] a,
-:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item:defined[active]:not([active="false"]) a,
-:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item:defined[aria-current="page"] a,
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  scale-telekom-nav-item:defined[active]:not([active="false"])
+  a,
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  scale-telekom-nav-item:defined[aria-current="page"]
+  a,
 :root[data-theme="dark"] [role="menuitem"],
 :root[data-theme="dark"] [role="menuitem"][aria-current="page"],
-:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) [role="menuitem"][aria-current="true"],
-:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) [role="menuitem"][aria-current="page"] {
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  [role="menuitem"][aria-current="true"],
+:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  [role="menuitem"][aria-current="page"] {
   color: #ffffff !important;
 }
 
@@ -355,8 +369,10 @@ scale-dropdown::part(combobox-label) {
  * Scale internally computes #f61488 which only achieves 3.9:1 against
  * white text (fails AA). Pinning to #e20074 gives 4.68:1 (AA).
  * Not applied in neutral/OSS which uses Scale's default purple. */
-:root:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
-:root[data-theme="dark"]:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary) {
+:root:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  scale-button::part(variant-primary),
+:root[data-theme="dark"]:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  scale-button::part(variant-primary) {
   background-color: #e20074 !important;
 }
 
@@ -388,6 +404,10 @@ scale-dropdown::part(combobox-label) {
   background-color: #ffffff !important;
   color: #000000 !important;
   border-color: #ffffff !important;
+}
+
+:root[data-high-contrast="true"][data-theme="dark"] scale-telekom-header::part(app-name-text) {
+  color: #ffffff !important;
 }
 
 /* Keep custom slotted button labels aligned with the high-contrast primary foreground. */
@@ -1157,7 +1177,10 @@ select:focus {
 }
 
 .dev-debug-panel .debug-invalid {
-  background: var(--telekom-color-functional-danger-subtle, color-mix(in srgb, var(--telekom-color-functional-danger-standard) 10%, transparent));
+  background: var(
+    --telekom-color-functional-danger-subtle,
+    color-mix(in srgb, var(--telekom-color-functional-danger-standard) 10%, transparent)
+  );
 }
 
 .dev-debug-panel .debug-summary {
@@ -1197,7 +1220,10 @@ select:focus {
 }
 
 .dev-debug-panel .debug-event-warning {
-  background: var(--telekom-color-functional-warning-subtle, color-mix(in srgb, var(--telekom-color-functional-warning-standard) 20%, transparent));
+  background: var(
+    --telekom-color-functional-warning-subtle,
+    color-mix(in srgb, var(--telekom-color-functional-warning-standard) 20%, transparent)
+  );
   padding: var(--space-2xs) var(--space-xs);
   border-radius: var(--radius-xs);
 }
