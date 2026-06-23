@@ -963,7 +963,7 @@ select:focus {
  * RESPONSIVE ADJUSTMENTS
  * ============================================ */
 @media (max-width: 768px) {
-  main {
+  .app-container {
     padding: var(--space-xl) var(--space-lg) var(--space-2xl);
   }
 

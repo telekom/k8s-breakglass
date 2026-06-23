@@ -220,8 +220,8 @@ describe("App — high-contrast and theme toggles", () => {
 
     expect(trigger.attributes("aria-label")).toBe("Close navigation menu");
     expect(trigger.attributes("aria-expanded")).toBe("true");
-    expect(wrapper.find(".mobile-nav-fallback").classes()).toContain("mobile-nav-fallback--open");
-    const fallbackLinks = wrapper.findAll(".mobile-nav-fallback__link");
+    expect(fallbackNav.classes()).toContain("mobile-nav-fallback--open");
+    const fallbackLinks = fallbackNav.findAll(".mobile-nav-fallback__link");
     expect(fallbackLinks).toHaveLength(6);
     expect(fallbackLinks.every((link) => link.attributes("role") === undefined)).toBe(true);
 
