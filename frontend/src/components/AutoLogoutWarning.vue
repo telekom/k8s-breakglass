@@ -122,24 +122,6 @@ export default {
       }
     }
 
-    function getStorageLength(storage: Storage): number {
-      try {
-        return storage.length;
-      } catch (err) {
-        warn("AutoLogoutWarning", "Unable to enumerate browser storage", err);
-        return 0;
-      }
-    }
-
-    function getStorageKey(storage: Storage, index: number): string | null {
-      try {
-        return storage.key(index);
-      } catch (err) {
-        warn("AutoLogoutWarning", "Unable to read browser storage key", err);
-        return null;
-      }
-    }
-
     function shouldReadLocalOIDCStorage(): boolean {
       if (import.meta.env.PROD) {
         return false;
@@ -158,37 +140,13 @@ export default {
       return storages;
     }
 
-    function getTrustedOIDCUserKeyPrefixes(): string[] {
-      const prefixes = new Set<string>();
-      const configuredAuthority = auth.userManager.settings.authority;
-      if (configuredAuthority) {
-        prefixes.add(`oidc.user:${configuredAuthority}:`);
-      }
-      prefixes.add("oidc.user:/api/oidc/authority:");
-      return Array.from(prefixes);
-    }
-
-    function isTrustedOIDCUserKey(key: string, trustedPrefixes: readonly string[]): boolean {
-      return trustedPrefixes.some((prefix) => key.startsWith(prefix));
-    }
-
     function getStoredOIDCUserValues(): string[] {
-      const defaultStorageKey =
-        "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id;
-      const trustedPrefixes = getTrustedOIDCUserKeyPrefixes();
       const values: string[] = [];
       const seenValues = new Set<string>();
+      const activeKeys = auth.getActiveOIDCUserStorageKeys();
 
       for (const storage of getAvailableOIDCStorages()) {
-        const keys = new Set<string>([defaultStorageKey]);
-        for (let index = 0; index < getStorageLength(storage); index += 1) {
-          const key = getStorageKey(storage, index);
-          if (key && isTrustedOIDCUserKey(key, trustedPrefixes)) {
-            keys.add(key);
-          }
-        }
-
-        for (const key of keys) {
+        for (const key of activeKeys) {
           const value = getStorageItem(storage, key);
           if (value && !seenValues.has(value)) {
             seenValues.add(value);
