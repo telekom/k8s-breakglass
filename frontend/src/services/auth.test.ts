@@ -264,7 +264,10 @@ describe("AuthService", () => {
 
       const fakeManager = {
         signinRedirect: vi.fn().mockResolvedValue(undefined),
-        settings: {},
+        settings: {
+          authority: "/api/oidc/authority",
+          client_id: "corp-ui",
+        },
       } as unknown as ReturnType<AuthService["getOrCreateUserManagerForIDP"]>;
       const managerSpy = vi
         .spyOn(
@@ -278,6 +281,9 @@ describe("AuthService", () => {
       expect(fakeManager.signinRedirect).toHaveBeenCalledWith({ state: { path: "/secure", idpName } });
       expect(sessionStorage.getItem("oidc_idp_name")).toBe(idpName);
       expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
+      expect(sessionStorage.getItem("breakglass_active_oidc_user_storage_key")).toBe(
+        "oidc.user:/api/oidc/authority:corp-ui",
+      );
       expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct.corp");
       expect(authService.getIdentityProviderName()).toBe(idpName);
 
@@ -479,6 +485,7 @@ describe("AuthService", () => {
       await authService.logout();
       expect(signoutSpy).toHaveBeenCalled();
       expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(sessionStorage.getItem("breakglass_active_oidc_user_storage_key")).toBeNull();
       expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
     });
   });
@@ -501,6 +508,22 @@ describe("AuthService", () => {
       localStorage.setItem("breakglass_current_idp_name", "corp");
 
       expect(authService.getIdentityProviderName()).toBe("corp");
+    });
+  });
+
+  describe("getActiveOIDCUserStorageKeys()", () => {
+    it("returns the default OIDC user key when no identity provider is active", () => {
+      expect(authService.getActiveOIDCUserStorageKeys()).toEqual(["oidc.user:https://example.com:test-client"]);
+    });
+
+    it("returns the active identity provider key from session state", () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      sessionStorage.setItem(
+        "breakglass_active_oidc_user_storage_key",
+        "oidc.user:/api/oidc/authority:corp-ui",
+      );
+
+      expect(authService.getActiveOIDCUserStorageKeys()).toEqual(["oidc.user:/api/oidc/authority:corp-ui"]);
     });
   });
 
