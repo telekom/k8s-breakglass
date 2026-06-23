@@ -44,18 +44,23 @@
   justify-content: center;
   min-height: 2.75rem;
   margin-top: var(--space-sm);
+  border: 2px solid transparent;
   border-radius: var(--radius-pill);
   padding: 0 var(--space-lg);
-  background: var(--accent-primary-aaa);
-  color: var(--accent-on-primary-aaa);
+  background: var(--cta-bg, var(--accent-primary-aaa));
+  color: var(--telekom-color-text-and-icon-white, var(--accent-on-primary-aaa));
   font: var(--telekom-text-style-body);
   font-weight: 700;
   text-decoration: none;
 }
 
 .not-found__cta:hover {
-  background: var(--accent-primary-aaa-hover);
+  background: var(--cta-bg-hover, var(--accent-primary-aaa-hover));
   text-decoration: none;
+}
+
+:global(:root[data-high-contrast="true"]) .not-found__cta {
+  border-color: var(--cta-bg, currentColor);
 }
 
 .not-found__cta:focus-visible {
