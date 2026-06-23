@@ -153,14 +153,14 @@ The neutral Scale package (`scale-components-neutral`) uses purple `#5300ff` as 
 
 ## 3. Themes
 
-Theme switching is controlled by HTML attributes and system media queries. Scale's own theme switching (`[data-mode]`) is **not** used; the app manages its own `[data-theme]` attribute.
+Theme switching is controlled by HTML attributes and system media queries. The app manages its own `[data-theme]` attribute and intentionally mirrors the same value to Scale's `[data-mode]` attribute so Scale shadow-DOM tokens resolve to the matching palette.
 
 | Theme | Activation |
 |-------|-----------|
-| Light (default) | `:root` (no attribute) |
-| Dark | `[data-theme="dark"]` on `<html>` |
+| Light (default) | `:root` or `[data-theme="light"][data-mode="light"]` on `<html>` |
+| Dark | `[data-theme="dark"][data-mode="dark"]` on `<html>` |
 | High-contrast light | `[data-high-contrast="true"]` on `<html>` |
-| High-contrast dark | `[data-high-contrast="true"][data-theme="dark"]` on `<html>` |
+| High-contrast dark | `[data-high-contrast="true"][data-theme="dark"][data-mode="dark"]` on `<html>` |
 | Windows forced-colors | `@media (forced-colors: active)` — automatic, no JS required |
 
 All four theme combinations have full token coverage. The forced-colors layer remaps every surface, border, chip, and accent token to CSS system color keywords (`Canvas`, `CanvasText`, `ButtonText`, `Highlight`, `GrayText`, `LinkText`) so the OS palette takes over without layout breakage.
@@ -174,7 +174,7 @@ Full details and contrast ratios are in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS
 | # | What | Why |
 |---|------|-----|
 | 1 | `--telekom-color-text-and-icon-additional` overridden with `!important` | Scale default (`#595959`) fails WCAG AAA 7 : 1 on white |
-| 2 | Primary button background pinned to `#e20074` | Scale's computed `#f61488` fails WCAG AA on white text |
+| 2 | Primary button background pinned to `#e20074`, with black/white high-contrast overrides | Scale's computed `#f61488` fails WCAG AA on white text; high-contrast buttons use maximum-contrast foreground/background pairs |
 | 3 | Active nav link uses `#8e004a` (light) / `#e20074` (dark) | Scale's `#e20074` fails AA on the nav active-surface background |
 | 4 | Chip/tag text colours darkened (light) or lightened (dark) | Scale functional colours target AA; we need AAA on tinted backgrounds |
 | 5 | Ghost button text in dark: `#93a8ff` | Scale default fails AAA on `#1c1c1e` |
@@ -182,7 +182,7 @@ Full details and contrast ratios are in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS
 | 7 | `scale-tag` variants overridden via `--background`/`--color` + `::part(base)` | Double approach needed for Scale shadow DOM version compatibility |
 | 8 | `scale-card` gets explicit border + `border-radius: var(--radius-lg)` | Card boundary needed for low-vision users; shadow alone insufficient in light mode |
 | 9 | `scale-button` uses `--radius-pill` | Design decision: all buttons are fully rounded |
-| 10 | `scale-modal` body uses `flex` + `gap` | Consistent internal spacing without margin hacks |
+| 10 | `scale-modal` body/header spacing and modal/form action bars are standardized | Consistent internal spacing and action alignment without margin hacks |
 | 11 | Forced-colors layer | Scale does not handle `forced-colors` explicitly |
 | 12 | 44 × 44 px touch targets in `[data-high-contrast]` | WCAG SC 2.5.5 AAA; Scale does not enforce this |
 | 13 | Neutral/OSS theme keeps purple primary — intentionally unbranded | N/A |
