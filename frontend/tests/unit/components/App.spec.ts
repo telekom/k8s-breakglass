@@ -209,17 +209,25 @@ describe("App — high-contrast and theme toggles", () => {
 
     const trigger = wrapper.find(".mobile-nav-trigger");
     expect(trigger.exists()).toBe(true);
+    expect(trigger.attributes("aria-label")).toBe("Open navigation menu");
     expect(trigger.attributes("aria-expanded")).toBe("false");
-    expect(wrapper.find(".mobile-nav-fallback").classes()).not.toContain("mobile-nav-fallback--open");
+    const fallbackNav = wrapper.find(".mobile-nav-fallback");
+    expect(fallbackNav.element.tagName).toBe("NAV");
+    expect(fallbackNav.attributes("role")).toBeUndefined();
+    expect(fallbackNav.classes()).not.toContain("mobile-nav-fallback--open");
 
     await trigger.trigger("click");
 
+    expect(trigger.attributes("aria-label")).toBe("Close navigation menu");
     expect(trigger.attributes("aria-expanded")).toBe("true");
     expect(wrapper.find(".mobile-nav-fallback").classes()).toContain("mobile-nav-fallback--open");
-    expect(wrapper.findAll(".mobile-nav-fallback__link")).toHaveLength(6);
+    const fallbackLinks = wrapper.findAll(".mobile-nav-fallback__link");
+    expect(fallbackLinks).toHaveLength(6);
+    expect(fallbackLinks.every((link) => link.attributes("role") === undefined)).toBe(true);
 
-    await wrapper.findAll(".mobile-nav-fallback__link")[1].trigger("click");
+    await fallbackLinks[1].trigger("click");
 
+    expect(trigger.attributes("aria-label")).toBe("Open navigation menu");
     expect(trigger.attributes("aria-expanded")).toBe("false");
     expect(wrapper.find(".mobile-nav-fallback").classes()).not.toContain("mobile-nav-fallback--open");
   });

@@ -526,7 +526,7 @@ watch(
               <button
                 type="button"
                 class="mobile-nav-trigger"
-                aria-label="Open navigation menu"
+                :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
                 aria-controls="mobile-nav-fallback"
                 :aria-expanded="mobileNavOpen"
                 @click="toggleMobileNav"
@@ -575,13 +575,11 @@ watch(
                   </scale-telekom-mobile-menu>
                 </scale-telekom-mobile-flyout-canvas>
               </scale-telekom-nav-flyout>
-              <div
+              <nav
                 v-if="authenticated"
                 id="mobile-nav-fallback"
                 :class="['mobile-nav-fallback', { 'mobile-nav-fallback--open': mobileNavOpen }]"
-                role="menu"
                 aria-label="Main navigation"
-                @keydown.esc="closeMobileNav"
               >
                 <a
                   v-for="item in primaryNavItems"
@@ -590,7 +588,6 @@ watch(
                   :class="{ 'mobile-nav-fallback__link--active': activeNavId === item.id }"
                   :href="navHref(item)"
                   :aria-current="activeNavId === item.id ? 'page' : undefined"
-                  role="menuitem"
                   @click="handleMobileNavItemClick($event, item)"
                 >
                   {{ item.label }}
@@ -610,7 +607,7 @@ watch(
                     <span>High Contrast</span>
                   </button>
                 </div>
-              </div>
+              </nav>
             </scale-telekom-nav-item>
           </scale-telekom-nav-list>
         </div>
