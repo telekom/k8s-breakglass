@@ -8,11 +8,10 @@ import AxeBuilder from "@axe-core/playwright";
 /**
  * Accessibility E2E tests using axe-core.
  *
- * Runs automated WCAG 2.1 AA + AAA checks against key pages in four theme modes:
+ * Runs automated WCAG 2.1 AA + AAA checks against key pages in three reachable theme modes:
  * - Light mode (default)
  * - Dark mode (prefers-color-scheme: dark)
- * - High Contrast mode (data-high-contrast="true")
- * - High Contrast Dark mode (data-high-contrast="true" + data-theme="dark")
+ * - High Contrast mode (data-high-contrast="true" + forced dark data-theme/data-mode)
  *
  * Coverage includes:
  * - All primary authenticated pages
@@ -147,18 +146,6 @@ const THEME_MODES: Array<{
   },
   {
     name: "high-contrast",
-    setup: async (page: Page) => {
-      await page.emulateMedia({ colorScheme: "light" });
-    },
-    postLogin: async (page: Page) => {
-      await page.evaluate(() => {
-        document.documentElement.setAttribute("data-high-contrast", "true");
-      });
-      await page.waitForTimeout(200);
-    },
-  },
-  {
-    name: "high-contrast-dark",
     setup: async (page: Page) => {
       await page.emulateMedia({ colorScheme: "dark" });
     },

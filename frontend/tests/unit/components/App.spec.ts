@@ -17,6 +17,7 @@ import { mount, VueWrapper } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import App from "@/App.vue";
 import { AuthKey, BrandingKey } from "@/keys";
+import { useUser } from "@/services/auth";
 
 // Stub heavy Scale web components so the test doesn't depend on custom element registrations.
 const SCALE_STUBS = {
@@ -72,6 +73,7 @@ describe("App — high-contrast and theme toggles", () => {
 
   beforeEach(() => {
     localStorage.clear();
+    useUser().value = undefined;
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-mode");
     document.documentElement.removeAttribute("data-high-contrast");
@@ -83,6 +85,7 @@ describe("App — high-contrast and theme toggles", () => {
     wrapper = null;
     vi.restoreAllMocks();
     localStorage.clear();
+    useUser().value = undefined;
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-mode");
     document.documentElement.removeAttribute("data-high-contrast");
@@ -125,7 +128,7 @@ describe("App — high-contrast and theme toggles", () => {
 
     const themeBtn = wrapper.find(".theme-toggle-button");
     expect(themeBtn.attributes("aria-label")).toBe(
-      "High contrast mode is displaying dark theme. Click to select dark theme preference.",
+      "High contrast mode is enabled and uses a dark canvas. Click to select dark theme preference for standard mode.",
     );
     expect(themeBtn.attributes("aria-pressed")).toBe("false");
     expect(themeBtn.classes()).not.toContain("theme-dark");
@@ -175,7 +178,7 @@ describe("App — high-contrast and theme toggles", () => {
     expect(document.documentElement.getAttribute("data-high-contrast")).toBe("true");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(wrapper.find(".theme-toggle-button").attributes("aria-label")).toBe(
-      "High contrast mode is displaying dark theme. Click to select light theme preference.",
+      "High contrast mode is enabled and uses a dark canvas. Click to select light theme preference for standard mode.",
     );
     expect(wrapper.find(".theme-toggle-button").attributes("aria-pressed")).toBe("true");
 
@@ -184,7 +187,7 @@ describe("App — high-contrast and theme toggles", () => {
     expect(localStorage.getItem("breakglass-theme")).toBe("light");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(wrapper.find(".theme-toggle-button").attributes("aria-label")).toBe(
-      "High contrast mode is displaying dark theme. Click to select dark theme preference.",
+      "High contrast mode is enabled and uses a dark canvas. Click to select dark theme preference for standard mode.",
     );
     expect(wrapper.find(".theme-toggle-button").attributes("aria-pressed")).toBe("false");
     expect(wrapper.find(".theme-toggle-button").classes()).not.toContain("theme-dark");
@@ -193,5 +196,31 @@ describe("App — high-contrast and theme toggles", () => {
 
     expect(document.documentElement.hasAttribute("data-high-contrast")).toBe(false);
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("opens and closes the mobile fallback navigation", async () => {
+    useUser().value = {
+      expired: false,
+      profile: {
+        email: "ops@example.com",
+      },
+    } as ReturnType<typeof useUser>["value"];
+    wrapper = mountApp();
+
+    const trigger = wrapper.find(".mobile-nav-trigger");
+    expect(trigger.exists()).toBe(true);
+    expect(trigger.attributes("aria-expanded")).toBe("false");
+    expect(wrapper.find(".mobile-nav-fallback").classes()).not.toContain("mobile-nav-fallback--open");
+
+    await trigger.trigger("click");
+
+    expect(trigger.attributes("aria-expanded")).toBe("true");
+    expect(wrapper.find(".mobile-nav-fallback").classes()).toContain("mobile-nav-fallback--open");
+    expect(wrapper.findAll(".mobile-nav-fallback__link")).toHaveLength(6);
+
+    await wrapper.findAll(".mobile-nav-fallback__link")[1].trigger("click");
+
+    expect(trigger.attributes("aria-expanded")).toBe("false");
+    expect(wrapper.find(".mobile-nav-fallback").classes()).not.toContain("mobile-nav-fallback--open");
   });
 });

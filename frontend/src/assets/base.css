@@ -356,10 +356,8 @@ scale-dropdown::part(combobox-label) {
  * Scale internally computes #f61488 which only achieves 3.9:1 against
  * white text (fails AA). Pinning to #e20074 gives 4.68:1 (AA).
  * Not applied in neutral/OSS which uses Scale's default purple. */
-:root:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
-:root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
-:root[data-high-contrast="true"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
-:root[data-high-contrast="true"][data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary) {
+:root:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary),
+:root[data-theme="dark"]:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-button::part(variant-primary) {
   background-color: #e20074 !important;
 }
 
@@ -369,10 +367,43 @@ scale-dropdown::part(combobox-label) {
   border: 2px solid #000000 !important;
 }
 
+:root[data-high-contrast="true"] scale-button[variant="primary"]::part(button),
+:root[data-high-contrast="true"] scale-button[variant="primary"]::part(base),
+:root[data-high-contrast="true"] scale-button:not([variant])::part(button),
+:root[data-high-contrast="true"] scale-button:not([variant])::part(base) {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border-color: #000000 !important;
+}
+
 :root[data-high-contrast="true"][data-theme="dark"] scale-button::part(variant-primary) {
   background-color: #ffffff !important;
   color: #000000 !important;
   border: 2px solid #ffffff !important;
+}
+
+:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"]::part(button),
+:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"]::part(base),
+:root[data-high-contrast="true"][data-theme="dark"] scale-button:not([variant])::part(button),
+:root[data-high-contrast="true"][data-theme="dark"] scale-button:not([variant])::part(base) {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  border-color: #ffffff !important;
+}
+
+/* Keep custom slotted button labels aligned with the high-contrast primary foreground. */
+:root[data-high-contrast="true"] scale-button[variant="primary"] .action-button__label,
+:root[data-high-contrast="true"] scale-button[variant="primary"] .action-button__icon,
+:root[data-high-contrast="true"] scale-button[variant="primary"] > *,
+:root[data-high-contrast="true"] scale-button:not([variant]) > * {
+  color: #ffffff !important;
+}
+
+:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"] .action-button__label,
+:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"] .action-button__icon,
+:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"] > *,
+:root[data-high-contrast="true"][data-theme="dark"] scale-button:not([variant]) > * {
+  color: #000000 !important;
 }
 
 /* AAA contrast: lighten ghost button text in dark mode for 7:1 on dark bg */
@@ -519,6 +550,16 @@ scale-telekom-nav-item:not(:defined)[aria-current="page"] > a {
   font-weight: 700;
 }
 
+@media (max-width: 1039px) {
+  scale-telekom-nav-list:not(:defined)[variant="main-nav"] {
+    display: none;
+  }
+
+  scale-telekom-header:not(:defined) {
+    justify-content: space-between;
+  }
+}
+
 :root[data-theme="dark"] scale-telekom-header:not(:defined) {
   background: var(--telekom-color-background-canvas);
   border-bottom-color: var(--telekom-color-primary-standard);
@@ -647,15 +688,20 @@ select:focus {
 }
 
 .sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  position: absolute !important;
+  width: 1px !important;
+  min-width: 1px !important;
+  max-width: 1px !important;
+  height: 1px !important;
+  min-height: 1px !important;
+  max-height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 /* ============================================

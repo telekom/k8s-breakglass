@@ -34,9 +34,15 @@ const theme = ref<Theme>(getInitialTheme());
 const highContrast = ref(getInitialHighContrast());
 const nextTheme = computed<Theme>(() => (theme.value === "dark" ? "light" : "dark"));
 const isDarkThemePreference = computed(() => theme.value === "dark");
+const themeToggleTitle = computed(() => {
+  if (highContrast.value) {
+    return `Select ${nextTheme.value} theme preference for standard mode`;
+  }
+  return theme.value === "dark" ? "Switch to light mode" : "Switch to dark mode";
+});
 const themeToggleAriaLabel = computed(() => {
   if (highContrast.value) {
-    return `High contrast mode is displaying dark theme. Click to select ${nextTheme.value} theme preference.`;
+    return `High contrast mode is enabled and uses a dark canvas. Click to select ${nextTheme.value} theme preference for standard mode.`;
   }
   return `${theme.value === "dark" ? "Dark" : "Light"} theme selected. Click to select ${nextTheme.value} theme.`;
 });
@@ -229,6 +235,7 @@ const userEmail = computed(() => user.value?.profile.email || "");
 const profileMenuRef = ref<HTMLElement | null>(null);
 type NavFlyoutElement = HTMLElement & { expanded: boolean };
 const mobileNavFlyoutRef = ref<NavFlyoutElement | null>(null);
+const mobileNavOpen = ref(false);
 
 const profileMenuLabel = computed(() => userDisplayName.value || userEmail.value || "Account");
 const profileMenuAriaLabel = computed(() => {
@@ -294,8 +301,16 @@ function handlePrimaryNavClick(event: Event, item: PrimaryNavItem) {
 }
 
 function closeMobileNav() {
+  mobileNavOpen.value = false;
   if (mobileNavFlyoutRef.value) {
     mobileNavFlyoutRef.value.expanded = false;
+  }
+}
+
+function toggleMobileNav() {
+  mobileNavOpen.value = !mobileNavOpen.value;
+  if (mobileNavFlyoutRef.value) {
+    mobileNavFlyoutRef.value.expanded = mobileNavOpen.value;
   }
 }
 
@@ -462,7 +477,7 @@ watch(
             <button
               type="button"
               :class="['theme-toggle-button', { 'theme-dark': isDarkThemePreference }]"
-              :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              :title="themeToggleTitle"
               :aria-label="themeToggleAriaLabel"
               :aria-pressed="isDarkThemePreference"
               @click="toggleTheme"
@@ -508,7 +523,14 @@ watch(
             </scale-telekom-nav-item>
 
             <scale-telekom-nav-item class="mobile-nav-item">
-              <button type="button" class="mobile-nav-trigger" aria-label="Open navigation menu">
+              <button
+                type="button"
+                class="mobile-nav-trigger"
+                aria-label="Open navigation menu"
+                aria-controls="mobile-nav-fallback"
+                :aria-expanded="mobileNavOpen"
+                @click="toggleMobileNav"
+              >
                 <scale-icon-action-menu decorative></scale-icon-action-menu>
               </button>
               <scale-telekom-nav-flyout ref="mobileNavFlyoutRef" variant="mobile">
@@ -553,6 +575,47 @@ watch(
                   </scale-telekom-mobile-menu>
                 </scale-telekom-mobile-flyout-canvas>
               </scale-telekom-nav-flyout>
+              <div
+                v-if="authenticated"
+                id="mobile-nav-fallback"
+                :class="['mobile-nav-fallback', { 'mobile-nav-fallback--open': mobileNavOpen }]"
+                role="menu"
+                aria-label="Main navigation"
+                @keydown.esc="closeMobileNav"
+              >
+                <a
+                  v-for="item in primaryNavItems"
+                  :key="`fallback-mobile-${item.id}`"
+                  class="mobile-nav-fallback__link"
+                  :class="{ 'mobile-nav-fallback__link--active': activeNavId === item.id }"
+                  :href="navHref(item)"
+                  :aria-current="activeNavId === item.id ? 'page' : undefined"
+                  role="menuitem"
+                  @click="handleMobileNavItemClick($event, item)"
+                >
+                  {{ item.label }}
+                </a>
+                <div class="mobile-nav-fallback__utilities">
+                  <button
+                    type="button"
+                    class="mobile-util-btn"
+                    :aria-pressed="theme === 'dark'"
+                    @click="toggleTheme"
+                  >
+                    <scale-icon-action-light-dark-mode size="24" :decorative="true"></scale-icon-action-light-dark-mode>
+                    <span>{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    :class="['mobile-util-btn', { active: highContrast }]"
+                    :aria-pressed="highContrast"
+                    @click="toggleHighContrast"
+                  >
+                    <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
+                    <span>High Contrast</span>
+                  </button>
+                </div>
+              </div>
             </scale-telekom-nav-item>
           </scale-telekom-nav-list>
         </div>
@@ -697,22 +760,77 @@ scale-telekom-header::part(app-name-text) {
 
 .mobile-nav-item {
   display: none;
+  position: relative;
 }
 
 .mobile-nav-trigger {
   display: inline-flex;
+  align-items: center;
   justify-content: center;
   border-radius: var(--radius-xs);
   border: 1px solid transparent;
   background: transparent;
   width: 60px;
+  min-height: 44px;
   color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
+}
+
+.mobile-nav-trigger:hover {
+  background-color: var(--surface-card-subtle);
+}
+
+.mobile-nav-fallback {
+  display: none;
 }
 
 @media (max-width: 1039px) {
   .mobile-nav-item {
     display: flex;
+  }
+
+  scale-telekom-nav-flyout:not(:defined) + .mobile-nav-fallback.mobile-nav-fallback--open {
+    position: fixed;
+    top: 3.75rem;
+    right: var(--space-md);
+    z-index: var(--z-header);
+    display: flex;
+    flex-direction: column;
+    width: min(22rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 4.5rem);
+    overflow-y: auto;
+    padding: var(--space-xs);
+    border: 1px solid var(--telekom-color-ui-border-standard);
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .mobile-nav-fallback__link {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    color: var(--telekom-color-text-and-icon-standard);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .mobile-nav-fallback__link:hover,
+  .mobile-nav-fallback__link:focus-visible {
+    background: var(--surface-card-subtle);
+  }
+
+  .mobile-nav-fallback__link--active {
+    color: var(--telekom-color-primary-standard);
+    font-weight: 700;
+  }
+
+  .mobile-nav-fallback__utilities {
+    margin-top: var(--space-xs);
+    padding-top: var(--space-xs);
+    border-top: 1px solid var(--telekom-color-ui-border-standard);
   }
 }
 </style>

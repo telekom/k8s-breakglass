@@ -41,12 +41,12 @@ Built on `--scl-spacing-*` primitives (2 · 4 · 8 · 12 · 16 · 24 · 32 · 40
 |-------|---------|-------|-----|
 | `--space-2xs` | `--scl-spacing-2` | 2 px | hairline gaps |
 | `--space-xs` | `--scl-spacing-4` | 4 px | tight internal padding |
-| `--space-sm` | `--scl-spacing-12` | 12 px | chip padding, small gaps |
-| `--space-md` | `--scl-spacing-16` | 16 px | default internal gaps |
-| `--space-lg` | `--scl-spacing-24` | 24 px | section gaps |
-| `--space-xl` | `--scl-spacing-32` | 32 px | large gaps, card padding |
-| `--space-2xl` | `--scl-spacing-48` | 48 px | section separation |
-| `--space-3xl` | `--scl-spacing-64` | 64 px | page-level gaps |
+| `--space-sm` | `--scl-spacing-8` | 8 px | chip padding, small gaps |
+| `--space-md` | `--scl-spacing-12` | 12 px | default internal gaps |
+| `--space-lg` | `--scl-spacing-16` | 16 px | section gaps |
+| `--space-xl` | `--scl-spacing-24` | 24 px | large gaps, card padding |
+| `--space-2xl` | `--scl-spacing-32` | 32 px | section separation |
+| `--space-3xl` | `--scl-spacing-48` | 48 px | page-level gaps |
 
 #### Contextual aliases
 
@@ -159,11 +159,10 @@ Theme switching is controlled by HTML attributes and system media queries. The a
 |-------|-----------|
 | Light (default) | `:root` or `[data-theme="light"][data-mode="light"]` on `<html>` |
 | Dark | `[data-theme="dark"][data-mode="dark"]` on `<html>` |
-| High-contrast light | `[data-high-contrast="true"]` on `<html>` |
-| High-contrast dark | `[data-high-contrast="true"][data-theme="dark"][data-mode="dark"]` on `<html>` |
+| High-contrast | `[data-high-contrast="true"][data-theme="dark"][data-mode="dark"]` on `<html>` |
 | Windows forced-colors | `@media (forced-colors: active)` — automatic, no JS required |
 
-All four theme combinations have full token coverage. The forced-colors layer remaps every surface, border, chip, and accent token to CSS system color keywords (`Canvas`, `CanvasText`, `ButtonText`, `Highlight`, `GrayText`, `LinkText`) so the OS palette takes over without layout breakage.
+The UI exposes light, dark, and high-contrast modes. High contrast intentionally forces a dark canvas so Scale shadow-DOM tokens and app-level text/background tokens resolve to the same contrast model. The forced-colors layer remaps every surface, border, chip, and accent token to CSS system color keywords (`Canvas`, `CanvasText`, `ButtonText`, `Highlight`, `GrayText`, `LinkText`) so the OS palette takes over without layout breakage.
 
 ---
 
@@ -174,7 +173,7 @@ Full details and contrast ratios are in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS
 | # | What | Why |
 |---|------|-----|
 | 1 | `--telekom-color-text-and-icon-additional` overridden with `!important` | Scale default (`#595959`) fails WCAG AAA 7 : 1 on white |
-| 2 | Primary button background pinned to `#e20074`, with black/white high-contrast overrides | Scale's computed `#f61488` fails WCAG AA on white text; high-contrast buttons use maximum-contrast foreground/background pairs |
+| 2 | Primary button background pinned to `#e20074`, with black/white high-contrast overrides for both shadow-DOM parts and custom slotted labels | Scale's computed `#f61488` fails WCAG AA on white text; high-contrast buttons use maximum-contrast foreground/background pairs |
 | 3 | Active nav link uses `#8e004a` (light) / `#e20074` (dark) | Scale's `#e20074` fails AA on the nav active-surface background |
 | 4 | Chip/tag text colours darkened (light) or lightened (dark) | Scale functional colours target AA; we need AAA on tinted backgrounds |
 | 5 | Ghost button text in dark: `#93a8ff` | Scale default fails AAA on `#1c1c1e` |
@@ -529,7 +528,7 @@ All `border: 1px dashed` styles in base.css and EmptyState.vue updated to `borde
 
 #### Neutral header fallback
 
-CSS `:not(:defined)` rules provide a fully functional header, nav, and app shell layout when Scale Telekom components aren't registered (neutral/OSS package). Includes sticky positioning, primary-colour accent border, dark mode support, and mobile responsiveness.
+CSS `:not(:defined)` rules provide a functional header, app shell layout, and desktop/mobile navigation when Scale Telekom components aren't registered (neutral/OSS package). Includes sticky positioning, primary-colour accent border, dark mode support, a constrained mobile fallback menu, and overflow protection below the mobile breakpoint.
 
 #### Decorative gradient removed
 
