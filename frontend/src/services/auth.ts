@@ -10,6 +10,7 @@ import { debug, info as logInfo, warn, error as logError } from "@/services/logg
 const DIRECT_AUTHORITY_STORAGE_KEY = "oidc_direct_authority";
 const CURRENT_IDP_SESSION_STORAGE_KEY = "oidc_idp_name";
 const CURRENT_IDP_LOCAL_STORAGE_KEY = "breakglass_current_idp_name";
+const ACTIVE_OIDC_USER_STORAGE_KEY = "breakglass_active_oidc_user_storage_key";
 const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
 export type TokenPersistenceMode = "session" | "persistent";
 const isBrowser = typeof window !== "undefined";
@@ -271,6 +272,21 @@ function getCurrentDirectAuthority(): string | undefined {
   return getBrowserStorageItem("sessionStorage", DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
+function buildOIDCUserStorageKey(settings: { authority?: string; client_id?: string }): string | undefined {
+  if (!settings.authority || !settings.client_id) {
+    return undefined;
+  }
+  return `oidc.user:${settings.authority}:${settings.client_id}`;
+}
+
+function setActiveOIDCUserStorageKey(key: string | undefined) {
+  setBrowserStorageItem("sessionStorage", ACTIVE_OIDC_USER_STORAGE_KEY, key);
+}
+
+function getStoredActiveOIDCUserStorageKey(): string | undefined {
+  return getBrowserStorageItem("sessionStorage", ACTIVE_OIDC_USER_STORAGE_KEY) || undefined;
+}
+
 function setStoredIdentityProviderName(idpName: string | undefined) {
   setBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY, idpName);
   if (shouldUseLocalOIDCStorage()) {
@@ -494,6 +510,7 @@ export default class AuthService {
     this.currentIDPName = state?.idpName;
     currentIDPName.value = state?.idpName;
     setStoredIdentityProviderName(state?.idpName);
+    setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(this.userManager.settings));
   }
 
   private clearMockSession() {
@@ -505,6 +522,7 @@ export default class AuthService {
     this.currentIDPName = undefined;
     currentIDPName.value = undefined;
     setStoredIdentityProviderName(undefined);
+    setActiveOIDCUserStorageKey(undefined);
   }
 
   public async getUser(): Promise<User | null> {
@@ -576,6 +594,7 @@ export default class AuthService {
         // Get or create UserManager for this IDP with the proxy authority
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
         const manager = this.getOrCreateUserManagerForIDP(state.idpName, proxyAuthority, oidcClientID, directAuthority);
+        setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(manager.settings));
 
         debug("AuthService", "About to initiate signin redirect for IDP:", {
           idpName: state.idpName,
@@ -607,6 +626,7 @@ export default class AuthService {
 
     debug("AuthService", "Logging in with default IDP (no specific IDP selected)");
     setStoredIdentityProviderName(undefined);
+    setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(this.userManager.settings));
     // Clear any previously set direct authority for default login
     setCurrentDirectAuthority(undefined);
     return this.userManager.signinRedirect({ state: resolveState(state) });
@@ -675,6 +695,19 @@ export default class AuthService {
     return this.currentIDPName ?? getStoredIdentityProviderName();
   }
 
+  public getActiveOIDCUserStorageKeys(): string[] {
+    const activeIDPName = this.getIdentityProviderName();
+    if (activeIDPName) {
+      const activeIDPManager = this.idpManagers.get(activeIDPName)?.manager;
+      const activeIDPKey = activeIDPManager ? buildOIDCUserStorageKey(activeIDPManager.settings) : undefined;
+      const storedActiveKey = getStoredActiveOIDCUserStorageKey();
+      return [...new Set([activeIDPKey, storedActiveKey].filter((key): key is string => !!key))];
+    }
+
+    const defaultKey = buildOIDCUserStorageKey(this.userManager.settings);
+    return defaultKey ? [defaultKey] : [];
+  }
+
   public logout(): Promise<void> {
     if (this.mockMode) {
       this.clearMockSession();
@@ -685,6 +718,7 @@ export default class AuthService {
     this.currentIDPName = undefined;
     currentIDPName.value = undefined;
     setStoredIdentityProviderName(undefined);
+    setActiveOIDCUserStorageKey(undefined);
     setCurrentDirectAuthority(undefined);
     return this.userManager.signoutRedirect();
   }
@@ -890,6 +924,7 @@ export default class AuthService {
         this.currentIDPName = restoredIdpName;
         currentIDPName.value = restoredIdpName;
         setStoredIdentityProviderName(restoredIdpName);
+        setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(candidate.manager.settings));
 
         return result;
       } catch (error) {
@@ -990,6 +1025,7 @@ export default class AuthService {
         this.currentIDPName = undefined;
         currentIDPName.value = undefined;
         setStoredIdentityProviderName(undefined);
+        setActiveOIDCUserStorageKey(undefined);
         setCurrentDirectAuthority(undefined);
       });
     }
@@ -1010,6 +1046,7 @@ export default class AuthService {
         this.currentIDPName = undefined;
         currentIDPName.value = undefined;
         setStoredIdentityProviderName(undefined);
+        setActiveOIDCUserStorageKey(undefined);
         setCurrentDirectAuthority(undefined);
         manager.removeUser().catch((error: unknown) => {
           logError("AuthService", "Failed to remove expired OIDC user", error);
@@ -1038,6 +1075,7 @@ export default class AuthService {
         this.currentIDPName = undefined;
         currentIDPName.value = undefined;
         setStoredIdentityProviderName(undefined);
+        setActiveOIDCUserStorageKey(undefined);
         setCurrentDirectAuthority(undefined);
       });
     }

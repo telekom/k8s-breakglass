@@ -247,7 +247,7 @@ The following patterns are stripped from text fields:
 ### OIDC Best Practices
 
 1. **Use short-lived tokens** - Configure your IDP to issue tokens with 5-15 minute expiry
-2. **Enable token refresh** - Allow token refresh for long-running sessions
+2. **Disable UI refresh tokens** - Do not issue `offline_access` or refresh tokens for breakglass UI sessions; use short access-token lifetimes and require explicit re-authentication instead
 3. **Validate audiences** - Ensure tokens are issued for the breakglass client
 4. **Use HTTPS** - Always use TLS for OIDC communication
 5. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
