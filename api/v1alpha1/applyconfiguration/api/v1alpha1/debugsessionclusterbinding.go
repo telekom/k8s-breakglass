@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -36,6 +39,47 @@ func DebugSessionClusterBinding(name, namespace string) *DebugSessionClusterBind
 	b.WithKind("DebugSessionClusterBinding")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractDebugSessionClusterBindingFrom extracts the applied configuration owned by fieldManager from
+// debugSessionClusterBinding for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// debugSessionClusterBinding must be a unmodified DebugSessionClusterBinding API object that was retrieved from the Kubernetes API.
+// ExtractDebugSessionClusterBindingFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDebugSessionClusterBindingFrom(debugSessionClusterBinding *apiv1alpha1.DebugSessionClusterBinding, fieldManager string, subresource string) (*DebugSessionClusterBindingApplyConfiguration, error) {
+	b := &DebugSessionClusterBindingApplyConfiguration{}
+	err := managedfields.ExtractInto(debugSessionClusterBinding, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBinding"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(debugSessionClusterBinding.Name)
+	b.WithNamespace(debugSessionClusterBinding.Namespace)
+
+	b.WithKind("DebugSessionClusterBinding")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractDebugSessionClusterBinding extracts the applied configuration owned by fieldManager from
+// debugSessionClusterBinding. If no managedFields are found in debugSessionClusterBinding for fieldManager, a
+// DebugSessionClusterBindingApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// debugSessionClusterBinding must be a unmodified DebugSessionClusterBinding API object that was retrieved from the Kubernetes API.
+// ExtractDebugSessionClusterBinding provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDebugSessionClusterBinding(debugSessionClusterBinding *apiv1alpha1.DebugSessionClusterBinding, fieldManager string) (*DebugSessionClusterBindingApplyConfiguration, error) {
+	return ExtractDebugSessionClusterBindingFrom(debugSessionClusterBinding, fieldManager, "")
+}
+
+// ExtractDebugSessionClusterBindingStatus extracts the applied configuration owned by fieldManager from
+// debugSessionClusterBinding for the status subresource.
+func ExtractDebugSessionClusterBindingStatus(debugSessionClusterBinding *apiv1alpha1.DebugSessionClusterBinding, fieldManager string) (*DebugSessionClusterBindingApplyConfiguration, error) {
+	return ExtractDebugSessionClusterBindingFrom(debugSessionClusterBinding, fieldManager, "status")
 }
 
 func (b DebugSessionClusterBindingApplyConfiguration) IsApplyConfiguration() {}

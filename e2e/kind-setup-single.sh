@@ -47,7 +47,7 @@ MAILHOG_UI_PORT=${MAILHOG_UI_PORT:-8025}
 # The breakglass controller exposes Prometheus metrics on port 8081
 
 # --- Kind node image ---
-KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.34.0}
+KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
 
 # --- TLS / temp directories (kept as before, but configurable) ---
 TDIR=${TDIR:-}
@@ -829,7 +829,7 @@ contexts:
 EOF
 
 AUTHN_API_VER=apiserver.config.k8s.io/v1beta1
-if [[ "$KIND_NODE_IMAGE" =~ v1\.34 ]]; then AUTHN_API_VER=apiserver.config.k8s.io/v1; fi
+if [[ "$KIND_NODE_IMAGE" =~ v1\.3[4-9]|v1\.[4-9][0-9] ]]; then AUTHN_API_VER=apiserver.config.k8s.io/v1; fi
 CA_INLINE=$(sed 's/^/        /' "$TLS_DIR/ca.crt")
 cat > "$AUTHN_FILE" <<EOF
 apiVersion: ${AUTHN_API_VER}

@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -35,6 +38,47 @@ func BreakglassSession(name, namespace string) *BreakglassSessionApplyConfigurat
 	b.WithKind("BreakglassSession")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractBreakglassSessionFrom extracts the applied configuration owned by fieldManager from
+// breakglassSession for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// breakglassSession must be a unmodified BreakglassSession API object that was retrieved from the Kubernetes API.
+// ExtractBreakglassSessionFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractBreakglassSessionFrom(breakglassSession *apiv1alpha1.BreakglassSession, fieldManager string, subresource string) (*BreakglassSessionApplyConfiguration, error) {
+	b := &BreakglassSessionApplyConfiguration{}
+	err := managedfields.ExtractInto(breakglassSession, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassSession"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(breakglassSession.Name)
+	b.WithNamespace(breakglassSession.Namespace)
+
+	b.WithKind("BreakglassSession")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractBreakglassSession extracts the applied configuration owned by fieldManager from
+// breakglassSession. If no managedFields are found in breakglassSession for fieldManager, a
+// BreakglassSessionApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// breakglassSession must be a unmodified BreakglassSession API object that was retrieved from the Kubernetes API.
+// ExtractBreakglassSession provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractBreakglassSession(breakglassSession *apiv1alpha1.BreakglassSession, fieldManager string) (*BreakglassSessionApplyConfiguration, error) {
+	return ExtractBreakglassSessionFrom(breakglassSession, fieldManager, "")
+}
+
+// ExtractBreakglassSessionStatus extracts the applied configuration owned by fieldManager from
+// breakglassSession for the status subresource.
+func ExtractBreakglassSessionStatus(breakglassSession *apiv1alpha1.BreakglassSession, fieldManager string) (*BreakglassSessionApplyConfiguration, error) {
+	return ExtractBreakglassSessionFrom(breakglassSession, fieldManager, "status")
 }
 
 func (b BreakglassSessionApplyConfiguration) IsApplyConfiguration() {}

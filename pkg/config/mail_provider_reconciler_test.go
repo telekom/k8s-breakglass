@@ -73,8 +73,7 @@ func TestMailProviderReconciler_ReconcileNotFound(t *testing.T) {
 
 	req := reconcile.Request{
 		NamespacedName: types.NamespacedName{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 	}
 
@@ -93,8 +92,7 @@ func TestMailProviderReconciler_ReconcileDisabled(t *testing.T) {
 
 	mp := &breakglassv1alpha1.MailProvider{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 		Spec: breakglassv1alpha1.MailProviderSpec{
 			Disabled: true,
@@ -117,8 +115,7 @@ func TestMailProviderReconciler_ReconcileDisabled(t *testing.T) {
 
 	req := reconcile.Request{
 		NamespacedName: types.NamespacedName{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 	}
 
@@ -128,7 +125,7 @@ func TestMailProviderReconciler_ReconcileDisabled(t *testing.T) {
 
 	// Verify status was updated
 	var updated breakglassv1alpha1.MailProvider
-	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &updated)
+	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &updated)
 	require.NoError(t, err)
 
 	// Check that Ready condition is False with reason "Disabled"
@@ -340,8 +337,7 @@ func TestMailProviderReconciler_UpdateStatusHealthy(t *testing.T) {
 
 	mp := &breakglassv1alpha1.MailProvider{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 		Spec: breakglassv1alpha1.MailProviderSpec{
 			SMTP: breakglassv1alpha1.SMTPConfig{
@@ -359,7 +355,7 @@ func TestMailProviderReconciler_UpdateStatusHealthy(t *testing.T) {
 
 	// Get a fresh copy for status update
 	var fresh breakglassv1alpha1.MailProvider
-	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &fresh)
+	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &fresh)
 	require.NoError(t, err)
 
 	result, err := reconciler.updateStatusHealthy(context.Background(), &fresh)
@@ -368,7 +364,7 @@ func TestMailProviderReconciler_UpdateStatusHealthy(t *testing.T) {
 
 	// Verify status was updated
 	var updated breakglassv1alpha1.MailProvider
-	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &updated)
+	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &updated)
 	require.NoError(t, err)
 
 	// Check Ready condition is True
@@ -395,8 +391,7 @@ func TestMailProviderReconciler_UpdateStatusUnhealthy(t *testing.T) {
 
 	mp := &breakglassv1alpha1.MailProvider{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 		Spec: breakglassv1alpha1.MailProviderSpec{
 			SMTP: breakglassv1alpha1.SMTPConfig{
@@ -414,7 +409,7 @@ func TestMailProviderReconciler_UpdateStatusUnhealthy(t *testing.T) {
 
 	// Get a fresh copy for status update
 	var fresh breakglassv1alpha1.MailProvider
-	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &fresh)
+	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &fresh)
 	require.NoError(t, err)
 
 	testErr := assert.AnError
@@ -424,7 +419,7 @@ func TestMailProviderReconciler_UpdateStatusUnhealthy(t *testing.T) {
 
 	// Verify status was updated
 	var updated breakglassv1alpha1.MailProvider
-	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &updated)
+	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &updated)
 	require.NoError(t, err)
 
 	// Check Ready condition is False
@@ -452,8 +447,7 @@ func TestMailProviderReconciler_UpdateStatusDisabled(t *testing.T) {
 
 	mp := &breakglassv1alpha1.MailProvider{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 		Spec: breakglassv1alpha1.MailProviderSpec{
 			Disabled: true,
@@ -472,7 +466,7 @@ func TestMailProviderReconciler_UpdateStatusDisabled(t *testing.T) {
 
 	// Get a fresh copy for status update
 	var fresh breakglassv1alpha1.MailProvider
-	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &fresh)
+	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &fresh)
 	require.NoError(t, err)
 
 	result, err := reconciler.updateStatusDisabled(context.Background(), &fresh)
@@ -481,7 +475,7 @@ func TestMailProviderReconciler_UpdateStatusDisabled(t *testing.T) {
 
 	// Verify status was updated
 	var updated breakglassv1alpha1.MailProvider
-	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &updated)
+	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &updated)
 	require.NoError(t, err)
 
 	// Check Ready condition is False with reason "Disabled"
@@ -511,8 +505,7 @@ func TestMailProviderReconciler_WithPasswordRef(t *testing.T) {
 
 	mp := &breakglassv1alpha1.MailProvider{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 		Spec: breakglassv1alpha1.MailProviderSpec{
 			SMTP: breakglassv1alpha1.SMTPConfig{
@@ -536,7 +529,7 @@ func TestMailProviderReconciler_WithPasswordRef(t *testing.T) {
 
 	// Get a fresh copy
 	var fresh breakglassv1alpha1.MailProvider
-	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &fresh)
+	err := cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &fresh)
 	require.NoError(t, err)
 
 	// Update status with password loaded condition
@@ -547,7 +540,7 @@ func TestMailProviderReconciler_WithPasswordRef(t *testing.T) {
 
 	// Verify PasswordLoaded condition was added
 	var updated breakglassv1alpha1.MailProvider
-	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider", Namespace: "default"}, &updated)
+	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &updated)
 	require.NoError(t, err)
 
 	passwordLoadedFound := false
@@ -566,8 +559,7 @@ func TestMailProviderReconciler_OnMailProviderChangeCallback(t *testing.T) {
 
 	mp := &breakglassv1alpha1.MailProvider{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 		Spec: breakglassv1alpha1.MailProviderSpec{
 			Disabled: true,
@@ -598,8 +590,7 @@ func TestMailProviderReconciler_OnMailProviderChangeCallback(t *testing.T) {
 
 	req := reconcile.Request{
 		NamespacedName: types.NamespacedName{
-			Name:      "test-provider",
-			Namespace: "default",
+			Name: "test-provider",
 		},
 	}
 

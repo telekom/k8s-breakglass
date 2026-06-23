@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.0
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: debugsessiontemplates.breakglass.t-caas.telekom.com
 spec:
   group: breakglass.t-caas.telekom.com
@@ -1415,24 +1415,16 @@ spec:
                         in the UI.
                       type: string
                     inputType:
-                      allOf:
-                      - enum:
-                        - boolean
-                        - text
-                        - number
-                        - storageSize
-                        - select
-                        - multiSelect
-                      - enum:
-                        - boolean
-                        - text
-                        - number
-                        - storageSize
-                        - select
-                        - multiSelect
                       default: text
                       description: inputType defines the UI input control and value
                         type.
+                      enum:
+                      - boolean
+                      - text
+                      - number
+                      - storageSize
+                      - select
+                      - multiSelect
                       type: string
                     name:
                       description: |-
@@ -1637,20 +1629,14 @@ spec:
                                         minLength: 1
                                         type: string
                                       operator:
-                                        allOf:
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
                                         description: |-
                                           operator represents a key's relationship to a set of values.
                                           Valid operators: In, NotIn, Exists, DoesNotExist.
+                                        enum:
+                                        - In
+                                        - NotIn
+                                        - Exists
+                                        - DoesNotExist
                                         type: string
                                       values:
                                         description: |-
@@ -1716,20 +1702,14 @@ spec:
                                         minLength: 1
                                         type: string
                                       operator:
-                                        allOf:
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
                                         description: |-
                                           operator represents a key's relationship to a set of values.
                                           Valid operators: In, NotIn, Exists, DoesNotExist.
+                                        enum:
+                                        - In
+                                        - NotIn
+                                        - Exists
+                                        - DoesNotExist
                                         type: string
                                       values:
                                         description: |-
@@ -1856,20 +1836,14 @@ spec:
                                         minLength: 1
                                         type: string
                                       operator:
-                                        allOf:
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
                                         description: |-
                                           operator represents a key's relationship to a set of values.
                                           Valid operators: In, NotIn, Exists, DoesNotExist.
+                                        enum:
+                                        - In
+                                        - NotIn
+                                        - Exists
+                                        - DoesNotExist
                                         type: string
                                       values:
                                         description: |-
@@ -1935,20 +1909,14 @@ spec:
                                         minLength: 1
                                         type: string
                                       operator:
-                                        allOf:
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
-                                        - enum:
-                                          - In
-                                          - NotIn
-                                          - Exists
-                                          - DoesNotExist
                                         description: |-
                                           operator represents a key's relationship to a set of values.
                                           Valid operators: In, NotIn, Exists, DoesNotExist.
+                                        enum:
+                                        - In
+                                        - NotIn
+                                        - Exists
+                                        - DoesNotExist
                                         type: string
                                       values:
                                         description: |-
@@ -2062,20 +2030,14 @@ spec:
                                     minLength: 1
                                     type: string
                                   operator:
-                                    allOf:
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
                                     description: |-
                                       operator represents a key's relationship to a set of values.
                                       Valid operators: In, NotIn, Exists, DoesNotExist.
+                                    enum:
+                                    - In
+                                    - NotIn
+                                    - Exists
+                                    - DoesNotExist
                                     type: string
                                   values:
                                     description: |-
@@ -2152,20 +2114,14 @@ spec:
                                     minLength: 1
                                     type: string
                                   operator:
-                                    allOf:
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
                                     description: |-
                                       operator represents a key's relationship to a set of values.
                                       Valid operators: In, NotIn, Exists, DoesNotExist.
+                                    enum:
+                                    - In
+                                    - NotIn
+                                    - Exists
+                                    - DoesNotExist
                                     type: string
                                   values:
                                     description: |-

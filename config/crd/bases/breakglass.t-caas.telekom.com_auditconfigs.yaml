@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.0
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: auditconfigs.breakglass.t-caas.telekom.com
 spec:
   group: breakglass.t-caas.telekom.com
@@ -121,20 +121,14 @@ spec:
                                     minLength: 1
                                     type: string
                                   operator:
-                                    allOf:
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
                                     description: |-
                                       operator represents a key's relationship to a set of values.
                                       Valid operators: In, NotIn, Exists, DoesNotExist.
+                                    enum:
+                                    - In
+                                    - NotIn
+                                    - Exists
+                                    - DoesNotExist
                                     type: string
                                   values:
                                     description: |-
@@ -219,20 +213,14 @@ spec:
                                     minLength: 1
                                     type: string
                                   operator:
-                                    allOf:
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
-                                    - enum:
-                                      - In
-                                      - NotIn
-                                      - Exists
-                                      - DoesNotExist
                                     description: |-
                                       operator represents a key's relationship to a set of values.
                                       Valid operators: In, NotIn, Exists, DoesNotExist.
+                                    enum:
+                                    - In
+                                    - NotIn
+                                    - Exists
+                                    - DoesNotExist
                                     type: string
                                   values:
                                     description: |-
@@ -523,18 +511,12 @@ spec:
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     type:
-                      allOf:
-                      - enum:
-                        - log
-                        - webhook
-                        - kafka
-                        - kubernetes
-                      - enum:
-                        - log
-                        - webhook
-                        - kafka
-                        - kubernetes
                       description: Type is the sink type.
+                      enum:
+                      - log
+                      - webhook
+                      - kafka
+                      - kubernetes
                       type: string
                     webhook:
                       description: Webhook configuration (required when type=webhook).

@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -27,13 +30,52 @@ type DenyPolicyApplyConfiguration struct {
 
 // DenyPolicy constructs a declarative configuration of the DenyPolicy type for use with
 // apply.
-func DenyPolicy(name, namespace string) *DenyPolicyApplyConfiguration {
+func DenyPolicy(name string) *DenyPolicyApplyConfiguration {
 	b := &DenyPolicyApplyConfiguration{}
 	b.WithName(name)
-	b.WithNamespace(namespace)
 	b.WithKind("DenyPolicy")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractDenyPolicyFrom extracts the applied configuration owned by fieldManager from
+// denyPolicy for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// denyPolicy must be a unmodified DenyPolicy API object that was retrieved from the Kubernetes API.
+// ExtractDenyPolicyFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDenyPolicyFrom(denyPolicy *apiv1alpha1.DenyPolicy, fieldManager string, subresource string) (*DenyPolicyApplyConfiguration, error) {
+	b := &DenyPolicyApplyConfiguration{}
+	err := managedfields.ExtractInto(denyPolicy, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicy"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(denyPolicy.Name)
+
+	b.WithKind("DenyPolicy")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractDenyPolicy extracts the applied configuration owned by fieldManager from
+// denyPolicy. If no managedFields are found in denyPolicy for fieldManager, a
+// DenyPolicyApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// denyPolicy must be a unmodified DenyPolicy API object that was retrieved from the Kubernetes API.
+// ExtractDenyPolicy provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDenyPolicy(denyPolicy *apiv1alpha1.DenyPolicy, fieldManager string) (*DenyPolicyApplyConfiguration, error) {
+	return ExtractDenyPolicyFrom(denyPolicy, fieldManager, "")
+}
+
+// ExtractDenyPolicyStatus extracts the applied configuration owned by fieldManager from
+// denyPolicy for the status subresource.
+func ExtractDenyPolicyStatus(denyPolicy *apiv1alpha1.DenyPolicy, fieldManager string) (*DenyPolicyApplyConfiguration, error) {
+	return ExtractDenyPolicyFrom(denyPolicy, fieldManager, "status")
 }
 
 func (b DenyPolicyApplyConfiguration) IsApplyConfiguration() {}

@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -34,6 +37,47 @@ func ClusterConfig(name, namespace string) *ClusterConfigApplyConfiguration {
 	b.WithKind("ClusterConfig")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractClusterConfigFrom extracts the applied configuration owned by fieldManager from
+// clusterConfig for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// clusterConfig must be a unmodified ClusterConfig API object that was retrieved from the Kubernetes API.
+// ExtractClusterConfigFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractClusterConfigFrom(clusterConfig *apiv1alpha1.ClusterConfig, fieldManager string, subresource string) (*ClusterConfigApplyConfiguration, error) {
+	b := &ClusterConfigApplyConfiguration{}
+	err := managedfields.ExtractInto(clusterConfig, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfig"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(clusterConfig.Name)
+	b.WithNamespace(clusterConfig.Namespace)
+
+	b.WithKind("ClusterConfig")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractClusterConfig extracts the applied configuration owned by fieldManager from
+// clusterConfig. If no managedFields are found in clusterConfig for fieldManager, a
+// ClusterConfigApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// clusterConfig must be a unmodified ClusterConfig API object that was retrieved from the Kubernetes API.
+// ExtractClusterConfig provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractClusterConfig(clusterConfig *apiv1alpha1.ClusterConfig, fieldManager string) (*ClusterConfigApplyConfiguration, error) {
+	return ExtractClusterConfigFrom(clusterConfig, fieldManager, "")
+}
+
+// ExtractClusterConfigStatus extracts the applied configuration owned by fieldManager from
+// clusterConfig for the status subresource.
+func ExtractClusterConfigStatus(clusterConfig *apiv1alpha1.ClusterConfig, fieldManager string) (*ClusterConfigApplyConfiguration, error) {
+	return ExtractClusterConfigFrom(clusterConfig, fieldManager, "status")
 }
 
 func (b ClusterConfigApplyConfiguration) IsApplyConfiguration() {}

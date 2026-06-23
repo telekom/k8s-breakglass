@@ -9,8 +9,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	internal "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -35,6 +38,47 @@ func DebugSession(name, namespace string) *DebugSessionApplyConfiguration {
 	b.WithKind("DebugSession")
 	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
 	return b
+}
+
+// ExtractDebugSessionFrom extracts the applied configuration owned by fieldManager from
+// debugSession for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// debugSession must be a unmodified DebugSession API object that was retrieved from the Kubernetes API.
+// ExtractDebugSessionFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDebugSessionFrom(debugSession *apiv1alpha1.DebugSession, fieldManager string, subresource string) (*DebugSessionApplyConfiguration, error) {
+	b := &DebugSessionApplyConfiguration{}
+	err := managedfields.ExtractInto(debugSession, internal.Parser().Type("com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSession"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(debugSession.Name)
+	b.WithNamespace(debugSession.Namespace)
+
+	b.WithKind("DebugSession")
+	b.WithAPIVersion("breakglass.t-caas.telekom.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractDebugSession extracts the applied configuration owned by fieldManager from
+// debugSession. If no managedFields are found in debugSession for fieldManager, a
+// DebugSessionApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// debugSession must be a unmodified DebugSession API object that was retrieved from the Kubernetes API.
+// ExtractDebugSession provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDebugSession(debugSession *apiv1alpha1.DebugSession, fieldManager string) (*DebugSessionApplyConfiguration, error) {
+	return ExtractDebugSessionFrom(debugSession, fieldManager, "")
+}
+
+// ExtractDebugSessionStatus extracts the applied configuration owned by fieldManager from
+// debugSession for the status subresource.
+func ExtractDebugSessionStatus(debugSession *apiv1alpha1.DebugSession, fieldManager string) (*DebugSessionApplyConfiguration, error) {
+	return ExtractDebugSessionFrom(debugSession, fieldManager, "status")
 }
 
 func (b DebugSessionApplyConfiguration) IsApplyConfiguration() {}

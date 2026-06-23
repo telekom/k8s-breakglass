@@ -17,8 +17,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  KIND_VERSION: 'v0.31.0'
-  KIND_NODE_IMAGE: 'kindest/node:v1.34.3@sha256:08497ee19eace7b4b5348db5c6a1591d7752b164530a36f855cb0f2bdcbadd48'
+  KIND_VERSION: 'v0.32.0'
+  KIND_NODE_IMAGE: 'kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -365,7 +365,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
         with:
-          version: v4.0.4
+          version: v4.2.2
       - name: Lint Helm charts
         run: |
           helm lint charts/escalation-config
