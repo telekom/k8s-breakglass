@@ -247,6 +247,7 @@ const scaleMobileFlyoutDefined = ref(false);
 const mobileNavControls = computed(() =>
   scaleMobileFlyoutDefined.value ? "mobile-nav-flyout" : "mobile-nav-fallback",
 );
+const mobileFlyoutExpanded = computed(() => (scaleMobileFlyoutDefined.value ? undefined : mobileNavOpen.value));
 
 const profileMenuLabel = computed(() => userDisplayName.value || userEmail.value || "Account");
 const profileMenuAriaLabel = computed(() => {
@@ -324,6 +325,7 @@ function isScaleMobileFlyoutDefined() {
 
 function toggleMobileNav() {
   if (scaleMobileFlyoutDefined.value) {
+    // Scale owns hydrated flyout toggling through trigger-selector; scale-expanded mirrors state back.
     return;
   }
   mobileNavOpen.value = !mobileNavOpen.value;
@@ -568,7 +570,7 @@ watch(
                 ref="mobileNavFlyoutRef"
                 variant="mobile"
                 trigger-selector="#mobile-nav-trigger"
-                :expanded="mobileNavOpen"
+                :expanded="mobileFlyoutExpanded"
                 @scale-expanded="handleMobileFlyoutExpanded"
               >
                 <scale-telekom-mobile-flyout-canvas :app-name="brandingTitle" :app-name-link="homeHref">
