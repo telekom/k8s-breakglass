@@ -144,6 +144,7 @@ linters:
           - gocritic
         path: _test\.go$
     paths:
+      - "frontend/node_modules/.*"
       - "zz_generated.*\\.go$"
       - "_generated\\.go$"
       - ".*\\.pb\\.go$"
@@ -154,6 +155,7 @@ formatters:
     - goimports
   exclusions:
     paths:
+      - "frontend/node_modules/.*"
       - "zz_generated.*\\.go$"
       - "_generated\\.go$"
       - ".*\\.pb\\.go$"

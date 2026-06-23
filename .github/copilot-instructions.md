@@ -175,7 +175,7 @@ SKIP_BUILD=true \
 SKIP_PROXY=true \
 IMAGE=breakglass:e2e \
 UI_FLAVOUR=telekom \
-KIND_NODE_IMAGE=kindest/node:v1.34.3 \
+KIND_NODE_IMAGE=kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5 \
 ./e2e/kind-setup-single.sh
 ```
 
@@ -186,7 +186,7 @@ KIND_NODE_IMAGE=kindest/node:v1.34.3 \
 | `SKIP_PROXY` | `false` | Skip corporate proxy config (set `true` on macOS/local) |
 | `IMAGE` | `breakglass:e2e` | Docker image to deploy |
 | `UI_FLAVOUR` | `oss` | UI theme: `oss` (neutral) or `telekom` (branded) |
-| `KIND_NODE_IMAGE` | `kindest/node:v1.34.0` | Kubernetes version for kind |
+| `KIND_NODE_IMAGE` | `kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5` | Kubernetes version for kind |
 | `KIND_RETAIN_ON_FAILURE` | `false` | Keep cluster on setup failure for debugging |
 | `CLUSTER_NAME` | `breakglass-hub` | Kind cluster name |
 
@@ -478,4 +478,3 @@ kubectl logs -n breakglass-system deployment/breakglass-controller -c manager -f
 - **Good Practices**: https://book.kubebuilder.io/reference/good-practices.html
 - **API Conventions**: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md
 - **Markers Reference**: https://book.kubebuilder.io/reference/markers.html
-
