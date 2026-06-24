@@ -983,7 +983,7 @@ impersonation:
 
 **Requirements:**
 - The referenced ServiceAccount must exist
-- The breakglass controller needs impersonation permissions for this SA
+- The breakglass controller needs explicit impersonation permissions for this SA. The production base does not grant broad user/group impersonation.
 - RBAC for impersonation:
   ```yaml
   apiVersion: rbac.authorization.k8s.io/v1
