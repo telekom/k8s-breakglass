@@ -335,6 +335,27 @@ describe("VariableForm", () => {
   // Validation
   // -----------------------------------------------------------------
   describe("validation", () => {
+    it("emits validation-change when validation state changes", async () => {
+      const vars = [
+        textVar({
+          validation: {
+            pattern: "^[a-z]+$",
+            patternError: "Must be lowercase",
+          },
+        }),
+      ];
+      const wrapper = mountForm(vars, { myText: "lower" });
+
+      const firstEvents = wrapper.emitted("validation-change") || [];
+      expect(firstEvents[firstEvents.length - 1]).toEqual([true]);
+
+      await wrapper.setProps({ modelValue: { myText: "UPPER" } });
+      await flushPromises();
+
+      const updatedEvents = wrapper.emitted("validation-change") || [];
+      expect(updatedEvents[updatedEvents.length - 1]).toEqual([false]);
+    });
+
     it("exposes isValid as true when no required fields are missing", () => {
       const vars = [textVar({ required: false })];
       const wrapper = mountForm(vars);

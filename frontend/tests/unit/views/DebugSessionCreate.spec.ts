@@ -867,6 +867,88 @@ describe("DebugSessionCreate", () => {
 
       expect(vm.hasExtraDeployVariables).toBeFalsy();
     });
+
+    it("does not submit when extra deploy variables are invalid", async () => {
+      const templates = defaultTemplates();
+      (templates[0] as unknown as Record<string, unknown>).extraDeployVariables = [
+        {
+          name: "debugTarget",
+          displayName: "Debug Target",
+          inputType: "text",
+          validation: {
+            pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+            patternError: "Must be a valid Kubernetes name",
+          },
+        },
+      ];
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [{ name: "prod-east", displayName: "Production East" }],
+      });
+
+      const wrapper = await createWrapper(templates);
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        handleSubmit: () => Promise<void>;
+        form: { cluster: string; reason: string; extraDeployValues: Record<string, unknown> };
+        isValid: boolean;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Investigating production issue";
+      vm.form.extraDeployValues = { debugTarget: "Invalid_Name" };
+      await flushPromises();
+
+      expect(vm.isValid).toBe(false);
+      await vm.handleSubmit();
+
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("submit validation", () => {
+    it("does not submit when namespace violates allowed patterns", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            namespaceConstraints: {
+              defaultNamespace: "debug-default",
+              allowUserNamespace: true,
+              allowedPatterns: ["debug-*"],
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        handleSubmit: () => Promise<void>;
+        form: { cluster: string; reason: string; targetNamespace: string };
+        isValid: boolean;
+        namespaceValidationError: string;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Investigating production issue";
+      vm.form.targetNamespace = "kube-system";
+      await flushPromises();
+
+      expect(vm.namespaceValidationError).toContain("debug-*");
+      expect(vm.isValid).toBe(false);
+      await vm.handleSubmit();
+
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
   });
 
   describe("auto-approve approval display", () => {

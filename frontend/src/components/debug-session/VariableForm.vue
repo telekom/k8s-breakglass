@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   "update:modelValue": [values: ExtraDeployValues];
   "update:showAdvanced": [show: boolean];
+  "validation-change": [valid: boolean];
 }>();
 
 // State for advanced toggle (if not controlled)
@@ -239,6 +240,14 @@ const validationErrors = computed((): ValidationError[] => {
 
   return errors;
 });
+
+watch(
+  validationErrors,
+  (errors) => {
+    emit("validation-change", errors.length === 0);
+  },
+  { immediate: true },
+);
 
 function getError(fieldName: string): string | undefined {
   const error = validationErrors.value.find((e) => e.field === fieldName);

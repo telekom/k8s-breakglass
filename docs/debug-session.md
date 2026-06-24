@@ -931,6 +931,8 @@ When a user creates a debug session:
    - `createIfNotExists: true`: Creates namespace with `namespaceLabels`
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
+The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace selectors and cluster state.
+
 ### Example: Team-Isolated Debug Namespaces
 
 ```yaml
@@ -1941,3 +1943,5 @@ The following test categories are implemented:
 - **Bad case tests**: Invalid inputs, unauthorized access, invalid state transitions
 - **E2E tests**: Template creation, session lifecycle, multi-participant sessions, kubectl-debug operations
 - **Frontend tests**: 478 tests passing (Vitest)
+
+```
