@@ -47,6 +47,13 @@ function appendOpenModal() {
   return modal;
 }
 
+function appendClosedModal() {
+  const modal = document.createElement("scale-modal");
+  modal.setAttribute("opened", "false");
+  document.body.appendChild(modal);
+  return modal;
+}
+
 beforeEach(() => {
   document.querySelectorAll("scale-modal").forEach((modal) => modal.remove());
   useUser().value = undefined;
@@ -198,6 +205,22 @@ describe("DebugPanel Utilities", () => {
 });
 
 describe("DebugPanel modal guard", () => {
+  it("keeps the debug toggle enabled when a closed app modal is mounted", async () => {
+    appendClosedModal();
+
+    wrapper = mountDebugPanel();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="debug-toggle-button"]');
+    expect(toggle.attributes("disabled")).toBeUndefined();
+    expect(toggle.attributes("aria-disabled")).toBe("false");
+
+    await toggle.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(true);
+  });
+
   it("disables the debug toggle while an app modal is open", async () => {
     appendOpenModal();
 

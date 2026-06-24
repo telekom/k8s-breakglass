@@ -52,7 +52,11 @@ function hasOpenAppModal(): boolean {
   if (typeof document === "undefined") {
     return false;
   }
-  return Boolean(document.querySelector("scale-modal[opened], scale-modal[open]"));
+  return Array.from(document.querySelectorAll("scale-modal")).some((modal) => {
+    const opened = modal.getAttribute("opened");
+    const open = modal.getAttribute("open");
+    return (opened !== null && opened !== "false") || (open !== null && open !== "false");
+  });
 }
 
 function refreshAppModalState() {
