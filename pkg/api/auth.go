@@ -742,23 +742,15 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		}
 	}
 
-	// Normalize group names: strip leading slashes and reduce nested paths to final segment.
+	// Normalize group claims without changing their identity. Escalation group
+	// matching is exact, so hierarchical OIDC group paths must stay distinct
+	// from same-named leaf groups in other hierarchies.
 	if len(groups) > 0 {
 		seen := make(map[string]struct{}, len(groups))
 		normalized := make([]string, 0, len(groups))
 		for _, g := range groups {
 			g = strings.TrimSpace(g)
 			if g == "" { // skip empty
-				continue
-			}
-			// Remove leading slash (Keycloak group path style: /team/role)
-			for strings.HasPrefix(g, "/") {
-				g = strings.TrimPrefix(g, "/")
-			}
-			if idx := strings.LastIndex(g, "/"); idx != -1 && idx < len(g)-1 { // keep only final path element
-				g = g[idx+1:]
-			}
-			if g == "" { // after normalization
 				continue
 			}
 			if _, exists := seen[g]; exists {

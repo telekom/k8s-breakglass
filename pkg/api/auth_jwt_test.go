@@ -107,10 +107,10 @@ func TestAuthMiddleware_GroupNormalizationCases(t *testing.T) {
 		claims jwt.MapClaims
 		want   []string
 	}{
-		{name: "groups_array_interface", claims: jwt.MapClaims{"groups": []interface{}{"/team/admin", " /space/ops ", ""}}, want: []string{"admin", "ops"}},
-		{name: "groups_array_string", claims: jwt.MapClaims{"groups": []string{"team/user", "/team/user"}}, want: []string{"user"}},
+		{name: "groups_array_interface", claims: jwt.MapClaims{"groups": []interface{}{"/team/admin", " /space/ops ", ""}}, want: []string{"/team/admin", "/space/ops"}},
+		{name: "groups_array_string", claims: jwt.MapClaims{"groups": []string{"team/user", "/team/user"}}, want: []string{"team/user", "/team/user"}},
 		{name: "realm_access_roles", claims: jwt.MapClaims{"realm_access": map[string]interface{}{"roles": []interface{}{"roleA", "roleB"}}}, want: []string{"roleA", "roleB"}},
-		{name: "nested_paths", claims: jwt.MapClaims{"groups": []interface{}{"/a/b/c", "/a/b/c"}}, want: []string{"c"}},
+		{name: "nested_paths", claims: jwt.MapClaims{"groups": []interface{}{"/a/b/c", "/a/b/c"}}, want: []string{"/a/b/c"}},
 	}
 
 	for _, tc := range cases {
@@ -385,7 +385,8 @@ func TestAuthMiddleware_ValidAndInvalidJWT(t *testing.T) {
 	// auth_header should be empty because middleware deletes it
 	require.Equal(t, "", got["auth_header"])
 
-	// groups normalized: expect admin and dev present (order possibly preserved)
+	// groups preserve hierarchical paths so exact escalation matching cannot
+	// collapse distinct group hierarchies into the same leaf name.
 	if groupsRaw, ok := got["groups"]; ok {
 		if arr, ok := groupsRaw.([]interface{}); ok {
 			// convert to strings
@@ -395,8 +396,10 @@ func TestAuthMiddleware_ValidAndInvalidJWT(t *testing.T) {
 					vals = append(vals, s)
 				}
 			}
-			require.Contains(t, vals, "admin")
-			require.Contains(t, vals, "dev")
+			require.Contains(t, vals, "/team/admin")
+			require.Contains(t, vals, "/ops/dev")
+			require.NotContains(t, vals, "admin")
+			require.NotContains(t, vals, "dev")
 		}
 	}
 

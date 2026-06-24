@@ -312,7 +312,7 @@ Protocol mappers control which claims appear in the OIDC tokens. The breakglass 
 
 | Claim | Mapper Type | Required By | Notes |
 |-------|------------|-------------|-------|
-| `groups` | `oidc-group-membership-mapper` | API server, controller | Must use `full.path=false` (flat group names, not `/parent/child` paths) |
+| `groups` | `oidc-group-membership-mapper` | API server, controller | Use `full.path=false` for flat group names, or configure `BreakglassEscalation` groups with the exact `/parent/child` paths emitted by `full.path=true` |
 | `preferred_username` | `oidc-usermodel-property-mapper` | UI, audit logs | Maps `user.attribute=username` to `preferred_username` claim |
 | `email` | (built-in scope) | Controller, API server | Used as `userIdentifierClaim` for matching users to sessions |
 | `aud` (audience) | `oidc-audience-mapper` | API server | Must include `kubernetes` in `aud` array for API server to accept the token |
@@ -320,7 +320,7 @@ Protocol mappers control which claims appear in the OIDC tokens. The breakglass 
 | `clientId` | `oidc-usersessionmodel-note-mapper` | Audit | Client ID for audit trail |
 | `clientAddress` | `oidc-usersessionmodel-note-mapper` | Audit | Client IP for audit trail |
 
-> **Critical**: If the `groups` mapper uses `full.path=true`, group names will be `/parent/child` format which won't match the flat group names used in `BreakglassEscalation` resources. Always use `full.path=false`.
+> **Critical**: The API preserves group claim values exactly after trimming whitespace; it does not collapse `/parent/admin` to `admin`. If the `groups` mapper uses `full.path=true`, configure `BreakglassEscalation.spec.allowed.groups` with the full `/parent/child` values. Use `full.path=false` when escalations are written with flat group names.
 
 > **Upstream reference**: [Keycloak Protocol Mapper Types](https://www.keycloak.org/docs/latest/server_admin/#_protocol-mappers)
 
