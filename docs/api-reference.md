@@ -1096,7 +1096,7 @@ Returns full `DebugSessionTemplate` CRD object.
 GET /api/debugSessions/templates/:name/clusters
 ```
 
-Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. Clusters with an explicit `ClusterConfig Ready=False` condition are hidden and cannot be selected for new debug sessions.
+Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions.
 
 **Response (200 OK):**
 

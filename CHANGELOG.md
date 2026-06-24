@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **DenyPolicy precedence is now honored during evaluation**: Multiple matching `DenyPolicy` resources are now evaluated in stable ascending `spec.precedence` order, with unset precedence defaulting to `100`, matching the documented policy semantics.
-- **Debug session cluster readiness enforcement**: Debug session template and cluster-selection APIs now hide clusters whose `ClusterConfig` is explicitly `Ready=False`, and debug session creation rejects requests targeting those unready clusters.
+- **Debug session cluster readiness enforcement**: Debug session template and cluster-selection APIs now require matching `ClusterConfig` resources to report `Ready=True`, and debug session creation rejects requests targeting clusters that are not ready.
 - **Debug session duration constraints are enforced at creation**: Debug session requests now reject non-positive requested durations and reject requested durations that exceed the effective template or cluster-binding `maxDuration`, instead of accepting them for later clamping. Direct `DebugSession` CR admission now also rejects non-positive `requestedDuration` values.
 - **Frontend: persistent API error states**: Request access, session search, pending approvals, and debug-session pages now show persistent error states with retry actions when primary API loads fail instead of rendering misleading empty-state messages.
 - **Release: checksum all payload artifacts**: GitHub Releases now attach a release-wide SHA-256 checksum file covering manifests, the Helm chart package, `bgctl` archives, and the SPDX SBOM instead of checksumming only `bgctl` archives.
