@@ -241,10 +241,12 @@ const validationErrors = computed((): ValidationError[] => {
   return errors;
 });
 
+const isFormValid = computed(() => validationErrors.value.length === 0);
+
 watch(
-  validationErrors,
-  (errors) => {
-    emit("validation-change", errors.length === 0);
+  isFormValid,
+  (valid) => {
+    emit("validation-change", valid);
   },
   { immediate: true },
 );
@@ -309,7 +311,7 @@ function getHelperText(variable: ExtraDeployVariable): string {
 
 // Expose validation state to parent
 defineExpose({
-  isValid: computed(() => validationErrors.value.length === 0),
+  isValid: isFormValid,
   errors: validationErrors,
 });
 
