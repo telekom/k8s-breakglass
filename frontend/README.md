@@ -145,6 +145,16 @@ This runs axe-core audits against all primary pages, error pages, and modals in 
 
 See `frontend/SCALE_DEVIATIONS.md` for documented contrast deviations from the Scale Design System and their rationale.
 
+### Screenshot Testing
+
+Visual regression screenshots are captured with Playwright:
+
+```sh
+npm run test:screenshots:update
+```
+
+The `UI Screenshots` GitHub Actions workflow uploads the screenshot gallery and Playwright report even when generation fails, then fails the job after diagnostics are available. A passing workflow therefore means the screenshots were generated successfully.
+
 ## State Management Architecture
 
 The frontend uses a **state-first validation approach** where:
