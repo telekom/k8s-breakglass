@@ -29,7 +29,7 @@ vi.mock("@/services/toast", () => ({
 }));
 
 vi.mock("@/services/logger", () => ({
-  handleAxiosError: vi.fn(),
+  handleAxiosError: vi.fn(() => ({ message: "network error" })),
   debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),

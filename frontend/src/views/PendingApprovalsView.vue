@@ -435,8 +435,8 @@ async function fetchPendingApprovals() {
     const sessions = await breakglassService.fetchPendingSessionsForApproval();
     pendingSessions.value = Array.isArray(sessions) ? dedupeSessions(sessions) : [];
   } catch (e: unknown) {
-    error.value = (e instanceof Error ? e.message : undefined) || "Failed to fetch pending approvals";
-    handleAxiosError("PendingApprovalsView", e, "Failed to fetch pending approvals");
+    const { message } = handleAxiosError("PendingApprovalsView", e, "Failed to fetch pending approvals");
+    error.value = message;
   }
   loading.value = false;
 }
