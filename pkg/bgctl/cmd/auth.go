@@ -12,10 +12,7 @@ import (
 )
 
 func NewAuthCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "auth",
-		Short: "Authenticate with Breakglass",
-	}
+	cmd := newHelpOnlyGroupCommand("auth", "Authenticate with Breakglass")
 	cmd.AddCommand(
 		newAuthLoginCommand(),
 		newAuthStatusCommand(),

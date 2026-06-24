@@ -11,6 +11,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
 )
 
+const helpOnlyGroupAnnotation = "bgctl.telekom.com/help-only-group"
+
 type Config struct {
 	ConfigPath     string
 	OutputWriter   io.Writer
@@ -81,6 +83,9 @@ func NewRootCommand(cfg Config) *cobra.Command {
 			if cmd.Name() == "version" || cmd.Name() == "completion" {
 				return nil
 			}
+			if cmd.Annotations != nil && cmd.Annotations[helpOnlyGroupAnnotation] == "true" {
+				return nil
+			}
 			// Skip config loading if server and token are both provided via flags or env vars.
 			// This allows users to run commands without a config file when they provide
 			// all necessary connection info on the command line.
@@ -124,6 +129,42 @@ func NewRootCommand(cfg Config) *cobra.Command {
 	)
 
 	return root
+}
+
+func newHelpOnlyGroupCommand(use, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Annotations: map[string]string{
+			helpOnlyGroupAnnotation: "true",
+		},
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+}
+
+func ExitCodeForError(err error) int {
+	if IsUsageError(err) {
+		return 2
+	}
+	return 1
+}
+
+func IsUsageError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.HasPrefix(msg, "unknown command ") ||
+		strings.HasPrefix(msg, "unknown flag:") ||
+		strings.HasPrefix(msg, "unknown shorthand flag:") ||
+		strings.HasPrefix(msg, "flag provided but not defined:") ||
+		strings.HasPrefix(msg, "requires at least ") ||
+		strings.HasPrefix(msg, "requires at most ") ||
+		strings.HasPrefix(msg, "accepts ") ||
+		strings.HasPrefix(msg, "invalid argument ")
 }
 
 func getRuntime(cmd *cobra.Command) (*runtimeState, error) {

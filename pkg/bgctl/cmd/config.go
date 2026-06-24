@@ -11,10 +11,7 @@ import (
 )
 
 func NewConfigCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Manage bgctl configuration",
-	}
+	cmd := newHelpOnlyGroupCommand("config", "Manage bgctl configuration")
 
 	cmd.AddCommand(
 		newConfigInitCommand(),

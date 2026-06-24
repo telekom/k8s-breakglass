@@ -15,10 +15,7 @@ import (
 )
 
 func NewDebugCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "debug",
-		Short: "Manage debug sessions and templates",
-	}
+	cmd := newHelpOnlyGroupCommand("debug", "Manage debug sessions and templates")
 
 	cmd.AddCommand(
 		newDebugSessionCommand(),
@@ -30,10 +27,7 @@ func NewDebugCommand() *cobra.Command {
 }
 
 func newDebugSessionCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "session",
-		Short: "Manage debug sessions",
-	}
+	cmd := newHelpOnlyGroupCommand("session", "Manage debug sessions")
 	cmd.AddCommand(
 		newDebugSessionListCommand(),
 		newDebugSessionGetCommand(),
@@ -516,10 +510,7 @@ func newDebugSessionRejectCommand() *cobra.Command {
 }
 
 func newDebugTemplateCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "template",
-		Short: "Manage debug session templates",
-	}
+	cmd := newHelpOnlyGroupCommand("template", "Manage debug session templates")
 	cmd.AddCommand(newDebugTemplateListCommand(), newDebugTemplateGetCommand(), newDebugTemplateClustersCommand(), newDebugTemplateBindingsCommand())
 	return cmd
 }
@@ -710,10 +701,7 @@ Use this to determine which --binding value to pass to 'debug session create'.`,
 }
 
 func newDebugPodTemplateCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "pod-template",
-		Short: "Manage debug pod templates",
-	}
+	cmd := newHelpOnlyGroupCommand("pod-template", "Manage debug pod templates")
 	cmd.AddCommand(newDebugPodTemplateListCommand(), newDebugPodTemplateGetCommand())
 	return cmd
 }
@@ -775,10 +763,7 @@ func newDebugPodTemplateGetCommand() *cobra.Command {
 }
 
 func newDebugKubectlCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "kubectl",
-		Short: "Kubectl-debug operations",
-	}
+	cmd := newHelpOnlyGroupCommand("kubectl", "Kubectl-debug operations")
 	cmd.AddCommand(
 		newDebugKubectlInjectCommand(),
 		newDebugKubectlCopyPodCommand(),

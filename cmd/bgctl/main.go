@@ -14,7 +14,7 @@ func run(args []string) int {
 	root := bgctlcmd.NewRootCommand(bgctlcmd.DefaultConfig())
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		return 1
+		return bgctlcmd.ExitCodeForError(err)
 	}
 	return 0
 }

@@ -16,10 +16,7 @@ import (
 )
 
 func NewSessionCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "session",
-		Short: "Manage breakglass sessions",
-	}
+	cmd := newHelpOnlyGroupCommand("session", "Manage breakglass sessions")
 
 	cmd.AddCommand(
 		newSessionListCommand(),

@@ -9,10 +9,7 @@ import (
 )
 
 func NewEscalationCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "escalation",
-		Short: "Manage escalation policies",
-	}
+	cmd := newHelpOnlyGroupCommand("escalation", "Manage escalation policies")
 	cmd.AddCommand(
 		newEscalationListCommand(),
 		newEscalationGetCommand(),
