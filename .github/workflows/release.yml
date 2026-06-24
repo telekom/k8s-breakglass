@@ -550,6 +550,56 @@ jobs:
           format: spdx-json
           output-file: sbom-${{ github.ref_name }}.spdx.json
           upload-release-assets: false
+      - name: Generate release asset checksums
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          chart_packages=(chart-dist/escalation-config-*.tgz)
+          bgctl_archives=(dist/bgctl_*.tar.gz dist/bgctl_*.zip)
+          if [ "${#chart_packages[@]}" -eq 0 ]; then
+            echo "::error::No escalation-config chart package found for checksum generation"
+            exit 1
+          fi
+          if [ "${#bgctl_archives[@]}" -eq 0 ]; then
+            echo "::error::No bgctl archives found for checksum generation"
+            exit 1
+          fi
+
+          artifacts=(
+            manifests-${{ github.ref_name }}.tgz
+            manifests-base.yaml
+            manifests-debug.yaml
+            manifests-crds.yaml
+            "${chart_packages[@]}"
+            "${bgctl_archives[@]}"
+            sbom-${{ github.ref_name }}.spdx.json
+          )
+          mapfile -t artifacts < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
+
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "::error::No release artifacts found for checksum generation"
+            exit 1
+          fi
+
+          for artifact in "${artifacts[@]}"; do
+            if [ ! -f "${artifact}" ]; then
+              echo "::error::Missing release artifact for checksum generation: ${artifact}"
+              exit 1
+            fi
+          done
+
+          checksum_file="release-${{ github.ref_name }}-checksums.txt"
+          : > "${checksum_file}"
+          for artifact in "${artifacts[@]}"; do
+            artifact_dir=$(dirname "${artifact}")
+            artifact_name=$(basename "${artifact}")
+            if [ "${artifact_dir}" = "." ]; then
+              sha256sum "${artifact_name}" >> "${checksum_file}"
+            else
+              (cd "${artifact_dir}" && sha256sum "${artifact_name}") >> "${checksum_file}"
+            fi
+          done
       - name: Create GitHub Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
@@ -563,5 +613,6 @@ jobs:
             dist/bgctl_*.zip
             dist/bgctl_*.sha256
             dist/bgctl_${{ github.ref_name }}_checksums.txt
+            release-${{ github.ref_name }}-checksums.txt
             sbom-${{ github.ref_name }}.spdx.json
           generate_release_notes: true

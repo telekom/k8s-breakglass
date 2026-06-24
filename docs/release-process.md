@@ -15,7 +15,10 @@ This document defines the release requirements for k8s-breakglass. It is intende
    - CI checks must be green on the release commit.
 
 2. **Checksums**
-   - Publish SHA-256 checksums for every artifact.
+   - Publish SHA-256 checksums for every release payload artifact.
+   - `release-<tag>-checksums.txt` covers manifests, Helm chart package, `bgctl` archives, and the SPDX SBOM.
+   - Entries in `release-<tag>-checksums.txt` use downloaded asset filenames, without workflow staging directories.
+   - `bgctl_<tag>_checksums.txt` and per-archive `.sha256` files are kept for CLI-only consumers.
 
 3. **Release notes**
    - Include a summary of changes, security notes, and upgrade guidance.
@@ -49,7 +52,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version (and `latest` for tag pushes). Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
 4. **Artifactory** — mirrors the multi-arch image and cosign artifacts (signatures + attestations) to the internal Artifactory OCI registry (best-effort).
 5. **Publish chart** — pushes `escalation-config` chart to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
-6. **Release** — creates a GitHub Release with manifests, Helm chart package, `bgctl` binaries, checksums, and SBOM (SPDX-JSON format via Syft).
+6. **Release** — creates a GitHub Release with manifests, Helm chart package, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).
 
 > **Note:** Buildx layer caching (`cache-from`/`cache-to`) is intentionally omitted in
 > release builds to ensure clean, reproducible images without layer reuse from prior
