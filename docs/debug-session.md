@@ -1248,6 +1248,8 @@ The two-step session creation flow uses the template clusters API to show users 
 GET /api/debugSessions/templates/:name/clusters
 ```
 
+Only ready cluster configurations are offered as debug targets. If a `ClusterConfig` has an explicit `Ready=False` condition, it is hidden from this response and `POST /api/debugSessions` rejects new debug sessions that target it.
+
 Response includes per-cluster details:
 
 ```json

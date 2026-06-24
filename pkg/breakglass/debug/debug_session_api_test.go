@@ -2269,6 +2269,73 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		}
 	})
 
+	t.Run("list templates hides unready clusters from availability", func(t *testing.T) {
+		readyCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-ready"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		unreadyCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-unready"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionFalse,
+						Reason: "ConnectionFailed",
+					},
+				},
+			},
+		}
+		templateWithPattern := breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-template"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"prod-*"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(readyCluster, unreadyCluster, &templateWithPattern).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		require.Equal(t, 1, response.Total)
+		require.Len(t, response.Templates, 1)
+		assert.Equal(t, []string{"prod-ready"}, response.Templates[0].AllowedClusters)
+		assert.True(t, response.Templates[0].HasAvailableClusters)
+		assert.Equal(t, 1, response.Templates[0].AvailableClusterCount)
+	})
+
 	t.Run("list templates with no cluster configs returns empty clusters", func(t *testing.T) {
 		// Template with pattern but no ClusterConfigs exist
 		templateWithPattern := breakglassv1alpha1.DebugSessionTemplate{
@@ -2726,6 +2793,45 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Contains(t, response.Name, "debug-")
 		assert.Equal(t, "production", response.Spec.Cluster)
 		assert.Equal(t, "alice@example.com", response.Spec.RequestedBy)
+	})
+
+	t.Run("rejects session for unready ClusterConfig", func(t *testing.T) {
+		unreadyCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionFalse,
+						Reason: "ConnectionFailed",
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template, unreadyCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "not ready")
 	})
 
 	t.Run("create session with invalid body", func(t *testing.T) {

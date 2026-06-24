@@ -462,6 +462,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		cc := &clusterConfigList.Items[i]
 		clusterMap[cc.Name] = cc
 	}
+	if cc, exists := clusterMap[req.Cluster]; exists && !isDebugClusterConfigReady(cc) {
+		reqLog.Warnw("ClusterConfig is not ready for debug session creation",
+			"cluster", req.Cluster,
+			"namespace", cc.Namespace,
+		)
+		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' is not ready for debug sessions", req.Cluster))
+		return
+	}
+	readyClusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
 	// Get current user from context before authorization checks.
 	currentUser, exists := ctx.Get("username")
@@ -542,7 +551,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			return
 		}
 
-		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap)
+		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, readyClusterMap)
 		if !stringInSlice(req.Cluster, bindingClusters) {
 			reqLog.Warnw("Binding does not grant requested cluster",
 				"bindingRef", req.BindingRef,
@@ -560,7 +569,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			AllBindings:     []breakglassv1alpha1.DebugSessionClusterBinding{*resolvedBinding},
 		}
 	} else {
-		allowedResult = c.isClusterAllowedByTemplateOrBinding(template, req.Cluster, bindingList.Items, clusterMap)
+		allowedResult = c.isClusterAllowedByTemplateOrBinding(template, req.Cluster, bindingList.Items, readyClusterMap)
 	}
 	if !allowedResult.Allowed {
 		var errDetails string
