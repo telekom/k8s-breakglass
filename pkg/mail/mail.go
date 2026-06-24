@@ -231,7 +231,7 @@ func (s *sender) sendSMTP(receivers []string, subject, body string, requireSTART
 	if requireSTARTTLS {
 		ok, _ := client.Extension("STARTTLS")
 		if !ok {
-			return fmt.Errorf("SMTP server does not advertise STARTTLS")
+			return fmt.Errorf("SMTP server %s does not advertise STARTTLS", addr)
 		}
 		tlsConfig := s.dialer.TLSConfig
 		if tlsConfig == nil {
@@ -241,7 +241,7 @@ func (s *sender) sendSMTP(receivers []string, subject, body string, requireSTART
 			}
 		}
 		if err := client.StartTLS(tlsConfig); err != nil {
-			return fmt.Errorf("STARTTLS failed: %w", err)
+			return fmt.Errorf("STARTTLS failed for SMTP server %s: %w", addr, err)
 		}
 	}
 

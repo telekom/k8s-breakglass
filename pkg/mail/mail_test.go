@@ -641,9 +641,11 @@ func TestSender_SendRequiresSTARTTLSByDefault(t *testing.T) {
 	if !ok {
 		t.Fatal("expected concrete sender")
 	}
+	mailSender.retryCount = 0
 
-	err := mailSender.sendStartTLSSMTP([]string{"recipient@example.com"}, "Hello", "<p>body</p>")
+	err := mailSender.Send([]string{"recipient@example.com"}, "Hello", "<p>body</p>")
 	assert.ErrorContains(t, err, "STARTTLS", "expected default SMTP path to fail closed when STARTTLS is unavailable")
+	assert.ErrorContains(t, err, net.JoinHostPort(host, fmt.Sprintf("%d", port)))
 }
 
 // TestSender_Send_PlainSMTP tests the DisableTLS path using plain SMTP without STARTTLS

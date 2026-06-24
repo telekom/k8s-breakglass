@@ -214,9 +214,9 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 	if !mp.Spec.SMTP.DisableTLS {
 		ok, _ := client.Extension("STARTTLS")
 		if !ok {
-			log.Warnw("SMTP server does not advertise STARTTLS")
+			log.Warnw("SMTP server does not advertise STARTTLS", "addr", addr)
 			metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "starttls_unavailable").Inc()
-			return false, fmt.Errorf("STARTTLS is required but not advertised by SMTP server")
+			return false, fmt.Errorf("STARTTLS is required but not advertised by SMTP server %s", addr)
 		}
 
 		var tlsConfig *tls.Config
@@ -235,7 +235,6 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 					tlsConfig.RootCAs = certPool
 				}
 			}
-
 		} else {
 			// Only use insecure TLS if explicitly configured
 			tlsConfig = &tls.Config{
@@ -246,9 +245,9 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 		}
 
 		if err := client.StartTLS(tlsConfig); err != nil {
-			log.Warnw("STARTTLS negotiation failed", "error", err)
+			log.Warnw("STARTTLS negotiation failed", "addr", addr, "error", err)
 			metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "starttls_failed").Inc()
-			return false, fmt.Errorf("STARTTLS failed: %w", err)
+			return false, fmt.Errorf("STARTTLS failed for SMTP server %s: %w", addr, err)
 		}
 	} else {
 		log.Debugw("TLS disabled for SMTP connection, skipping STARTTLS")
