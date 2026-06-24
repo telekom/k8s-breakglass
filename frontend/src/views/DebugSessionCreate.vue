@@ -211,7 +211,7 @@ const namespaceValidationError = computed(() => {
     return "";
   }
 
-  const namespace = form.targetNamespace.trim();
+  const namespace = form.targetNamespace;
   if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(namespace) || namespace.length > 63) {
     return "Must be a valid Kubernetes namespace name";
   }
@@ -228,6 +228,10 @@ const namespaceValidationError = computed(() => {
 
   return "";
 });
+
+function updateExtraDeployValid(valid: boolean) {
+  extraDeployValid.value = valid;
+}
 
 const namespaceValid = computed(() => namespaceValidationError.value === "");
 
@@ -676,7 +680,7 @@ function handleTemplateChange(ev: Event) {
         :show-advanced-options="form.showAdvancedOptions"
         @update:selected-scheduling-option="form.selectedSchedulingOption = $event"
         @update:target-namespace="form.targetNamespace = $event"
-        @update:extra-deploy-valid="extraDeployValid = $event"
+        @update:extra-deploy-valid="updateExtraDeployValid"
         @update:requested-duration="form.requestedDuration = $event"
         @update:reason="form.reason = $event"
         @update:scheduled-start-time="form.scheduledStartTime = $event"
