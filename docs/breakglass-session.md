@@ -87,7 +87,7 @@ spec:
   
   # Optional: Session duration settings
   maxValidFor: "1h"           # Max time active after approval (default: 1h)
-  retainFor: "720h"           # Time to retain expired sessions (default: 720h)
+  retainFor: "720h"           # Time to retain terminal sessions (default: 720h)
   idleTimeout: "30m"          # Auto-expire if no activity within this duration (optional)
   
   # Optional: ClusterConfig reference (if different from cluster name parsing)
@@ -109,7 +109,7 @@ status:
   approvedAt: "2024-01-15T10:30:00Z"    # When approved
   rejectedAt: null                       # When rejected (if applicable)
   expiresAt: "2024-01-15T11:30:00Z"     # When session expires
-  retainedUntil: "2024-02-14T10:30:00Z" # When session object is deleted
+  retainedUntil: "2024-02-14T10:30:00Z" # Set after terminal entry; when session object is deleted
   
   # Activity tracking (updated by webhook)
   lastActivity: "2024-01-15T10:45:00Z"  # Most recent authorized request
@@ -251,7 +251,9 @@ status:
 
 #### retainedUntil
 
-When the session object will be removed (calculated from `spec.retainFor`):
+When the session object will be removed. This is calculated from `spec.retainFor`
+when the session enters a terminal state; pending, approved, and waiting sessions
+do not use this timestamp for cleanup.
 
 ```yaml
 status:

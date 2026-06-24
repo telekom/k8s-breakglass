@@ -612,7 +612,7 @@ func TestEdgeCase_ApprovalAfterRejection(t *testing.T) {
 
 // TestEdgeCase_ScheduledSessionNotWaitingUntilActivation tests that when a
 // session has ScheduledStartTime set, it transitions to WaitingForScheduledTime
-// and the expiry/retention times are calculated from ScheduledStartTime, not now.
+// and the expiry time is calculated from ScheduledStartTime, not now.
 //
 // Location: session_controller.go lines 843-859
 // This is critical: premature expiration if timestamps not set correctly!
@@ -620,7 +620,6 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 	now := time.Now()
 	scheduledTime := now.Add(24 * time.Hour) // Schedule for tomorrow
 	validFor := 1 * time.Hour
-	retainFor := 7 * 24 * time.Hour
 
 	tests := []struct {
 		name          string
@@ -671,17 +670,18 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 			if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
 				session.Status.State = breakglassv1alpha1.SessionStateWaitingForScheduledTime
 				session.Status.ExpiresAt = metav1.NewTime(session.Spec.ScheduledStartTime.Add(validFor))
-				session.Status.RetainedUntil = metav1.NewTime(session.Spec.ScheduledStartTime.Add(validFor).Add(retainFor))
 				session.Status.ActualStartTime = metav1.Time{}
 			} else {
 				session.Status.State = breakglassv1alpha1.SessionStateApproved
 				session.Status.ExpiresAt = metav1.NewTime(now.Add(validFor))
-				session.Status.RetainedUntil = metav1.NewTime(now.Add(validFor).Add(retainFor))
 				session.Status.ActualStartTime = metav1.Now()
 			}
 
 			if session.Status.State != tt.expectedState {
 				t.Errorf("Expected state %s but got %s. %s", tt.expectedState, session.Status.State, tt.description)
+			}
+			if !session.Status.RetainedUntil.IsZero() {
+				t.Errorf("Non-terminal state %s should not set retainedUntil before terminal entry", session.Status.State)
 			}
 
 			// Only check expiry if we have a scheduled time

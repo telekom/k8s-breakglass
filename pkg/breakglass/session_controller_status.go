@@ -156,9 +156,6 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		// Determine expiry based on session spec MaxValidFor if provided, otherwise use default
 		validFor := ParseMaxValidFor(bs.Spec, reqLog)
 
-		// Determine retention based on session spec RetainFor if provided, otherwise use default
-		retainFor := ParseRetainFor(bs.Spec, reqLog)
-
 		bs.Status.TimeoutAt = metav1.Time{} // Clear approval timeout
 
 		// Check if session has a scheduled start time
@@ -166,9 +163,9 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			// Scheduled session: enter WaitingForScheduledTime state
 			// RBAC group will NOT be applied until activation time is reached
 			bs.Status.State = breakglassv1alpha1.SessionStateWaitingForScheduledTime
-			// Calculate expiry and retention from ScheduledStartTime, not from now
+			// Calculate expiry from ScheduledStartTime, not from now.
 			bs.Status.ExpiresAt = metav1.NewTime(bs.Spec.ScheduledStartTime.Add(validFor))
-			bs.Status.RetainedUntil = metav1.NewTime(bs.Spec.ScheduledStartTime.Add(validFor).Add(retainFor))
+			bs.Status.RetainedUntil = metav1.Time{}
 			// ActualStartTime will be set during activation
 			bs.Status.ActualStartTime = metav1.Time{}
 			reqLog.Infow("Session approved with scheduled start time",
@@ -180,9 +177,9 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			// Immediate session: activate now (original behavior)
 			bs.Status.State = breakglassv1alpha1.SessionStateApproved
 			bs.Status.ActualStartTime = metav1.Now() // For consistency
-			// Calculate expiry and retention from now
+			// Calculate expiry from approval time.
 			bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(validFor))
-			bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+			bs.Status.RetainedUntil = metav1.Time{}
 			// RBAC group is immediately applied (via webhook or controller)
 			reqLog.Infow("Session approved and activated immediately",
 				"session", bs.Name,

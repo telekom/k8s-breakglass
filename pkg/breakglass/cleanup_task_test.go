@@ -64,6 +64,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 						Namespace: "default",
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State:         breakglassv1alpha1.SessionStateExpired,
 						RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 					},
 				},
@@ -80,6 +81,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 						Namespace: "default",
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State:         breakglassv1alpha1.SessionStateExpired,
 						RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 					},
 				},
@@ -96,6 +98,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 						Namespace: "default",
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State:         breakglassv1alpha1.SessionStateExpired,
 						RetainedUntil: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
 					},
 				},
@@ -105,6 +108,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 						Namespace: "default",
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State:         breakglassv1alpha1.SessionStateExpired,
 						RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 					},
 				},
@@ -114,6 +118,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 						Namespace: "default",
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
+						State:         breakglassv1alpha1.SessionStateExpired,
 						RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 					},
 				},
@@ -200,6 +205,7 @@ func TestCleanupRoutine_markCleanupExpiredSession_ErrorHandling(t *testing.T) {
 			Namespace: "default",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateExpired,
 			RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 		},
 	}
@@ -1203,6 +1209,67 @@ func TestCleanupRoutine_OrphanDeletion_TerminalStatesOnly(t *testing.T) {
 				assert.Empty(t, list.Items, "session should have been deleted")
 			} else {
 				require.Len(t, list.Items, 1, "session should still exist")
+				assert.Equal(t, tt.state, list.Items[0].Status.State)
+			}
+		})
+	}
+}
+
+func TestCleanupRoutine_RetentionDeletionRequiresTerminalState(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	logger := zaptest.NewLogger(t).Sugar()
+
+	pastRetention := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	tests := []struct {
+		name          string
+		state         breakglassv1alpha1.BreakglassSessionState
+		expectDeleted bool
+	}{
+		{name: "pending with stale retention is preserved", state: breakglassv1alpha1.SessionStatePending, expectDeleted: false},
+		{name: "approved with stale retention is preserved", state: breakglassv1alpha1.SessionStateApproved, expectDeleted: false},
+		{name: "scheduled with stale retention is preserved", state: breakglassv1alpha1.SessionStateWaitingForScheduledTime, expectDeleted: false},
+		{name: "expired with stale retention is deleted", state: breakglassv1alpha1.SessionStateExpired, expectDeleted: true},
+		{name: "idle expired with stale retention is deleted", state: breakglassv1alpha1.SessionStateIdleExpired, expectDeleted: true},
+		{name: "rejected with stale retention is deleted", state: breakglassv1alpha1.SessionStateRejected, expectDeleted: true},
+		{name: "withdrawn with stale retention is deleted", state: breakglassv1alpha1.SessionStateWithdrawn, expectDeleted: true},
+		{name: "approval timeout with stale retention is deleted", state: breakglassv1alpha1.SessionStateTimeout, expectDeleted: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ses := breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "retention-session", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "test-cluster",
+					User:         "user@example.com",
+					GrantedGroup: "cluster-admin",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         tt.state,
+					RetainedUntil: pastRetention,
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(&ses).
+				WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+				Build()
+
+			routine := CleanupRoutine{
+				Log:     logger,
+				Manager: &SessionManager{Client: fakeClient},
+			}
+
+			routine.markCleanupExpiredSession(context.Background())
+
+			var list breakglassv1alpha1.BreakglassSessionList
+			require.NoError(t, fakeClient.List(context.Background(), &list))
+			if tt.expectDeleted {
+				assert.Empty(t, list.Items, "terminal session should have been deleted")
+			} else {
+				require.Len(t, list.Items, 1, "live session should still exist")
 				assert.Equal(t, tt.state, list.Items[0].Status.State)
 			}
 		})

@@ -103,6 +103,8 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 		ses.Status.State = breakglassv1alpha1.SessionStateIdleExpired
 		ses.SetCondition(newIdleCondition(idleSince, ses.Spec.IdleTimeout))
 		ses.Status.ReasonEnded = "idleTimeout"
+		retainFor := ParseRetainFor(ses.Spec, wc.log)
+		ses.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 		// Ensure we have correct metadata for the API update.
 		// Re-validate idle condition after refetch to avoid TOCTOU race where
@@ -159,6 +161,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 					updated.Status.State = ses.Status.State
 					updated.Status.Conditions = ses.Status.Conditions
 					updated.Status.ReasonEnded = ses.Status.ReasonEnded
+					updated.Status.RetainedUntil = ses.Status.RetainedUntil
 					ses = updated
 				} else {
 					wc.log.Errorw("failed to refetch session after failed idle status update",

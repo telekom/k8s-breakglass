@@ -96,6 +96,8 @@ func TestExpireIdleSessions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateIdleExpired, got.Status.State)
 		assert.Equal(t, "idleTimeout", got.Status.ReasonEnded)
+		require.False(t, got.Status.RetainedUntil.IsZero(), "idle-expired sessions must get terminal retention")
+		assert.True(t, got.Status.RetainedUntil.After(time.Now()))
 	})
 
 	t.Run("does not expire session within idle timeout based on lastActivity", func(t *testing.T) {

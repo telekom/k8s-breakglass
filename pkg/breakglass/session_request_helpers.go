@@ -700,13 +700,9 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 		reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
 	}
 
-	// Compute retained-until at creation so sessions always expose when they will be cleaned up.
-	retainFor := ParseRetainFor(params.spec, reqLog)
-
 	bs.Status = breakglassv1alpha1.BreakglassSessionStatus{
-		RetainedUntil: metav1.NewTime(time.Now().Add(retainFor)),
-		TimeoutAt:     metav1.NewTime(time.Now().Add(approvalTimeout)), // Approval timeout
-		State:         breakglassv1alpha1.SessionStatePending,
+		TimeoutAt: metav1.NewTime(time.Now().Add(approvalTimeout)), // Approval timeout
+		State:     breakglassv1alpha1.SessionStatePending,
 		Conditions: []metav1.Condition{{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeIdle),
 			Status:             metav1.ConditionTrue,

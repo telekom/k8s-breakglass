@@ -227,22 +227,38 @@ func TestIsSessionRetained_TimeVariants(t *testing.T) {
 
 	tests := []struct {
 		name          string
+		state         breakglassv1alpha1.BreakglassSessionState
 		retainedUntil time.Time
 		expected      bool
 	}{
 		{
 			name:          "past retained time returns true (should be removed)",
+			state:         breakglassv1alpha1.SessionStateExpired,
 			retainedUntil: now.Add(-1 * time.Hour),
 			expected:      true,
 		},
 		{
 			name:          "future retained time returns false (should be kept)",
+			state:         breakglassv1alpha1.SessionStateExpired,
 			retainedUntil: now.Add(1 * time.Hour),
 			expected:      false,
 		},
 		{
 			name:          "zero time returns false",
+			state:         breakglassv1alpha1.SessionStateExpired,
 			retainedUntil: time.Time{},
+			expected:      false,
+		},
+		{
+			name:          "approved state ignores stale retained time",
+			state:         breakglassv1alpha1.SessionStateApproved,
+			retainedUntil: now.Add(-1 * time.Hour),
+			expected:      false,
+		},
+		{
+			name:          "pending state ignores stale retained time",
+			state:         breakglassv1alpha1.SessionStatePending,
+			retainedUntil: now.Add(-1 * time.Hour),
 			expected:      false,
 		},
 	}
@@ -251,6 +267,7 @@ func TestIsSessionRetained_TimeVariants(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			session := breakglassv1alpha1.BreakglassSession{
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         tt.state,
 					RetainedUntil: metav1.NewTime(tt.retainedUntil),
 				},
 			}

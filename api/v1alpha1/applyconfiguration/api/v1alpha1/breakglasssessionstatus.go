@@ -45,7 +45,7 @@ type BreakglassSessionStatusApplyConfiguration struct {
 	// This value is set when the session is created and only applies while pending approval.
 	TimeoutAt *metav1.Time `json:"timeoutAt,omitempty"`
 	// retainedUntil is the time when the session object will be removed from the cluster.
-	// This value is set based on spec.retainFor when the session is approved.
+	// This value is set based on spec.retainFor when the session enters a terminal state.
 	RetainedUntil *metav1.Time `json:"retainedUntil,omitempty"`
 	// State represents the current state of the Breakglass session.
 	State *apiv1alpha1.BreakglassSessionState `json:"state,omitempty"`
