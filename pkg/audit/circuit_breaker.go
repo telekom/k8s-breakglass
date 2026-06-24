@@ -90,6 +90,10 @@ func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 // ErrCircuitOpen is returned when the circuit breaker is open.
 var ErrCircuitOpen = errors.New("circuit breaker is open")
 
+type storedError struct {
+	err error
+}
+
 // CircuitBreaker implements the circuit breaker pattern for sink resilience.
 // It prevents cascading failures by temporarily blocking requests to failing sinks.
 type CircuitBreaker struct {
@@ -104,7 +108,7 @@ type CircuitBreaker struct {
 	halfOpenRequests atomic.Int64
 	lastFailureTime  atomic.Value // time.Time
 	lastStateChange  atomic.Value // time.Time
-	lastError        atomic.Value // error
+	lastError        atomic.Value // storedError
 
 	// Metrics
 	totalRequests   atomic.Int64
@@ -151,7 +155,8 @@ func NewCircuitBreaker(name string, cfg CircuitBreakerConfig, logger *zap.Logger
 // Execute wraps a function call with circuit breaker protection.
 // Returns ErrCircuitOpen if the circuit is open.
 func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) error) error {
-	if !cb.canExecute() {
+	allowed, halfOpenProbe := cb.canExecute()
+	if !allowed {
 		cb.totalRejections.Add(1)
 		metrics.AuditCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
 		return ErrCircuitOpen
@@ -162,62 +167,104 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) 
 	err := fn(ctx)
 
 	if err != nil {
-		cb.recordFailure(err)
+		cb.recordFailure(err, halfOpenProbe)
 		return err
 	}
 
-	cb.recordSuccess()
+	cb.recordSuccess(halfOpenProbe)
 	return nil
 }
 
 // canExecute checks if a request can be executed based on circuit state.
-func (cb *CircuitBreaker) canExecute() bool {
+func (cb *CircuitBreaker) canExecute() (bool, bool) {
 	state := CircuitState(cb.state.Load())
 
 	switch state {
 	case CircuitClosed:
-		return true
+		return true, false
 
 	case CircuitOpen:
 		// Check if we should transition to half-open
 		lastChange, ok := cb.lastStateChange.Load().(time.Time)
 		if ok && time.Since(lastChange) >= cb.config.OpenTimeout {
-			cb.transitionTo(CircuitHalfOpen)
-			return true
+			cb.mu.Lock()
+
+			currentState := CircuitState(cb.state.Load())
+			if currentState != CircuitOpen {
+				switch currentState {
+				case CircuitClosed:
+					cb.mu.Unlock()
+					return true, false
+				case CircuitHalfOpen:
+					allowed := cb.acquireHalfOpenSlot()
+					cb.mu.Unlock()
+					return allowed, allowed
+				default:
+					cb.mu.Unlock()
+					return false, false
+				}
+			}
+			lastChange, ok = cb.lastStateChange.Load().(time.Time)
+			if !ok || time.Since(lastChange) < cb.config.OpenTimeout {
+				cb.mu.Unlock()
+				return false, false
+			}
+
+			cb.transitionToLocked(CircuitHalfOpen)
+			cb.halfOpenRequests.Add(1)
+			cb.mu.Unlock()
+			return true, true
 		}
-		return false
+		return false, false
 
 	case CircuitHalfOpen:
-		// Only allow limited requests in half-open
-		current := cb.halfOpenRequests.Add(1)
-		if current <= int64(cb.config.HalfOpenMaxRequests) {
-			return true
-		}
-		cb.halfOpenRequests.Add(-1) // Revert the increment
-		return false
+		allowed := cb.acquireHalfOpenSlot()
+		return allowed, allowed
 
 	default:
-		return false
+		return false, false
 	}
 }
 
+func (cb *CircuitBreaker) acquireHalfOpenSlot() bool {
+	current := cb.halfOpenRequests.Add(1)
+	if current <= int64(cb.config.HalfOpenMaxRequests) {
+		return true
+	}
+	cb.halfOpenRequests.Add(-1)
+	return false
+}
+
 // recordSuccess records a successful operation.
-func (cb *CircuitBreaker) recordSuccess() {
+func (cb *CircuitBreaker) recordSuccess(halfOpenProbe bool) {
 	cb.totalSuccesses.Add(1)
 	cb.consecutiveFails.Store(0)
-	successes := cb.consecutiveSuccs.Add(1)
 
-	state := CircuitState(cb.state.Load())
-	if state == CircuitHalfOpen && int(successes) >= cb.config.SuccessThreshold {
-		cb.transitionTo(CircuitClosed)
+	if !halfOpenProbe {
+		if CircuitState(cb.state.Load()) == CircuitClosed {
+			cb.consecutiveSuccs.Add(1)
+		}
+		return
+	}
+
+	successes := cb.consecutiveSuccs.Add(1)
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if CircuitState(cb.state.Load()) != CircuitHalfOpen {
+		return
+	}
+	cb.halfOpenRequests.Add(-1)
+	if int(successes) >= cb.config.SuccessThreshold {
+		cb.transitionToLocked(CircuitClosed)
 	}
 }
 
 // recordFailure records a failed operation.
-func (cb *CircuitBreaker) recordFailure(err error) {
+func (cb *CircuitBreaker) recordFailure(err error, halfOpenProbe bool) {
 	cb.totalFailures.Add(1)
 	cb.consecutiveSuccs.Store(0)
-	cb.lastError.Store(err)
+	cb.lastError.Store(storedError{err: err})
 	cb.lastFailureTime.Store(time.Now())
 	failures := cb.consecutiveFails.Add(1)
 
@@ -228,8 +275,17 @@ func (cb *CircuitBreaker) recordFailure(err error) {
 			cb.transitionTo(CircuitOpen)
 		}
 	case CircuitHalfOpen:
+		if !halfOpenProbe {
+			return
+		}
 		// Any failure in half-open trips back to open
-		cb.transitionTo(CircuitOpen)
+		cb.mu.Lock()
+		defer cb.mu.Unlock()
+
+		if CircuitState(cb.state.Load()) == CircuitHalfOpen {
+			cb.halfOpenRequests.Add(-1)
+			cb.transitionToLocked(CircuitOpen)
+		}
 	}
 }
 
@@ -238,6 +294,10 @@ func (cb *CircuitBreaker) transitionTo(newState CircuitState) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
+	cb.transitionToLocked(newState)
+}
+
+func (cb *CircuitBreaker) transitionToLocked(newState CircuitState) {
 	oldState := CircuitState(cb.state.Load())
 	if oldState == newState {
 		return
@@ -255,6 +315,7 @@ func (cb *CircuitBreaker) transitionTo(newState CircuitState) {
 
 	// Update metrics
 	metrics.AuditCircuitBreakerState.WithLabelValues(cb.name).Set(float64(newState))
+	metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(cb.name, oldState.String(), newState.String()).Inc()
 
 	if cb.config.OnStateChange != nil {
 		cb.config.OnStateChange(oldState, newState)
@@ -298,8 +359,8 @@ func (cb *CircuitBreaker) Stats() CircuitBreakerStats {
 	if t, ok := cb.lastStateChange.Load().(time.Time); ok {
 		stats.LastStateChange = t
 	}
-	if err, ok := cb.lastError.Load().(error); ok {
-		stats.LastError = err
+	if stored, ok := cb.lastError.Load().(storedError); ok {
+		stats.LastError = stored.err
 	}
 
 	return stats
