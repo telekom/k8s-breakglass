@@ -295,14 +295,25 @@ func IsSessionExpired(session breakglassv1alpha1.BreakglassSession) bool {
 	return false
 }
 
+// IsSessionTerminalState returns true when a session state is terminal and must
+// not be transitioned by user actions.
+func IsSessionTerminalState(state breakglassv1alpha1.BreakglassSessionState) bool {
+	switch state {
+	case breakglassv1alpha1.SessionStateRejected,
+		breakglassv1alpha1.SessionStateWithdrawn,
+		breakglassv1alpha1.SessionStateExpired,
+		breakglassv1alpha1.SessionStateIdleExpired,
+		breakglassv1alpha1.SessionStateTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
 	// Even if timestamps suggest validity, terminal states are never valid.
-	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
-		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
-		session.Status.State == breakglassv1alpha1.SessionStateExpired ||
-		session.Status.State == breakglassv1alpha1.SessionStateIdleExpired ||
-		session.Status.State == breakglassv1alpha1.SessionStateTimeout {
+	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
 
@@ -333,11 +344,7 @@ func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
 // State is the primary determinant; timestamps are secondary validators.
 func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
 	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
-	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
-		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
-		session.Status.State == breakglassv1alpha1.SessionStateExpired ||
-		session.Status.State == breakglassv1alpha1.SessionStateIdleExpired ||
-		session.Status.State == breakglassv1alpha1.SessionStateTimeout {
+	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
 

@@ -126,6 +126,11 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		return
 	}
 
+	if IsSessionTerminalState(bs.Status.State) {
+		apiresponses.RespondBadRequest(c, fmt.Sprintf("session is in terminal state %s and cannot be dropped", bs.Status.State))
+		return
+	}
+
 	// If approved -> mark as Expired and set RetainedUntil appropriately (owner requested termination)
 	if bs.Status.State == breakglassv1alpha1.SessionStateApproved && !bs.Status.ApprovedAt.IsZero() {
 		// Approved session dropped - transition to Expired

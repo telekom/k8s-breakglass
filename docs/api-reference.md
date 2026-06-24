@@ -504,19 +504,25 @@ Authorization: Bearer <token>
 
 ### Drop Session
 
-Drop your own session (either pending or active).
+Drop your own non-terminal session (pending, waiting for scheduled start, or active).
 
 ```http
 POST /api/breakglassSessions/{session-name}/drop
 Authorization: Bearer <token>
 ```
 
-**Status Code:** `200 OK`
+**Status Codes:**
+
+- `200 OK` - Session was dropped and updated
+- `400 Bad Request` - Session is already terminal and was not modified
 
 **Authorization:**
 
 - **Requester**: Can drop pending requests
 - **Owner**: Can drop active sessions
+
+Terminal sessions (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, `ApprovalTimeout`)
+return `400 Bad Request` and are not modified.
 
 **Response:** Complete updated `BreakglassSession` resource with dropped/terminated status
 

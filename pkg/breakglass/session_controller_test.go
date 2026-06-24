@@ -1674,6 +1674,77 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 }
 
+func TestDropTerminalSessionRejected(t *testing.T) {
+	terminalStates := []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStateRejected,
+		breakglassv1alpha1.SessionStateExpired,
+		breakglassv1alpha1.SessionStateIdleExpired,
+		breakglassv1alpha1.SessionStateWithdrawn,
+		breakglassv1alpha1.SessionStateTimeout,
+	}
+
+	for _, terminalState := range terminalStates {
+		t.Run(string(terminalState), func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+			}
+
+			baseTime := time.Date(2026, time.June, 24, 16, 0, 0, 0, time.UTC)
+			originalWithdrawnAt := metav1.NewTime(baseTime.Add(-2 * time.Hour))
+			originalRejectedAt := metav1.NewTime(baseTime.Add(-90 * time.Minute))
+			originalExpiresAt := metav1.NewTime(baseTime.Add(-1 * time.Hour))
+			originalRetainedUntil := metav1.NewTime(baseTime.Add(24 * time.Hour))
+			session := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "terminal-drop"},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "c",
+					User:         "user@e.com",
+					GrantedGroup: "g",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         terminalState,
+					RejectedAt:    originalRejectedAt,
+					WithdrawnAt:   originalWithdrawnAt,
+					ExpiresAt:     originalExpiresAt,
+					RetainedUntil: originalRetainedUntil,
+					ReasonEnded:   "original-reason",
+					Approver:      "approver@e.com",
+					Approvers:     []string{"approver@e.com"},
+				},
+			}
+
+			cli := builder.WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+			sesmanager := SessionManager{Client: cli}
+			escmanager := testEscalationLookup{Client: cli}
+
+			logger, _ := zap.NewDevelopment()
+			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+				c.Set("email", "user@e.com")
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+			engine := gin.New()
+			_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+			req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/terminal-drop/drop", nil)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+			require.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+
+			var got breakglassv1alpha1.BreakglassSession
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Name: "terminal-drop"}, &got))
+			require.Equal(t, terminalState, got.Status.State)
+			assert.True(t, got.Status.RejectedAt.Time.Equal(originalRejectedAt.Time), "rejectedAt changed")
+			assert.True(t, got.Status.WithdrawnAt.Time.Equal(originalWithdrawnAt.Time), "withdrawnAt changed")
+			assert.True(t, got.Status.ExpiresAt.Time.Equal(originalExpiresAt.Time), "expiresAt changed")
+			assert.True(t, got.Status.RetainedUntil.Time.Equal(originalRetainedUntil.Time), "retainedUntil changed")
+			assert.Equal(t, "original-reason", got.Status.ReasonEnded)
+			assert.Equal(t, "approver@e.com", got.Status.Approver)
+			assert.Equal(t, []string{"approver@e.com"}, got.Status.Approvers)
+		})
+	}
+}
+
 // TestApproverCancelRunningSession verifies that an approver can cancel a running session
 // and that a non-approver is forbidden to do so.
 // TestApproverCancelRunningSession
