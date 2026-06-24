@@ -54,6 +54,13 @@ function appendClosedModal() {
   return modal;
 }
 
+function appendPropertyOpenModal() {
+  const modal = document.createElement("scale-modal") as HTMLElement & { opened: boolean };
+  modal.opened = true;
+  document.body.appendChild(modal);
+  return modal;
+}
+
 beforeEach(() => {
   document.querySelectorAll("scale-modal").forEach((modal) => modal.remove());
   useUser().value = undefined;
@@ -236,6 +243,21 @@ describe("DebugPanel modal guard", () => {
     expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(false);
   });
 
+  it("disables the debug toggle when a modal is open via DOM property only", async () => {
+    appendPropertyOpenModal();
+
+    wrapper = mountDebugPanel();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="debug-toggle-button"]');
+    expect(toggle.attributes("disabled")).toBeDefined();
+    expect(toggle.attributes("aria-disabled")).toBe("true");
+
+    await toggle.trigger("click");
+
+    expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(false);
+  });
+
   it("closes the debug panel when an app modal opens later", async () => {
     wrapper = mountDebugPanel();
     await flushPromises();
@@ -250,5 +272,24 @@ describe("DebugPanel modal guard", () => {
 
     expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(false);
     expect(wrapper.get('[data-testid="debug-toggle-button"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("keeps the debug panel open for unrelated DOM mutations", async () => {
+    wrapper = mountDebugPanel();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="debug-toggle-button"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(true);
+
+    const unrelated = document.createElement("div");
+    document.body.appendChild(unrelated);
+    await flushMutationObserver();
+
+    expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="debug-toggle-button"]').attributes("disabled")).toBeUndefined();
+
+    unrelated.remove();
   });
 });

@@ -47,15 +47,53 @@ const debugInfo = ref<DebugInfo>({
 });
 
 let modalObserver: MutationObserver | undefined;
+let modalRefreshQueued = false;
+
+type ScaleModalElement = Element & {
+  open?: unknown;
+  opened?: unknown;
+};
+
+function isOpenState(propertyValue: unknown, attributeValue: string | null): boolean {
+  if (typeof propertyValue === "boolean") {
+    return propertyValue;
+  }
+  if (typeof propertyValue === "string" && propertyValue !== "") {
+    return propertyValue !== "false";
+  }
+  if (propertyValue !== undefined && propertyValue !== null) {
+    return Boolean(propertyValue);
+  }
+  return attributeValue !== null && attributeValue !== "false";
+}
+
+function isScaleModalElement(node: Node): node is Element {
+  return node instanceof Element && node.tagName.toLowerCase() === "scale-modal";
+}
+
+function nodeTouchesScaleModal(node: Node): boolean {
+  return isScaleModalElement(node) || (node instanceof Element && node.querySelector("scale-modal") !== null);
+}
+
+function mutationTouchesScaleModal(mutation: MutationRecord): boolean {
+  if (mutation.type === "attributes") {
+    return isScaleModalElement(mutation.target);
+  }
+  return (
+    Array.from(mutation.addedNodes).some(nodeTouchesScaleModal) ||
+    Array.from(mutation.removedNodes).some(nodeTouchesScaleModal)
+  );
+}
 
 function hasOpenAppModal(): boolean {
   if (typeof document === "undefined") {
     return false;
   }
   return Array.from(document.querySelectorAll("scale-modal")).some((modal) => {
+    const scaleModal = modal as ScaleModalElement;
     const opened = modal.getAttribute("opened");
     const open = modal.getAttribute("open");
-    return (opened !== null && opened !== "false") || (open !== null && open !== "false");
+    return isOpenState(scaleModal.opened, opened) || isOpenState(scaleModal.open, open);
   });
 }
 
@@ -64,6 +102,17 @@ function refreshAppModalState() {
   if (appModalOpen.value) {
     showDebug.value = false;
   }
+}
+
+function scheduleAppModalRefresh() {
+  if (modalRefreshQueued) {
+    return;
+  }
+  modalRefreshQueued = true;
+  void Promise.resolve().then(() => {
+    modalRefreshQueued = false;
+    refreshAppModalState();
+  });
 }
 
 function toggleDebugPanel() {
@@ -173,7 +222,11 @@ onMounted(() => {
   collectDebugInfo();
   refreshAppModalState();
   if (typeof document !== "undefined" && typeof MutationObserver !== "undefined") {
-    modalObserver = new MutationObserver(refreshAppModalState);
+    modalObserver = new MutationObserver((mutations) => {
+      if (mutations.some(mutationTouchesScaleModal)) {
+        scheduleAppModalRefresh();
+      }
+    });
     modalObserver.observe(document.body, {
       attributes: true,
       attributeFilter: ["open", "opened"],
@@ -186,6 +239,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   modalObserver?.disconnect();
   modalObserver = undefined;
+  modalRefreshQueued = false;
 });
 
 const tokenSummary = computed(() => {
