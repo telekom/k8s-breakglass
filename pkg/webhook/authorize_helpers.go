@@ -296,7 +296,21 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 		if err != nil {
 			s.reqLog.Debugw("Failed to fetch namespace labels for DenyPolicy evaluation",
 				"error", err.Error(), "namespace", act.Namespace)
-			// NamespaceLabels will be nil; SelectorTerms cannot be evaluated
+			actions := make([]policy.Action, 0, len(s.sessions)+1)
+			actions = append(actions, act)
+			for _, sess := range s.sessions {
+				sessionAct := act
+				sessionAct.Session = sess.Name
+				actions = append(actions, sessionAct)
+			}
+			needsLabels, checkErr := wc.denyEval.RequiresNamespaceLabels(s.ctx, actions...)
+			if checkErr != nil {
+				return wc.denyPolicyEvaluationFailure(c, s, act, "namespace-label-check", checkErr)
+			}
+			if needsLabels {
+				return wc.denyPolicyEvaluationFailure(c, s, act, "namespace-labels", err)
+			}
+			// NamespaceLabels will be nil; pattern-only namespace rules remain evaluable.
 		} else {
 			act.NamespaceLabels = nsLabels
 		}
@@ -319,6 +333,7 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 	// Global deny-policy evaluation
 	if denied, pol, podSecResult, derr := wc.denyEval.MatchWithDetails(s.ctx, act); derr != nil {
 		s.reqLog.With("error", derr.Error(), "action", act).Error("deny evaluation error")
+		return wc.denyPolicyEvaluationFailure(c, s, act, "global", derr)
 	} else {
 		// Emit pod security audit event if we have a result
 		if podSecResult != nil {
@@ -369,6 +384,7 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 		if denied, pol, podSecResult, derr := wc.denyEval.MatchWithDetails(s.ctx, act); derr != nil {
 			s.reqLog.With("error", derr.Error(), "session", sess.Name, "action", act).
 				Error("deny evaluation error for session")
+			return wc.denyPolicyEvaluationFailure(c, s, act, "session", derr)
 		} else {
 			// Emit pod security audit event if we have a result
 			if podSecResult != nil {
@@ -416,6 +432,33 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 
 	s.phases.EndPhase(PhaseDenyPolicy) // End deny_policy phase
 	return false
+}
+
+func (wc *WebhookController) denyPolicyEvaluationFailure(
+	c *gin.Context,
+	s *authorizeState,
+	act policy.Action,
+	scope string,
+	err error,
+) bool {
+	s.reqLog.With("error", err.Error(), "scope", scope, "action", act).
+		Error("deny policy evaluation failed closed")
+	metrics.WebhookSARDenied.WithLabelValues(s.clusterName).Inc()
+	metrics.WebhookSARDecisionsByAction.WithLabelValues(
+		s.clusterName, act.Verb, act.APIGroup, act.Resource,
+		act.Namespace, act.Subresource, "denied", "policy-error").Inc()
+	metrics.WebhookSARDuration.WithLabelValues(s.clusterName, "denied").
+		Observe(time.Since(s.startTime).Seconds())
+
+	reason := wc.finalizeReason("DenyPolicy evaluation failed; request denied fail-closed", false, s.clusterName)
+	s.phases.EndPhase(PhaseDenyPolicy)
+	s.phases.LogSummary()
+	c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
+		ApiVersion: s.sar.APIVersion,
+		Kind:       s.sar.Kind,
+		Status:     SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason},
+	})
+	return true
 }
 
 // buildDenyPolicyReason constructs the deny reason including escalation availability and IDP hint.

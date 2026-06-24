@@ -528,6 +528,85 @@ func TestDenyPolicyGlobal(t *testing.T) {
 	}
 }
 
+func TestDenyPolicyEvaluationErrorFailsClosed(t *testing.T) {
+	listIntercept := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if _, ok := list.(*breakglassv1alpha1.DenyPolicyList); ok {
+			return errors.New("simulated DenyPolicy list failure")
+		}
+		return c.List(ctx, list, opts...)
+	}}
+	controller := SetupController(&listIntercept)
+	controller.canDoFn = alwaysCanDo
+
+	engine := gin.New()
+	_ = controller.Register(engine.Group(""))
+	inBytes, _ := json.Marshal(sar)
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 got %d", resp.StatusCode)
+	}
+	out := SubjectAccessReviewResponse{}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Status.Allowed {
+		t.Fatalf("expected denied when DenyPolicy evaluation fails")
+	}
+	if !strings.Contains(out.Status.Reason, "DenyPolicy evaluation failed") {
+		t.Fatalf("expected fail-closed reason, got %q", out.Status.Reason)
+	}
+}
+
+func TestDenyPolicyNamespaceLabelFetchFailureFailsClosedForSelectors(t *testing.T) {
+	controller := SetupController(nil)
+	controller.canDoFn = alwaysCanDo
+	pol := &breakglassv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "deny-prod-services"},
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			Rules: []breakglassv1alpha1.DenyRule{{
+				Verbs:     []string{"get"},
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{
+					SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
+						MatchLabels: map[string]string{"env": "production"},
+					}},
+				},
+			}},
+		},
+	}
+	if err := controller.escalManager.Create(context.Background(), pol); err != nil {
+		t.Fatalf("failed creating deny policy: %v", err)
+	}
+	controller.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+		return nil, errors.New("simulated namespace label lookup failure")
+	})
+
+	engine := gin.New()
+	_ = controller.Register(engine.Group(""))
+	inBytes, _ := json.Marshal(sar)
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 got %d", resp.StatusCode)
+	}
+	out := SubjectAccessReviewResponse{}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Status.Allowed {
+		t.Fatalf("expected denied when selector-based DenyPolicy cannot load namespace labels")
+	}
+	if !strings.Contains(out.Status.Reason, "DenyPolicy evaluation failed") {
+		t.Fatalf("expected fail-closed reason, got %q", out.Status.Reason)
+	}
+}
+
 // Tests that a session-scoped deny policy (AppliesTo.Sessions) triggers only during session evaluation phase.
 func TestDenyPolicySessionScope(t *testing.T) {
 	controller := SetupController(nil)
