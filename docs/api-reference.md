@@ -893,7 +893,7 @@ POST /api/debugSessions
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `templateRef` | string | Yes | Name of the DebugSessionTemplate to use |
-| `cluster` | string | Yes | Name of the target cluster |
+| `cluster` | string | Yes | Name of the target cluster. When a matching `ClusterConfig` exists, it must have `Ready=True`. |
 | `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster). The referenced binding must be active, match the selected template, grant the selected cluster, and allow the authenticated requester. |
 | `requestedDuration` | string | No | Desired session duration (e.g., "2h") |
 | `nodeSelector` | object | No | Additional node selector labels |
@@ -906,7 +906,7 @@ POST /api/debugSessions
 
 **Error Responses:**
 - `400 Bad Request`: Invalid template, malformed or missing binding, invalid cluster, invalid duration, or invalid scheduling option
-- `403 Forbidden`: Requester, namespace, cluster, or binding is not allowed by the effective template/binding constraints
+- `403 Forbidden`: Requester, namespace, cluster readiness, or binding is not allowed by the effective template/binding constraints
 
 ### Join Debug Session
 
@@ -1104,7 +1104,7 @@ Returns full `DebugSessionTemplate` CRD object.
 GET /api/debugSessions/templates/:name/clusters
 ```
 
-Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options.
+Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions.
 
 **Response (200 OK):**
 

@@ -2260,6 +2260,33 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 		assert.Contains(t, clusterNames, "cluster-b")
 	})
 
+	t.Run("hides unready clusters", func(t *testing.T) {
+		unreadyCluster := clusterB.DeepCopy()
+		unreadyCluster.Status.Conditions = []metav1.Condition{
+			{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionFalse,
+				Reason: "ConnectionFailed",
+			},
+		}
+		router, _ := setupTestRouter(t, template, clusterA, unreadyCluster)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+
+		require.Len(t, resp.Clusters, 1)
+		assert.Equal(t, "cluster-a", resp.Clusters[0].Name)
+	})
+
 	t.Run("returns clusters with binding constraints", func(t *testing.T) {
 		// Create a binding that overrides constraints
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{

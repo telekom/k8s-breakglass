@@ -206,13 +206,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		reqLog.Warnw("Failed to list cluster configs for pattern resolution", "error", err)
 		// Continue without pattern resolution - clusters will be empty
 	}
-	allClusterNames := make([]string, 0, len(clusterConfigList.Items))
-	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(clusterConfigList.Items))
-	for i := range clusterConfigList.Items {
-		cc := &clusterConfigList.Items[i]
-		allClusterNames = append(allClusterNames, cc.Name)
-		clusterMap[cc.Name] = cc
-	}
+	clusterMap, allClusterNames := readyDebugClusterConfigMap(clusterConfigList.Items)
 
 	// Fetch all bindings to determine which templates have available clusters
 	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
@@ -529,12 +523,8 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 		return
 	}
 
-	// Build cluster name -> ClusterConfig map
-	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(clusterConfigList.Items))
-	for i := range clusterConfigList.Items {
-		cc := &clusterConfigList.Items[i]
-		clusterMap[cc.Name] = cc
-	}
+	// Build cluster name -> ready ClusterConfig map. Unready clusters are not offered as debug targets.
+	clusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
 	// Find all bindings that apply to this template
 	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)
