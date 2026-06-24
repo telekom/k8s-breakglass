@@ -9,6 +9,57 @@
  * @vitest-environment jsdom
  */
 
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import DebugPanel from "@/components/DebugPanel.vue";
+import { AuthKey } from "@/keys";
+import { useUser } from "@/services/auth";
+
+let wrapper: VueWrapper | null = null;
+
+function mountDebugPanel() {
+  return mount(DebugPanel, {
+    global: {
+      provide: {
+        [AuthKey as symbol]: {
+          getAccessToken: vi.fn().mockResolvedValue(""),
+        },
+      },
+      stubs: {
+        "scale-card": { template: "<div><slot /></div>" },
+        "scale-button": { template: "<button v-bind=\"$attrs\"><slot /></button>" },
+        "scale-icon-action-circle-close": true,
+        "scale-icon-action-success": true,
+        "scale-icon-service-settings": true,
+      },
+    },
+  });
+}
+
+async function flushMutationObserver() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function appendOpenModal() {
+  const modal = document.createElement("scale-modal");
+  modal.setAttribute("opened", "");
+  document.body.appendChild(modal);
+  return modal;
+}
+
+beforeEach(() => {
+  document.querySelectorAll("scale-modal").forEach((modal) => modal.remove());
+  useUser().value = undefined;
+});
+
+afterEach(() => {
+  wrapper?.unmount();
+  wrapper = null;
+  document.querySelectorAll("scale-modal").forEach((modal) => modal.remove());
+  useUser().value = undefined;
+  vi.restoreAllMocks();
+});
+
 describe("DebugPanel Utilities", () => {
   /**
    * Utility function that extracts groups from JWT claims
@@ -143,5 +194,38 @@ describe("DebugPanel Utilities", () => {
     it("returns single group without comma", () => {
       expect(formatGroupsDisplay(["admin"])).toBe("admin");
     });
+  });
+});
+
+describe("DebugPanel modal guard", () => {
+  it("disables the debug toggle while an app modal is open", async () => {
+    appendOpenModal();
+
+    wrapper = mountDebugPanel();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="debug-toggle-button"]');
+    expect(toggle.attributes("disabled")).toBeDefined();
+    expect(toggle.attributes("aria-disabled")).toBe("true");
+
+    await toggle.trigger("click");
+
+    expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(false);
+  });
+
+  it("closes the debug panel when an app modal opens later", async () => {
+    wrapper = mountDebugPanel();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="debug-toggle-button"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(true);
+
+    appendOpenModal();
+    await flushMutationObserver();
+
+    expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="debug-toggle-button"]').attributes("disabled")).toBeDefined();
   });
 });

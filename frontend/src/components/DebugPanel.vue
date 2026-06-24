@@ -8,7 +8,7 @@
  * Can be toggled with a debug button in the UI.
  */
 
-import { computed, ref, inject, onMounted } from "vue";
+import { computed, ref, inject, onMounted, onBeforeUnmount } from "vue";
 import { decodeJwt } from "jose";
 import { AuthKey } from "@/keys";
 import { useUser, currentIDPName } from "@/services/auth";
@@ -17,6 +17,7 @@ import { debug, warn, error } from "@/services/logger";
 const auth = inject(AuthKey);
 const user = useUser();
 const showDebug = ref(false);
+const appModalOpen = ref(false);
 const usedMockAccessToken = ref(false);
 const allowMockAccessToken =
   import.meta.env.DEV === true || import.meta.env.VITE_DEBUG_PANEL_ALLOW_MOCK_TOKEN === "true";
@@ -44,6 +45,33 @@ const debugInfo = ref<DebugInfo>({
   groups: [],
   error: null,
 });
+
+let modalObserver: MutationObserver | undefined;
+
+function hasOpenAppModal(): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  return Boolean(document.querySelector("scale-modal[opened], scale-modal[open]"));
+}
+
+function refreshAppModalState() {
+  appModalOpen.value = hasOpenAppModal();
+  if (appModalOpen.value) {
+    showDebug.value = false;
+  }
+}
+
+function toggleDebugPanel() {
+  refreshAppModalState();
+  if (appModalOpen.value) {
+    return;
+  }
+  showDebug.value = !showDebug.value;
+  if (showDebug.value) {
+    void collectDebugInfo();
+  }
+}
 
 function extractGroups(claims: Record<string, unknown> | null): string[] {
   if (!claims) return [];
@@ -139,6 +167,21 @@ async function collectDebugInfo() {
 onMounted(() => {
   debug("DebugPanel", "Component mounted");
   collectDebugInfo();
+  refreshAppModalState();
+  if (typeof document !== "undefined" && typeof MutationObserver !== "undefined") {
+    modalObserver = new MutationObserver(refreshAppModalState);
+    modalObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["open", "opened"],
+      childList: true,
+      subtree: true,
+    });
+  }
+});
+
+onBeforeUnmount(() => {
+  modalObserver?.disconnect();
+  modalObserver = undefined;
 });
 
 const tokenSummary = computed(() => {
@@ -153,6 +196,10 @@ const groupsDisplay = computed(() => {
   }
   return debugInfo.value.groups.join(", ");
 });
+
+const debugToggleTitle = computed(() =>
+  appModalOpen.value ? "Close the open dialog before using the debug panel" : "Toggle debug panel",
+);
 </script>
 
 <template>
@@ -160,10 +207,12 @@ const groupsDisplay = computed(() => {
     <button
       type="button"
       class="debug-toggle"
-      title="Toggle debug panel"
+      :title="debugToggleTitle"
       aria-label="Toggle debug panel"
+      :aria-disabled="appModalOpen"
+      :disabled="appModalOpen"
       data-testid="debug-toggle-button"
-      @click="showDebug = !showDebug"
+      @click="toggleDebugPanel"
     >
       <scale-icon-service-settings size="20" decorative />
     </button>
@@ -301,6 +350,15 @@ const groupsDisplay = computed(() => {
 
 .debug-toggle:hover {
   background-color: var(--telekom-color-ui-subtle, #2a2a2a);
+}
+
+.debug-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.debug-toggle:disabled:hover {
+  background-color: var(--surface-card, #1a1a1a);
 }
 
 .debug-toggle:active {
