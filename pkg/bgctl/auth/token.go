@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,7 +127,10 @@ func SaveTokenCache(path string, cache *TokenCache) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal token cache: %w", err)
 	}
-	return os.WriteFile(path, content, 0o600)
+	if err := writePrivateFile(path, content); err != nil {
+		return fmt.Errorf("failed to write token cache: %w", err)
+	}
+	return nil
 }
 
 func normalizeTokenStorage(mode string) string {
@@ -135,4 +139,27 @@ func normalizeTokenStorage(mode string) string {
 		return tokenStoreKeychain
 	}
 	return val
+}
+
+func writePrivateFile(path string, content []byte) (err error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	n, err := file.Write(content)
+	if err != nil {
+		return err
+	}
+	if n != len(content) {
+		return io.ErrShortWrite
+	}
+	return nil
 }

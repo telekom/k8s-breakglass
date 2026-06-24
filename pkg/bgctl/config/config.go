@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,7 +111,33 @@ func Save(path string, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	return os.WriteFile(path, content, 0o600)
+	if err := writePrivateFile(path, content); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+	return nil
+}
+
+func writePrivateFile(path string, content []byte) (err error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	n, err := file.Write(content)
+	if err != nil {
+		return err
+	}
+	if n != len(content) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func (c *Config) FindContext(name string) (*Context, error) {

@@ -261,6 +261,13 @@ Global flags can also be set via environment variables:
 - `BGCTL_VERBOSE` - Set to `true` to enable verbose logging (output goes to stderr)
 - `BGCTL_NON_INTERACTIVE` - Set to `true` to disable interactive prompts
 
+### Local File Permissions
+
+`bgctl` stores configuration files and file-backed token caches with owner-only
+permissions (`0600`). When updating an existing config or token cache file, the
+CLI tightens the file mode before writing secrets such as inline OIDC client
+secrets or cached bearer/refresh tokens.
+
 ## Shell Completion
 
 ```bash

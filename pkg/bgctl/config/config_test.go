@@ -115,6 +115,24 @@ func TestSaveDefaultsVersion(t *testing.T) {
 	require.Equal(t, VersionV1, loaded.Version)
 }
 
+func TestSaveTightensExistingFileMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: v1\n"), 0o644))
+
+	cfg := DefaultConfig()
+	cfg.OIDCProviders = []OIDCProvider{{
+		Name:         "corp",
+		Authority:    "https://idp.example.com",
+		ClientID:     "bgctl",
+		ClientSecret: "secret",
+	}}
+	require.NoError(t, Save(path, &cfg))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
 func TestFindContext(t *testing.T) {
 	cfg := &Config{
 		Contexts: []Context{
