@@ -20,7 +20,7 @@ This guide covers upgrading the breakglass controller between versions, includin
 kubectl get breakglassescalations -A -o yaml > escalations-backup.yaml
 kubectl get breakglasssessions -A -o yaml > sessions-backup.yaml
 kubectl get clusterconfigs -A -o yaml > clusterconfigs-backup.yaml
-kubectl get auditconfigs -A -o yaml > auditconfigs-backup.yaml
+kubectl get auditconfigs -o yaml > auditconfigs-backup.yaml
 kubectl get identityproviders -o yaml > identityproviders-backup.yaml
 kubectl get mailproviders -o yaml > mailproviders-backup.yaml
 kubectl get denypolicies -A -o yaml > denypolicies-backup.yaml
@@ -39,6 +39,10 @@ kubectl get secrets -l app=breakglass -A -o yaml > breakglass-secrets-backup.yam
 TARGET_VERSION=v1.0.0
 
 # 1. Update CRDs first (always safe to apply newer CRDs)
+# Using the release manifest:
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-crds.yaml"
+
+# Or from a checked-out source tree:
 kubectl apply -f config/crd/bases/
 
 # 2. Update the controller deployment
@@ -250,6 +254,7 @@ kubectl apply -f debugsessions-backup.yaml
 kubectl apply -f debugsessionclusterbindings-backup.yaml
 kubectl apply -f debugsessiontemplates-backup.yaml
 kubectl apply -f debugpodtemplates-backup.yaml
+kubectl apply -f breakglass-secrets-backup.yaml
 
 # 3. Apply previous CRD versions
 kubectl apply -f previous-crds/
