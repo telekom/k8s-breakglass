@@ -186,7 +186,7 @@ function setBrowserStorageItem(name: "localStorage" | "sessionStorage", key: str
     return;
   }
   try {
-    if (value) {
+    if (value !== undefined) {
       storage.setItem(key, value);
     } else {
       storage.removeItem(key);
@@ -195,6 +195,13 @@ function setBrowserStorageItem(name: "localStorage" | "sessionStorage", key: str
     warn("AuthService", `Unable to update browser ${name}`, error);
   }
 }
+
+export const __authTestHooks =
+  import.meta.env.MODE === "test"
+    ? {
+        setBrowserStorageItem,
+      }
+    : undefined;
 
 function getTokenPersistenceMode(): TokenPersistenceMode {
   const stored = getBrowserStorageItem("localStorage", TOKEN_PERSISTENCE_KEY);

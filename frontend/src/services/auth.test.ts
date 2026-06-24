@@ -11,7 +11,7 @@ vi.mock("@/services/logger", () => ({
   error: vi.fn(),
 }));
 
-import AuthService, { useUser, AuthRedirect, AuthSilentRedirect } from "./auth";
+import AuthService, { useUser, AuthRedirect, AuthSilentRedirect, __authTestHooks } from "./auth";
 import type { User, UserManager } from "oidc-client-ts";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 import type Config from "@/model/config";
@@ -612,6 +612,16 @@ describe("AuthService", () => {
       expect(token?.split(".")[2]).toBe("bW9jay1zaWduYXR1cmU");
       expect(await mockAuthService.getUserEmail()).toBe("mock.user@breakglass.dev");
       expect(mockAuthService.getIdentityProviderName()).toBe("production-keycloak");
+    });
+
+    it("stores empty browser storage values instead of clearing the key", () => {
+      expect(__authTestHooks).toBeDefined();
+
+      __authTestHooks!.setBrowserStorageItem("sessionStorage", "empty-storage-value", "");
+      expect(sessionStorage.getItem("empty-storage-value")).toBe("");
+
+      __authTestHooks!.setBrowserStorageItem("sessionStorage", "empty-storage-value", undefined);
+      expect(sessionStorage.getItem("empty-storage-value")).toBeNull();
     });
 
     it("issues synthetic access tokens and email with default profile", async () => {

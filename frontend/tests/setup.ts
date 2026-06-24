@@ -58,7 +58,7 @@ const sessionStorageMock = (() => {
     get length() {
       return Object.keys(store).length;
     },
-    getItem: (key: string) => store[key] || null,
+    getItem: (key: string) => (Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null),
     key: (index: number) => Object.keys(store)[index] ?? null,
     setItem: (key: string, value: string) => {
       store[key] = value;
@@ -84,7 +84,7 @@ const localStorageMock = (() => {
     get length() {
       return Object.keys(store).length;
     },
-    getItem: (key: string) => store[key] || null,
+    getItem: (key: string) => (Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null),
     key: (index: number) => Object.keys(store)[index] ?? null,
     setItem: (key: string, value: string) => {
       store[key] = value;
