@@ -95,3 +95,83 @@ func TestHandleGetEscalations_ReturnsEscalationsForTokenGroups(t *testing.T) {
 		t.Fatalf("expected esc-auth, got %s", out[0].Name)
 	}
 }
+
+func TestHandleGetEscalations_HidesEscalationsForUnreadyClusterConfig(t *testing.T) {
+	readyEsc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-ready", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"ready-cluster"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "ready-group",
+		},
+	}
+	unreadyEsc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-unready", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"unready-cluster"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "unready-group",
+		},
+	}
+	readyCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-cluster", Namespace: "default"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}
+	unreadyCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "unready-cluster", Namespace: "default"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionFalse,
+			}},
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		WithObjects(readyEsc, unreadyEsc, readyCluster, unreadyCluster).
+		Build()
+	em := EscalationManager{Client: cli}
+
+	controller := &BreakglassEscalationController{
+		manager:          &em,
+		log:              zap.NewNop().Sugar(),
+		middleware:       func(c *gin.Context) { c.Next() },
+		identityProvider: &stubIdentityProvider{email: "user@example.com"},
+	}
+
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("groups", []string{"system:authenticated"})
+		c.Next()
+	})
+	_ = controller.Register(engine.Group("/" + controller.BasePath()))
+
+	req := httptest.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
+	}
+
+	var out []breakglassv1alpha1.BreakglassEscalation
+	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected only ready escalation, got %#v", out)
+	}
+	if out[0].Name != "esc-ready" {
+		t.Fatalf("expected esc-ready, got %s", out[0].Name)
+	}
+}

@@ -50,6 +50,10 @@ func NewClusterConfigManager(c client.Client, opts ...ClusterConfigManagerOption
 	return ccm
 }
 
+func (ccm *ClusterConfigManager) hasClient() bool {
+	return ccm != nil && ccm.client != nil
+}
+
 // GetClusterConfigByName fetches the ClusterConfig CR by metadata.name (which is usually the cluster name/ID)
 func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
 	// Try to use a field index (metadata.name) if available via the client's cache.
