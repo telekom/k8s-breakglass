@@ -188,7 +188,7 @@ const isNamespaceEditable = computed(() => {
   // If there's exactly one allowed pattern that's an exact match (no wildcards)
   if (constraints.allowedPatterns && constraints.allowedPatterns.length === 1) {
     const pattern = constraints.allowedPatterns[0];
-    if (pattern && !pattern.includes("*") && !pattern.includes("?")) {
+    if (pattern && !containsGlobMeta(pattern)) {
       return false;
     }
   }
@@ -196,14 +196,81 @@ const isNamespaceEditable = computed(() => {
   return true;
 });
 
-function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  const wildcardPattern = escaped.split("*").join(".*").split("?").join(".");
-  return new RegExp(`^${wildcardPattern}$`);
+function containsGlobMeta(pattern: string): boolean {
+  return /[*?[]/.test(pattern);
+}
+
+function escapeRegExpChar(char: string): string {
+  return char.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function globToRegExp(pattern: string): RegExp | null {
+  let source = "";
+
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    if (char === "*") {
+      source += "[^/]*";
+      continue;
+    }
+    if (char === "?") {
+      source += "[^/]";
+      continue;
+    }
+    if (char === "\\") {
+      i++;
+      if (i >= pattern.length) {
+        return null;
+      }
+      source += escapeRegExpChar(pattern[i] || "");
+      continue;
+    }
+    if (char === "[") {
+      let j = i + 1;
+      let classSource = "";
+
+      if (pattern[j] === "^") {
+        classSource = "^";
+        j++;
+      }
+
+      for (; j < pattern.length; j++) {
+        const classChar = pattern[j];
+        if (classChar === "]" && classSource !== "" && classSource !== "^") {
+          break;
+        }
+        if (classChar === "\\") {
+          j++;
+          if (j >= pattern.length) {
+            return null;
+          }
+          classSource += `\\${pattern[j]}`;
+          continue;
+        }
+        if (classChar === "[" || classChar === "]") {
+          classSource += `\\${classChar}`;
+          continue;
+        }
+        classSource += classChar;
+      }
+
+      if (j >= pattern.length || classSource === "" || classSource === "^") {
+        return null;
+      }
+
+      source += `[${classSource}]`;
+      i = j;
+      continue;
+    }
+
+    source += escapeRegExpChar(char);
+  }
+
+  return new RegExp(`^${source}$`);
 }
 
 function matchesPattern(value: string, pattern: string): boolean {
-  return globToRegExp(pattern).test(value);
+  return globToRegExp(pattern)?.test(value) ?? false;
 }
 
 const namespaceValidationError = computed(() => {

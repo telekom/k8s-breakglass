@@ -950,6 +950,79 @@ describe("DebugSessionCreate", () => {
       expect(mockCreateSession).not.toHaveBeenCalled();
     });
 
+    it("accepts namespace character classes matching backend glob semantics", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            namespaceConstraints: {
+              defaultNamespace: "debug-default",
+              allowUserNamespace: true,
+              allowedPatterns: ["team-[a-c]"],
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string; reason: string; targetNamespace: string };
+        isValid: boolean;
+        namespaceValidationError: string;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Investigating production issue";
+      vm.form.targetNamespace = "team-b";
+      await flushPromises();
+
+      expect(vm.namespaceValidationError).toBe("");
+      expect(vm.isValid).toBe(true);
+    });
+
+    it("rejects namespace character classes in denied patterns", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            namespaceConstraints: {
+              defaultNamespace: "debug-default",
+              allowUserNamespace: true,
+              allowedPatterns: ["team-*"],
+              deniedPatterns: ["team-[x-z]"],
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string; reason: string; targetNamespace: string };
+        isValid: boolean;
+        namespaceValidationError: string;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Investigating production issue";
+      vm.form.targetNamespace = "team-y";
+      await flushPromises();
+
+      expect(vm.namespaceValidationError).toContain("denied");
+      expect(vm.isValid).toBe(false);
+    });
+
     it("does not submit when namespace has leading or trailing whitespace", async () => {
       mockGetTemplateClusters.mockResolvedValue({
         templateName: "standard-debug",
