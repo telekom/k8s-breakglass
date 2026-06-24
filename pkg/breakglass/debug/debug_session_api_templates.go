@@ -854,18 +854,18 @@ func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *breakg
 	if binding == nil || binding.Spec.Constraints == nil {
 		return templateConstraints
 	}
-	if templateConstraints == nil {
-		return binding.Spec.Constraints
-	}
 
 	// Binding constraints override template constraints
-	merged := templateConstraints.DeepCopy()
+	merged := &breakglassv1alpha1.DebugSessionConstraints{}
+	if templateConstraints != nil {
+		merged = templateConstraints.DeepCopy()
+	}
 	bc := binding.Spec.Constraints
 
-	if bc.MaxDuration != "" {
+	if isPositiveDebugSessionDuration(bc.MaxDuration) {
 		merged.MaxDuration = bc.MaxDuration
 	}
-	if bc.DefaultDuration != "" {
+	if isPositiveDebugSessionDuration(bc.DefaultDuration) {
 		merged.DefaultDuration = bc.DefaultDuration
 	}
 	if bc.MaxConcurrentSessions > 0 {

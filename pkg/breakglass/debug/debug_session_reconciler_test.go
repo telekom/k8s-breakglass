@@ -3684,6 +3684,16 @@ func TestParseDuration(t *testing.T) {
 		assert.Equal(t, 30*time.Minute, result)
 	})
 
+	t.Run("non-positive configured durations are ignored", func(t *testing.T) {
+		constraints := &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "-30m",
+			MaxDuration:     "0",
+		}
+
+		assert.Equal(t, time.Hour, ctrl.parseDuration("", constraints))
+		assert.Equal(t, 4*time.Hour, ctrl.parseDuration("8h", constraints))
+	})
+
 	t.Run("supports day units", func(t *testing.T) {
 		constraints := &breakglassv1alpha1.DebugSessionConstraints{
 			DefaultDuration: "1h",

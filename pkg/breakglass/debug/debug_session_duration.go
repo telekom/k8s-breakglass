@@ -24,10 +24,10 @@ func effectiveDebugSessionConstraints(
 		constraints = &breakglassv1alpha1.DebugSessionConstraints{}
 	}
 	bindingConstraints := binding.Spec.Constraints
-	if bindingConstraints.MaxDuration != "" {
+	if isPositiveDebugSessionDuration(bindingConstraints.MaxDuration) {
 		constraints.MaxDuration = bindingConstraints.MaxDuration
 	}
-	if bindingConstraints.DefaultDuration != "" {
+	if isPositiveDebugSessionDuration(bindingConstraints.DefaultDuration) {
 		constraints.DefaultDuration = bindingConstraints.DefaultDuration
 	}
 	if bindingConstraints.AllowRenewal != nil {
@@ -43,6 +43,14 @@ func effectiveDebugSessionConstraints(
 	}
 
 	return constraints
+}
+
+func isPositiveDebugSessionDuration(value string) bool {
+	if value == "" {
+		return false
+	}
+	duration, err := breakglassv1alpha1.ParseDuration(value)
+	return err == nil && duration > 0
 }
 
 func validateRequestedDebugSessionDuration(requested string, constraints *breakglassv1alpha1.DebugSessionConstraints) error {

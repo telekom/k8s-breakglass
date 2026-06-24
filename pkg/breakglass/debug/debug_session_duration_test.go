@@ -42,6 +42,51 @@ func TestEffectiveDebugSessionConstraints(t *testing.T) {
 	assert.Equal(t, int32(4), *constraints.MaxRenewals)
 }
 
+func TestEffectiveDebugSessionConstraints_IgnoresInvalidBindingDurationOverrides(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "-1h",
+				DefaultDuration: "not-a-duration",
+			},
+		},
+	}
+
+	constraints := effectiveDebugSessionConstraints(template, binding)
+
+	require.NotNil(t, constraints)
+	assert.Equal(t, "4h", constraints.MaxDuration)
+	assert.Equal(t, "1h", constraints.DefaultDuration)
+}
+
+func TestMergeConstraints_IgnoresInvalidBindingDurationOverridesWithoutTemplateConstraints(t *testing.T) {
+	controller := &DebugSessionAPIController{}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+				MaxDuration:           "-1h",
+				DefaultDuration:       "not-a-duration",
+				MaxConcurrentSessions: 3,
+			},
+		},
+	}
+
+	constraints := controller.mergeConstraints(nil, binding)
+
+	require.NotNil(t, constraints)
+	assert.Empty(t, constraints.MaxDuration)
+	assert.Empty(t, constraints.DefaultDuration)
+	assert.Equal(t, int32(3), constraints.MaxConcurrentSessions)
+}
+
 func TestValidateRequestedDebugSessionDuration(t *testing.T) {
 	constraints := &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "2h"}
 
