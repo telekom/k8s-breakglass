@@ -126,8 +126,8 @@ func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error)
 }
 
 // MatchWithDetails is like Match but also returns pod security evaluation details.
-// It evaluates all policies and returns denial if any policy denies.
-// Warning results are collected but do not short-circuit policy evaluation.
+// It evaluates policies by precedence and returns on the first denial.
+// Warning results are collected until a denial short-circuits policy evaluation.
 func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bool, policyName string, podSecResult *PodSecurityResult, err error) {
 	policies, err := e.listPolicies(ctx)
 	if err != nil {
