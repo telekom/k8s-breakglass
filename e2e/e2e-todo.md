@@ -357,7 +357,7 @@ The following tests in `e2e/api/use_cases_test.go` cover real-world scenarios do
 
 [D-013] DebugSession constraints enforcement
 - Steps: Create a DebugSessionTemplate with maxDuration=1h. Try to create a DebugSession requesting 4h.
-- Expected: Session is created with duration capped at maxDuration (1h).
+- Expected: Session creation is rejected because requestedDuration exceeds maxDuration.
 - Priority: Medium
 
 [D-014] DebugSession access control - allowed groups

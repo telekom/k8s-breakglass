@@ -960,11 +960,11 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = cli.Delete(ctx, template) }()
 
-	// Create session requesting duration longer than max via API
+	// Create a session within the configured maximum duration.
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
-		RequestedDuration: "4h", // Requesting 4h, max is 1h
+		RequestedDuration: "30m",
 		Namespace:         testNamespace,
 		Reason:            "Testing constraints enforcement",
 	})
@@ -973,9 +973,21 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 	// Wait for session to be processed using helper
 	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
 
-	// The session should still exist, potentially with capped duration
+	// The session should exist because the requested duration is within maxDuration.
 	t.Logf("Session state: %s, requestedDuration: %s", session.Status.State, session.Spec.RequestedDuration)
 	assert.NotEmpty(t, session.Status.State)
+
+	// Requests longer than maxDuration are rejected at the API boundary.
+	_, err = api.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
+		Cluster:           "tenant-a",
+		TemplateRef:       template.Name,
+		RequestedDuration: "4h",
+		Namespace:         testNamespace,
+		Reason:            "Testing constraints enforcement rejection",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "status=400")
+	assert.Contains(t, err.Error(), "exceeds maximum duration 1h")
 }
 
 // D-014: DebugSession access control - allowed groups
