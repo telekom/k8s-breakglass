@@ -226,6 +226,13 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	// Extend the expiration
+	if session.Status.ExpiresAt == nil {
+		apiresponses.RespondBadRequest(ctx, "session has no expiration time")
+		return
+	}
+	newExpiry := metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
+
 	// Check renewal constraints
 	if session.Status.ResolvedTemplate != nil && session.Status.ResolvedTemplate.Constraints != nil {
 		constraints := session.Status.ResolvedTemplate.Constraints
@@ -254,9 +261,12 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		// Check total duration would not exceed max
 		if constraints.MaxDuration != "" {
 			maxDur, err := breakglassv1alpha1.ParseDuration(constraints.MaxDuration)
-			if err == nil && session.Status.StartsAt != nil {
-				currentDuration := time.Since(session.Status.StartsAt.Time)
-				if currentDuration+extendBy > maxDur {
+			if err == nil {
+				if session.Status.StartsAt == nil {
+					apiresponses.RespondBadRequest(ctx, "session has no start time")
+					return
+				}
+				if newExpiry.Time.After(session.Status.StartsAt.Add(maxDur)) {
 					apiresponses.RespondForbidden(ctx, fmt.Sprintf("extension would exceed maximum duration of %s", constraints.MaxDuration))
 					return
 				}
@@ -264,13 +274,6 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Extend the expiration
-	if session.Status.ExpiresAt == nil {
-		apiresponses.RespondBadRequest(ctx, "session has no expiration time")
-		return
-	}
-
-	newExpiry := metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
 	session.Status.ExpiresAt = &newExpiry
 	session.Status.RenewalCount++
 

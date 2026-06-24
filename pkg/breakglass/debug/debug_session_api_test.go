@@ -4165,6 +4165,118 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		assert.Equal(t, int32(1), updatedSession.Status.RenewalCount)
 	})
 
+	t.Run("renew rejects extension beyond max duration", func(t *testing.T) {
+		startedAt := metav1.NewTime(now.Add(-90 * time.Minute))
+		expiresNearLimit := metav1.NewTime(now.Add(30 * time.Minute))
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &startedAt,
+				ExpiresAt: &expiresNearLimit,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+						MaxDuration: "2h",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"15m"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), updatedSession.Status.RenewalCount)
+		require.NotNil(t, updatedSession.Status.ExpiresAt)
+		assert.WithinDuration(t, expiresNearLimit.Time, updatedSession.Status.ExpiresAt.Time, time.Second)
+	})
+
+	t.Run("renew requires start time for max duration enforcement", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				ExpiresAt: &expiresAt,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+						MaxDuration: "2h",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"15m"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
 	t.Run("renew rejects expired active session", func(t *testing.T) {
 		expiredAt := metav1.NewTime(now.Add(-time.Hour))
 		session := breakglassv1alpha1.DebugSession{

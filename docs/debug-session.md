@@ -1395,7 +1395,8 @@ Requested durations must be positive and cannot exceed the effective
 `maxDuration`. When a request selects a `DebugSessionClusterBinding` through
 `bindingRef`, or the API/reconciler defaults to an applicable binding for the
 target cluster, that binding's duration constraints override the template
-constraints for that session.
+constraints for that session. Renewals extend the current expiration time, but
+the renewed expiration cannot move past `status.startsAt + maxDuration`.
 
 ## Terminal Sharing
 

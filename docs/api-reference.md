@@ -946,7 +946,9 @@ POST /api/debugSessions/:name/renew
 }
 ```
 
-Extends the session duration. Subject to template constraints (maxDuration, maxRenewals).
+Extends the session duration. Subject to template constraints (`maxDuration`,
+`maxRenewals`); the renewed expiration cannot exceed
+`status.startsAt + maxDuration`.
 
 ### Terminate Debug Session
 
