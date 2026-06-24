@@ -126,6 +126,11 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		return
 	}
 
+	if isDropTerminalState(bs.Status.State) {
+		apiresponses.RespondBadRequest(c, fmt.Sprintf("session is in terminal state %s and cannot be dropped", bs.Status.State))
+		return
+	}
+
 	// If approved -> mark as Expired and set RetainedUntil appropriately (owner requested termination)
 	if bs.Status.State == breakglassv1alpha1.SessionStateApproved && !bs.Status.ApprovedAt.IsZero() {
 		// Approved session dropped - transition to Expired
@@ -182,6 +187,19 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionDropped, &bs, requesterEmail, "Session dropped by owner")
 
 	c.JSON(http.StatusOK, bs)
+}
+
+func isDropTerminalState(state breakglassv1alpha1.BreakglassSessionState) bool {
+	switch state {
+	case breakglassv1alpha1.SessionStateRejected,
+		breakglassv1alpha1.SessionStateExpired,
+		breakglassv1alpha1.SessionStateIdleExpired,
+		breakglassv1alpha1.SessionStateWithdrawn,
+		breakglassv1alpha1.SessionStateTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 // handleApproverCancel allows an approver to cancel/terminate a running (approved) session.

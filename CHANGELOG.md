@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Session drop preserves terminal audit history**: Owner `POST /api/breakglassSessions/{name}/drop` now rejects sessions that are already in a terminal state instead of rewriting Rejected, Expired, IdleExpired, Withdrawn, or ApprovalTimeout sessions to `Withdrawn`.
 - **DenyPolicy precedence is now honored during evaluation**: Multiple matching `DenyPolicy` resources are now evaluated in stable ascending `spec.precedence` order, with unset precedence defaulting to `100`, matching the documented policy semantics.
 - **Debug session duration constraints are enforced at creation**: Debug session requests now reject non-positive requested durations and reject requested durations that exceed the effective template or cluster-binding `maxDuration`, instead of accepting them for later clamping. Direct `DebugSession` CR admission now also rejects non-positive `requestedDuration` values.
 - **Frontend: persistent API error states**: Request access, session search, pending approvals, and debug-session pages now show persistent error states with retry actions when primary API loads fail instead of rendering misleading empty-state messages.
