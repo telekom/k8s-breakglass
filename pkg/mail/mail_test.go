@@ -618,11 +618,32 @@ func TestSender_Send_HappyPath(t *testing.T) {
 		Port:          port,
 		Username:      "", // no auth for our test server
 		SenderAddress: "sender@example.com",
+		DisableTLS:    true,
 	}
 	sender := NewSenderFromMailProvider(mpConfig, "")
 
 	err := sender.Send([]string{"recipient@example.com"}, "Hello", "<p>body</p>")
 	assert.NoError(t, err, "expected Send to succeed against test SMTP server")
+}
+
+func TestSender_SendRequiresSTARTTLSByDefault(t *testing.T) {
+	host, port, stop := startTestSMTPServer(t)
+	defer stop()
+
+	mpConfig := &config.MailProviderConfig{
+		Name:          "starttls-required",
+		Host:          host,
+		Port:          port,
+		Username:      "", // no auth for our test server
+		SenderAddress: "sender@example.com",
+	}
+	mailSender, ok := NewSenderFromMailProvider(mpConfig, "").(*sender)
+	if !ok {
+		t.Fatal("expected concrete sender")
+	}
+
+	err := mailSender.sendStartTLSSMTP([]string{"recipient@example.com"}, "Hello", "<p>body</p>")
+	assert.ErrorContains(t, err, "STARTTLS", "expected default SMTP path to fail closed when STARTTLS is unavailable")
 }
 
 // TestSender_Send_PlainSMTP tests the DisableTLS path using plain SMTP without STARTTLS

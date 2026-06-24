@@ -59,7 +59,7 @@ MailProvider replaces the legacy `mail` configuration from `config.yaml` with a 
 | `passwordRef` | SecretKeyReference | No | Reference to secret containing password |
 | `insecureSkipVerify` | bool | No | Skip TLS cert verification (testing only!) |
 | `certificateAuthority` | string | No | PEM-encoded CA certificate for TLS |
-| `disableTLS` | bool | No | Disable TLS/STARTTLS entirely (for dev servers like MailHog) |
+| `disableTLS` | bool | No | Disable TLS/STARTTLS entirely (for dev servers like MailHog). When unset or `false`, SMTP servers must advertise and complete STARTTLS unless implicit TLS is used. |
 
 **Validation Rules:**
 - If `username` is set, `passwordRef` must be provided
@@ -258,7 +258,7 @@ spec:
 
 ### Development with MailHog
 
-MailHog is a local email testing tool that doesn't support TLS. Use `disableTLS: true` to skip STARTTLS negotiation:
+MailHog is a local email testing tool that doesn't support TLS. Use `disableTLS: true` to opt in to plaintext SMTP and skip STARTTLS negotiation:
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -328,7 +328,7 @@ The MailProvider reconciler automatically performs health checks:
 - **Checks**:
   1. Load password from secret
   2. Connect to SMTP server
-  3. Perform STARTTLS negotiation
+  3. Perform STARTTLS negotiation unless `disableTLS: true`
   4. Authenticate with credentials
 - **Timeout**: 10 seconds per health check
 

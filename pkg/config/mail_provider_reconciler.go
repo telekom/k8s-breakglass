@@ -212,8 +212,16 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 
 	// Try STARTTLS unless explicitly disabled (e.g., for MailHog)
 	if !mp.Spec.SMTP.DisableTLS {
+		ok, _ := client.Extension("STARTTLS")
+		if !ok {
+			log.Warnw("SMTP server does not advertise STARTTLS")
+			metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "starttls_unavailable").Inc()
+			return false, fmt.Errorf("STARTTLS is required but not advertised by SMTP server")
+		}
+
+		var tlsConfig *tls.Config
 		if !mp.Spec.SMTP.InsecureSkipVerify {
-			tlsConfig := &tls.Config{
+			tlsConfig = &tls.Config{
 				MinVersion: tls.VersionTLS12,
 				ServerName: mp.Spec.SMTP.Host,
 			}
@@ -228,20 +236,19 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 				}
 			}
 
-			if err := client.StartTLS(tlsConfig); err != nil {
-				// STARTTLS might not be supported, log but don't fail
-				log.Debugw("STARTTLS not available or failed", "error", err)
-			}
 		} else {
 			// Only use insecure TLS if explicitly configured
-			tlsConfig := &tls.Config{
+			tlsConfig = &tls.Config{
 				MinVersion:         tls.VersionTLS12,
 				ServerName:         mp.Spec.SMTP.Host,
 				InsecureSkipVerify: true, // #nosec G402 -- explicit MailProvider option for test/dev SMTP endpoints
 			}
-			if err := client.StartTLS(tlsConfig); err != nil {
-				log.Debugw("STARTTLS not available or failed (insecure mode)", "error", err)
-			}
+		}
+
+		if err := client.StartTLS(tlsConfig); err != nil {
+			log.Warnw("STARTTLS negotiation failed", "error", err)
+			metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "starttls_failed").Inc()
+			return false, fmt.Errorf("STARTTLS failed: %w", err)
 		}
 	} else {
 		log.Debugw("TLS disabled for SMTP connection, skipping STARTTLS")

@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"math"
 	"net"
@@ -159,8 +160,11 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 		if s.disableTLS {
 			// Use plain SMTP without STARTTLS (for MailHog and similar dev servers)
 			err = s.sendPlainSMTP(receivers, safeSubject, safeBody)
+		} else if !s.dialer.SSL {
+			// Require STARTTLS for non-implicit-TLS SMTP connections.
+			err = s.sendStartTLSSMTP(receivers, safeSubject, safeBody)
 		} else {
-			// Use gomail with TLS/STARTTLS support
+			// Use gomail for implicit TLS (port 465).
 			msg := gomail.NewMessage()
 			msg.SetAddressHeader("From", s.senderAddress, s.senderName)
 			msg.SetHeader("Bcc", receivers...)
@@ -197,9 +201,17 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 	return lastErr
 }
 
+func (s *sender) sendStartTLSSMTP(receivers []string, subject, body string) error {
+	return s.sendSMTP(receivers, subject, body, true)
+}
+
 // sendPlainSMTP sends email using plain SMTP without STARTTLS
 // This is used for development SMTP servers like MailHog that don't support TLS
 func (s *sender) sendPlainSMTP(receivers []string, subject, body string) error {
+	return s.sendSMTP(receivers, subject, body, false)
+}
+
+func (s *sender) sendSMTP(receivers []string, subject, body string, requireSTARTTLS bool) error {
 	addr := net.JoinHostPort(s.host, fmt.Sprintf("%d", s.port))
 
 	// Connect to the server
@@ -215,6 +227,23 @@ func (s *sender) sendPlainSMTP(receivers []string, subject, body string) error {
 		return fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 	defer func() { _ = client.Close() }()
+
+	if requireSTARTTLS {
+		ok, _ := client.Extension("STARTTLS")
+		if !ok {
+			return fmt.Errorf("SMTP server does not advertise STARTTLS")
+		}
+		tlsConfig := s.dialer.TLSConfig
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				ServerName: s.host,
+			}
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("STARTTLS failed: %w", err)
+		}
+	}
 
 	// Authenticate if credentials are provided
 	if s.username != "" && s.password != "" {

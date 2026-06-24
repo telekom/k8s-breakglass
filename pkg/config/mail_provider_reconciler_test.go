@@ -17,7 +17,12 @@ limitations under the License.
 package config
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +54,55 @@ func newTestMailProviderClient(objs ...client.Object) client.Client {
 		WithObjects(objs...).
 		WithStatusSubresource(&breakglassv1alpha1.MailProvider{}).
 		Build()
+}
+
+func startMailProviderTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() { _ = ln.Close() }()
+
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		reader := bufio.NewReader(conn)
+		_, _ = fmt.Fprintf(conn, "220 localhost Test SMTP Service Ready\r\n")
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			line = strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(line, "EHLO") || strings.HasPrefix(line, "HELO"):
+				_, _ = fmt.Fprintf(conn, "250-localhost Hello\r\n250 OK\r\n")
+			case strings.HasPrefix(line, "QUIT"):
+				_, _ = fmt.Fprintf(conn, "221 Bye\r\n")
+				return
+			default:
+				_, _ = fmt.Fprintf(conn, "250 OK\r\n")
+			}
+		}
+	}()
+
+	_, portText, err := net.SplitHostPort(ln.Addr().String())
+	require.NoError(t, err)
+	_, err = fmt.Sscanf(portText, "%d", &port)
+	require.NoError(t, err)
+
+	stop = func() {
+		_ = ln.Close()
+		wg.Wait()
+	}
+	return "127.0.0.1", port, stop
 }
 
 func TestMailProviderReconciler_ReconcileNotFound(t *testing.T) {
@@ -330,6 +384,50 @@ func TestMailProviderReconciler_GetSecretValue(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "secret reference is nil")
 	})
+}
+
+func TestMailProviderReconciler_PerformHealthCheckRequiresSTARTTLS(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	host, port, stop := startMailProviderTestSMTPServer(t)
+	defer stop()
+
+	mp := &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "starttls-required"},
+		Spec: breakglassv1alpha1.MailProviderSpec{
+			SMTP: breakglassv1alpha1.SMTPConfig{
+				Host: host,
+				Port: port,
+			},
+		},
+	}
+	reconciler := &MailProviderReconciler{Log: logger}
+
+	healthy, err := reconciler.performHealthCheckSync(context.Background(), mp, "", logger)
+	require.Error(t, err)
+	assert.False(t, healthy)
+	assert.Contains(t, err.Error(), "STARTTLS")
+}
+
+func TestMailProviderReconciler_PerformHealthCheckAllowsPlainSMTPWhenTLSDisabled(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	host, port, stop := startMailProviderTestSMTPServer(t)
+	defer stop()
+
+	mp := &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "plain-smtp"},
+		Spec: breakglassv1alpha1.MailProviderSpec{
+			SMTP: breakglassv1alpha1.SMTPConfig{
+				Host:       host,
+				Port:       port,
+				DisableTLS: true,
+			},
+		},
+	}
+	reconciler := &MailProviderReconciler{Log: logger}
+
+	healthy, err := reconciler.performHealthCheckSync(context.Background(), mp, "", logger)
+	require.NoError(t, err)
+	assert.True(t, healthy)
 }
 
 func TestMailProviderReconciler_UpdateStatusHealthy(t *testing.T) {
