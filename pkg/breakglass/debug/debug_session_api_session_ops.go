@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -64,14 +65,41 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot join session in state '%s'", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot join expired session")
+		return
+	}
 
 	// Check if user already joined
-	username := currentUser.(string)
+	username, ok := currentUser.(string)
+	if !ok {
+		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
+		return
+	}
+
+	// Get email from context (set by auth middleware from "email" claim)
+	userEmail := ""
+	if email, exists := ctx.Get("email"); exists && email != nil {
+		if emailStr, ok := email.(string); ok {
+			userEmail = emailStr
+		}
+	}
+
 	for _, p := range session.Status.Participants {
 		if p.User == username {
 			apiresponses.RespondConflict(ctx, "user already joined this session")
 			return
 		}
+	}
+
+	if !isTerminalSharingEnabledForJoin(session) {
+		apiresponses.RespondForbidden(ctx, "terminal sharing is not enabled for this session")
+		return
+	}
+
+	if !isInvitedDebugSessionParticipant(session, username, userEmail) {
+		apiresponses.RespondForbidden(ctx, "user is not invited to join this debug session")
+		return
 	}
 
 	// Check max participants if configured
@@ -88,7 +116,12 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	// Determine role
 	role := breakglassv1alpha1.ParticipantRoleViewer
 	if req.Role == string(breakglassv1alpha1.ParticipantRoleParticipant) {
-		role = breakglassv1alpha1.ParticipantRoleParticipant
+		apiresponses.RespondForbidden(ctx, "participant role requires owner assignment")
+		return
+	}
+	if req.Role != string(breakglassv1alpha1.ParticipantRoleViewer) {
+		apiresponses.RespondBadRequest(ctx, "invalid participant role")
+		return
 	}
 
 	// Get display name from context (set by auth middleware from "name" claim)
@@ -96,14 +129,6 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	if dn, exists := ctx.Get("displayName"); exists && dn != nil {
 		if dnStr, ok := dn.(string); ok {
 			displayName = dnStr
-		}
-	}
-
-	// Get email from context (set by auth middleware from "email" claim)
-	userEmail := ""
-	if email, exists := ctx.Get("email"); exists && email != nil {
-		if emailStr, ok := email.(string); ok {
-			userEmail = emailStr
 		}
 	}
 
@@ -196,6 +221,10 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot renew session in state '%s'", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot renew expired session")
+		return
+	}
 
 	// Check renewal constraints
 	if session.Status.ResolvedTemplate != nil && session.Status.ResolvedTemplate.Constraints != nil {
@@ -262,6 +291,34 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		"newExpiresAt": newExpiry.Time,
 		"renewalCount": session.Status.RenewalCount,
 	})
+}
+
+func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Time) bool {
+	return session != nil && session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now)
+}
+
+func isTerminalSharingEnabledForJoin(session *breakglassv1alpha1.DebugSession) bool {
+	if session == nil {
+		return false
+	}
+	if session.Status.TerminalSharing != nil {
+		return session.Status.TerminalSharing.Enabled
+	}
+	return session.Status.ResolvedTemplate != nil &&
+		session.Status.ResolvedTemplate.TerminalSharing != nil &&
+		session.Status.ResolvedTemplate.TerminalSharing.Enabled
+}
+
+func isInvitedDebugSessionParticipant(session *breakglassv1alpha1.DebugSession, username, email string) bool {
+	if session == nil {
+		return false
+	}
+	for _, invited := range session.Spec.InvitedParticipants {
+		if strings.EqualFold(invited, username) || (email != "" && strings.EqualFold(invited, email)) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleTerminateDebugSession terminates a debug session early

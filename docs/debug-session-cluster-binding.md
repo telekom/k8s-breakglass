@@ -1074,10 +1074,11 @@ GET /api/debugSessions/templates/network-debug/clusters
 | Scenario | Behavior |
 |----------|----------|
 | Multiple bindings match | All matching bindings returned in `bindingOptions` array; user selects which to use |
-| User selects binding via API | Include `bindingRef` in `CreateDebugSessionRequest` to specify which binding |
+| User selects binding via API | Include `bindingRef` in `CreateDebugSessionRequest` to specify which binding. The API validates `namespace/name` format, active binding state, template match, cluster match, and requester allowlists before creating the session. |
 | No binding selected | First matching binding used as default (backward compatible) |
 | Binding becomes disabled | Auto-discovery skips disabled bindings |
 | Binding deleted after session created | Session continues with cached `ResolvedBinding` info |
+| Malformed binding reference | Session creation is rejected with `400 Bad Request` |
 | Malformed label selector | Binding is skipped (logged as warning) |
 | ClusterConfig missing for clusterSelector | clusterSelector cannot match; explicit clusters still work |
 | Empty binding list | Session proceeds without binding configuration |

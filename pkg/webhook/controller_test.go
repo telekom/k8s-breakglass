@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -1060,6 +1061,8 @@ func (c *listErrorClient) List(ctx context.Context, list client.ObjectList, opts
 // TestCheckDebugSessionAccess tests the checkDebugSessionAccess helper function
 func TestCheckDebugSessionAccess(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
+	now := metav1.Now()
+	expiredAt := metav1.NewTime(now.Add(-time.Hour))
 
 	tests := []struct {
 		name            string
@@ -1253,6 +1256,57 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			expectAllowed:   true,
 			expectSession:   "ds-1",
 			expectReasonHas: "debug session",
+		},
+		{
+			name:        "viewer participant cannot access pod subresources",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "exec",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-viewer", Namespace: "default"},
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleViewer}},
+					},
+				},
+			},
+			expectAllowed: false,
+		},
+		{
+			name:        "expired active debug session denied",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "exec",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-expired", Namespace: "default"},
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State:     breakglassv1alpha1.DebugSessionStateActive,
+						ExpiresAt: &expiredAt,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+					},
+				},
+			},
+			expectAllowed: false,
 		},
 		// AllowedPodOperations test cases
 		{

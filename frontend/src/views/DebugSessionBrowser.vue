@@ -134,7 +134,7 @@ function isOwner(session: DebugSessionSummary): boolean {
 
 async function handleJoin(session: DebugSessionSummary) {
   try {
-    await debugSessionService.joinSession(session.name, { role: "participant" });
+    await debugSessionService.joinSession(session.name, { role: "viewer" });
     pushSuccess(`Joined debug session ${session.name}`);
     await refresh();
   } catch (e: unknown) {

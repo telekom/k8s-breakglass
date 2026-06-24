@@ -429,8 +429,9 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
+	authorizationReader := c.reader()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
+	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			reqLog.Warnw("Template not found", "templateRef", req.TemplateRef)
 			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("template '%s' not found", req.TemplateRef))
@@ -444,12 +445,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Fetch bindings and cluster configs to check if cluster is allowed via template or binding
 	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
 	var clusterConfigList breakglassv1alpha1.ClusterConfigList
-	if err := c.client.List(apiCtx, &bindingList); err != nil {
+	if err := authorizationReader.List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
 	}
-	if err := c.client.List(apiCtx, &clusterConfigList); err != nil {
+	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
 		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
@@ -462,8 +463,105 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		clusterMap[cc.Name] = cc
 	}
 
+	// Get current user from context before authorization checks.
+	currentUser, exists := ctx.Get("username")
+	if !exists || currentUser == nil {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
+	currentUserStr, ok := currentUser.(string)
+	if !ok {
+		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
+		return
+	}
+
+	// Get email from context (set by auth middleware from "email" claim)
+	userEmail := ""
+	if email, exists := ctx.Get("email"); exists && email != nil {
+		if emailStr, ok := email.(string); ok {
+			userEmail = emailStr
+		}
+	}
+
+	// Get display name from context (set by auth middleware from "name" claim)
+	displayName := ""
+	if dn, exists := ctx.Get("displayName"); exists && dn != nil {
+		if dnStr, ok := dn.(string); ok {
+			displayName = dnStr
+		}
+	}
+
+	// Get user groups from context for authorization and auto-approval logic
+	var userGroups []string
+	if groups, exists := ctx.Get("groups"); exists && groups != nil {
+		if g, ok := groups.([]string); ok {
+			userGroups = g
+		}
+	}
+
 	// Check if cluster is allowed by template or any binding
-	allowedResult := c.isClusterAllowedByTemplateOrBinding(template, req.Cluster, bindingList.Items, clusterMap)
+	var resolvedBinding *breakglassv1alpha1.DebugSessionClusterBinding
+	var allowedResult ClusterAllowedResult
+	if req.BindingRef != "" {
+		bindingNamespace, bindingName, validBindingRef := parseDebugSessionBindingRef(req.BindingRef)
+		if !validBindingRef {
+			reqLog.Warnw("Invalid bindingRef format", "bindingRef", req.BindingRef)
+			apiresponses.RespondBadRequest(ctx, "bindingRef must use namespace/name format")
+			return
+		}
+
+		resolvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+		if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: bindingName, Namespace: bindingNamespace}, resolvedBinding); err != nil {
+			if apierrors.IsNotFound(err) {
+				reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
+				apiresponses.RespondBadRequest(ctx, fmt.Sprintf("binding '%s' not found", req.BindingRef))
+				return
+			}
+			reqLog.Errorw("Failed to get binding", "binding", req.BindingRef, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to validate binding")
+			return
+		}
+
+		if !breakglass.IsBindingActive(resolvedBinding) {
+			reqLog.Warnw("Binding is not active",
+				"bindingRef", req.BindingRef,
+				"disabled", resolvedBinding.Spec.Disabled,
+				"effectiveFrom", resolvedBinding.Spec.EffectiveFrom,
+				"expiresAt", resolvedBinding.Spec.ExpiresAt,
+			)
+			apiresponses.RespondForbidden(ctx, "binding is not active (disabled, expired, or not yet effective)")
+			return
+		}
+
+		if len(c.findBindingsForTemplate(template, []breakglassv1alpha1.DebugSessionClusterBinding{*resolvedBinding})) == 0 {
+			reqLog.Warnw("Binding does not reference requested template",
+				"bindingRef", req.BindingRef,
+				"templateRef", req.TemplateRef,
+			)
+			apiresponses.RespondForbidden(ctx, "binding does not grant access to the requested template")
+			return
+		}
+
+		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap)
+		if !stringInSlice(req.Cluster, bindingClusters) {
+			reqLog.Warnw("Binding does not grant requested cluster",
+				"bindingRef", req.BindingRef,
+				"requestedCluster", req.Cluster,
+				"bindingClusters", bindingClusters,
+			)
+			apiresponses.RespondForbidden(ctx, "binding does not grant access to the requested cluster")
+			return
+		}
+
+		allowedResult = ClusterAllowedResult{
+			Allowed:         true,
+			AllowedBySource: fmt.Sprintf("binding:%s/%s", resolvedBinding.Namespace, resolvedBinding.Name),
+			MatchingBinding: resolvedBinding,
+			AllBindings:     []breakglassv1alpha1.DebugSessionClusterBinding{*resolvedBinding},
+		}
+	} else {
+		allowedResult = c.isClusterAllowedByTemplateOrBinding(template, req.Cluster, bindingList.Items, clusterMap)
+	}
 	if !allowedResult.Allowed {
 		var errDetails string
 		if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
@@ -485,6 +583,16 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			"bindingsChecked", len(bindingList.Items),
 		)
 		apiresponses.RespondForbidden(ctx, errDetails)
+		return
+	}
+	if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, allowedResult.MatchingBinding), currentUserStr, userEmail, userGroups) {
+		reqLog.Warnw("User is not allowed to request debug session",
+			"templateRef", req.TemplateRef,
+			"bindingRef", req.BindingRef,
+			"user", currentUserStr,
+			"groupCount", len(userGroups),
+		)
+		apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
 		return
 	}
 	reqLog.Debugw("Cluster access validated",
@@ -574,37 +682,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Get current user from context
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
-		return
-	}
-
-	// Get email from context (set by auth middleware from "email" claim)
-	userEmail := ""
-	if email, exists := ctx.Get("email"); exists && email != nil {
-		if emailStr, ok := email.(string); ok {
-			userEmail = emailStr
-		}
-	}
-
-	// Get display name from context (set by auth middleware from "name" claim)
-	displayName := ""
-	if dn, exists := ctx.Get("displayName"); exists && dn != nil {
-		if dnStr, ok := dn.(string); ok {
-			displayName = dnStr
-		}
-	}
-
-	// Get user groups from context for authorization and auto-approval logic
-	var userGroups []string
-	if groups, exists := ctx.Get("groups"); exists && groups != nil {
-		if g, ok := groups.([]string); ok {
-			userGroups = g
-		}
-	}
-
 	// Coerce extraDeployValues types based on template variable definitions.
 	// HTML form inputs and YAML defaults can produce string-encoded numbers/booleans
 	// (e.g., "5" instead of 5). Normalize them before validation and storage so
@@ -641,12 +718,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Generate session name - use safe type assertion
-	currentUserStr, ok := currentUser.(string)
-	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
-		return
-	}
 	sessionName := fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(currentUserStr), naming.ToRFC1123Subdomain(req.Cluster), time.Now().Unix())
 
 	// Determine namespace from ClusterConfig for the requested cluster
@@ -824,6 +895,56 @@ var validDebugSessionStates = map[string]struct{}{
 func isValidDebugSessionState(val string) bool {
 	for k := range validDebugSessionStates {
 		if strings.EqualFold(k, val) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseDebugSessionBindingRef(bindingRef string) (string, string, bool) {
+	if strings.Count(bindingRef, "/") != 1 {
+		return "", "", false
+	}
+	parts := strings.SplitN(bindingRef, "/", 2)
+	if parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func effectiveDebugSessionAllowed(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionAllowed {
+	if binding != nil && binding.Spec.Allowed != nil &&
+		(len(binding.Spec.Allowed.Users) > 0 || len(binding.Spec.Allowed.Groups) > 0) {
+		return binding.Spec.Allowed
+	}
+	if template == nil {
+		return nil
+	}
+	return template.Spec.Allowed
+}
+
+func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllowed, username, email string, userGroups []string) bool {
+	if allowed == nil || (len(allowed.Users) == 0 && len(allowed.Groups) == 0) {
+		return true
+	}
+	for _, allowedUser := range allowed.Users {
+		if matchPattern(allowedUser, username) || (email != "" && matchPattern(allowedUser, email)) {
+			return true
+		}
+	}
+	for _, allowedGroup := range allowed.Groups {
+		for _, userGroup := range userGroups {
+			if matchPattern(allowedGroup, userGroup) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stringInSlice(value string, values []string) bool {
+	for _, candidate := range values {
+		if candidate == value {
 			return true
 		}
 	}

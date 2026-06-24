@@ -888,7 +888,7 @@ POST /api/debugSessions
 |-------|------|----------|-------------|
 | `templateRef` | string | Yes | Name of the DebugSessionTemplate to use |
 | `cluster` | string | Yes | Name of the target cluster |
-| `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster) |
+| `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster). The referenced binding must be active, match the selected template, grant the selected cluster, and allow the authenticated requester. |
 | `requestedDuration` | string | No | Desired session duration (e.g., "2h") |
 | `nodeSelector` | object | No | Additional node selector labels |
 | `reason` | string | No | Explanation for the debug session request |
@@ -899,8 +899,8 @@ POST /api/debugSessions
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**
-- `400 Bad Request`: Invalid template, cluster not allowed, or invalid scheduling option
-- `403 Forbidden`: Namespace not allowed by template constraints
+- `400 Bad Request`: Invalid template, malformed or missing binding, invalid cluster, invalid duration, or invalid scheduling option
+- `403 Forbidden`: Requester, namespace, cluster, or binding is not allowed by the effective template/binding constraints
 
 ### Join Debug Session
 
@@ -912,11 +912,11 @@ POST /api/debugSessions/:name/join
 
 ```json
 {
-  "role": "participant"
+  "role": "viewer"
 }
 ```
 
-Role can be `participant` or `viewer` (default: `viewer`).
+Only invited users can join an active, unexpired session, and only when terminal sharing is enabled for that session. The join endpoint adds callers as `viewer` participants; callers cannot self-select the privileged `participant` role.
 
 ### Leave Debug Session
 

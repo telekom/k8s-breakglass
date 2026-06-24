@@ -317,6 +317,41 @@ func TestDebugSessionListCommand_WideFormat(t *testing.T) {
 	assert.Contains(t, output, "ALLOWED_PODS")
 }
 
+func TestDebugSessionJoinCommand_DefaultsToViewerRole(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/debugSessions/debug-session-1/join", r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+
+		var req client.JoinDebugSessionRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.Equal(t, "viewer", req.Role)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(client.DebugSessionDetailResponse{
+			DebugSession: breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-1"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "session", "join", "debug-session-1",
+		"-o", "json",
+	})
+
+	require.NoError(t, rootCmd.Execute())
+}
+
 func TestDebugTemplateListCommand_WithMockServer(t *testing.T) {
 	server := setupMockDebugServer(t)
 	defer server.Close()

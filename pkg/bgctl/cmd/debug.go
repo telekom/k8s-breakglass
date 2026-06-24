@@ -367,7 +367,7 @@ func newDebugSessionJoinCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
 		},
 	}
-	cmd.Flags().StringVar(&role, "role", "participant", "Role: participant|viewer")
+	cmd.Flags().StringVar(&role, "role", "viewer", "Role: participant|viewer")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
 	return cmd
 }
