@@ -233,6 +233,14 @@ describe("App — high-contrast and theme toggles", () => {
     expect(wrapper.find(".mobile-nav-fallback").classes()).not.toContain("mobile-nav-fallback--open");
   });
 
+  it("does not expose mobile navigation links before login", () => {
+    wrapper = mountApp();
+
+    expect(wrapper.find(".mobile-nav-trigger").exists()).toBe(false);
+    expect(wrapper.find(".mobile-nav-fallback").exists()).toBe(false);
+    expect(wrapper.findAll(".mobile-nav-fallback__link")).toHaveLength(0);
+  });
+
   it("exposes the app content as the skip-link main landmark", () => {
     wrapper = mountApp();
 

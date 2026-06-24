@@ -87,6 +87,10 @@ This keeps UI branding and outgoing email sender names consistent while allowing
 
 For complete MailProvider configuration options, see [Mail Provider documentation](./mail-provider.md).
 
+## Header Navigation
+
+Authenticated navigation links are shown only after login on both desktop and mobile. Mobile header controls use at least a 44px touch target regardless of theme or high-contrast settings.
+
 ## High Contrast Mode
 
 The frontend includes a user-facing High Contrast toggle for enhanced readability, available in the header navigation.

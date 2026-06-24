@@ -553,7 +553,7 @@ watch(
               ></scale-telekom-profile-menu>
             </scale-telekom-nav-item>
 
-            <scale-telekom-nav-item class="mobile-nav-item">
+            <scale-telekom-nav-item v-if="authenticated" class="mobile-nav-item">
               <button
                 id="mobile-nav-trigger"
                 type="button"
@@ -802,6 +802,15 @@ scale-telekom-header::part(app-name-text) {
 @media (max-width: 1039px) {
   .mobile-nav-item {
     display: flex;
+  }
+
+  .profile-nav-item,
+  .profile-menu {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .mobile-flyout-nav {
