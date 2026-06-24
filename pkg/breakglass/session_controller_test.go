@@ -3109,6 +3109,18 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 			Approvers: []string{"carol@example.com"},
 		},
 	}
+	usernameRequester := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "reader-sess-3"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-read",
+			User:         "alice",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
 	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-readable"},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
@@ -3118,7 +3130,7 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 		},
 	}
 
-	cli := builder.WithObjects(pending, approved, esc).Build()
+	cli := builder.WithObjects(pending, approved, usernameRequester, esc).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -3152,6 +3164,12 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 		return w.Result().StatusCode, body
 	}
+	sessionNameFromBody := func(body map[string]any) string {
+		return body["session"].(map[string]any)["metadata"].(map[string]any)["name"].(string)
+	}
+	isRequesterFromBody := func(body map[string]any) bool {
+		return body["approvalMeta"].(map[string]any)["isRequester"].(bool)
+	}
 
 	status, body := serveAs("mallory@example.com", "reader-sess-1")
 	require.Equal(t, http.StatusForbidden, status)
@@ -3159,15 +3177,24 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 
 	status, body = serveAs("alice@example.com", "reader-sess-1")
 	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, "reader-sess-1", body["session"].(map[string]any)["metadata"].(map[string]any)["name"])
+	require.Equal(t, "reader-sess-1", sessionNameFromBody(body))
 
 	status, body = serveAs("bob@example.com", "reader-sess-1")
 	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, "reader-sess-1", body["session"].(map[string]any)["metadata"].(map[string]any)["name"])
+	require.Equal(t, "reader-sess-1", sessionNameFromBody(body))
+
+	status, body = serveAs("bob@example.com", "reader-sess-2")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "reader-sess-2", sessionNameFromBody(body))
 
 	status, body = serveAs("carol@example.com", "reader-sess-2")
 	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, "reader-sess-2", body["session"].(map[string]any)["metadata"].(map[string]any)["name"])
+	require.Equal(t, "reader-sess-2", sessionNameFromBody(body))
+
+	status, body = serveAs("alice@example.com", "reader-sess-3")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "reader-sess-3", sessionNameFromBody(body))
+	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize username-based requester")
 }
 
 // Fake identity provider that returns an error for GetEmail to exercise error paths

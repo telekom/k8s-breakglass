@@ -778,8 +778,10 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 		return meta
 	}
 
-	// Check if user is the requester
-	meta.IsRequester = email == session.Spec.User
+	// Check if user is the requester. Sessions can store the requester by email,
+	// preferred_username, or sub depending on the spoke cluster identity claim.
+	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	meta.IsRequester = matchesAuthIdentifier(session.Spec.User, authIdentifiers)
 
 	// Check session state first
 	switch session.Status.State {
@@ -850,11 +852,15 @@ func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, 
 		return true, nil
 	}
 
-	if approvalMeta.IsApprover || wc.isSessionApprover(c, session) {
+	if approvalMeta.IsApprover {
 		return true, nil
 	}
 
 	if userHasApprovedSession(session, email) {
+		return true, nil
+	}
+
+	if session.Status.State != breakglassv1alpha1.SessionStatePending && wc.isSessionApprover(c, session) {
 		return true, nil
 	}
 
