@@ -28,8 +28,9 @@ const ScaleButtonStub = {
   template: '<button v-bind="$attrs" :disabled="disabled"><slot /></button>',
 };
 
-function disabledAttribute(selector: string, wrapper: ReturnType<typeof mount>): string | undefined {
-  return wrapper.find(selector).attributes("disabled");
+function isDisabled(selector: string, wrapper: ReturnType<typeof mount>): boolean {
+  const disabled = wrapper.find(selector).attributes("disabled");
+  return disabled !== undefined && disabled !== "false";
 }
 
 describe("ApprovalModalContent", () => {
@@ -48,8 +49,8 @@ describe("ApprovalModalContent", () => {
       },
     });
 
-    expect(disabledAttribute('[data-testid="approve-button"]', wrapper)).toBe("true");
-    expect(disabledAttribute('[data-testid="reject-button"]', wrapper)).toBe("true");
+    expect(isDisabled('[data-testid="approve-button"]', wrapper)).toBe(true);
+    expect(isDisabled('[data-testid="reject-button"]', wrapper)).toBe(true);
     expect(wrapper.find(".approval-note-required").text()).toBe("This field is required.");
   });
 
@@ -68,8 +69,8 @@ describe("ApprovalModalContent", () => {
       },
     });
 
-    expect(disabledAttribute('[data-testid="approve-button"]', wrapper)).toBe("false");
-    expect(disabledAttribute('[data-testid="reject-button"]', wrapper)).toBe("false");
+    expect(isDisabled('[data-testid="approve-button"]', wrapper)).toBe(false);
+    expect(isDisabled('[data-testid="reject-button"]', wrapper)).toBe(false);
     expect(wrapper.find(".approval-note-required").exists()).toBe(false);
   });
 });
