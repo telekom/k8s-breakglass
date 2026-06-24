@@ -23,11 +23,11 @@ kubectl get clusterconfigs -A -o yaml > clusterconfigs-backup.yaml
 kubectl get auditconfigs -o yaml > auditconfigs-backup.yaml
 kubectl get identityproviders -o yaml > identityproviders-backup.yaml
 kubectl get mailproviders -o yaml > mailproviders-backup.yaml
-kubectl get denypolicies -A -o yaml > denypolicies-backup.yaml
+kubectl get denypolicies -o yaml > denypolicies-backup.yaml
 kubectl get debugsessions -A -o yaml > debugsessions-backup.yaml
 kubectl get debugsessionclusterbindings -A -o yaml > debugsessionclusterbindings-backup.yaml
-kubectl get debugsessiontemplates -A -o yaml > debugsessiontemplates-backup.yaml
-kubectl get debugpodtemplates -A -o yaml > debugpodtemplates-backup.yaml
+kubectl get debugsessiontemplates -o yaml > debugsessiontemplates-backup.yaml
+kubectl get debugpodtemplates -o yaml > debugpodtemplates-backup.yaml
 
 # Backup secrets
 kubectl get secrets -l app=breakglass -A -o yaml > breakglass-secrets-backup.yaml
@@ -257,7 +257,7 @@ kubectl apply -f debugpodtemplates-backup.yaml
 kubectl apply -f breakglass-secrets-backup.yaml
 
 # 3. Apply previous CRD versions
-kubectl apply -f previous-crds/
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-crds.yaml"
 
 # 4. Deploy previous controller version
 kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-base.yaml"
