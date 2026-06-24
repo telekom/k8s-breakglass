@@ -90,6 +90,7 @@ For complete MailProvider configuration options, see [Mail Provider documentatio
 ## High Contrast Mode
 
 The frontend includes a user-facing High Contrast toggle for enhanced readability, available in the header navigation.
+Authenticated navigation links are shown only after login on both desktop and mobile; mobile header controls use at least a 44px touch target.
 
 **Enabling:**
 - **UI toggle**: Click the eye icon in the header navigation bar
