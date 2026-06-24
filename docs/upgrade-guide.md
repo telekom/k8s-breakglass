@@ -20,11 +20,14 @@ This guide covers upgrading the breakglass controller between versions, includin
 kubectl get breakglassescalations -A -o yaml > escalations-backup.yaml
 kubectl get breakglasssessions -A -o yaml > sessions-backup.yaml
 kubectl get clusterconfigs -A -o yaml > clusterconfigs-backup.yaml
+kubectl get auditconfigs -o yaml > auditconfigs-backup.yaml
 kubectl get identityproviders -o yaml > identityproviders-backup.yaml
 kubectl get mailproviders -o yaml > mailproviders-backup.yaml
-kubectl get denypolicies -A -o yaml > denypolicies-backup.yaml
-kubectl get debugsessiontemplates -A -o yaml > debugsessiontemplates-backup.yaml
-kubectl get debugpodtemplates -A -o yaml > debugpodtemplates-backup.yaml
+kubectl get denypolicies -o yaml > denypolicies-backup.yaml
+kubectl get debugsessions -A -o yaml > debugsessions-backup.yaml
+kubectl get debugsessionclusterbindings -A -o yaml > debugsessionclusterbindings-backup.yaml
+kubectl get debugsessiontemplates -o yaml > debugsessiontemplates-backup.yaml
+kubectl get debugpodtemplates -o yaml > debugpodtemplates-backup.yaml
 
 # Backup secrets
 kubectl get secrets -l app=breakglass -A -o yaml > breakglass-secrets-backup.yaml
@@ -33,20 +36,27 @@ kubectl get secrets -l app=breakglass -A -o yaml > breakglass-secrets-backup.yam
 ### Standard Upgrade Steps
 
 ```bash
+TARGET_VERSION=v1.0.0
+
 # 1. Update CRDs first (always safe to apply newer CRDs)
+# Using the release manifest:
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-crds.yaml"
+
+# Or from a checked-out source tree:
 kubectl apply -f config/crd/bases/
 
 # 2. Update the controller deployment
-# Using Helm:
-helm upgrade breakglass charts/escalation-config \
-  --namespace breakglass-system \
-  --values your-values.yaml
+# Using the release manifest:
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 
-# Or using kubectl:
-kubectl apply -k config/default/
+# Or from a checked-out source tree:
+IMG="ghcr.io/telekom/k8s-breakglass:${TARGET_VERSION}" make deploy
+
+# The charts/escalation-config Helm chart deploys configuration CRs only.
+# Use it after the controller and CRDs are installed.
 
 # 3. Verify deployment
-kubectl rollout status deployment/breakglass -n breakglass-system
+kubectl rollout status deployment/breakglass-manager -n breakglass-system
 
 # 4. Check logs for errors
 kubectl logs -l app=breakglass -n breakglass-system --tail=100
@@ -142,9 +152,8 @@ kubectl apply -f identityprovider.yaml
 **Step 4: Upgrade Controller**
 
 ```bash
-helm upgrade breakglass charts/escalation-config \
-  --namespace breakglass-system \
-  --values your-values.yaml
+TARGET_VERSION=v1.0.0
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 ```
 
 **Step 5: Verify IdentityProvider Status**
@@ -185,9 +194,8 @@ kubectl apply -f config/crd/bases/breakglass.t-caas.telekom.com_debugpodtemplate
 **Step 2: Upgrade Controller**
 
 ```bash
-helm upgrade breakglass charts/escalation-config \
-  --namespace breakglass-system \
-  --set debugSessions.enabled=true
+TARGET_VERSION=v0.9.0
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 ```
 
 ---
@@ -229,21 +237,33 @@ kubectl apply -k config/default-previous/
 If CRD changes cause issues:
 
 ```bash
+PREVIOUS_VERSION=v0.8.0
+
 # 1. Scale down controller
-kubectl scale deployment/breakglass -n breakglass-system --replicas=0
+kubectl scale deployment/breakglass-manager -n breakglass-system --replicas=0
 
 # 2. Restore resources from backup
 kubectl apply -f escalations-backup.yaml
 kubectl apply -f sessions-backup.yaml
+kubectl apply -f clusterconfigs-backup.yaml
+kubectl apply -f auditconfigs-backup.yaml
+kubectl apply -f identityproviders-backup.yaml
+kubectl apply -f mailproviders-backup.yaml
+kubectl apply -f denypolicies-backup.yaml
+kubectl apply -f debugsessions-backup.yaml
+kubectl apply -f debugsessionclusterbindings-backup.yaml
+kubectl apply -f debugsessiontemplates-backup.yaml
+kubectl apply -f debugpodtemplates-backup.yaml
+kubectl apply -f breakglass-secrets-backup.yaml
 
 # 3. Apply previous CRD versions
-kubectl apply -f previous-crds/
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-crds.yaml"
 
 # 4. Deploy previous controller version
-kubectl apply -k config/default-v0.8/
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-base.yaml"
 
 # 5. Scale up
-kubectl scale deployment/breakglass -n breakglass-system --replicas=2
+kubectl scale deployment/breakglass-manager -n breakglass-system --replicas=2
 ```
 
 ### Handling CRD Conversion Webhook Issues
@@ -354,12 +374,12 @@ For production environments requiring zero-downtime upgrades:
 kubectl apply -f config/crd/bases/
 
 # 2. Perform rolling update
-kubectl set image deployment/breakglass \
+kubectl set image deployment/breakglass-manager \
   breakglass=ghcr.io/telekom/k8s-breakglass:v1.0.0 \
   -n breakglass-system
 
 # 3. Monitor rollout
-kubectl rollout status deployment/breakglass -n breakglass-system
+kubectl rollout status deployment/breakglass-manager -n breakglass-system
 
 # 4. Verify health
 kubectl get pods -l app=breakglass -n breakglass-system -o wide
