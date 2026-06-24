@@ -19,14 +19,28 @@ env:
 jobs:
   validate-tag:
     runs-on: ubuntu-latest
+    outputs:
+      stable: ${{ steps.classify.outputs.stable }}
+      prerelease: ${{ steps.classify.outputs.prerelease }}
+      make_latest: ${{ steps.classify.outputs.make_latest }}
     steps:
       - name: Require version tag ref
+        id: classify
         run: |
           if [[ "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "Release ref is ${GITHUB_REF}"
           else
             echo "::error::Release workflow must run from a semver tag like v1.2.3 or v1.2.3-rc.1. Build metadata tags are not supported because Docker image tags cannot contain '+'. Got ${GITHUB_REF}"
             exit 1
+          fi
+          if [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
@@ -249,7 +263,7 @@ jobs:
   # Assemble per-arch images into a single multi-arch manifest and tag it
   # ---------------------------------------------------------------------------
   assemble:
-    needs: [build-image]
+    needs: [build-image, validate-tag]
     permissions:
       contents: read
       packages: write
@@ -273,15 +287,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
-      - name: Classify release tag
-        id: release-tag
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "stable=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "stable=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
@@ -289,7 +294,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ github.ref_name }}
-            type=raw,value=latest,enable=${{ steps.release-tag.outputs.stable == 'true' }}
+            type=raw,value=latest,enable=${{ needs.validate-tag.outputs.stable == 'true' }}
       - name: Create and push multi-arch manifest
         env:
           REGISTRY: ${{ env.REGISTRY }}
@@ -531,7 +536,7 @@ jobs:
   release:
     # NOTE: Does not depend on `artifactory` intentionally — Artifactory is a
     # best-effort mirror and should not block GitHub Release creation.
-    needs: [prepare, assemble, publish-chart]
+    needs: [prepare, assemble, publish-chart, validate-tag]
     permissions:
       contents: write
       packages: read
@@ -609,22 +614,11 @@ jobs:
               (cd "${artifact_dir}" && sha256sum "${artifact_name}") >> "${checksum_file}"
             fi
           done
-      - name: Classify GitHub release tag
-        id: release-tag
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "make_latest=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Create GitHub Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
-          prerelease: ${{ steps.release-tag.outputs.prerelease }}
-          make_latest: ${{ steps.release-tag.outputs.make_latest }}
+          prerelease: ${{ needs.validate-tag.outputs.prerelease }}
+          make_latest: ${{ needs.validate-tag.outputs.make_latest }}
           files: |
             manifests-${{ github.ref_name }}.tgz
             manifests-base.yaml
