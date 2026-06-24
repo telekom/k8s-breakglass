@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestEffectiveDebugSessionConstraints(t *testing.T) {
@@ -148,4 +149,23 @@ func TestValidateRequestedDebugSessionDuration_IgnoresInvalidConfiguredMaxDurati
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestSelectEffectiveDebugSessionBinding_DefaultsToFirstApplicableBinding(t *testing.T) {
+	first := breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "default"},
+	}
+	second := breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "default"},
+	}
+	result := ClusterAllowedResult{
+		Allowed:     true,
+		AllBindings: []breakglassv1alpha1.DebugSessionClusterBinding{first, second},
+	}
+
+	binding, err := selectEffectiveDebugSessionBinding("", result)
+
+	require.NoError(t, err)
+	require.NotNil(t, binding)
+	assert.Equal(t, "first", binding.Name)
 }

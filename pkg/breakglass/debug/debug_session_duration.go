@@ -111,7 +111,13 @@ func selectEffectiveDebugSessionBinding(
 	allowedResult ClusterAllowedResult,
 ) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	if strings.TrimSpace(bindingRef) == "" {
-		return allowedResult.MatchingBinding, nil
+		if allowedResult.MatchingBinding != nil {
+			return allowedResult.MatchingBinding, nil
+		}
+		if len(allowedResult.AllBindings) > 0 {
+			return &allowedResult.AllBindings[0], nil
+		}
+		return nil, nil
 	}
 
 	namespace, name, ok := strings.Cut(bindingRef, "/")

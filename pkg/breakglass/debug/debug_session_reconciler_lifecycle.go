@@ -492,6 +492,9 @@ func (c *DebugSessionController) parseDuration(requested string, constraints *br
 			maxDur = d
 		}
 	}
+	if defaultDur > maxDur {
+		defaultDur = maxDur
+	}
 
 	if requested == "" {
 		return defaultDur

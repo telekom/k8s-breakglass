@@ -2925,6 +2925,76 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "exceeds maximum duration 2h")
 	})
 
+	t.Run("create session applies implicit binding max duration when template also allows cluster", func(t *testing.T) {
+		templateWithBinding := breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "template-and-binding-debug",
+			},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode:         breakglassv1alpha1.DebugSessionModeWorkload,
+				WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"production"},
+				},
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+					MaxDuration:     "4h",
+					DefaultDuration: "1h",
+				},
+			},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "tight-binding",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-and-binding-debug"},
+				Clusters:    []string{"production"},
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+					MaxDuration:     "2h",
+					DefaultDuration: "30m",
+				},
+			},
+		}
+		cluster := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "production",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
+					Name:      "production-kubeconfig",
+					Namespace: "breakglass",
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithBinding, &binding, &cluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"template-and-binding-debug","cluster":"production","requestedDuration":"3h"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "exceeds maximum duration 2h")
+	})
+
 	t.Run("create session returns warnings when namespace is defaulted", func(t *testing.T) {
 		templateWithNsDefaults := breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
