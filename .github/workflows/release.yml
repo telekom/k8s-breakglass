@@ -575,6 +575,7 @@ jobs:
             "${bgctl_archives[@]}"
             sbom-${{ github.ref_name }}.spdx.json
           )
+          mapfile -t artifacts < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 
           if [ "${#artifacts[@]}" -eq 0 ]; then
             echo "::error::No release artifacts found for checksum generation"
