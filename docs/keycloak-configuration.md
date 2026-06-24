@@ -321,6 +321,7 @@ Protocol mappers control which claims appear in the OIDC tokens. The breakglass 
 | `clientAddress` | `oidc-usersessionmodel-note-mapper` | Audit | Client IP for audit trail |
 
 > **Critical**: If the `groups` mapper uses `full.path=true`, group names will be `/parent/child` format which won't match the flat group names used in `BreakglassEscalation` resources. Always use `full.path=false`.
+> The API preserves group claim values exactly after trimming whitespace; it does not collapse `/parent/admin` to `admin`.
 
 > **Upstream reference**: [Keycloak Protocol Mapper Types](https://www.keycloak.org/docs/latest/server_admin/#_protocol-mappers)
 
