@@ -36,6 +36,8 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 			})
 			// set short reason for UI consumption
 			ses.Status.ReasonEnded = "timeExpired"
+			retainFor := ParseRetainFor(ses.Spec, wc.log)
+			ses.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 			// Ensure we have the correct namespace/resourceVersion from the stored object before updating status.
 			if stored, gerr := wc.sessionManager.GetBreakglassSessionByName(context.Background(), ses.Name); gerr == nil {
@@ -67,6 +69,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 						updated.Status.State = ses.Status.State
 						updated.Status.Conditions = ses.Status.Conditions
 						updated.Status.ReasonEnded = ses.Status.ReasonEnded
+						updated.Status.RetainedUntil = ses.Status.RetainedUntil
 						ses = updated
 					} else {
 						// If we cannot re-fetch, short-circuit and surface error

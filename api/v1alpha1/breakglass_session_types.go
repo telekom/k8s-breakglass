@@ -198,7 +198,7 @@ type BreakglassSessionStatus struct {
 	TimeoutAt metav1.Time `json:"timeoutAt,omitempty"`
 
 	// retainedUntil is the time when the session object will be removed from the cluster.
-	// This value is set based on spec.retainFor when the session is approved.
+	// This value is set based on spec.retainFor when the session enters a terminal state.
 	// +omitempty
 	RetainedUntil metav1.Time `json:"retainedUntil,omitempty"`
 

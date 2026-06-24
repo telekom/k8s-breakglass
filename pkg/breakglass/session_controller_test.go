@@ -223,8 +223,8 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	}
 
 	ses := getSession()
-	if stat := ses.Status.RetainedUntil; stat.Day() != time.Now().Add(MonthDuration).Day() {
-		t.Fatalf("Incorrect session store until date day status %#v", stat)
+	if stat := ses.Status.RetainedUntil; !stat.IsZero() {
+		t.Fatalf("Pending session should not have retainedUntil set, got %#v", stat)
 	}
 
 	// approve session
@@ -242,6 +242,9 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	ses = getSession()
 	if ses.Status.ApprovedAt.Day() != time.Now().Day() {
 		t.Fatalf("Expected session to be approved, but it is not.")
+	}
+	if stat := ses.Status.RetainedUntil; !stat.IsZero() {
+		t.Fatalf("Approved session should not have retainedUntil set, got %#v", stat)
 	}
 
 	// reject session -> should be invalid because session is already approved (terminal)
@@ -4525,9 +4528,10 @@ func TestFormatDuration(t *testing.T) {
 
 // TestIsSessionRetained covers the IsSessionRetained helper function
 func TestIsSessionRetained(t *testing.T) {
-	t.Run("session retained - retention time in past", func(t *testing.T) {
+	t.Run("terminal session retained - retention time in past", func(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:         breakglassv1alpha1.SessionStateExpired,
 				RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 			},
 		}
@@ -4535,13 +4539,24 @@ func TestIsSessionRetained(t *testing.T) {
 		require.True(t, IsSessionRetained(session))
 	})
 
-	t.Run("session not ready for removal - retention time in future", func(t *testing.T) {
+	t.Run("terminal session not ready for removal - retention time in future", func(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:         breakglassv1alpha1.SessionStateExpired,
 				RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
 			},
 		}
 		// Should be "retained" (not ready for removal) since time has not passed
+		require.False(t, IsSessionRetained(session))
+	})
+
+	t.Run("approved session with stale retention is not retained", func(t *testing.T) {
+		session := breakglassv1alpha1.BreakglassSession{
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:         breakglassv1alpha1.SessionStateApproved,
+				RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+			},
+		}
 		require.False(t, IsSessionRetained(session))
 	})
 }

@@ -297,14 +297,14 @@ Configured per-escalation:
 spec:
   maxValidFor: "2h"    # Total active time after approval
   idleTimeout: "1h"    # Auto-expire after 1h of inactivity
-  retainFor: "720h"    # Retention after expiry (30 days)
+  retainFor: "720h"    # Retention after terminal state entry (30 days)
 ```
 
 Timeout behavior:
 
 - `maxValidFor`: Total duration session is active regardless of usage
 - `idleTimeout`: Session auto-expired if no authorization requests for this duration
-- `retainFor`: How long to keep expired sessions in system (for audit)
+- `retainFor`: How long to keep terminal sessions in system after rejection, withdrawal, expiry, idle expiry, or approval timeout (for audit)
 
 ## API Response Format
 

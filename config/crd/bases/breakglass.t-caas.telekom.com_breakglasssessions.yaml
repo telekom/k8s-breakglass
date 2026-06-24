@@ -312,7 +312,7 @@ spec:
               retainedUntil:
                 description: |-
                   retainedUntil is the time when the session object will be removed from the cluster.
-                  This value is set based on spec.retainFor when the session is approved.
+                  This value is set based on spec.retainFor when the session enters a terminal state.
                 format: date-time
                 type: string
               state:

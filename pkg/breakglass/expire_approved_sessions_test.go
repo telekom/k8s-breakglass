@@ -83,6 +83,8 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
 		assert.Equal(t, "timeExpired", updated.Status.ReasonEnded)
+		require.False(t, updated.Status.RetainedUntil.IsZero(), "expired sessions must get terminal retention")
+		assert.True(t, updated.Status.RetainedUntil.After(time.Now()))
 
 		// Verify the Expired condition was added
 		var hasExpiredCondition bool

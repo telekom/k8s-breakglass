@@ -218,8 +218,16 @@ func (wc *BreakglassSessionController) isSessionApprover(c *gin.Context, session
 	return result.Allowed
 }
 
-// IsSessionRetained checks if a session should be removed (retainedUntil passed)
+// IsTerminalSessionState returns true for states from which sessions cannot transition.
+func IsTerminalSessionState(state breakglassv1alpha1.BreakglassSessionState) bool {
+	return IsSessionTerminalState(state)
+}
+
+// IsSessionRetained checks if a terminal session should be removed.
 func IsSessionRetained(session breakglassv1alpha1.BreakglassSession) bool {
+	if !IsTerminalSessionState(session.Status.State) {
+		return false
+	}
 	if session.Status.RetainedUntil.IsZero() {
 		return false
 	}
