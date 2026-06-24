@@ -298,7 +298,7 @@ bgctl update rollback
 
 - `0` - Success
 - `1` - General error
-- `2` - Command-line usage error, such as an unknown command, invalid flag, or missing required argument
+- `2` - Command-line usage error, such as an unknown command, invalid flag, or missing required argument/flag
 
 ## Environment Variables
 

@@ -161,6 +161,7 @@ func IsUsageError(err error) bool {
 		strings.HasPrefix(msg, "unknown flag:") ||
 		strings.HasPrefix(msg, "unknown shorthand flag:") ||
 		strings.HasPrefix(msg, "flag provided but not defined:") ||
+		strings.HasPrefix(msg, "required flag(s) ") ||
 		strings.HasPrefix(msg, "requires at least ") ||
 		strings.HasPrefix(msg, "requires at most ") ||
 		strings.HasPrefix(msg, "accepts ") ||

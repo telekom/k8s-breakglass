@@ -40,6 +40,12 @@ func TestRunUsageError(t *testing.T) {
 	}
 }
 
+func TestRunRequiredFlagUsageError(t *testing.T) {
+	if code := run([]string{"config", "init", "--oidc-provider", "prod"}); code != 2 {
+		t.Fatalf("expected exit code 2 for missing required flag, got %d", code)
+	}
+}
+
 func TestRunGeneralError(t *testing.T) {
 	if code := run([]string{"completion", "unsupported"}); code != 1 {
 		t.Fatalf("expected exit code 1 for non-usage command error, got %d", code)
