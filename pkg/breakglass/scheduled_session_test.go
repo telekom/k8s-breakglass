@@ -6,6 +6,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -519,10 +520,12 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 
 	// Create mock mail enqueuer
 	mockMail := NewMockMailEnqueuer(true)
+	mockAudit := NewMockAuditEmitter(true)
 
 	// Create the activator
 	activator := NewScheduledSessionActivator(log, sesManager).
-		WithMailService(mockMail, "TestBrand", false)
+		WithMailService(mockMail, "TestBrand", false).
+		WithAuditService(mockAudit)
 
 	// Run activation
 	activator.ActivateScheduledSessions()
@@ -552,6 +555,16 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 	}
 	if !hasCondition {
 		t.Error("session-to-activate should have ScheduledStartTimeReached condition")
+	}
+	events := mockAudit.GetEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event for scheduled activation, got %d", len(events))
+	}
+	if events[0].Type != audit.EventSessionActivated {
+		t.Fatalf("expected session activated audit event, got %s", events[0].Type)
+	}
+	if events[0].Target.Name != "session-to-activate" {
+		t.Fatalf("audit event should target session-to-activate, got %s", events[0].Target.Name)
 	}
 
 	// Verify sessionNotReady was NOT activated
