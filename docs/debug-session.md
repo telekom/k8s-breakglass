@@ -1409,13 +1409,13 @@ terminalSharing:
 
 When enabled, participants can attach to shared terminals:
 - Owner starts the debug session
-- Participants join using the `attachCommand` from status
+- Invited users join the session as viewers and use the `attachCommand` from status
 - All participants see the same terminal output
 
 **Implementation details:**
 - When terminal sharing is enabled, the controller wraps the container command with `tmux new-session` or `screen` 
 - The attach command is populated in `status.terminalSharing.attachCommand`
-- Participants can exec into the debug pod and run the attach command to join the session
+- Invited viewers can attach to the shared terminal. The join API does not grant the privileged `participant` role; only existing owner or participant status entries can use debug pod operations.
 - The debug image must include the selected terminal sharing binary (`tmux` or `screen`)
 
 **Tmux image for E2E:**
@@ -1468,6 +1468,8 @@ Debug sessions support multiple participant roles:
 | `owner` | Full control, can terminate session, invite others |
 | `participant` | Can use debug pods, view terminal |
 | `viewer` | Read-only access, can observe terminal sharing |
+
+Joining an existing session requires an entry in `spec.invitedParticipants`, an active unexpired session, and terminal sharing enabled by the resolved template/status. Self-service join requests always create `viewer` entries; users cannot request the `participant` role for themselves.
 
 ## Audit Logging
 
@@ -1941,3 +1943,5 @@ The following test categories are implemented:
 - **Bad case tests**: Invalid inputs, unauthorized access, invalid state transitions
 - **E2E tests**: Template creation, session lifecycle, multi-participant sessions, kubectl-debug operations
 - **Frontend tests**: 478 tests passing (Vitest)
+
+```

@@ -294,6 +294,12 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 			continue
 		}
+		if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.Time.After(time.Now()) {
+			reqLog.Debugw("Debug session skipped because it is expired",
+				"session", ds.Name,
+				"expiresAt", ds.Status.ExpiresAt.Time)
+			continue
+		}
 
 		// Check if the pod is in the allowed pods list
 		podAllowed := false
