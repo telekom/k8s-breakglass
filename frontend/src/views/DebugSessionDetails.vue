@@ -473,8 +473,17 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
     <LoadingState v-if="loading" message="Loading session details..." />
 
-    <EmptyState v-else-if="error" icon="alert-error" :message="error">
-      <scale-button variant="primary" @click="goBack"> Back to Sessions </scale-button>
+    <EmptyState
+      v-else-if="error"
+      variant="error"
+      title="Unable to load debug session"
+      :description="error"
+      data-testid="debug-session-details-error-state"
+    >
+      <template #actions>
+        <scale-button variant="primary" @click="fetchSession">Retry</scale-button>
+        <scale-button variant="secondary" @click="goBack">Back to Sessions</scale-button>
+      </template>
     </EmptyState>
 
     <template v-else-if="session">

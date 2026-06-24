@@ -163,6 +163,30 @@ describe("DebugSessionDetails", () => {
     expect(mockCopy).toHaveBeenCalledWith("kubectl exec -it pod-1 -n ns-1 -- /bin/sh");
   });
 
+  it("shows an error state when loading session details fails", async () => {
+    mockGetSession.mockRejectedValueOnce(new Error("detail down"));
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    const errorState = wrapper.findComponent({ name: "EmptyState" });
+
+    expect(errorState.exists()).toBe(true);
+    expect(errorState.props("variant")).toBe("error");
+    expect(errorState.props("description")).toBe("detail down");
+  });
+
   it("calls clipboardCleanup on unmount", async () => {
     mockGetSession.mockResolvedValue({
       status: { state: "Active" },

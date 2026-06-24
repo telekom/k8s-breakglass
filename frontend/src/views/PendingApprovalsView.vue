@@ -48,6 +48,18 @@
     <LoadingState v-if="loading" message="Loading pending approvals..." />
 
     <EmptyState
+      v-else-if="error"
+      data-testid="approvals-error-state"
+      variant="error"
+      title="Unable to load pending approvals"
+      :description="error"
+    >
+      <template #actions>
+        <scale-button variant="primary" @click="fetchPendingApprovals">Retry</scale-button>
+      </template>
+    </EmptyState>
+
+    <EmptyState
       v-else-if="sortedSessions.length === 0"
       data-testid="empty-state"
       :title="pendingSessions.length === 0 ? 'No pending requests' : 'No matching requests'"
@@ -262,6 +274,7 @@ const breakglassService = new BreakglassService(auth);
 // State
 const pendingSessions = ref<SessionCR[]>([]);
 const loading = ref(true);
+const error = ref("");
 const approving = ref<string | null>(null);
 const approverNotes = reactive<Record<string, string>>({});
 const showApproveModal = ref(false);
@@ -417,11 +430,13 @@ const sortedSessions = computed(() => {
 // API interactions
 async function fetchPendingApprovals() {
   loading.value = true;
+  error.value = "";
   try {
     const sessions = await breakglassService.fetchPendingSessionsForApproval();
     pendingSessions.value = Array.isArray(sessions) ? dedupeSessions(sessions) : [];
   } catch (e: unknown) {
-    handleAxiosError("PendingApprovalsView", e, "Failed to fetch pending approvals");
+    const { message } = handleAxiosError("PendingApprovalsView", e, "Failed to fetch pending approvals");
+    error.value = message;
   }
   loading.value = false;
 }

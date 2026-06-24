@@ -292,6 +292,18 @@ function onStateToggle(state: string, event: Event) {
 
     <LoadingState v-if="loading" message="Loading debug sessions..." />
 
+    <EmptyState
+      v-else-if="error"
+      variant="error"
+      title="Unable to load debug sessions"
+      :description="error"
+      data-testid="debug-sessions-error-state"
+    >
+      <template #actions>
+        <scale-button variant="primary" @click="refresh()">Retry</scale-button>
+      </template>
+    </EmptyState>
+
     <div v-else-if="filteredSessions.length > 0" class="sessions-grid" data-testid="debug-sessions-grid">
       <DebugSessionCard
         v-for="session in filteredSessions"

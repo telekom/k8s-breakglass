@@ -29,7 +29,7 @@ vi.mock("@/services/toast", () => ({
 }));
 
 vi.mock("@/services/logger", () => ({
-  handleAxiosError: vi.fn(),
+  handleAxiosError: vi.fn(() => ({ message: "network error" })),
   debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
@@ -127,11 +127,15 @@ describe("PendingApprovalsView (component)", () => {
   it("shows error toast when loading sessions fails", async () => {
     mockFetchPendingSessionsForApproval.mockRejectedValueOnce(new Error("network error"));
 
-    await createWrapper();
+    const wrapper = await createWrapper();
     expect(handleAxiosError).toHaveBeenCalledWith(
       "PendingApprovalsView",
       expect.any(Error),
       "Failed to fetch pending approvals",
     );
+    const errorState = wrapper.findComponent({ name: "EmptyState" });
+    expect(errorState.exists()).toBe(true);
+    expect(errorState.props("variant")).toBe("error");
+    expect(errorState.props("description")).toBe("network error");
   });
 });

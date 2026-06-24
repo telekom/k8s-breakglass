@@ -100,7 +100,7 @@ export default class BreakglassService {
       debug("BreakglassService.fetchAvailableEscalations", "Request failed", {
         errorMessage: (e as Error)?.message,
       });
-      return [];
+      throw e;
     }
   }
 
@@ -203,7 +203,7 @@ export default class BreakglassService {
       debug("BreakglassService.fetchPendingSessionsForApproval", "Request failed", {
         errorMessage: (e as Error)?.message,
       });
-      return [];
+      throw e;
     }
   }
 
@@ -217,9 +217,9 @@ export default class BreakglassService {
       debug("BreakglassService.searchSessions", "Search complete", { count: results.length });
       return results;
     } catch (e) {
-      handleAxiosError("BreakglassService.searchSessions", e, "Failed to search sessions");
-      debug("BreakglassService.searchSessions", "Search failed", { errorMessage: (e as Error)?.message });
-      return [];
+      const { message } = handleAxiosError("BreakglassService.searchSessions", e, "Failed to search sessions", false);
+      debug("BreakglassService.searchSessions", "Search failed", { errorMessage: message });
+      throw new Error(message);
     }
   }
 
