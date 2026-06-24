@@ -270,7 +270,8 @@ function globToRegExp(pattern: string): RegExp | null {
 }
 
 function matchesPattern(value: string, pattern: string): boolean {
-  return globToRegExp(pattern)?.test(value) ?? false;
+  const regex = globToRegExp(pattern);
+  return regex ? regex.test(value) : value === pattern;
 }
 
 const namespaceValidationError = computed(() => {

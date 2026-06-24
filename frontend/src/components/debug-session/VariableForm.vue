@@ -45,6 +45,7 @@ const visibleVariables = computed(() => {
 const basicVariables = computed(() => visibleVariables.value.filter((v) => !v.advanced));
 const advancedVariables = computed(() => visibleVariables.value.filter((v) => v.advanced));
 const hasAdvanced = computed(() => advancedVariables.value.length > 0);
+const renderedVariables = computed(() => (showAdvancedInternal.value ? visibleVariables.value : basicVariables.value));
 
 // Group variables by their group field
 interface VariableGroup {
@@ -172,7 +173,7 @@ interface ValidationError {
 const validationErrors = computed((): ValidationError[] => {
   const errors: ValidationError[] = [];
 
-  for (const variable of visibleVariables.value) {
+  for (const variable of renderedVariables.value) {
     const value = getValue(variable.name, variable.default);
     const validation = variable.validation;
 

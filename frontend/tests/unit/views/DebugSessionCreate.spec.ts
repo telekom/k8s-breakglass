@@ -986,6 +986,16 @@ describe("DebugSessionCreate", () => {
       expect(vm.isValid).toBe(true);
     });
 
+    it("falls back to exact matching for invalid namespace glob patterns", async () => {
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        matchesPattern: (value: string, pattern: string) => boolean;
+      };
+
+      expect(vm.matchesPattern("debug-team[", "debug-team[")).toBe(true);
+      expect(vm.matchesPattern("debug-team", "debug-team[")).toBe(false);
+    });
+
     it("rejects namespace character classes in denied patterns", async () => {
       mockGetTemplateClusters.mockResolvedValue({
         templateName: "standard-debug",
