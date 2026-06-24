@@ -1389,6 +1389,10 @@ constraints:
   requireApprovalForRenewal: false
 ```
 
+Requested durations must be positive and cannot exceed the effective
+`maxDuration`. When a `DebugSessionClusterBinding` matches the target cluster,
+its duration constraints override the template constraints for that session.
+
 ## Terminal Sharing
 
 Enable collaborative debugging with terminal sharing:

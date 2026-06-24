@@ -176,9 +176,6 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 	}
 
-	// Cache the resolved template in status
-	ds.Status.ResolvedTemplate = &template.Spec
-
 	// Find binding early so we can check its approvers for the approval decision
 	// This ensures bindings with approvers properly trigger approval workflow
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
@@ -199,6 +196,11 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"namespace", binding.Namespace)
 		}
 	}
+
+	// Cache the resolved template in status after applying binding-level duration overrides.
+	resolvedTemplate := template.Spec.DeepCopy()
+	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
+	ds.Status.ResolvedTemplate = resolvedTemplate
 
 	// Check if approval is required (checks both template and binding approvers)
 	requiresApproval := c.requiresApproval(template, binding, ds)
@@ -373,7 +375,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 
 	// Calculate expiration
-	duration := c.parseDuration(ds.Spec.RequestedDuration, template.Spec.Constraints)
+	duration := c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding))
 	now := metav1.Now()
 	expiresAt := metav1.NewTime(now.Add(duration))
 

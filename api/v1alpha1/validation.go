@@ -707,7 +707,7 @@ func ValidateDebugSession(ds *DebugSession) *ValidationResult {
 
 	// Validate duration format if specified
 	if ds.Spec.RequestedDuration != "" {
-		result.Errors = append(result.Errors, validateDurationFormat(ds.Spec.RequestedDuration, specPath.Child("requestedDuration"))...)
+		result.Errors = append(result.Errors, validatePositiveDurationFormat(ds.Spec.RequestedDuration, specPath.Child("requestedDuration"))...)
 	}
 
 	return result

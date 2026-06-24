@@ -1388,6 +1388,31 @@ func TestDebugSession_ValidateCreate_InvalidDuration(t *testing.T) {
 	}
 }
 
+func TestDebugSession_ValidateCreate_NonPositiveDuration(t *testing.T) {
+	ctx := context.Background()
+	for _, duration := range []string{"0", "-1h"} {
+		t.Run(duration, func(t *testing.T) {
+			session := &DebugSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-session",
+					Namespace: "breakglass",
+				},
+				Spec: DebugSessionSpec{
+					Cluster:           "cluster",
+					TemplateRef:       "template",
+					RequestedBy:       "user@example.com",
+					RequestedDuration: duration,
+				},
+			}
+
+			_, err := session.ValidateCreate(ctx, session)
+			if err == nil {
+				t.Errorf("ValidateCreate() expected error for non-positive duration %q", duration)
+			}
+		})
+	}
+}
+
 func TestDebugSession_ValidateCreate_ValidDurations(t *testing.T) {
 	ctx := context.Background()
 	validDurations := []string{"1h", "30m", "2h30m", "24h", "1h30m45s", ""}
@@ -1743,6 +1768,28 @@ func TestValidateDebugSessionSpec_InvalidDuration(t *testing.T) {
 	errs := validateDebugSessionSpec(session)
 	if len(errs) != 1 {
 		t.Errorf("expected 1 error for invalid duration, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidateDebugSessionSpec_NonPositiveDuration(t *testing.T) {
+	for _, duration := range []string{"0", "-1h"} {
+		t.Run(duration, func(t *testing.T) {
+			session := &DebugSession{
+				Spec: DebugSessionSpec{
+					Cluster:           "cluster",
+					TemplateRef:       "template",
+					RequestedBy:       "user@example.com",
+					RequestedDuration: duration,
+				},
+			}
+			errs := validateDebugSessionSpec(session)
+			if len(errs) != 1 {
+				t.Fatalf("expected 1 error for non-positive duration, got %d: %v", len(errs), errs)
+			}
+			if errs[0].Field != "spec.requestedDuration" {
+				t.Errorf("expected error field spec.requestedDuration, got %s", errs[0].Field)
+			}
+		})
 	}
 }
 

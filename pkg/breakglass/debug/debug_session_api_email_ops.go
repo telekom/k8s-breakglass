@@ -733,13 +733,15 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 				)
 				result.Allowed = true
 				result.AllowedBySource = "template"
-				return result
+				break
 			}
 		}
-		c.log.Debugw("Cluster not allowed by template patterns",
-			"cluster", clusterName,
-			"templatePatterns", template.Spec.Allowed.Clusters,
-		)
+		if !result.Allowed {
+			c.log.Debugw("Cluster not allowed by template patterns",
+				"cluster", clusterName,
+				"templatePatterns", template.Spec.Allowed.Clusters,
+			)
+		}
 	}
 
 	// 2. Check if allowed by any binding that references this template

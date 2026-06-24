@@ -492,18 +492,40 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		"allowedBySource", allowedResult.AllowedBySource,
 	)
 
+	resolvedBinding, err := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
+	if err != nil {
+		reqLog.Warnw("Requested binding is not valid for debug session",
+			"bindingRef", req.BindingRef,
+			"cluster", req.Cluster,
+			"templateRef", req.TemplateRef,
+			"error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+
+	effectiveConstraints := effectiveDebugSessionConstraints(template, resolvedBinding)
+	if err := validateRequestedDebugSessionDuration(req.RequestedDuration, effectiveConstraints); err != nil {
+		reqLog.Warnw("Requested debug session duration is invalid",
+			"templateRef", req.TemplateRef,
+			"bindingRef", req.BindingRef,
+			"requestedDuration", req.RequestedDuration,
+			"error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+
 	// Track warnings for defaults that were applied
 	var warnings []string
 
 	// Validate and resolve target namespace (pass binding for constraint override)
-	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace, allowedResult.MatchingBinding)
+	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace, resolvedBinding)
 	if err != nil {
 		// Provide more context about namespace constraints when validation fails
 		var effectiveAllowUserNs bool
 		var effectiveDefault string
-		if allowedResult.MatchingBinding != nil && allowedResult.MatchingBinding.Spec.NamespaceConstraints != nil {
-			effectiveAllowUserNs = allowedResult.MatchingBinding.Spec.NamespaceConstraints.AllowUserNamespace
-			effectiveDefault = allowedResult.MatchingBinding.Spec.NamespaceConstraints.DefaultNamespace
+		if resolvedBinding != nil && resolvedBinding.Spec.NamespaceConstraints != nil {
+			effectiveAllowUserNs = resolvedBinding.Spec.NamespaceConstraints.AllowUserNamespace
+			effectiveDefault = resolvedBinding.Spec.NamespaceConstraints.DefaultNamespace
 		} else if template.Spec.NamespaceConstraints != nil {
 			effectiveAllowUserNs = template.Spec.NamespaceConstraints.AllowUserNamespace
 			effectiveDefault = template.Spec.NamespaceConstraints.DefaultNamespace
@@ -513,7 +535,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			"requestedNamespace", req.TargetNamespace,
 			"allowUserNamespace", effectiveAllowUserNs,
 			"defaultNamespace", effectiveDefault,
-			"bindingUsed", allowedResult.MatchingBinding != nil,
+			"bindingUsed", resolvedBinding != nil,
 			"error", err,
 		)
 		apiresponses.RespondBadRequest(ctx, err.Error())
@@ -526,7 +548,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Validate and resolve scheduling option
-	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption, allowedResult.MatchingBinding)
+	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption, resolvedBinding)
 	if err != nil {
 		reqLog.Warnw("Scheduling option validation failed",
 			"templateRef", req.TemplateRef,
@@ -545,7 +567,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if req.SelectedSchedulingOption != "" && selectedOption == "" {
 		// Determine if any scheduling options exist (template or binding)
 		hasOptions := (template.Spec.SchedulingOptions != nil && len(template.Spec.SchedulingOptions.Options) > 0) ||
-			(allowedResult.MatchingBinding != nil && allowedResult.MatchingBinding.Spec.SchedulingOptions != nil && len(allowedResult.MatchingBinding.Spec.SchedulingOptions.Options) > 0)
+			(resolvedBinding != nil && resolvedBinding.Spec.SchedulingOptions != nil && len(resolvedBinding.Spec.SchedulingOptions.Options) > 0)
 		if !hasOptions {
 			warnings = append(warnings, fmt.Sprintf("Scheduling option '%s' was ignored (template has no scheduling options)", req.SelectedSchedulingOption))
 			reqLog.Debugw("Scheduling option ignored", "ignoredOption", req.SelectedSchedulingOption)
@@ -674,6 +696,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			ExtraDeployValues:             req.ExtraDeployValues,
 		},
 	}
+	if resolvedBinding != nil {
+		session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{
+			Name:      resolvedBinding.Name,
+			Namespace: resolvedBinding.Namespace,
+		}
+	}
 
 	// Copy reason configurations as snapshots so session is self-contained
 	// This avoids needing to look up the template later
@@ -682,44 +710,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 	if template.Spec.ApprovalReason != nil {
 		session.Spec.ApprovalReasonConfig = template.Spec.ApprovalReason.DeepCopy()
-	}
-
-	// Set explicit binding reference if provided (format: "namespace/name")
-	var resolvedBinding *breakglassv1alpha1.DebugSessionClusterBinding
-	if req.BindingRef != "" {
-		parts := strings.SplitN(req.BindingRef, "/", 2)
-		if len(parts) == 2 {
-			session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{
-				Name:      parts[1],
-				Namespace: parts[0],
-			}
-			// Fetch the binding for limit checking
-			resolvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
-			if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: parts[1], Namespace: parts[0]}, resolvedBinding); err != nil {
-				if apierrors.IsNotFound(err) {
-					reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
-					apiresponses.RespondBadRequest(ctx, fmt.Sprintf("binding '%s' not found", req.BindingRef))
-					return
-				}
-				reqLog.Errorw("Failed to get binding", "binding", req.BindingRef, "error", err)
-				apiresponses.RespondInternalErrorSimple(ctx, "failed to validate binding")
-				return
-			}
-
-			// Check if binding is active
-			if !breakglass.IsBindingActive(resolvedBinding) {
-				reqLog.Warnw("Binding is not active",
-					"bindingRef", req.BindingRef,
-					"disabled", resolvedBinding.Spec.Disabled,
-					"effectiveFrom", resolvedBinding.Spec.EffectiveFrom,
-					"expiresAt", resolvedBinding.Spec.ExpiresAt,
-				)
-				apiresponses.RespondForbidden(ctx, "binding is not active (disabled, expired, or not yet effective)")
-				return
-			}
-		} else {
-			reqLog.Warnw("Invalid bindingRef format, expected namespace/name", "bindingRef", req.BindingRef)
-		}
 	}
 
 	// Check binding session limits if a binding is resolved
