@@ -485,12 +485,15 @@ func (c *DebugSessionController) parseDuration(requested string, constraints *br
 	maxDur := 4 * time.Hour
 
 	if constraints != nil {
-		if d, err := breakglassv1alpha1.ParseDuration(constraints.DefaultDuration); err == nil {
+		if d, err := breakglassv1alpha1.ParseDuration(constraints.DefaultDuration); err == nil && d > 0 {
 			defaultDur = d
 		}
-		if d, err := breakglassv1alpha1.ParseDuration(constraints.MaxDuration); err == nil {
+		if d, err := breakglassv1alpha1.ParseDuration(constraints.MaxDuration); err == nil && d > 0 {
 			maxDur = d
 		}
+	}
+	if defaultDur > maxDur {
+		defaultDur = maxDur
 	}
 
 	if requested == "" {

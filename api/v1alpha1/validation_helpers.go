@@ -832,6 +832,23 @@ func validateDurationFormat(duration string, fieldPath *field.Path) field.ErrorL
 	return nil
 }
 
+// validatePositiveDurationFormat validates that a string is a valid positive duration.
+func validatePositiveDurationFormat(duration string, fieldPath *field.Path) field.ErrorList {
+	if duration == "" || fieldPath == nil {
+		return nil
+	}
+
+	parsed, err := ParseDuration(duration)
+	if err != nil {
+		return field.ErrorList{field.Invalid(fieldPath, duration, fmt.Sprintf("invalid duration format: %v", err))}
+	}
+	if parsed <= 0 {
+		return field.ErrorList{field.Invalid(fieldPath, duration, "duration must be positive")}
+	}
+
+	return nil
+}
+
 // validateClusterAuthConfig validates that exactly one authentication method is configured
 // for a ClusterConfig. Either kubeconfigSecretRef OR oidcAuth/oidcFromIdentityProvider must be specified, but not both.
 func validateClusterAuthConfig(spec ClusterConfigSpec, specPath *field.Path) field.ErrorList {

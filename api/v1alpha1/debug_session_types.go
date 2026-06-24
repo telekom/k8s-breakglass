@@ -634,7 +634,7 @@ func validateDebugSessionSpec(session *DebugSession) field.ErrorList {
 
 	// Validate duration format if specified
 	if session.Spec.RequestedDuration != "" {
-		allErrs = append(allErrs, validateDurationFormat(session.Spec.RequestedDuration, specPath.Child("requestedDuration"))...)
+		allErrs = append(allErrs, validatePositiveDurationFormat(session.Spec.RequestedDuration, specPath.Child("requestedDuration"))...)
 	}
 
 	// Validate extraDeployValues keys are valid Go identifiers
