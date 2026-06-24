@@ -511,7 +511,10 @@ POST /api/breakglassSessions/{session-name}/drop
 Authorization: Bearer <token>
 ```
 
-**Status Code:** `200 OK`
+**Status Codes:**
+
+- `200 OK` - Session was dropped and updated
+- `400 Bad Request` - Session is already terminal and was not modified
 
 **Authorization:**
 
