@@ -22,10 +22,10 @@ jobs:
     steps:
       - name: Require version tag ref
         run: |
-          if [[ "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "Release ref is ${GITHUB_REF}"
           else
-            echo "::error::Release workflow must run from a semver tag like v1.2.3, got ${GITHUB_REF}"
+            echo "::error::Release workflow must run from a semver tag like v1.2.3 or v1.2.3-rc.1. Build metadata tags are not supported because Docker image tags cannot contain '+'. Got ${GITHUB_REF}"
             exit 1
           fi
 
@@ -609,9 +609,22 @@ jobs:
               (cd "${artifact_dir}" && sha256sum "${artifact_name}") >> "${checksum_file}"
             fi
           done
+      - name: Classify GitHub release tag
+        id: release-tag
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Create GitHub Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
+          prerelease: ${{ steps.release-tag.outputs.prerelease }}
+          make_latest: ${{ steps.release-tag.outputs.make_latest }}
           files: |
             manifests-${{ github.ref_name }}.tgz
             manifests-base.yaml
