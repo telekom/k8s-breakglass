@@ -175,3 +175,71 @@ func TestHandleGetEscalations_HidesEscalationsForUnreadyClusterConfig(t *testing
 		t.Fatalf("expected esc-ready, got %s", out[0].Name)
 	}
 }
+
+func TestHandleGetEscalations_HidesEscalationsForDuplicateClusterConfigNames(t *testing.T) {
+	clusterName := "duplicate-cluster"
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-duplicate-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{clusterName},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "duplicate-group",
+		},
+	}
+	firstCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "first"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}
+	secondCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "second"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		WithObjects(esc, firstCluster, secondCluster).
+		Build()
+	em := EscalationManager{Client: cli}
+
+	controller := &BreakglassEscalationController{
+		manager:          &em,
+		log:              zap.NewNop().Sugar(),
+		middleware:       func(c *gin.Context) { c.Next() },
+		identityProvider: &stubIdentityProvider{email: "user@example.com"},
+	}
+
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("groups", []string{"system:authenticated"})
+		c.Next()
+	})
+	_ = controller.Register(engine.Group("/" + controller.BasePath()))
+
+	req := httptest.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
+	}
+
+	var out []breakglassv1alpha1.BreakglassEscalation
+	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected duplicate cluster config name to hide escalation, got %#v", out)
+	}
+}

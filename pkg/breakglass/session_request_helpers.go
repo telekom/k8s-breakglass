@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -178,10 +179,16 @@ func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context
 
 	clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, clusterName)
 	if err != nil {
-		reqLog.Debugw("No ClusterConfig found while enforcing session readiness; preserving legacy escalation-based matching",
+		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "not found") {
+			reqLog.Debugw("No ClusterConfig found while enforcing session readiness; preserving legacy escalation-based matching",
+				"cluster", clusterName,
+				"error", err)
+			return true
+		}
+		reqLog.Warnw("Failed to resolve ClusterConfig while enforcing session readiness; blocking request",
 			"cluster", clusterName,
 			"error", err)
-		return true
+		return false
 	}
 	if IsClusterConfigReady(clusterConfig) {
 		return true

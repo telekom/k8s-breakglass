@@ -214,6 +214,10 @@ func (ec *BreakglassEscalationController) clusterConfigReadiness(ctx context.Con
 	}
 	for i := range list.Items {
 		cc := &list.Items[i]
+		if _, exists := readiness[cc.Name]; exists {
+			readiness[cc.Name] = false
+			continue
+		}
 		readiness[cc.Name] = breakglass.IsClusterConfigReady(cc)
 	}
 	return readiness, nil
