@@ -297,6 +297,7 @@ func (cb *CircuitBreaker) transitionTo(newState CircuitState) {
 	cb.transitionToLocked(newState)
 }
 
+// transitionToLocked changes the circuit state while cb.mu is held.
 func (cb *CircuitBreaker) transitionToLocked(newState CircuitState) {
 	oldState := CircuitState(cb.state.Load())
 	if oldState == newState {

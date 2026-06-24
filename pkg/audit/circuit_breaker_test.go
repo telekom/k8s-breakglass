@@ -292,6 +292,7 @@ func TestCircuitBreaker_Reset(t *testing.T) {
 func TestCircuitBreaker_StateCallback(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	var transitions []string
+	sinkName := "state-callback-sink"
 
 	cfg := CircuitBreakerConfig{
 		FailureThreshold: 1,
@@ -299,7 +300,7 @@ func TestCircuitBreaker_StateCallback(t *testing.T) {
 			transitions = append(transitions, from.String()+"->"+to.String())
 		},
 	}
-	cb := NewCircuitBreaker("test-sink", cfg, logger)
+	cb := NewCircuitBreaker(sinkName, cfg, logger)
 
 	// Trip the circuit
 	_ = cb.Execute(context.Background(), func(ctx context.Context) error {
@@ -308,7 +309,7 @@ func TestCircuitBreaker_StateCallback(t *testing.T) {
 
 	require.Len(t, transitions, 1)
 	assert.Equal(t, "closed->open", transitions[0])
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.AuditCircuitBreakerStateTransitions.WithLabelValues("callback-sink", "closed", "open")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(sinkName, "closed", "open")))
 }
 
 func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
