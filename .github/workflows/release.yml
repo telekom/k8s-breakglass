@@ -588,7 +588,17 @@ jobs:
             fi
           done
 
-          sha256sum "${artifacts[@]}" > release-${{ github.ref_name }}-checksums.txt
+          checksum_file="release-${{ github.ref_name }}-checksums.txt"
+          : > "${checksum_file}"
+          for artifact in "${artifacts[@]}"; do
+            artifact_dir=$(dirname "${artifact}")
+            artifact_name=$(basename "${artifact}")
+            if [ "${artifact_dir}" = "." ]; then
+              sha256sum "${artifact_name}" >> "${checksum_file}"
+            else
+              (cd "${artifact_dir}" && sha256sum "${artifact_name}") >> "${checksum_file}"
+            fi
+          done
       - name: Create GitHub Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:

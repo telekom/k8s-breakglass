@@ -17,6 +17,7 @@ This document defines the release requirements for k8s-breakglass. It is intende
 2. **Checksums**
    - Publish SHA-256 checksums for every release payload artifact.
    - `release-<tag>-checksums.txt` covers manifests, Helm chart package, `bgctl` archives, and the SPDX SBOM.
+   - Entries in `release-<tag>-checksums.txt` use downloaded asset filenames, without workflow staging directories.
    - `bgctl_<tag>_checksums.txt` and per-archive `.sha256` files are kept for CLI-only consumers.
 
 3. **Release notes**
