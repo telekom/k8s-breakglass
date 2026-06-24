@@ -419,6 +419,11 @@ describe("BreakglassService", () => {
 
     mockClient.get.mockRejectedValueOnce(new Error("search boom"));
     await expect(service.searchSessions({ mine: true })).rejects.toThrow("search boom");
+
+    mockClient.get.mockRejectedValueOnce({
+      response: { data: { error: "normalized search failure" }, status: 503 },
+    });
+    await expect(service.searchSessions({ mine: true })).rejects.toThrow("normalized search failure");
   });
 
   it("validates requests by passing the token and rethrowing failures", async () => {
