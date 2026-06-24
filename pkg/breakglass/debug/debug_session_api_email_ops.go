@@ -632,7 +632,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 
 	// Get current active sessions for this binding
 	sessionList := &breakglassv1alpha1.DebugSessionList{}
-	if err := c.client.List(ctx, sessionList); err != nil {
+	if err := c.reader().List(ctx, sessionList); err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
 

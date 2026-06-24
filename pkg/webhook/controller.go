@@ -324,16 +324,25 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 
 		// Check if the user is a participant of this session
 		for _, p := range ds.Status.Participants {
-			if p.User == username {
-				reason := fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, p.Role, ra.Subresource)
-				reqLog.Infow("Debug session pod operation allowed",
+			if p.User != username {
+				continue
+			}
+			if !canDebugSessionParticipantAccessPodOperations(p.Role) {
+				reqLog.Debugw("Debug session participant role cannot perform pod operation",
 					"session", ds.Name,
-					"pod", fmt.Sprintf("%s/%s", ra.Namespace, ra.Name),
 					"user", username,
 					"role", p.Role,
 					"operation", ra.Subresource)
-				return true, ds.Name, reason
+				continue
 			}
+			reason := fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, p.Role, ra.Subresource)
+			reqLog.Infow("Debug session pod operation allowed",
+				"session", ds.Name,
+				"pod", fmt.Sprintf("%s/%s", ra.Namespace, ra.Name),
+				"user", username,
+				"role", p.Role,
+				"operation", ra.Subresource)
+			return true, ds.Name, reason
 		}
 	}
 
@@ -976,6 +985,10 @@ func (wc *WebhookController) SetNamespaceLabelsFetchFn(f NamespaceLabelsFetchFun
 // This includes exec, attach, portforward, and log (which are configured via AllowedPodOperations).
 func isDebugSessionSubresource(subresource string) bool {
 	return subresource == "exec" || subresource == "attach" || subresource == "portforward" || subresource == "log"
+}
+
+func canDebugSessionParticipantAccessPodOperations(role breakglassv1alpha1.ParticipantRole) bool {
+	return role == breakglassv1alpha1.ParticipantRoleOwner || role == breakglassv1alpha1.ParticipantRoleParticipant
 }
 
 // isExecSubresource returns true if the subresource is exec, attach, or portforward.

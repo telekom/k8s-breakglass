@@ -1258,6 +1258,31 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			expectReasonHas: "debug session",
 		},
 		{
+			name:        "viewer participant cannot access pod subresources",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "exec",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-viewer", Namespace: "default"},
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateActive,
+						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleViewer}},
+					},
+				},
+			},
+			expectAllowed: false,
+		},
+		{
 			name:        "expired active debug session denied",
 			username:    "test-user",
 			clusterName: "test-cluster",

@@ -429,8 +429,9 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
+	authorizationReader := c.reader()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
+	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			reqLog.Warnw("Template not found", "templateRef", req.TemplateRef)
 			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("template '%s' not found", req.TemplateRef))
@@ -444,12 +445,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Fetch bindings and cluster configs to check if cluster is allowed via template or binding
 	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
 	var clusterConfigList breakglassv1alpha1.ClusterConfigList
-	if err := c.client.List(apiCtx, &bindingList); err != nil {
+	if err := authorizationReader.List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
 	}
-	if err := c.client.List(apiCtx, &clusterConfigList); err != nil {
+	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
 		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
@@ -510,7 +511,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 
 		resolvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
-		if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: bindingName, Namespace: bindingNamespace}, resolvedBinding); err != nil {
+		if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: bindingName, Namespace: bindingNamespace}, resolvedBinding); err != nil {
 			if apierrors.IsNotFound(err) {
 				reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
 				apiresponses.RespondBadRequest(ctx, fmt.Sprintf("binding '%s' not found", req.BindingRef))
