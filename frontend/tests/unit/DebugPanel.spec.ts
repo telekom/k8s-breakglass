@@ -27,7 +27,7 @@ function mountDebugPanel() {
       },
       stubs: {
         "scale-card": { template: "<div><slot /></div>" },
-        "scale-button": { template: "<button v-bind=\"$attrs\"><slot /></button>" },
+        "scale-button": { template: '<button v-bind="$attrs"><slot /></button>' },
         "scale-icon-action-circle-close": true,
         "scale-icon-action-success": true,
         "scale-icon-service-settings": true,
