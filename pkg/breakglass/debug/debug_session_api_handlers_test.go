@@ -1833,6 +1833,11 @@ func TestResolveTargetNamespace(t *testing.T) {
 func TestResolveSchedulingConstraints(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	ctrl := NewDebugSessionAPIController(logger, nil, nil, nil)
+	requester := schedulingOptionRequester{
+		Username: "alice@example.com",
+		Email:    "alice@example.com",
+		Groups:   []string{"tenant-admins"},
+	}
 
 	t.Run("no scheduling options returns base constraints", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
@@ -1842,7 +1847,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", nil)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", nil, requester)
 		require.NoError(t, err)
 		assert.Empty(t, selectedOpt)
 		require.NotNil(t, resolved)
@@ -1860,7 +1865,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				// No SchedulingOptions defined
 			},
 		}
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "any-worker", nil)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "any-worker", nil, requester)
 		require.NoError(t, err, "should not error when stale option is sent")
 		assert.Empty(t, selectedOpt, "selected option should be empty")
 		require.NotNil(t, resolved)
@@ -1877,7 +1882,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		_, _, err := ctrl.resolveSchedulingConstraints(template, "nonexistent", nil)
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "nonexistent", nil, requester)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found in template")
 	})
@@ -1893,7 +1898,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		_, _, err := ctrl.resolveSchedulingConstraints(template, "", nil)
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "", nil, requester)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "required but none selected")
 	})
@@ -1910,9 +1915,106 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		_, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", nil)
+		_, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", nil, requester)
 		require.NoError(t, err)
 		assert.Equal(t, "standard", selectedOpt)
+	})
+
+	t.Run("allows restricted scheduling option by username email or group", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{Name: "by-username", AllowedUsers: []string{"alice@example.com"}},
+						{Name: "by-email", AllowedUsers: []string{"alice.alias@example.com"}},
+						{Name: "by-group", AllowedGroups: []string{"tenant-*"}},
+					},
+				},
+			},
+		}
+		emailRequester := schedulingOptionRequester{
+			Username: "alice",
+			Email:    "alice.alias@example.com",
+			Groups:   []string{"dev-team"},
+		}
+
+		_, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "by-username", nil, requester)
+		require.NoError(t, err)
+		assert.Equal(t, "by-username", selectedOpt)
+
+		_, selectedOpt, err = ctrl.resolveSchedulingConstraints(template, "by-email", nil, emailRequester)
+		require.NoError(t, err)
+		assert.Equal(t, "by-email", selectedOpt)
+
+		_, selectedOpt, err = ctrl.resolveSchedulingConstraints(template, "by-group", nil, requester)
+		require.NoError(t, err)
+		assert.Equal(t, "by-group", selectedOpt)
+	})
+
+	t.Run("denies restricted scheduling option for unauthorized requester", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{Name: "platform-only", AllowedGroups: []string{"platform-admins"}},
+					},
+				},
+			},
+		}
+
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "platform-only", nil, requester)
+		require.Error(t, err)
+		var accessErr *schedulingOptionAccessError
+		require.ErrorAs(t, err, &accessErr)
+		assert.Contains(t, err.Error(), "platform-only")
+	})
+
+	t.Run("denies restricted default scheduling option for unauthorized requester", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Required: true,
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{Name: "restricted-default", Default: true, AllowedGroups: []string{"platform-admins"}},
+					},
+				},
+			},
+		}
+
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "", nil, requester)
+		require.Error(t, err)
+		var accessErr *schedulingOptionAccessError
+		require.ErrorAs(t, err, &accessErr)
+		assert.Contains(t, err.Error(), "restricted-default")
+	})
+
+	t.Run("enforces binding scheduling option restrictions", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{Name: "binding-platform", AllowedGroups: []string{"platform-admins"}},
+					},
+				},
+			},
+		}
+
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "binding-platform", binding, requester)
+		require.Error(t, err)
+		var accessErr *schedulingOptionAccessError
+		require.ErrorAs(t, err, &accessErr)
+
+		allowedRequester := schedulingOptionRequester{
+			Username: "bob@example.com",
+			Email:    "bob@example.com",
+			Groups:   []string{"platform-admins"},
+		}
+		_, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "binding-platform", binding, allowedRequester)
+		require.NoError(t, err)
+		assert.Equal(t, "binding-platform", selectedOpt)
 	})
 
 	t.Run("merges base and option constraints", func(t *testing.T) {
@@ -1936,7 +2038,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "sriov", nil)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "sriov", nil, requester)
 		require.NoError(t, err)
 		assert.Equal(t, "sriov", selectedOpt)
 		require.NotNil(t, resolved)
@@ -1980,7 +2082,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 			},
 		}
 
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "binding-opt", binding)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "binding-opt", binding, requester)
 		require.NoError(t, err)
 		assert.Equal(t, "binding-opt", selectedOpt)
 		require.NotNil(t, resolved)
@@ -2015,7 +2117,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 			},
 		}
 
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "dedicated-debug", binding)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "dedicated-debug", binding, requester)
 		require.NoError(t, err)
 		assert.Equal(t, "dedicated-debug", selectedOpt)
 		require.NotNil(t, resolved)
@@ -2035,7 +2137,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 			},
 		}
 
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "template-opt", nil)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "template-opt", nil, requester)
 		require.NoError(t, err)
 		assert.Equal(t, "template-opt", selectedOpt)
 		assert.Nil(t, resolved)
@@ -2060,7 +2162,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 		}
 
 		// No scheduling options - just base constraints
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", binding)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", binding, requester)
 		require.NoError(t, err)
 		assert.Equal(t, "", selectedOpt)
 		require.NotNil(t, resolved)
@@ -2099,7 +2201,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 			},
 		}
 
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "gpu", binding)
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "gpu", binding, requester)
 		require.NoError(t, err)
 		assert.Equal(t, "gpu", selectedOpt)
 		require.NotNil(t, resolved)
