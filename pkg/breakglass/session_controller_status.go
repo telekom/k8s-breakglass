@@ -839,6 +839,28 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 	return meta
 }
 
+func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, session breakglassv1alpha1.BreakglassSession, approvalMeta SessionApprovalMeta) (bool, error) {
+	email, err := wc.identityProvider.GetEmail(c)
+	if err != nil {
+		return false, err
+	}
+
+	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	if matchesAuthIdentifier(session.Spec.User, authIdentifiers) {
+		return true, nil
+	}
+
+	if approvalMeta.IsApprover || wc.isSessionApprover(c, session) {
+		return true, nil
+	}
+
+	if userHasApprovedSession(session, email) {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 // handleGetBreakglassSessionByName handles GET /breakglassSessions/:name and returns a single session
 // It includes authorization metadata to help the frontend display appropriate UI/errors
 func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.Context) {
@@ -865,6 +887,18 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.C
 
 	// Get authorization metadata
 	approvalMeta := wc.getSessionApprovalMeta(c, ses)
+	canRead, err := wc.canReadBreakglassSession(c, ses, approvalMeta)
+	if err != nil {
+		reqLog.Warnw("Unable to verify session read authorization", "session", sessionName, "error", err)
+		apiresponses.RespondUnauthorizedWithMessage(c, "unable to verify user identity")
+		return
+	}
+	if !canRead {
+		reqLog.Warnw("User is not authorized to read session", "session", sessionName)
+		apiresponses.RespondForbidden(c, "not allowed to read this breakglass session")
+		return
+	}
+
 	reqLog.Infow("Session retrieved with approval metadata",
 		"session", sessionName,
 		"state", ses.Status.State,

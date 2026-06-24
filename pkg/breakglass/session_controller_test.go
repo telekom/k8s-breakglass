@@ -3078,6 +3078,98 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 	}
 }
 
+func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	pending := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "reader-sess-1"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-read",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+	approved := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "reader-sess-2"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-read",
+			User:         "dave@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			Approver:  "carol@example.com",
+			Approvers: []string{"carol@example.com"},
+		},
+	}
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-readable"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cl-read"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "approvable",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"bob@example.com"}},
+		},
+	}
+
+	cli := builder.WithObjects(pending, approved, esc).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		email := c.GetHeader("X-Test-Email")
+		c.Set("email", email)
+		c.Set("username", strings.TrimSuffix(email, "@example.com"))
+		c.Set("user_id", email)
+		c.Set("groups", []string{"system:authenticated"})
+		c.Next()
+	}
+
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	serveAs := func(email, sessionName string) (int, map[string]any) {
+		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions/"+sessionName, nil)
+		req.Header.Set("X-Test-Email", email)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+		return w.Result().StatusCode, body
+	}
+
+	status, body := serveAs("mallory@example.com", "reader-sess-1")
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "FORBIDDEN", body["code"])
+
+	status, body = serveAs("alice@example.com", "reader-sess-1")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "reader-sess-1", body["session"].(map[string]any)["metadata"].(map[string]any)["name"])
+
+	status, body = serveAs("bob@example.com", "reader-sess-1")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "reader-sess-1", body["session"].(map[string]any)["metadata"].(map[string]any)["name"])
+
+	status, body = serveAs("carol@example.com", "reader-sess-2")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "reader-sess-2", body["session"].(map[string]any)["metadata"].(map[string]any)["name"])
+}
+
 // Fake identity provider that returns an error for GetEmail to exercise error paths
 type ErrIdentityProvider struct{}
 

@@ -412,41 +412,53 @@ GET /api/breakglassSessions/{session-name}
 Authorization: Bearer <token>
 ```
 
-**Status Code:** `200 OK` | `404 Not Found`
+**Authorization:** Only the session requester, an authorized approver, or a recorded historical approver can read an individual session by name. Other authenticated users receive `403 Forbidden`.
 
-**Response:** Complete `BreakglassSession` resource with full metadata and status:
+**Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `404 Not Found`
+
+**Response:** Object containing the complete `BreakglassSession` resource and authorization metadata for the current user:
 
 ```json
 {
-  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
-  "kind": "BreakglassSession",
-  "metadata": {
-    "name": "session-abc123",
-    "namespace": "breakglass-system",
-    "uid": "...",
-    "creationTimestamp": "2024-01-15T10:30:00Z"
+  "session": {
+    "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
+    "kind": "BreakglassSession",
+    "metadata": {
+      "name": "session-abc123",
+      "namespace": "breakglass-system",
+      "uid": "...",
+      "creationTimestamp": "2024-01-15T10:30:00Z"
+    },
+    "spec": {
+      "cluster": "prod-cluster-1",
+      "user": "user@example.com",
+      "grantedGroup": "cluster-admin",
+      "requestReason": "Emergency access for incident response"
+    },
+    "status": {
+      "state": "Approved",
+      "approvedAt": "2024-01-15T10:31:00Z",
+      "expiresAt": "2024-01-15T12:31:00Z",
+      "approver": "admin@example.com",
+      "approvers": ["admin@example.com"],
+      "conditions": [
+        {
+          "type": "Approved",
+          "status": "True",
+          "lastTransitionTime": "2024-01-15T10:31:00Z",
+          "reason": "ApprovedByUser",
+          "message": "Session approved by admin@example.com"
+        }
+      ]
+    }
   },
-  "spec": {
-    "cluster": "prod-cluster-1",
-    "user": "user@example.com",
-    "grantedGroup": "cluster-admin",
-    "requestReason": "Emergency access for incident response"
-  },
-  "status": {
-    "state": "Approved",
-    "approvedAt": "2024-01-15T10:31:00Z",
-    "expiresAt": "2024-01-15T12:31:00Z",
-    "approver": "admin@example.com",
-    "approvers": ["admin@example.com"],
-    "conditions": [
-      {
-        "type": "Approved",
-        "status": "True",
-        "lastTransitionTime": "2024-01-15T10:31:00Z",
-        "reason": "ApprovedByUser",
-        "message": "Session approved by admin@example.com"
-      }
-    ]
+  "approvalMeta": {
+    "isRequester": true,
+    "isApprover": false,
+    "canApprove": false,
+    "canReject": false,
+    "sessionState": "Approved",
+    "stateMessage": "This session has already been approved by admin@example.com"
   }
 }
 ```
