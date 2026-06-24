@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **DenyPolicy precedence is now honored during evaluation**: Multiple matching `DenyPolicy` resources are now evaluated in stable ascending `spec.precedence` order, with unset precedence defaulting to `100`, matching the documented policy semantics.
 - **Frontend: restored persisted theme selection in the app header**: The accessibility remediation now keeps both theme and high-contrast controls available, persists manual light/dark selection, preserves the forced dark canvas while high-contrast mode is enabled, and avoids duplicate modal form-control IDs in debug session cards.
 - **Orphaned session cleanup now restricted to terminal states**: `markCleanupExpiredSession` previously deleted orphaned `BreakglassSession` objects in any non-Pending state, including active `Approved` and `WaitingForScheduledTime` sessions that had no `RetainedUntil` set. The predicate is now an explicit allowlist of terminal states (`Expired`, `IdleExpired`, `Rejected`, `Withdrawn`, `ApprovalTimeout`) — active sessions are never deleted by the orphan cleanup path.
 

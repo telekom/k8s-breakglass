@@ -92,6 +92,79 @@ func TestEvaluatorWildcards(t *testing.T) {
 	}
 }
 
+func TestEvaluatorMatch_UsesDenyPolicyPrecedence(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	lowPriority := int32(200)
+	highPriority := int32(10)
+	defaultPriorityPolicy := &breakglassv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-priority"},
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			Rules: []breakglassv1alpha1.DenyRule{{
+				Verbs:      []string{"get"},
+				APIGroups:  []string{""},
+				Resources:  []string{"secrets"},
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+			}},
+		},
+	}
+	lowPriorityPolicy := &breakglassv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "low-priority"},
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			Precedence: &lowPriority,
+			Rules: []breakglassv1alpha1.DenyRule{{
+				Verbs:      []string{"get"},
+				APIGroups:  []string{""},
+				Resources:  []string{"secrets"},
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+			}},
+		},
+	}
+	highPriorityPolicy := &breakglassv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "high-priority"},
+		Spec: breakglassv1alpha1.DenyPolicySpec{
+			Precedence: &highPriority,
+			Rules: []breakglassv1alpha1.DenyRule{{
+				Verbs:      []string{"get"},
+				APIGroups:  []string{""},
+				Resources:  []string{"secrets"},
+				Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+			}},
+		},
+	}
+
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(lowPriorityPolicy, defaultPriorityPolicy, highPriorityPolicy).
+		Build()
+	eval := NewEvaluator(c, zap.NewNop().Sugar())
+
+	act := Action{Verb: "get", APIGroup: "", Resource: "secrets", Namespace: "default"}
+	denied, policyName, err := eval.Match(context.Background(), act)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !denied {
+		t.Fatal("expected denied")
+	}
+	if policyName != "high-priority" {
+		t.Fatalf("expected high-priority policy to win, got %s", policyName)
+	}
+
+	denied, policyName, _, err = eval.MatchWithDetails(context.Background(), act)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !denied {
+		t.Fatal("expected denied")
+	}
+	if policyName != "high-priority" {
+		t.Fatalf("expected high-priority policy to win in detailed match, got %s", policyName)
+	}
+}
+
 func TestEvaluatorCalculateRiskScore(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)

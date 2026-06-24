@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -83,6 +84,7 @@ func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error)
 	if err != nil {
 		return false, "", err
 	}
+	sortPoliciesByPrecedence(policies)
 	for _, pol := range policies {
 		if !scopeMatches(pol.Spec.AppliesTo, act) {
 			continue
@@ -124,13 +126,14 @@ func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error)
 }
 
 // MatchWithDetails is like Match but also returns pod security evaluation details.
-// It evaluates all policies and returns denial if any policy denies.
-// Warning results are collected but do not short-circuit policy evaluation.
+// It evaluates policies by precedence and returns on the first denial.
+// Warning results are collected until a denial short-circuits policy evaluation.
 func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bool, policyName string, podSecResult *PodSecurityResult, err error) {
 	policies, err := e.listPolicies(ctx)
 	if err != nil {
 		return false, "", nil, err
 	}
+	sortPoliciesByPrecedence(policies)
 
 	// Track the first warning result to return if no denial occurs
 	var warnResult *PodSecurityResult
@@ -177,6 +180,19 @@ func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bo
 	}
 	// Return warning result (if any) after confirming no policy denied
 	return false, "", warnResult, nil
+}
+
+func sortPoliciesByPrecedence(policies []breakglassv1alpha1.DenyPolicy) {
+	sort.SliceStable(policies, func(i, j int) bool {
+		return denyPolicyPrecedence(policies[i]) < denyPolicyPrecedence(policies[j])
+	})
+}
+
+func denyPolicyPrecedence(policy breakglassv1alpha1.DenyPolicy) int32 {
+	if policy.Spec.Precedence == nil {
+		return 100
+	}
+	return *policy.Spec.Precedence
 }
 
 // evaluatePodSecurity checks if the action should be denied based on pod security rules.
