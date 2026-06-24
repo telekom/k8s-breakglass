@@ -50,6 +50,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run screenshot tests (update mode to generate screenshots)
+        id: screenshot-tests
         run: npm run test:screenshots:update
         continue-on-error: true
 
@@ -255,3 +256,9 @@ jobs:
           echo "Generated **$count** screenshots in light, dark, and high-contrast mode." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Download the \`ui-screenshots\` artifact to view the screenshot gallery." >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if screenshot generation failed
+        if: steps.screenshot-tests.outcome == 'failure'
+        run: |
+          echo "::error::Playwright screenshot generation failed. Diagnostic artifacts and the step summary were uploaded above."
+          exit 1
