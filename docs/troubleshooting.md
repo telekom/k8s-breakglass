@@ -328,10 +328,10 @@ curl https://keycloak.example.com/realms/master/.well-known/openid-configuration
 openssl s_client -connect keycloak.example.com:443
 ```
 
-3. Test from breakglass pod
+3. Test from a temporary curl pod in the breakglass namespace
 
 ```bash
-kubectl exec -it -n breakglass-system deployment/breakglass-manager -- \
+kubectl run -it oidc-curl --rm --image=curlimages/curl --restart=Never -n breakglass-system -- \
   curl https://keycloak.example.com/realms/master/.well-known/openid-configuration
 ```
 
@@ -722,7 +722,8 @@ kubectl get secret <secret-name> -o yaml
 View all resources:
 
 ```bash
-kubectl get auditconfig,breakglassescalation,breakglasssession,clusterconfig,debugsession,debugsessionclusterbinding,debugsessiontemplate,debugpodtemplate,denypolicy,identityprovider,mailprovider -A
+kubectl get breakglassescalations,breakglasssessions,clusterconfigs,debugsessions,debugsessionclusterbindings -A
+kubectl get auditconfigs,debugpodtemplates,debugsessiontemplates,denypolicies,identityproviders,mailproviders
 ```
 
 Check recent events:

@@ -50,7 +50,7 @@ kubectl apply -f config/crd/bases/
 kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 
 # Or from a checked-out source tree:
-kustomize build config/base | kubectl apply -f -
+IMG="ghcr.io/telekom/k8s-breakglass:${TARGET_VERSION}" make deploy
 
 # The charts/escalation-config Helm chart deploys configuration CRs only.
 # Use it after the controller and CRDs are installed.
@@ -195,7 +195,7 @@ kubectl apply -f config/crd/bases/breakglass.t-caas.telekom.com_debugpodtemplate
 
 ```bash
 TARGET_VERSION=v0.9.0
-kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-debug.yaml"
+kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 ```
 
 ---
