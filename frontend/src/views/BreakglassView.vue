@@ -30,20 +30,24 @@ const state = reactive<{
   loading: boolean;
   refreshing: boolean;
   search: string;
+  error: string;
 }>({
   breakglasses: [],
   loading: true,
   refreshing: false,
   search: "",
+  error: "",
 });
 
 async function fetchAll() {
   state.loading = true;
+  state.error = "";
   try {
     // getBreakglasses() returns merged escalation/session info
     state.breakglasses = await breakglassService.getBreakglasses();
   } catch (e: unknown) {
-    pushError((e instanceof Error ? e.message : undefined) || "Failed to load escalations");
+    state.error = (e instanceof Error ? e.message : undefined) || "Failed to load escalations";
+    pushError(state.error);
     state.breakglasses = [];
   } finally {
     state.loading = false;
@@ -277,6 +281,18 @@ async function onDrop(bg: Breakglass) {
     />
 
     <LoadingState v-if="state.loading" message="Loading escalations..." />
+    <EmptyState
+      v-else-if="state.error"
+      variant="error"
+      title="Unable to load escalations"
+      :description="state.error"
+      data-testid="escalations-error-state"
+    >
+      <template #actions>
+        <scale-button variant="primary" @click="refresh()">Retry</scale-button>
+      </template>
+    </EmptyState>
+
     <div v-else-if="state.breakglasses.length > 0">
       <div class="breakglass-toolbar" data-testid="breakglass-toolbar">
         <div class="breakglass-toolbar__field">
@@ -342,7 +358,8 @@ async function onDrop(bg: Breakglass) {
     <EmptyState
       v-else
       icon="content-lock"
-      message="No requestable breakglass groups found for your current identity provider or group membership."
+      title="No requestable breakglass groups found"
+      description="No requestable breakglass groups were found for your current identity provider or group membership."
     />
   </div>
 </template>

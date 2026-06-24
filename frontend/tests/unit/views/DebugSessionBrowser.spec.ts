@@ -11,31 +11,33 @@ import { ref } from "vue";
 import DebugSessionBrowser from "@/views/DebugSessionBrowser.vue";
 import { AuthKey } from "@/keys";
 
+const mockListSessions = vi.fn().mockResolvedValue({
+  sessions: [
+    {
+      name: "debug-session-1",
+      namespace: "default",
+      cluster: "test-cluster",
+      state: "Active",
+      templateRef: "standard-debug",
+      requestedBy: "user@example.com",
+      createdAt: new Date().toISOString(),
+    },
+    {
+      name: "debug-session-2",
+      namespace: "default",
+      cluster: "prod-cluster",
+      state: "Pending",
+      templateRef: "elevated-debug",
+      requestedBy: "admin@example.com",
+      createdAt: new Date().toISOString(),
+    },
+  ],
+});
+
 // Mock debug session service
 vi.mock("@/services/debugSession", () => ({
   default: class MockDebugSessionService {
-    listSessions = vi.fn().mockResolvedValue({
-      sessions: [
-        {
-          name: "debug-session-1",
-          namespace: "default",
-          cluster: "test-cluster",
-          state: "Active",
-          templateRef: "standard-debug",
-          requestedBy: "user@example.com",
-          createdAt: new Date().toISOString(),
-        },
-        {
-          name: "debug-session-2",
-          namespace: "default",
-          cluster: "prod-cluster",
-          state: "Pending",
-          templateRef: "elevated-debug",
-          requestedBy: "admin@example.com",
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    });
+    listSessions = mockListSessions;
     terminateSession = vi.fn().mockResolvedValue({});
   },
 }));
@@ -67,6 +69,7 @@ describe("DebugSessionBrowser", () => {
   };
 
   beforeEach(() => {
+    mockListSessions.mockClear();
     router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -134,6 +137,17 @@ describe("DebugSessionBrowser", () => {
       expect(refreshButton.attributes("icon-only")).toBe("true");
       expect(refreshButton.attributes("aria-label")).toBe("Refresh");
       expect(refreshButton.classes()).toContain("ui-toolbar-icon-control");
+    });
+
+    it("shows an error state when loading debug sessions fails", async () => {
+      mockListSessions.mockRejectedValueOnce(new Error("debug list down"));
+
+      const wrapper = await createWrapper();
+      const errorState = wrapper.findComponent({ name: "EmptyState" });
+
+      expect(errorState.exists()).toBe(true);
+      expect(errorState.props("variant")).toBe("error");
+      expect(errorState.props("description")).toBe("debug list down");
     });
   });
 

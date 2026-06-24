@@ -38,7 +38,7 @@ describe("BreakglassService", () => {
   });
 
   describe("fetchAvailableEscalations (via getBreakglasses)", () => {
-    it("returns empty array when escalations API fails", async () => {
+    it("rethrows when escalations API fails", async () => {
       // fetchAvailableEscalations is private, but it's called by getBreakglasses
       // Simulate a network error on the escalations endpoint
       mockGet.mockImplementation((url: string) => {
@@ -49,10 +49,7 @@ describe("BreakglassService", () => {
         return Promise.resolve({ data: [] });
       });
 
-      // getBreakglasses calls fetchAvailableEscalations internally
-      // The error should be caught and an empty array returned
-      const result = await service.getBreakglasses();
-      expect(Array.isArray(result)).toBe(true);
+      await expect(service.getBreakglasses()).rejects.toThrow("Network error");
     });
 
     it("handles non-array response data gracefully", async () => {
@@ -76,7 +73,7 @@ describe("BreakglassService", () => {
         return Promise.resolve({ data: [] });
       });
 
-      await service.getBreakglasses();
+      await expect(service.getBreakglasses()).rejects.toThrow("Server error");
 
       expect(handleAxiosError).toHaveBeenCalledWith(
         expect.stringContaining("fetchAvailableEscalations"),

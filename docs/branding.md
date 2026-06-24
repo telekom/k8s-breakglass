@@ -111,3 +111,7 @@ The frontend includes a user-facing High Contrast toggle for enhanced readabilit
 - Automated axe-core accessibility tests run in CI across all four theme modes
 - Config: `frontend/playwright.a11y.config.ts`
 - Tests: `frontend/tests/e2e/a11y.spec.ts`
+
+## Error States
+
+Primary access and session views display persistent retryable error states when API list requests fail. Empty states are reserved for successful responses with no matching records.

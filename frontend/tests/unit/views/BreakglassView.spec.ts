@@ -188,6 +188,10 @@ describe("BreakglassView", () => {
 
       // Component should still mount successfully after error
       expect(wrapper.exists()).toBe(true);
+      const errorState = wrapper.findComponent({ name: "EmptyState" });
+      expect(errorState.exists()).toBe(true);
+      expect(errorState.props("variant")).toBe("error");
+      expect(errorState.props("description")).toBe("Fail");
     });
 
     it("does not throw when getBreakglasses rejects", async () => {

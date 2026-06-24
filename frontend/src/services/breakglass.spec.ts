@@ -412,14 +412,13 @@ describe("BreakglassService", () => {
     expect((pending[0] as unknown as Record<string, unknown>).approvalReason).toBeUndefined();
   });
 
-  it("searches sessions with arbitrary parameters and handles failures", async () => {
+  it("searches sessions with arbitrary parameters and rethrows failures", async () => {
     mockClient.get.mockResolvedValueOnce({ data: [{ metadata: { name: "s" } }] });
     const results = await service.searchSessions({ mine: true, state: "approved" });
     expect(results).toHaveLength(1);
 
     mockClient.get.mockRejectedValueOnce(new Error("search boom"));
-    const fallback = await service.searchSessions({ mine: true });
-    expect(fallback).toEqual([]);
+    await expect(service.searchSessions({ mine: true })).rejects.toThrow("search boom");
   });
 
   it("validates requests by passing the token and rethrowing failures", async () => {
