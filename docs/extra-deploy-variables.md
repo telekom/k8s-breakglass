@@ -194,7 +194,7 @@ Restrict specific options within select/multiSelect:
 
 | Location | Behavior |
 |----------|----------|
-| Frontend | Hides unavailable options from the UI |
+| Frontend | Hides unavailable options from the UI and disables debug session creation while visible variable validation errors are present |
 | API | Returns `400 Bad Request` with details about which option/variable is restricted |
 | Webhook | Admission validation rejects direct `kubectl` creation if user lacks access |
 

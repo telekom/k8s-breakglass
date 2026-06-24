@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   "update:modelValue": [values: ExtraDeployValues];
   "update:showAdvanced": [show: boolean];
+  "validation-change": [valid: boolean];
 }>();
 
 // State for advanced toggle (if not controlled)
@@ -44,6 +45,7 @@ const visibleVariables = computed(() => {
 const basicVariables = computed(() => visibleVariables.value.filter((v) => !v.advanced));
 const advancedVariables = computed(() => visibleVariables.value.filter((v) => v.advanced));
 const hasAdvanced = computed(() => advancedVariables.value.length > 0);
+const renderedVariables = computed(() => (showAdvancedInternal.value ? visibleVariables.value : basicVariables.value));
 
 // Group variables by their group field
 interface VariableGroup {
@@ -171,7 +173,7 @@ interface ValidationError {
 const validationErrors = computed((): ValidationError[] => {
   const errors: ValidationError[] = [];
 
-  for (const variable of visibleVariables.value) {
+  for (const variable of renderedVariables.value) {
     const value = getValue(variable.name, variable.default);
     const validation = variable.validation;
 
@@ -240,6 +242,16 @@ const validationErrors = computed((): ValidationError[] => {
   return errors;
 });
 
+const isFormValid = computed(() => validationErrors.value.length === 0);
+
+watch(
+  isFormValid,
+  (valid) => {
+    emit("validation-change", valid);
+  },
+  { immediate: true },
+);
+
 function getError(fieldName: string): string | undefined {
   const error = validationErrors.value.find((e) => e.field === fieldName);
   return error?.message;
@@ -300,7 +312,7 @@ function getHelperText(variable: ExtraDeployVariable): string {
 
 // Expose validation state to parent
 defineExpose({
-  isValid: computed(() => validationErrors.value.length === 0),
+  isValid: isFormValid,
   errors: validationErrors,
 });
 

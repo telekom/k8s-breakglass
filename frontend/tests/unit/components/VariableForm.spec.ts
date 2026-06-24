@@ -335,6 +335,68 @@ describe("VariableForm", () => {
   // Validation
   // -----------------------------------------------------------------
   describe("validation", () => {
+    it("emits validation-change when validation state changes", async () => {
+      const vars = [
+        textVar({
+          validation: {
+            pattern: "^[a-z]+$",
+            patternError: "Must be lowercase",
+          },
+        }),
+      ];
+      const wrapper = mountForm(vars, { myText: "lower" });
+
+      const firstEvents = wrapper.emitted("validation-change") || [];
+      expect(firstEvents[firstEvents.length - 1]).toEqual([true]);
+
+      await wrapper.setProps({ modelValue: { myText: "UPPER" } });
+      await flushPromises();
+
+      const updatedEvents = wrapper.emitted("validation-change") || [];
+      expect(updatedEvents[updatedEvents.length - 1]).toEqual([false]);
+    });
+
+    it("does not emit validation-change when validity stays the same", async () => {
+      const vars = [
+        textVar({
+          validation: {
+            pattern: "^[a-z]+$",
+            patternError: "Must be lowercase",
+          },
+        }),
+      ];
+      const wrapper = mountForm(vars, { myText: "lower" });
+
+      expect(wrapper.emitted("validation-change")).toHaveLength(1);
+
+      await wrapper.setProps({ modelValue: { myText: "stillvalid" } });
+      await flushPromises();
+
+      expect(wrapper.emitted("validation-change")).toHaveLength(1);
+    });
+
+    it("does not validate collapsed advanced variables", async () => {
+      const vars = [
+        textVar({ name: "basic", required: true }),
+        textVar({ name: "advanced", advanced: true, required: true }),
+      ];
+      const wrapper = mountForm(vars, { basic: "filled" });
+      await flushPromises();
+
+      const exposed = wrapper.vm as unknown as { isValid: boolean; errors: { field: string }[] };
+      expect(wrapper.find('[data-testid="advanced-section"]').exists()).toBe(false);
+      expect(exposed.isValid).toBe(true);
+      expect(exposed.errors.some((e) => e.field === "advanced")).toBe(false);
+
+      await wrapper.find('[data-testid="toggle-advanced"]').trigger("click");
+      await flushPromises();
+
+      const updatedEvents = wrapper.emitted("validation-change") || [];
+      expect(updatedEvents[updatedEvents.length - 1]).toEqual([false]);
+      expect(exposed.isValid).toBe(false);
+      expect(exposed.errors.some((e) => e.field === "advanced")).toBe(true);
+    });
+
     it("exposes isValid as true when no required fields are missing", () => {
       const vars = [textVar({ required: false })];
       const wrapper = mountForm(vars);

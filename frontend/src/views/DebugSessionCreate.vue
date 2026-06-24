@@ -34,6 +34,7 @@ const clusterDetails = ref<AvailableClusterDetail[]>([]);
 const loading = ref(true);
 const loadingClusters = ref(false);
 const submitting = ref(false);
+const extraDeployValid = ref(true);
 
 const form = reactive<{
   templateRef: string;
@@ -73,6 +74,7 @@ watch(
       form.targetNamespace = "";
       form.selectedSchedulingOption = "";
       form.extraDeployValues = {};
+      extraDeployValid.value = true;
       form.showAdvancedOptions = false;
       clusterDetails.value = [];
       currentStep.value = 1;
@@ -186,13 +188,120 @@ const isNamespaceEditable = computed(() => {
   // If there's exactly one allowed pattern that's an exact match (no wildcards)
   if (constraints.allowedPatterns && constraints.allowedPatterns.length === 1) {
     const pattern = constraints.allowedPatterns[0];
-    if (pattern && !pattern.includes("*") && !pattern.includes("?")) {
+    if (pattern && !containsGlobMeta(pattern)) {
       return false;
     }
   }
 
   return true;
 });
+
+function containsGlobMeta(pattern: string): boolean {
+  return /[*?[]/.test(pattern);
+}
+
+function escapeRegExpChar(char: string): string {
+  return char.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function globToRegExp(pattern: string): RegExp | null {
+  let source = "";
+
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    if (char === "*") {
+      source += "[^/]*";
+      continue;
+    }
+    if (char === "?") {
+      source += "[^/]";
+      continue;
+    }
+    if (char === "\\") {
+      i++;
+      if (i >= pattern.length) {
+        return null;
+      }
+      source += escapeRegExpChar(pattern[i] || "");
+      continue;
+    }
+    if (char === "[") {
+      let j = i + 1;
+      let classSource = "";
+
+      if (pattern[j] === "^") {
+        classSource = "^";
+        j++;
+      }
+
+      for (; j < pattern.length; j++) {
+        const classChar = pattern[j];
+        if (classChar === "]" && classSource !== "" && classSource !== "^") {
+          break;
+        }
+        if (classChar === "\\") {
+          j++;
+          if (j >= pattern.length) {
+            return null;
+          }
+          classSource += `\\${pattern[j]}`;
+          continue;
+        }
+        if (classChar === "[" || classChar === "]") {
+          classSource += `\\${classChar}`;
+          continue;
+        }
+        classSource += classChar;
+      }
+
+      if (j >= pattern.length || classSource === "" || classSource === "^") {
+        return null;
+      }
+
+      source += `[${classSource}]`;
+      i = j;
+      continue;
+    }
+
+    source += escapeRegExpChar(char);
+  }
+
+  return new RegExp(`^${source}$`);
+}
+
+function matchesPattern(value: string, pattern: string): boolean {
+  const regex = globToRegExp(pattern);
+  return regex ? regex.test(value) : value === pattern;
+}
+
+const namespaceValidationError = computed(() => {
+  if (!canSelectNamespace.value || !isNamespaceEditable.value || !form.targetNamespace) {
+    return "";
+  }
+
+  const namespace = form.targetNamespace;
+  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(namespace) || namespace.length > 63) {
+    return "Must be a valid Kubernetes namespace name";
+  }
+
+  const deniedPatterns = namespaceConstraints.value?.deniedPatterns || [];
+  if (deniedPatterns.some((pattern) => matchesPattern(namespace, pattern))) {
+    return "Namespace is denied by this template";
+  }
+
+  const allowedPatterns = namespaceConstraints.value?.allowedPatterns || [];
+  if (allowedPatterns.length > 0 && !allowedPatterns.some((pattern) => matchesPattern(namespace, pattern))) {
+    return `Namespace must match: ${allowedPatterns.join(", ")}`;
+  }
+
+  return "";
+});
+
+function updateExtraDeployValid(valid: boolean) {
+  extraDeployValid.value = valid;
+}
+
+const namespaceValid = computed(() => namespaceValidationError.value === "");
 
 // Auxiliary resources required for this cluster/binding
 const requiredAuxiliaryResources = computed(() => {
@@ -341,7 +450,7 @@ const isValid = computed(() => {
     return false;
   }
 
-  return true;
+  return namespaceValid.value && extraDeployValid.value;
 });
 
 async function fetchTemplates() {
@@ -630,6 +739,7 @@ function handleTemplateChange(ev: Event) {
         :user-groups="userGroups"
         :selected-scheduling-option="form.selectedSchedulingOption"
         :target-namespace="form.targetNamespace"
+        :namespace-validation-error="namespaceValidationError"
         :requested-duration="form.requestedDuration"
         :reason="form.reason"
         :scheduled-start-time="form.scheduledStartTime"
@@ -638,6 +748,7 @@ function handleTemplateChange(ev: Event) {
         :show-advanced-options="form.showAdvancedOptions"
         @update:selected-scheduling-option="form.selectedSchedulingOption = $event"
         @update:target-namespace="form.targetNamespace = $event"
+        @update:extra-deploy-valid="updateExtraDeployValid"
         @update:requested-duration="form.requestedDuration = $event"
         @update:reason="form.reason = $event"
         @update:scheduled-start-time="form.scheduledStartTime = $event"

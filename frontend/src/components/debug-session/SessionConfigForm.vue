@@ -33,6 +33,7 @@ defineProps<{
   // v-model values
   selectedSchedulingOption: string;
   targetNamespace: string;
+  namespaceValidationError?: string;
   requestedDuration: string;
   reason: string;
   scheduledStartTime: string;
@@ -44,6 +45,7 @@ defineProps<{
 const emit = defineEmits<{
   "update:selectedSchedulingOption": [value: string];
   "update:targetNamespace": [value: string];
+  "update:extraDeployValid": [valid: boolean];
   "update:requestedDuration": [value: string];
   "update:reason": [value: string];
   "update:scheduledStartTime": [value: string];
@@ -139,6 +141,8 @@ function handleDurationChange(ev: Event) {
         :value="targetNamespace"
         label="Namespace"
         :placeholder="defaultNamespace || 'Enter namespace name'"
+        :invalid="!!namespaceValidationError"
+        :helper-text-invalid="namespaceValidationError"
         data-testid="namespace-input"
         @scale-change="emit('update:targetNamespace', ($event.target as HTMLInputElement).value)"
       ></scale-text-field>
@@ -243,6 +247,7 @@ function handleDurationChange(ev: Event) {
         data-testid="variable-form"
         @update:model-value="emit('update:extraDeployValues', $event)"
         @update:show-advanced="emit('update:showAdvancedOptions', $event)"
+        @validation-change="emit('update:extraDeployValid', $event)"
       />
     </div>
 
