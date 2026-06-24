@@ -118,26 +118,43 @@ func Save(path string, cfg *Config) error {
 }
 
 func writePrivateFile(path string, content []byte) (err error) {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
+	tmpPath := file.Name()
+	closed := false
 	defer func() {
-		if closeErr := file.Close(); err == nil && closeErr != nil {
-			err = closeErr
+		if !closed && err != nil {
+			_ = file.Close()
+		} else if !closed {
+			if closeErr := file.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}
+		if err != nil {
+			_ = os.Remove(tmpPath)
 		}
 	}()
 	if err := file.Chmod(0o600); err != nil {
 		return err
 	}
-	n, err := file.Write(content)
-	if err != nil {
+	for len(content) > 0 {
+		n, err := file.Write(content)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		content = content[n:]
+	}
+	if err := file.Close(); err != nil {
 		return err
 	}
-	if n != len(content) {
-		return io.ErrShortWrite
-	}
-	return nil
+	closed = true
+	return os.Rename(tmpPath, path)
 }
 
 func (c *Config) FindContext(name string) (*Context, error) {
