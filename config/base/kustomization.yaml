@@ -26,6 +26,31 @@ configMapGenerator:
 # Patch the Deployment to add webhook port and cert volume mounts
 # NOTE: --enable-validating-webhooks and other flags are already in config/deployment/app.yaml
 patches:
+  # Do not ship the generated auth-checker impersonation helper in the
+  # production base. Debug-session impersonation should be granted explicitly
+  # for named ServiceAccounts in the target cluster.
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRole
+      name: impersonate-auth-manager-role
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: impersonate-auth-manager-role
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: impersonate-auth-manager-rolebinding
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: impersonate-auth-manager-rolebinding
   - target:
       group: apps
       version: v1
@@ -50,4 +75,3 @@ patches:
           name: webhook-certs
           secret:
             secretName: webhook-server-cert
-
