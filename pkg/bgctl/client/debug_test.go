@@ -246,7 +246,7 @@ func TestDebugSessionsJoin(t *testing.T) {
 
 		var req JoinDebugSessionRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		assert.Equal(t, "participant", req.Role)
+		assert.Equal(t, "viewer", req.Role)
 
 		response := DebugSessionDetailResponse{
 			DebugSession: breakglassv1alpha1.DebugSession{
@@ -261,7 +261,7 @@ func TestDebugSessionsJoin(t *testing.T) {
 	client, err := New(WithServer(server.URL))
 	require.NoError(t, err)
 
-	result, err := client.DebugSessions().Join(context.Background(), "debug-session-123", "participant", "")
+	result, err := client.DebugSessions().Join(context.Background(), "debug-session-123", "viewer", "")
 	require.NoError(t, err)
 	assert.Equal(t, "debug-session-123", result.Name)
 }

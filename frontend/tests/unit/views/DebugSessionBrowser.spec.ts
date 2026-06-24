@@ -33,11 +33,13 @@ const mockListSessions = vi.fn().mockResolvedValue({
     },
   ],
 });
+const mockJoinSession = vi.fn().mockResolvedValue({});
 
 // Mock debug session service
 vi.mock("@/services/debugSession", () => ({
   default: class MockDebugSessionService {
     listSessions = mockListSessions;
+    joinSession = mockJoinSession;
     terminateSession = vi.fn().mockResolvedValue({});
   },
 }));
@@ -70,6 +72,7 @@ describe("DebugSessionBrowser", () => {
 
   beforeEach(() => {
     mockListSessions.mockClear();
+    mockJoinSession.mockClear();
     router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -95,7 +98,12 @@ describe("DebugSessionBrowser", () => {
           PageHeader: true,
           LoadingState: true,
           EmptyState: true,
-          DebugSessionCard: true,
+          DebugSessionCard: {
+            inheritAttrs: false,
+            props: ["session"],
+            emits: ["join"],
+            template: '<button :data-testid="`join-${session.name}`" @click="$emit(`join`)">Join</button>',
+          },
           "scale-text-field": true,
           "scale-checkbox": true,
           "scale-button": true,
@@ -148,6 +156,18 @@ describe("DebugSessionBrowser", () => {
       expect(errorState.exists()).toBe(true);
       expect(errorState.props("variant")).toBe("error");
       expect(errorState.props("description")).toBe("debug list down");
+    });
+
+    it("joins sessions as a viewer", async () => {
+      const wrapper = await createWrapper();
+      await vi.waitFor(() => {
+        expect(wrapper.find('[data-testid="join-debug-session-1"]').exists()).toBe(true);
+      });
+
+      await wrapper.find('[data-testid="join-debug-session-1"]').trigger("click");
+      await flushPromises();
+
+      expect(mockJoinSession).toHaveBeenCalledWith("debug-session-1", { role: "viewer" });
     });
   });
 

@@ -12,6 +12,7 @@ import { AuthKey } from "@/keys";
 
 const mockPush = vi.fn();
 const mockGetSession = vi.fn();
+const mockJoinSession = vi.fn();
 const mockCopy = vi.fn().mockResolvedValue(true);
 const mockCleanup = vi.fn();
 const mockCopied = ref(false);
@@ -29,7 +30,7 @@ vi.mock("vue-router", () => ({
 vi.mock("@/services/debugSession", () => ({
   default: class MockDebugSessionService {
     getSession = mockGetSession;
-    joinSession = vi.fn();
+    joinSession = mockJoinSession;
     leaveSession = vi.fn();
     terminateSession = vi.fn();
     renewSession = vi.fn();
@@ -77,6 +78,7 @@ describe("DebugSessionDetails", () => {
     vi.useFakeTimers();
     mockPush.mockReset();
     mockGetSession.mockReset();
+    mockJoinSession.mockReset();
     mockRouteParams.name = "dbg-1";
   });
 
@@ -185,6 +187,40 @@ describe("DebugSessionDetails", () => {
     expect(errorState.exists()).toBe(true);
     expect(errorState.props("variant")).toBe("error");
     expect(errorState.props("description")).toBe("detail down");
+  });
+
+  it("joins active sessions as a viewer", async () => {
+    mockGetSession.mockResolvedValue({
+      status: {
+        state: "Active",
+        participants: [],
+      },
+      metadata: { name: "dbg-1" },
+      spec: {
+        cluster: "test-cluster",
+        requestedBy: "owner@example.com",
+      },
+    });
+    mockJoinSession.mockResolvedValue({});
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    await wrapper.find('[data-testid="join-session-button"]').trigger("click");
+    await flushPromises();
+
+    expect(mockJoinSession).toHaveBeenCalledWith("dbg-1", { role: "viewer" });
   });
 
   it("calls clipboardCleanup on unmount", async () => {

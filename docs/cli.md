@@ -349,6 +349,9 @@ bgctl debug session create \
 # Approve (if required)
 bgctl debug session approve DEBUG_SESSION_NAME
 
+# Invited users join shared terminal sessions as viewers by default
+bgctl debug session join DEBUG_SESSION_NAME
+
 # Inject ephemeral container
 bgctl debug kubectl inject DEBUG_SESSION_NAME \
   --namespace production \
