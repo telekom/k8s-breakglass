@@ -247,19 +247,10 @@ docker push myregistry.example.com/breakglass:v1.0.0
 
 ## Step 7: Deploy to Hub Cluster
 
-Update deployment manifests with your image:
-
-```bash
-sed -i 's|breakglass:latest|myregistry.example.com/breakglass:v1.0.0|g' \
-  config/deployment/app.yaml
-```
-
 Deploy:
 
 ```bash
-kubectl apply -f config/crd/
-kubectl apply -f config/rbac/
-kubectl apply -f config/deployment/
+IMG=myregistry.example.com/breakglass:v1.0.0 make deploy
 ```
 
 Verify deployment:
@@ -554,7 +545,7 @@ kubectl get pods -n breakglass-system
 Check logs for errors:
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller
+kubectl logs -n breakglass-system deployment/breakglass-manager
 ```
 
 Secure OIDC client:

@@ -398,16 +398,17 @@ Before deploying to production with multiple replicas:
 kubectl get lease -n breakglass-system breakglass.telekom.io -w
 
 # Watch leader transitions
-kubectl logs -n breakglass-system -l app=breakglass-controller -f | grep -i leader
+kubectl logs -n breakglass-system -l app=breakglass -f | grep -i leader
 
 # Check which replica is leader
-kubectl logs -n breakglass-system -l app=breakglass-controller -f | grep "is now the leader"
+kubectl logs -n breakglass-system -l app=breakglass -f | grep "is now the leader"
 
 # Verify cleanup runs on leader
-kubectl logs -n breakglass-system -l app=breakglass-controller -f | grep "Running breakglass session cleanup"
+kubectl logs -n breakglass-system -l app=breakglass -f | grep "Running breakglass session cleanup"
 
-# Delete leader pod to test failover
-kubectl delete pod -n breakglass-system breakglass-controller-0
+# Delete the observed leader pod to test failover
+kubectl get pods -n breakglass-system -l app=breakglass
+kubectl delete pod -n breakglass-system <leader-pod-name>
 # Watch for new leader election within ~15 seconds
 ```
 
@@ -470,12 +471,12 @@ If you're currently running multiple replicas:
 
 1. **Verify current behavior**: Check if background loops are running on all replicas
    ```bash
-   kubectl logs -n breakglass-system -l app=breakglass-controller | grep "Running breakglass session cleanup"
+   kubectl logs -n breakglass-system -l app=breakglass | grep "Running breakglass session cleanup"
    ```
 
 2. **Option A: Enable Leader Election (Recommended)**
    - Update deployment to set `--enable-leader-election=true` (default)
-   - Redeploy: `kubectl rollout restart deployment/breakglass-controller`
+   - Redeploy: `kubectl rollout restart deployment/breakglass-manager -n breakglass-system`
    - Monitor logs for leader election
    - Cleanup operations now run on leader only
 
@@ -493,10 +494,10 @@ If you're currently running multiple replicas:
 kubectl get lease -n breakglass-system breakglass.telekom.io
 
 # Check controller logs for leadership
-kubectl logs -n breakglass-system -l app=breakglass-controller | grep -i leader
+kubectl logs -n breakglass-system -l app=breakglass | grep -i leader
 
 # Verify RBAC allows lease operations
-kubectl auth can-i get leases --as=system:serviceaccount:breakglass-system:breakglass-controller -n breakglass-system
+kubectl auth can-i get leases --as=system:serviceaccount:breakglass-system:breakglass-manager -n breakglass-system
 ```
 
 **Symptom**: Multiple replicas showing "is now the leader"
@@ -512,8 +513,8 @@ This should not happen - only one replica can hold the lease at a time. If you s
 
 **Checklist**:
 1. Verify leader election is enabled: `--enable-leader-election=true` (check logs)
-2. Verify controller is leader: `kubectl logs -n breakglass-system -l app=breakglass-controller | grep "is now the leader"`
-3. Verify RBAC has lease permissions: `kubectl auth can-i get leases --as=system:serviceaccount:breakglass-system:breakglass-controller`
+2. Verify controller is leader: `kubectl logs -n breakglass-system -l app=breakglass | grep "is now the leader"`
+3. Verify RBAC has lease permissions: `kubectl auth can-i get leases --as=system:serviceaccount:breakglass-system:breakglass-manager`
 4. Check lease exists: `kubectl get lease -n breakglass-system breakglass.telekom.io`
 
 ### Can I disable leader election?
@@ -574,7 +575,7 @@ If the lease is held by a crashed pod:
 kubectl delete lease -n breakglass-system breakglass.telekom.io
 
 # New leader will be elected within 2-10 seconds
-kubectl logs -n breakglass-system -l app=breakglass-controller -f | grep "is now the leader"
+kubectl logs -n breakglass-system -l app=breakglass -f | grep "is now the leader"
 ```
 
 The lease has a 15-second expiration, so it will be automatically reclaimed if the leader crashes ungracefully.
@@ -586,10 +587,10 @@ The lease has a 15-second expiration, so it will be automatically reclaimed if t
 kubectl get lease -n breakglass-system breakglass.telekom.io -w
 
 # Check controller logs
-kubectl logs -n breakglass-system -l app=breakglass-controller -f
+kubectl logs -n breakglass-system -l app=breakglass -f
 
 # See only leadership events
-kubectl logs -n breakglass-system -l app=breakglass-controller -f | grep -E "(leader|leadership)"
+kubectl logs -n breakglass-system -l app=breakglass -f | grep -E "(leader|leadership)"
 ```
 
 ### Webhook paths changed - do I need to update ValidatingWebhookConfiguration?
@@ -815,5 +816,5 @@ With the implemented leader election:
 
 1. Deploy with `--enable-leader-election=true` (default behavior)
 2. Monitor lease creation: `kubectl get lease -n breakglass-system`
-3. Watch leader transitions: `kubectl logs -n breakglass-system -l app=breakglass-controller -f | grep leader`
+3. Watch leader transitions: `kubectl logs -n breakglass-system -l app=breakglass -f | grep leader`
 4. Scale replicas as needed - leader election handles coordination automatically

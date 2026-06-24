@@ -264,7 +264,7 @@ kubectl --kubeconfig=/tmp/test.kubeconfig auth can-i '*' '*'
 1. Review controller logs
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller -f
+kubectl logs -n breakglass-system deployment/breakglass-manager -f
 ```
 
 2. Verify OIDC connectivity
@@ -331,7 +331,7 @@ openssl s_client -connect keycloak.example.com:443
 3. Test from breakglass pod
 
 ```bash
-kubectl exec -it -n breakglass-system deployment/breakglass-controller -- \
+kubectl exec -it -n breakglass-system deployment/breakglass-manager -- \
   curl https://keycloak.example.com/realms/master/.well-known/openid-configuration
 ```
 
@@ -386,7 +386,7 @@ spec:
 3. Check controller logs for detailed error
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller | grep -i oidc
+kubectl logs -n breakglass-system deployment/breakglass-manager | grep -i oidc
 ```
 
 ### ClusterConfig Shows "OIDCTokenFetchFailed"
@@ -513,7 +513,7 @@ kubectl get clusterconfig <name> -o yaml | grep -A 20 status
 2. Look at controller logs
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller --since=5m | grep -i "oidc\|token"
+kubectl logs -n breakglass-system deployment/breakglass-manager --since=5m | grep -i "oidc\|token"
 ```
 
 3. Test token acquisition manually using the configured credentials
@@ -538,7 +538,7 @@ kubectl --server=https://api.cluster.example.com:6443 \
 1. Review pod logs
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller
+kubectl logs -n breakglass-system deployment/breakglass-manager
 ```
 
 2. Check resource availability
@@ -569,7 +569,7 @@ kubectl top pod -n breakglass-system
 2. Check for stuck reconciliation loops
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller | grep "error"
+kubectl logs -n breakglass-system deployment/breakglass-manager | grep "error"
 ```
 
 ## Performance Issues
@@ -585,7 +585,7 @@ kubectl logs -n breakglass-system deployment/breakglass-controller | grep "error
 2. Check webhook authorization latency
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller | \
+kubectl logs -n breakglass-system deployment/breakglass-manager | \
   grep "authorization duration"
 ```
 
@@ -722,19 +722,19 @@ kubectl get secret <secret-name> -o yaml
 View all resources:
 
 ```bash
-kubectl get breakglassescalation,breakglasssession,clusterconfig,denypolicy -A
+kubectl get auditconfig,breakglassescalation,breakglasssession,clusterconfig,debugsession,debugsessionclusterbinding,debugsessiontemplate,debugpodtemplate,denypolicy,identityprovider,mailprovider -A
 ```
 
 Check recent events:
 
 ```bash
-kubectl describe deployment -n breakglass-system breakglass-controller
+kubectl describe deployment -n breakglass-system breakglass-manager
 ```
 
 Stream logs with filtering:
 
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller -f | grep -i error
+kubectl logs -n breakglass-system deployment/breakglass-manager -f | grep -i error
 ```
 
 Test OIDC token:
@@ -758,7 +758,7 @@ If issues persist:
 
 ```bash
 kubectl get all -n breakglass-system -o yaml > debug.yaml
-kubectl logs -n breakglass-system deployment/breakglass-controller > logs.txt
+kubectl logs -n breakglass-system deployment/breakglass-manager > logs.txt
 ```
 
 2. Search GitHub issues for similar problems

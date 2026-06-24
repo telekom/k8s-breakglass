@@ -104,8 +104,11 @@ kustomize build config/dev | kubectl apply -f -
 
 Pre-built manifest files are published with each release for users who prefer not to use kustomize:
 
-- **GitHub Releases**: Each release includes `manifests.yaml` containing all resources
-- **Installation**: `kubectl apply -f https://github.com/telekom/k8s-breakglass/releases/download/v1.0.0/manifests.yaml`
+- **Base controller**: `manifests-base.yaml`
+- **CRDs only**: `manifests-crds.yaml`
+- **Debug overlay**: `manifests-debug.yaml`
+- **Bundled archive**: `manifests-<version>.tgz`
+- **Installation**: `kubectl apply -f https://github.com/telekom/k8s-breakglass/releases/download/v1.0.0/manifests-base.yaml`
 
 See the [Releases page](https://github.com/telekom/k8s-breakglass/releases) for available versions.
 
