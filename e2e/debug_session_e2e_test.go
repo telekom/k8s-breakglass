@@ -42,10 +42,8 @@ const (
 )
 
 var (
-	k8sClient      client.Client
-	apiClient      *helpers.APIClient
-	approverClient *helpers.APIClient
-	testNamespace  = helpers.GetTestNamespace()
+	k8sClient     client.Client
+	testNamespace = helpers.GetTestNamespace()
 )
 
 func init() {
@@ -75,25 +73,15 @@ func setupClient(t *testing.T) client.Client {
 }
 
 func setupAPIClient(t *testing.T) *helpers.APIClient {
-	if apiClient != nil {
-		return apiClient
-	}
-	// Use TestContext to get an authenticated client
 	ctx := context.Background()
 	tc := helpers.NewTestContext(t, ctx)
-	apiClient = tc.RequesterClient()
-	return apiClient
+	return tc.RequesterClient()
 }
 
 func setupApproverClient(t *testing.T) *helpers.APIClient {
-	if approverClient != nil {
-		return approverClient
-	}
-	// Use TestContext to get an authenticated approver client
 	ctx := context.Background()
 	tc := helpers.NewTestContext(t, ctx)
-	approverClient = tc.ApproverClient()
-	return approverClient
+	return tc.ApproverClient()
 }
 
 // ensureTestSessionTemplate ensures that the e2e-test-session-template exists.
