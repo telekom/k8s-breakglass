@@ -244,7 +244,7 @@ entryPoints:
 | `X-Request-ID` | Request correlation | `abc123-def456` |
 | `X-Correlation-ID` | Request correlation compatibility alias | `abc123-def456` |
 
-**Note:** Breakglass propagates `X-Request-ID` if provided, accepts `X-Correlation-ID` as a compatibility alias when `X-Request-ID` is absent, or generates one if neither header is present. Responses always include the canonical `X-Request-ID` header. This is useful for distributed tracing.
+**Note:** Breakglass propagates `X-Request-ID` if provided and valid, accepts `X-Correlation-ID` as a compatibility alias when `X-Request-ID` is absent or invalid, or generates one if neither header is usable. Responses always include the canonical `X-Request-ID` header. This is useful for distributed tracing.
 
 ## CORS Configuration
 
