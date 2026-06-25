@@ -44,6 +44,11 @@ type APIController interface {
 	Handlers() []gin.HandlerFunc
 }
 
+const (
+	requestIDHeader     = "X-Request-ID"
+	correlationIDHeader = "X-Correlation-ID"
+)
+
 type Server struct {
 	gin    *gin.Engine
 	config config.Config
@@ -194,13 +199,15 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	// Correlation ID middleware
 	engine.Use(func(c *gin.Context) {
-		cid := c.Request.Header.Get("X-Request-ID")
-		// Sanitize: only safe characters (checked inside isValidRequestID).
+		cid := c.Request.Header.Get(requestIDHeader)
+		if !isValidRequestID(cid) {
+			cid = c.Request.Header.Get(correlationIDHeader)
+		}
 		if !isValidRequestID(cid) {
 			cid = uuid.NewString()
 		}
 		c.Set("cid", cid)
-		c.Writer.Header().Set("X-Request-ID", cid)
+		c.Writer.Header().Set(requestIDHeader, cid)
 		c.Next()
 	})
 

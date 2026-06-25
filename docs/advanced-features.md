@@ -316,6 +316,11 @@ All API responses include a correlation ID header for request tracking:
 X-Request-ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
+Requests may provide `X-Request-ID` to keep a caller-generated correlation ID.
+For compatibility with existing tooling, Breakglass also accepts `X-Correlation-ID`
+when `X-Request-ID` is absent. Responses always return the canonical
+`X-Request-ID` header.
+
 Use this ID when debugging or filing support requests.
 
 ### Error Format

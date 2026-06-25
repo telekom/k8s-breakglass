@@ -70,6 +70,9 @@ func TestClientDo(t *testing.T) {
 		ua := r.Header.Get("User-Agent")
 		require.Equal(t, "test-agent", ua)
 
+		correlationID := r.Header.Get(CorrelationIDHeader)
+		require.NotEmpty(t, correlationID)
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
