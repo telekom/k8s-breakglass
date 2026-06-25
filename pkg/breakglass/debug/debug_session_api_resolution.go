@@ -304,16 +304,20 @@ func (c *DebugSessionAPIController) resolveApprovalReason(template *breakglassv1
 	// Binding overrides template
 	if binding != nil && binding.Spec.ApprovalReason != nil {
 		return &breakglass.ReasonConfigInfo{
-			Mandatory:   binding.Spec.ApprovalReason.Mandatory,
-			Description: binding.Spec.ApprovalReason.Description,
+			Mandatory:             binding.Spec.ApprovalReason.Mandatory,
+			MandatoryForRejection: binding.Spec.ApprovalReason.MandatoryForRejection,
+			Description:           binding.Spec.ApprovalReason.Description,
+			MinLength:             binding.Spec.ApprovalReason.MinLength,
 		}
 	}
 
 	// Fall back to template
 	if template.Spec.ApprovalReason != nil {
 		return &breakglass.ReasonConfigInfo{
-			Mandatory:   template.Spec.ApprovalReason.Mandatory,
-			Description: template.Spec.ApprovalReason.Description,
+			Mandatory:             template.Spec.ApprovalReason.Mandatory,
+			MandatoryForRejection: template.Spec.ApprovalReason.MandatoryForRejection,
+			Description:           template.Spec.ApprovalReason.Description,
+			MinLength:             template.Spec.ApprovalReason.MinLength,
 		}
 	}
 

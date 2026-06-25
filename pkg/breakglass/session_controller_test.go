@@ -1522,6 +1522,92 @@ func TestSessionApproveRejectInvalidOptionalBody(t *testing.T) {
 	}
 }
 
+func TestApprovalReasonMandatoryEnforced(t *testing.T) {
+	setup := func(t *testing.T, sessionName string) *gin.Engine {
+		t.Helper()
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		now := metav1.Now()
+		pending := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: sessionName},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "c1",
+				User:         "requester@example.com",
+				GrantedGroup: "g1",
+				ApprovalReasonConfig: &breakglassv1alpha1.ReasonConfig{
+					Mandatory:   true,
+					Description: "Approval note",
+				},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:         breakglassv1alpha1.SessionStatePending,
+				TimeoutAt:     now,
+				RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+			},
+		}
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "esc-" + sessionName},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c1"}, Groups: []string{"system:authenticated"}},
+				EscalatedGroup: "g1",
+				Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			},
+		}
+
+		cli := builder.WithObjects(pending, esc).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "approver@example.com")
+				c.Set("username", "Approver")
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"system:authenticated"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+		return engine
+	}
+
+	t.Run("approve without mandatory reason", func(t *testing.T) {
+		engine := setup(t, "pending-approve")
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/pending-approve/approve", bytes.NewReader([]byte(`{"reason":"   "}`)))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Contains(t, w.Body.String(), "missing required approval reason")
+	})
+
+	t.Run("reject without mandatory reason", func(t *testing.T) {
+		engine := setup(t, "pending-reject")
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/pending-reject/reject", nil)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		assert.Contains(t, w.Body.String(), "missing required approval reason")
+	})
+
+	t.Run("approve with mandatory reason", func(t *testing.T) {
+		engine := setup(t, "pending-approve-with-reason")
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/pending-approve-with-reason/approve", bytes.NewReader([]byte(`{"reason":"Approved for incident"}`)))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "Approved for incident")
+	})
+}
+
 // TestApprovalAuthorizationDetailedResponses verifies that approval denials return appropriate
 // HTTP status codes and specific error messages based on the denial reason.
 // - 401 Unauthorized: authentication failures (can't identify user)
