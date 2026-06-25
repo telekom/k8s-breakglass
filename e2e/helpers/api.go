@@ -47,9 +47,10 @@ const CorrelationIDHeader = "X-Correlation-ID"
 type APIClient struct {
 	BaseURL       string
 	HTTPClient    *http.Client
-	AuthToken     string        // Optional: Bearer token for authenticated requests
-	CleanupClient client.Client // Optional: K8s client for auto-expiring conflicting sessions
-	Namespace     string        // Namespace for cleanup operations (defaults to "default")
+	AuthToken     string                       // Optional: Bearer token for authenticated requests
+	RefreshToken  func(context.Context) string // Optional: refreshes AuthToken after an unexpected 401
+	CleanupClient client.Client                // Optional: K8s client for auto-expiring conflicting sessions
+	Namespace     string                       // Namespace for cleanup operations (defaults to "default")
 }
 
 // NewAPIClient creates a new API client for E2E tests
@@ -66,6 +67,14 @@ func NewAPIClient() *APIClient {
 func NewAPIClientWithAuth(token string) *APIClient {
 	c := NewAPIClient()
 	c.AuthToken = token
+	return c
+}
+
+// WithTokenRefresh configures a callback used to refresh authentication once
+// after an unexpected 401. Tests that intentionally use invalid tokens should
+// not set this hook.
+func (c *APIClient) WithTokenRefresh(refresh func(context.Context) string) *APIClient {
+	c.RefreshToken = refresh
 	return c
 }
 
@@ -107,35 +116,56 @@ func (c *APIClient) doRequest(ctx context.Context, method, path string, body int
 // doRequestWithCID performs an HTTP request with a specific correlation ID.
 // If cid is empty, a new UUID will be generated.
 func (c *APIClient) doRequestWithCID(ctx context.Context, method, path string, body interface{}, cid string) (*http.Response, error) {
-	var reqBody io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
-		reqBody = bytes.NewBuffer(jsonBody)
+		bodyBytes = jsonBody
 	}
 
 	url := c.BaseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
 
 	// Generate correlation ID if not provided
 	if cid == "" {
 		cid = uuid.New().String()
 	}
-	req.Header.Set(CorrelationIDHeader, cid)
 
-	if c.AuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	for attempt := 0; attempt < 2; attempt++ {
+		var reqBody io.Reader
+		if bodyBytes != nil {
+			reqBody = bytes.NewReader(bodyBytes)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set(CorrelationIDHeader, cid)
+
+		if c.AuthToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+		}
+
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusUnauthorized || c.RefreshToken == nil || attempt > 0 {
+			return resp, nil
+		}
+
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if token := c.RefreshToken(ctx); token != "" {
+			c.AuthToken = token
+		}
 	}
 
-	return c.HTTPClient.Do(req)
+	return nil, fmt.Errorf("failed to execute request")
 }
 
 // sessionsBasePath is the base path for session API endpoints
