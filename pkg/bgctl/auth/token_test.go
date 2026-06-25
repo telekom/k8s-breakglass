@@ -51,3 +51,22 @@ func TestSaveTokenCacheInitializesMap(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, loaded.Tokens)
 }
+
+func TestSaveTokenCacheTightensExistingFileMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o644))
+
+	cache := &TokenCache{Tokens: map[string]StoredToken{
+		"provider": {
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			TokenType:    "Bearer",
+			Expiry:       time.Now().UTC(),
+		},
+	}}
+	require.NoError(t, SaveTokenCache(path, cache))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
