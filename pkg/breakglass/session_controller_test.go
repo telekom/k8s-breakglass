@@ -1594,7 +1594,7 @@ func TestApprovalReasonMandatoryEnforced(t *testing.T) {
 		engine.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-		assert.Contains(t, w.Body.String(), "missing required approval reason")
+		assert.Contains(t, w.Body.String(), "missing required rejection reason")
 	})
 
 	t.Run("approve with mandatory reason", func(t *testing.T) {
