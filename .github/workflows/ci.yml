@@ -58,7 +58,7 @@ jobs:
         run: make test-controller
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: always()
+        if: ${{ always() && github.actor != 'dependabot[bot]' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: cover-controller.out
@@ -81,7 +81,7 @@ jobs:
         run: make test-cli-e2e
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: always()
+        if: ${{ always() && github.actor != 'dependabot[bot]' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: cover-cli.out
@@ -350,7 +350,7 @@ jobs:
           retention-days: 7
       - name: Upload frontend coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: always()
+        if: ${{ always() && github.actor != 'dependabot[bot]' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: frontend
