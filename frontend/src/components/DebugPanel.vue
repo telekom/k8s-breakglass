@@ -219,7 +219,7 @@ async function collectDebugInfo() {
 
 onMounted(() => {
   debug("DebugPanel", "Component mounted");
-  collectDebugInfo();
+  void collectDebugInfo();
   refreshAppModalState();
   if (typeof document !== "undefined" && typeof MutationObserver !== "undefined") {
     modalObserver = new MutationObserver((mutations) => {
