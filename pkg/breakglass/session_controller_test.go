@@ -3246,6 +3246,16 @@ func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 
 // Test that blockSelfApproval in ClusterConfig prevents a user from approving their own session
 func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
+	runBlockSelfApprovalPreventsSelfApproval(t, "self@example.com")
+}
+
+func TestClusterConfig_BlockSelfApproval_PreventsUsernameSelfApproval(t *testing.T) {
+	runBlockSelfApprovalPreventsSelfApproval(t, "self")
+}
+
+func runBlockSelfApprovalPreventsSelfApproval(t *testing.T, sessionUser string) {
+	t.Helper()
+
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
@@ -3256,7 +3266,7 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "self-approve-sess"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "cluster-block",
-			User:         "self@example.com",
+			User:         sessionUser,
 			GrantedGroup: "g-block",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},

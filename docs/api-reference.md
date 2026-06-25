@@ -182,7 +182,6 @@ Authorization: Bearer <token>
     "metadata": {
       "name": "session-abc123",
       "namespace": "breakglass-system",
-      "uid": "...",
       "creationTimestamp": "2024-01-15T10:30:00Z"
     },
     "spec": {
@@ -426,7 +425,6 @@ Authorization: Bearer <token>
     "metadata": {
       "name": "session-abc123",
       "namespace": "breakglass-system",
-      "uid": "...",
       "creationTimestamp": "2024-01-15T10:30:00Z"
     },
     "spec": {
