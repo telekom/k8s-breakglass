@@ -19,12 +19,16 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -93,7 +97,7 @@ func TestCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 		OpenTimeout:         50 * time.Millisecond,
 		HalfOpenMaxRequests: 1,
 	}
-	cb := NewCircuitBreaker("test-sink", cfg, logger)
+	cb := NewCircuitBreaker("callback-sink", cfg, logger)
 
 	// Trip the circuit
 	for i := 0; i < 2; i++ {
@@ -175,6 +179,80 @@ func TestCircuitBreaker_FailureInHalfOpenReturnsToOpen(t *testing.T) {
 	assert.Equal(t, CircuitOpen, cb.State())
 }
 
+func TestCircuitBreaker_HalfOpenCountsInitialProbeAsInFlight(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cfg := CircuitBreakerConfig{
+		FailureThreshold:    1,
+		SuccessThreshold:    2,
+		OpenTimeout:         10 * time.Millisecond,
+		HalfOpenMaxRequests: 1,
+	}
+	cb := NewCircuitBreaker("test-sink", cfg, logger)
+
+	err := cb.Execute(context.Background(), func(ctx context.Context) error {
+		return errors.New("fail")
+	})
+	require.Error(t, err)
+	require.Equal(t, CircuitOpen, cb.State())
+
+	time.Sleep(20 * time.Millisecond)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- cb.Execute(context.Background(), func(ctx context.Context) error {
+			close(started)
+			<-release
+			return nil
+		})
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("initial half-open probe did not start")
+	}
+
+	err = cb.Execute(context.Background(), func(ctx context.Context) error {
+		t.Fatal("second half-open request should be rejected while first probe is running")
+		return nil
+	})
+	require.ErrorIs(t, err, ErrCircuitOpen)
+
+	close(release)
+	require.NoError(t, <-done)
+	require.Equal(t, CircuitHalfOpen, cb.State())
+
+	err = cb.Execute(context.Background(), func(ctx context.Context) error {
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, CircuitClosed, cb.State())
+}
+
+func TestCircuitBreaker_LastErrorStoresMixedConcreteTypes(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cfg := CircuitBreakerConfig{
+		FailureThreshold: 3,
+		OpenTimeout:      time.Second,
+	}
+	cb := NewCircuitBreaker("test-sink", cfg, logger)
+
+	require.NotPanics(t, func() {
+		_ = cb.Execute(context.Background(), func(ctx context.Context) error {
+			return &url.Error{Op: "Post", URL: "https://audit.example.test", Err: errors.New("timeout")}
+		})
+		_ = cb.Execute(context.Background(), func(ctx context.Context) error {
+			return fmt.Errorf("wrapped audit write: %w", errors.New("refused"))
+		})
+	})
+
+	stats := cb.Stats()
+	require.Error(t, stats.LastError)
+	assert.Contains(t, stats.LastError.Error(), "wrapped audit write")
+}
+
 func TestCircuitBreaker_ForceOpenAndClose(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	cb := NewCircuitBreaker("test-sink", DefaultCircuitBreakerConfig(), logger)
@@ -214,6 +292,7 @@ func TestCircuitBreaker_Reset(t *testing.T) {
 func TestCircuitBreaker_StateCallback(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	var transitions []string
+	sinkName := "state-callback-sink"
 
 	cfg := CircuitBreakerConfig{
 		FailureThreshold: 1,
@@ -221,7 +300,7 @@ func TestCircuitBreaker_StateCallback(t *testing.T) {
 			transitions = append(transitions, from.String()+"->"+to.String())
 		},
 	}
-	cb := NewCircuitBreaker("test-sink", cfg, logger)
+	cb := NewCircuitBreaker(sinkName, cfg, logger)
 
 	// Trip the circuit
 	_ = cb.Execute(context.Background(), func(ctx context.Context) error {
@@ -230,6 +309,7 @@ func TestCircuitBreaker_StateCallback(t *testing.T) {
 
 	require.Len(t, transitions, 1)
 	assert.Equal(t, "closed->open", transitions[0])
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(sinkName, "closed", "open")))
 }
 
 func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {

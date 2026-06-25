@@ -380,6 +380,9 @@ The audit system exposes Prometheus metrics:
 - `breakglass_audit_events_dropped_total` - Events dropped (queue full)
 - `breakglass_audit_sink_errors_total{sink="..."}` - Errors by sink
 - `breakglass_audit_sink_latency_seconds{sink="..."}` - Write latency histogram
+- `breakglass_audit_circuit_breaker_state{sink="..."}` - Per-sink circuit state (`0` closed, `1` open, `2` half-open)
+- `breakglass_audit_circuit_breaker_rejections_total{sink="..."}` - Writes rejected while a sink circuit is open
+- `breakglass_audit_circuit_breaker_state_transitions_total{sink="...",from="...",to="..."}` - Circuit state transitions
 
 ## Examples
 
