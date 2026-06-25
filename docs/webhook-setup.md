@@ -474,6 +474,9 @@ If you're experiencing this issue, you'll see:
    Failed to fetch namespace labels for DenyPolicy evaluation
    error: "failed to get namespace default from cluster X: context canceled"
    ```
+   When a matching DenyPolicy uses namespace `selectorTerms`, these failures
+   cause the webhook to deny the request fail-closed because label-based policy
+   evaluation cannot be completed safely.
 
 3. **Webhook requests taking ~3 seconds** (the full timeout duration) even for simple operations
 

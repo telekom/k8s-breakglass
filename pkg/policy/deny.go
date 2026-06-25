@@ -30,6 +30,7 @@ type Action struct {
 	Session     string
 	// NamespaceLabels contains labels of the namespace for label selector matching.
 	// If nil, DenyPolicy SelectorTerms cannot be evaluated and will be skipped.
+	// Callers that must fail closed can use RequiresNamespaceLabels before matching.
 	NamespaceLabels map[string]string
 	// Pod is populated for exec/attach/portforward requests to enable security evaluation.
 	// If nil and podSecurityRules are configured, behavior depends on failMode.
@@ -180,6 +181,34 @@ func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bo
 	}
 	// Return warning result (if any) after confirming no policy denied
 	return false, "", warnResult, nil
+}
+
+// RequiresNamespaceLabels reports whether any supplied action could be denied by
+// a DenyPolicy namespace selector and therefore needs namespace labels for a
+// complete evaluation. Pattern-only matches do not require labels.
+func (e *Evaluator) RequiresNamespaceLabels(ctx context.Context, actions ...Action) (bool, error) {
+	policies, err := e.listPolicies(ctx)
+	if err != nil {
+		return false, err
+	}
+	sortPoliciesByPrecedence(policies)
+
+	for _, act := range actions {
+		if act.Namespace == "" {
+			continue
+		}
+		for _, pol := range policies {
+			if !scopeMatches(pol.Spec.AppliesTo, act) {
+				continue
+			}
+			for _, rule := range pol.Spec.Rules {
+				if ruleRequiresNamespaceLabels(rule, act) {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 func sortPoliciesByPrecedence(policies []breakglassv1alpha1.DenyPolicy) {
@@ -590,6 +619,31 @@ func ruleMatches(r breakglassv1alpha1.DenyRule, act Action) bool {
 		}
 	}
 	if len(r.ResourceNames) > 0 && !matchAny(r.ResourceNames, act.Name) {
+		return false
+	}
+	return true
+}
+
+func ruleRequiresNamespaceLabels(r breakglassv1alpha1.DenyRule, act Action) bool {
+	if !contains(r.Verbs, act.Verb) {
+		return false
+	}
+	if !contains(r.APIGroups, act.APIGroup) {
+		return false
+	}
+	if !contains(r.Resources, act.Resource) {
+		return false
+	}
+	if len(r.Subresources) > 0 && !contains(r.Subresources, act.Subresource) && !contains(r.Subresources, "*") {
+		return false
+	}
+	if len(r.ResourceNames) > 0 && !matchAny(r.ResourceNames, act.Name) {
+		return false
+	}
+	if r.Namespaces == nil || r.Namespaces.IsEmpty() || !r.Namespaces.HasSelectorTerms() {
+		return false
+	}
+	if r.Namespaces.HasPatterns() && utils.NewNamespaceMatcher(r.Namespaces).Matches(act.Namespace) {
 		return false
 	}
 	return true

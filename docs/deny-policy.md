@@ -352,6 +352,11 @@ The webhook authorization evaluates access in the following order:
 4. **RBAC** — standard Kubernetes permissions
 5. **Default** — deny if no permissions match
 
+The webhook treats DenyPolicy evaluation errors as fail-closed. If policies
+cannot be listed/evaluated, or namespace labels required for a selector-based
+namespace rule cannot be loaded, the authorization request is denied instead of
+falling through to RBAC or breakglass session authorization.
+
 > **Debug Session Override:** Active debug sessions bypass deny policy evaluation
 > for pod-level operations. When a user has an active `DebugSession` authorizing a
 > specific pod and operation, the webhook grants access **before** deny policies
@@ -523,4 +528,3 @@ Need inspiration for real-world controls? The repository ships with [config/deny
 - **Pod security classification:** risk-based exec/attach blocking for high-risk pod configurations
 
 Apply the file as-is to bootstrap a baseline posture, or copy individual policies and adjust `appliesTo`, `namespaces`, or `verb` settings to fit your organization.
-

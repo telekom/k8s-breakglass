@@ -3288,6 +3288,137 @@ func TestEvaluatorNamespaceSelectorTerms(t *testing.T) {
 	}
 }
 
+func TestEvaluatorRequiresNamespaceLabels(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	policies := []runtime.Object{
+		&breakglassv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "pattern-only"},
+			Spec: breakglassv1alpha1.DenyPolicySpec{
+				AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{"prod-cluster"}},
+				Rules: []breakglassv1alpha1.DenyRule{{
+					Verbs:      []string{"delete"},
+					APIGroups:  []string{""},
+					Resources:  []string{"secrets"},
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"prod-*"}},
+				}},
+			},
+		},
+		&breakglassv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "selector-only"},
+			Spec: breakglassv1alpha1.DenyPolicySpec{
+				AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{"prod-cluster"}},
+				Rules: []breakglassv1alpha1.DenyRule{{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"services"},
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
+							MatchLabels: map[string]string{"env": "production"},
+						}},
+					},
+				}},
+			},
+		},
+		&breakglassv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "mixed"},
+			Spec: breakglassv1alpha1.DenyPolicySpec{
+				AppliesTo: &breakglassv1alpha1.DenyPolicyScope{Sessions: []string{"session-a"}},
+				Rules: []breakglassv1alpha1.DenyRule{{
+					Verbs:     []string{"get"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+					Namespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"kube-*"},
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
+							MatchLabels: map[string]string{"restricted": "true"},
+						}},
+					},
+				}},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(policies...).Build()
+	eval := NewEvaluator(c, zap.NewNop().Sugar())
+
+	tests := []struct {
+		name string
+		act  Action
+		want bool
+	}{
+		{
+			name: "pattern only does not require labels",
+			act: Action{
+				Verb:      "delete",
+				APIGroup:  "",
+				Resource:  "secrets",
+				Namespace: "prod-a",
+				ClusterID: "prod-cluster",
+			},
+			want: false,
+		},
+		{
+			name: "selector only requires labels",
+			act: Action{
+				Verb:      "delete",
+				APIGroup:  "",
+				Resource:  "services",
+				Namespace: "prod-services",
+				ClusterID: "prod-cluster",
+			},
+			want: true,
+		},
+		{
+			name: "mixed policy pattern match does not require labels",
+			act: Action{
+				Verb:      "get",
+				APIGroup:  "",
+				Resource:  "pods",
+				Namespace: "kube-system",
+				Session:   "session-a",
+			},
+			want: false,
+		},
+		{
+			name: "mixed policy pattern miss requires labels",
+			act: Action{
+				Verb:      "get",
+				APIGroup:  "",
+				Resource:  "pods",
+				Namespace: "app-prod",
+				Session:   "session-a",
+			},
+			want: true,
+		},
+		{
+			name: "non matching scope does not require labels",
+			act: Action{
+				Verb:      "delete",
+				APIGroup:  "",
+				Resource:  "services",
+				Namespace: "prod-services",
+				ClusterID: "staging-cluster",
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := eval.RequiresNamespaceLabels(context.Background(), tt.act)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("RequiresNamespaceLabels() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestEvaluatorNamespaceSelectorMatchExpressionOperators tests all selector operators.
 func TestEvaluatorNamespaceSelectorMatchExpressionOperators(t *testing.T) {
 	scheme := runtime.NewScheme()
