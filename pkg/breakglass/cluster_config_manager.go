@@ -7,6 +7,8 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -94,7 +96,7 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 	}
 	switch len(matching) {
 	case 0:
-		return nil, fmt.Errorf("failed to get ClusterConfig by name %q: not found", name)
+		return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}, name)
 	case 1:
 		return matching[0], nil
 	default:

@@ -616,10 +616,12 @@ clusterConfigRefs: ["*"]         # ALL clusters (global escalation)
 
 > **Runtime validation:** The admission webhook intentionally accepts escalations even if the referenced `ClusterConfig` objects are missing. The Escalation controller re-validates these references and updates the `ClusterRefsValid` condition (and emits warning events) whenever a reference cannot be resolved.
 
-The Escalation API defaults `activeOnly=true`. In that mode, escalations for a
-registered `ClusterConfig` with `Ready=False` or an ambiguous duplicate name are
-hidden from users, and session creation for that cluster is rejected until the
-`ClusterConfig` returns to `Ready=True` with a unique name.
+The Escalation API defaults `activeOnly=true`. With a concrete or glob `cluster`
+filter, escalations are hidden when every matching registered `ClusterConfig`
+has `Ready=False` or an ambiguous duplicate name. Unfiltered multi-cluster and
+global escalations can still be returned when they match at least one ready
+registered cluster. Session creation for a specific unready or ambiguous cluster
+is rejected until the `ClusterConfig` returns to `Ready=True` with a unique name.
 
 ### denyPolicyRefs
 

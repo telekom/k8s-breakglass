@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -164,7 +163,7 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	escalations = readyEscalations
 
 	if !wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog) {
-		apiresponses.RespondForbidden(c, "requested cluster/escalation is not ready")
+		apiresponses.RespondForbidden(c, "requested ClusterConfig is not ready or is ambiguous")
 		return nil, false
 	}
 
@@ -179,7 +178,7 @@ func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context
 
 	clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, clusterName)
 	if err != nil {
-		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "not found") {
+		if apierrors.IsNotFound(err) {
 			reqLog.Debugw("No ClusterConfig found while enforcing session readiness; preserving legacy escalation-based matching",
 				"cluster", clusterName,
 				"error", err)

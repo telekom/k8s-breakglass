@@ -227,13 +227,12 @@ func escalationHasReadyCluster(esc breakglassv1alpha1.BreakglassEscalation, clus
 	if len(readiness) == 0 {
 		return true
 	}
-	if clusterFilter != "" {
-		ready, found := readiness[clusterFilter]
-		return !found || ready
-	}
 
 	matchedKnownCluster := false
 	for clusterName, ready := range readiness {
+		if clusterFilter != "" && !clusterMatchesPatterns(clusterName, []string{clusterFilter}) {
+			continue
+		}
 		if escalationMatchesCluster(esc, clusterName) {
 			matchedKnownCluster = true
 			if ready {
