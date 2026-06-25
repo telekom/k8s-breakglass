@@ -1112,20 +1112,16 @@ func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *break
 }
 
 func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
-	identity := a.identity
 	approvers, err := a.readApproversFromBinding(ctx, session)
 	if err != nil {
 		return false, err
 	}
-	if approvers != nil &&
-		debugSessionApproversConfigured(approvers) &&
-		a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups) {
-		return true, nil
+	if debugSessionApproversConfigured(approvers) {
+		return a.approverAuthorizationMatches(approvers), nil
 	}
 	if session.Status.ResolvedTemplate != nil &&
-		debugSessionApproversConfigured(session.Status.ResolvedTemplate.Approvers) &&
-		a.controller.checkApproverAuthorization(session.Status.ResolvedTemplate.Approvers, identity.username, identity.groups) {
-		return true, nil
+		debugSessionApproversConfigured(session.Status.ResolvedTemplate.Approvers) {
+		return a.approverAuthorizationMatches(session.Status.ResolvedTemplate.Approvers), nil
 	}
 
 	approvers, err = a.readApproversFromTemplate(ctx, session)
@@ -1133,7 +1129,17 @@ func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.
 		return false, err
 	}
 	return debugSessionApproversConfigured(approvers) &&
-		a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups), nil
+		a.approverAuthorizationMatches(approvers), nil
+}
+
+func (a *debugSessionReadAuthorizer) approverAuthorizationMatches(approvers *breakglassv1alpha1.DebugSessionApprovers) bool {
+	identity := a.identity
+	if a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups) {
+		return true
+	}
+	return identity.email != "" &&
+		identity.email != identity.username &&
+		a.controller.checkApproverAuthorization(approvers, identity.email, identity.groups)
 }
 
 func (a *debugSessionReadAuthorizer) readApproversFromBinding(ctx context.Context, session *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.DebugSessionApprovers, error) {
