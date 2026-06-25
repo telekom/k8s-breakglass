@@ -293,6 +293,12 @@ These labels and annotations are propagated to:
 - The deployed workloads (Deployment/Job)
 - The pod templates
 
+The controller-owned DebugSession identity labels
+`breakglass.telekom.com/debug-session`,
+`breakglass.telekom.com/debug-template`, and
+`breakglass.telekom.com/debug-cluster` are reserved. Binding labels using
+those keys are ignored so sessions remain discoverable and auditable.
+
 ### Request Reason Configuration
 
 Configure reason requirements for session requests:

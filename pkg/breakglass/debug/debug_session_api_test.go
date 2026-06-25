@@ -3524,6 +3524,12 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "binding-debug"},
 				Clusters:    []string{"production"},
+				Labels: map[string]string{
+					DebugSessionLabelKey:  "other-session",
+					DebugTemplateLabelKey: "other-template",
+					DebugClusterLabelKey:  "other-cluster",
+					"team":                "platform-sre",
+				},
 				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
 					Groups: []string{"sre"},
 				},
@@ -3562,6 +3568,14 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		require.NotNil(t, response.Spec.BindingRef)
 		assert.Equal(t, "sre-binding", response.Spec.BindingRef.Name)
 		assert.Equal(t, "breakglass", response.Spec.BindingRef.Namespace)
+
+		created := &breakglassv1alpha1.DebugSession{}
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: response.Name, Namespace: "breakglass"}, created)
+		require.NoError(t, err)
+		assert.Equal(t, response.Name, created.Labels[DebugSessionLabelKey])
+		assert.Equal(t, "binding-debug", created.Labels[DebugTemplateLabelKey])
+		assert.Equal(t, "production", created.Labels[DebugClusterLabelKey])
+		assert.Equal(t, "platform-sre", created.Labels["team"])
 	})
 
 	t.Run("create session rejects malformed bindingRef", func(t *testing.T) {

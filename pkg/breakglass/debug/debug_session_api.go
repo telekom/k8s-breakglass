@@ -185,6 +185,10 @@ func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, n
 	return &sessionList.Items[0], nil
 }
 
+func isControllerOwnedDebugSessionLabel(key string) bool {
+	return key == DebugSessionLabelKey || key == DebugTemplateLabelKey || key == DebugClusterLabelKey
+}
+
 // CreateDebugSessionRequest represents the request body for creating a debug session
 type CreateDebugSessionRequest struct {
 	TemplateRef              string                          `json:"templateRef" binding:"required"`
@@ -954,6 +958,9 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		// Apply binding labels to the session
 		if len(resolvedBinding.Spec.Labels) > 0 {
 			for k, v := range resolvedBinding.Spec.Labels {
+				if isControllerOwnedDebugSessionLabel(k) {
+					continue
+				}
 				session.Labels[k] = v
 			}
 		}
