@@ -3,11 +3,11 @@ package config
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/privatefile"
 	"gopkg.in/yaml.v2"
 )
 
@@ -111,50 +111,10 @@ func Save(path string, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	if err := writePrivateFile(path, content); err != nil {
+	if err := privatefile.Write(path, content); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	return nil
-}
-
-func writePrivateFile(path string, content []byte) (err error) {
-	dir := filepath.Dir(path)
-	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := file.Name()
-	closed := false
-	defer func() {
-		if !closed && err != nil {
-			_ = file.Close()
-		} else if !closed {
-			if closeErr := file.Close(); err == nil && closeErr != nil {
-				err = closeErr
-			}
-		}
-		if err != nil {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := file.Chmod(0o600); err != nil {
-		return err
-	}
-	for len(content) > 0 {
-		n, err := file.Write(content)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-		content = content[n:]
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	closed = true
-	return os.Rename(tmpPath, path)
 }
 
 func (c *Config) FindContext(name string) (*Context, error) {
