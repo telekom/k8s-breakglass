@@ -357,7 +357,7 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
-		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
+		err = approverClient.ApproveSessionWithReasonViaAPI(ctx, t, session.Name, namespace, "Confirmed stuck pod deletion is required")
 		require.NoError(t, err)
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)

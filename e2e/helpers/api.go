@@ -348,6 +348,12 @@ func (c *APIClient) doCreateSession(ctx context.Context, t *testing.T, req Sessi
 
 // ApproveSessionViaAPI approves a session via the REST API
 func (c *APIClient) ApproveSessionViaAPI(ctx context.Context, t *testing.T, sessionName, namespace string) error {
+	return c.ApproveSessionWithReasonViaAPI(ctx, t, sessionName, namespace, "")
+}
+
+// ApproveSessionWithReasonViaAPI approves a session via the REST API and records
+// an optional approver reason.
+func (c *APIClient) ApproveSessionWithReasonViaAPI(ctx context.Context, t *testing.T, sessionName, namespace, reason string) error {
 	cid := uuid.New().String()
 	path := fmt.Sprintf("%s/%s/approve", sessionsBasePath, sessionName)
 	if namespace != "" {
@@ -358,7 +364,12 @@ func (c *APIClient) ApproveSessionViaAPI(ctx context.Context, t *testing.T, sess
 		t.Logf("ApproveSession: sending request with correlationID=%s, session=%s", cid, sessionName)
 	}
 
-	resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, nil, cid)
+	var reqBody interface{}
+	if reason != "" {
+		reqBody = map[string]string{"reason": reason}
+	}
+
+	resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, reqBody, cid)
 	if err != nil {
 		return fmt.Errorf("failed to approve session (cid=%s): %w", cid, err)
 	}
