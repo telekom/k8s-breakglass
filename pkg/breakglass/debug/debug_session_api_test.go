@@ -2989,6 +2989,72 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, "alice@example.com", response.Spec.RequestedBy)
 	})
 
+	t.Run("create session treats namespace as target namespace alias", func(t *testing.T) {
+		templateWithUserNamespace := template.DeepCopy()
+		templateWithUserNamespace.Spec.NamespaceConstraints = &breakglassv1alpha1.NamespaceConstraints{
+			AllowUserNamespace: true,
+			DefaultNamespace:   "default-debug",
+		}
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass-control"},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateWithUserNamespace, clusterConfig).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","namespace":"debug-pods","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 201, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-control", response.Namespace)
+		assert.Equal(t, "debug-pods", response.Spec.TargetNamespace)
+	})
+
+	t.Run("create session rejects conflicting namespace aliases", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","namespace":"debug-a","targetNamespace":"debug-b"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "namespace is deprecated alias for targetNamespace")
+	})
+
 	t.Run("rejects session for unready ClusterConfig", func(t *testing.T) {
 		unreadyCluster := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},

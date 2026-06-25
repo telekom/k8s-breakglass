@@ -26,6 +26,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -999,6 +1000,33 @@ func TestGetDebugSessionByName_Found(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "test-session", found.Name)
+}
+
+func TestGetDebugSessionByName_NamespaceHintIsStrict(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "test-session",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	ctx := context.Background()
+	found, err := ctrl.getDebugSessionByName(ctx, "test-session", "wrong-namespace")
+	require.Error(t, err)
+	require.Nil(t, found)
+	assert.True(t, apierrors.IsNotFound(err))
 }
 
 func TestGetDebugSessionByName_NotFound(t *testing.T) {

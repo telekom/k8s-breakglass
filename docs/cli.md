@@ -387,6 +387,7 @@ kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh
 | `--reason` | Reason for the debug session request |
 | `--scheduling-option` | Scheduling option name from template (e.g., `sriov`, `standard`) |
 | `--target-namespace` | Namespace where debug pods will be deployed |
+| `--namespace` | Deprecated alias for `--target-namespace`; if both flags are set they must match |
 | `--invite` | Users to invite as participants (can be repeated) |
 | `--set` | Set template variable value (key=value), can be repeated |
 | `--binding` | Binding reference (namespace/name or name) when multiple bindings exist |

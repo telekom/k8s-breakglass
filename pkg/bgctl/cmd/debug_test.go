@@ -630,6 +630,75 @@ func TestDebugSessionCreateCommand_WithSetFlag(t *testing.T) {
 	assert.Equal(t, "true", receivedReq.ExtraDeployValues["enableTracing"])
 }
 
+func TestDebugSessionCreateCommand_LegacyNamespaceMapsToTargetNamespace(t *testing.T) {
+	var receivedReq client.CreateDebugSessionRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/debugSessions" {
+			err := json.NewDecoder(r.Body).Decode(&receivedReq)
+			if err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			session := breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-session",
+					Namespace: "breakglass",
+				},
+			}
+			_ = json.NewEncoder(w).Encode(session)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "session", "create",
+		"--template", "my-template",
+		"--cluster", "cluster-a",
+		"--namespace", "debug-ns",
+		"-o", "json",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	assert.Equal(t, "", receivedReq.Namespace)
+	assert.Equal(t, "debug-ns", receivedReq.TargetNamespace)
+}
+
+func TestDebugSessionCreateCommand_RejectsConflictingNamespaceFlags(t *testing.T) {
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   "/tmp/nonexistent-test-config.yaml",
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", "https://breakglass.example.test",
+		"--token", "test-token",
+		"debug", "session", "create",
+		"--template", "my-template",
+		"--cluster", "cluster-a",
+		"--namespace", "debug-a",
+		"--target-namespace", "debug-b",
+	})
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--namespace is deprecated alias for --target-namespace")
+}
+
 func TestDebugSessionCreateCommand_SetFlagInvalidFormat(t *testing.T) {
 	buf := &bytes.Buffer{}
 	errBuf := &bytes.Buffer{}

@@ -145,16 +145,19 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 }
 
 // getDebugSessionByName finds a debug session by name across all namespaces
-// or optionally in a specific namespace if provided via query param.
+// or in the exact namespace provided via query param.
 // Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, name, namespaceHint string) (*breakglassv1alpha1.DebugSession, error) {
 	reader := c.reader()
-	// If namespace hint provided, try that first
 	if namespaceHint != "" {
 		session := &breakglassv1alpha1.DebugSession{}
-		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespaceHint}, session); err == nil {
-			return session, nil
+		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespaceHint}, session); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, apierrors.NewNotFound(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, name)
+			}
+			return nil, err
 		}
+		return session, nil
 	}
 
 	// Search across all namespaces using label selector
@@ -182,12 +185,23 @@ type CreateDebugSessionRequest struct {
 	BindingRef               string                          `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" (when multiple match)
 	RequestedDuration        string                          `json:"requestedDuration,omitempty"`
 	NodeSelector             map[string]string               `json:"nodeSelector,omitempty"`
-	Namespace                string                          `json:"namespace,omitempty"`
+	Namespace                string                          `json:"namespace,omitempty"` // Deprecated: alias for targetNamespace
 	Reason                   string                          `json:"reason,omitempty"`
 	InvitedParticipants      []string                        `json:"invitedParticipants,omitempty"`
 	TargetNamespace          string                          `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
 	SelectedSchedulingOption string                          `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
 	ExtraDeployValues        map[string]apiextensionsv1.JSON `json:"extraDeployValues,omitempty"`        // User-provided values for template variables
+}
+
+func normalizeCreateDebugSessionNamespace(req *CreateDebugSessionRequest) error {
+	if req.Namespace == "" {
+		return nil
+	}
+	if req.TargetNamespace != "" && req.TargetNamespace != req.Namespace {
+		return fmt.Errorf("namespace is deprecated alias for targetNamespace and must match targetNamespace when both are set")
+	}
+	req.TargetNamespace = req.Namespace
+	return nil
 }
 
 // JoinDebugSessionRequest represents the request to join an existing debug session
@@ -517,6 +531,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 	if err := validateCreateDebugSessionRequest(req); err != nil {
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+	if err := normalizeCreateDebugSessionNamespace(&req); err != nil {
+		reqLog.Warnw("Conflicting debug session namespace fields",
+			"namespace", req.Namespace,
+			"targetNamespace", req.TargetNamespace,
+			"error", err,
+		)
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
@@ -850,17 +873,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	// Determine namespace from ClusterConfig for the requested cluster
 	// DebugSessions should be in the same namespace as the ClusterConfig
-	namespace := req.Namespace
-	if namespace == "" {
-		// Find ClusterConfig by cluster name to get its namespace
-		clusterConfigs := &breakglassv1alpha1.ClusterConfigList{}
-		if err := c.client.List(apiCtx, clusterConfigs); err == nil {
-			for _, cc := range clusterConfigs.Items {
-				if cc.Name == req.Cluster || cc.Spec.Tenant == req.Cluster {
-					namespace = cc.Namespace
-					break
-				}
-			}
+	namespace := ""
+	for _, cc := range clusterConfigList.Items {
+		if cc.Name == req.Cluster || cc.Spec.Tenant == req.Cluster {
+			namespace = cc.Namespace
+			break
 		}
 	}
 	if namespace == "" {

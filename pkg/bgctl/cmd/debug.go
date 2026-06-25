@@ -291,17 +291,22 @@ Use --set to provide values for template extraDeployVariables:
 				}
 				extraDeployValues[parts[0]] = parts[1]
 			}
+			if namespace != "" && targetNamespace != "" && namespace != targetNamespace {
+				return fmt.Errorf("--namespace is deprecated alias for --target-namespace and must match when both are set")
+			}
 
 			req := client.CreateDebugSessionRequest{
 				TemplateRef:              templateRef,
 				Cluster:                  cluster,
 				BindingRef:               bindingRef, // Format: "namespace/name" or just "name" (defaults to breakglass/name)
 				RequestedDuration:        duration,
-				Namespace:                namespace,
+				TargetNamespace:          targetNamespace,
 				Reason:                   reason,
 				InvitedParticipants:      invitees,
-				TargetNamespace:          targetNamespace,
 				SelectedSchedulingOption: selectedSchedulingOption,
+			}
+			if req.TargetNamespace == "" {
+				req.TargetNamespace = namespace
 			}
 
 			// Add extraDeployValues if any were provided
@@ -325,7 +330,7 @@ Use --set to provide values for template extraDeployVariables:
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Target cluster")
 	cmd.Flags().StringVar(&bindingRef, "binding", "", "Binding reference (namespace/name or name) when multiple bindings exist")
 	cmd.Flags().StringVar(&duration, "duration", "", "Requested duration (e.g. 1h)")
-	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace to deploy debug pods (legacy, use --target-namespace)")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Target namespace for debug pods (legacy, use --target-namespace)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Reason for debug session")
 	cmd.Flags().StringSliceVar(&invitees, "invite", nil, "Invite participants")
 	cmd.Flags().StringVar(&targetNamespace, "target-namespace", "", "Target namespace for debug pods")

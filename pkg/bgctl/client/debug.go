@@ -59,7 +59,7 @@ type CreateDebugSessionRequest struct {
 	BindingRef               string                 `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" when multiple match
 	RequestedDuration        string                 `json:"requestedDuration,omitempty"`
 	NodeSelector             map[string]string      `json:"nodeSelector,omitempty"`
-	Namespace                string                 `json:"namespace,omitempty"`
+	Namespace                string                 `json:"namespace,omitempty"` // Deprecated: alias for TargetNamespace
 	Reason                   string                 `json:"reason,omitempty"`
 	InvitedParticipants      []string               `json:"invitedParticipants,omitempty"`
 	TargetNamespace          string                 `json:"targetNamespace,omitempty"`
