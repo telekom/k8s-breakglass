@@ -957,6 +957,84 @@ func TestHSTSHeaderBehindProxy(t *testing.T) {
 	}
 }
 
+func TestCorrelationIDMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+
+	cfg := config.Config{
+		Server: config.Server{
+			ListenAddress:  ":8080",
+			AllowedOrigins: []string{"https://test.example.com"},
+		},
+	}
+
+	server := NewServer(logger, cfg, true, &AuthHandler{})
+	require.NotNil(t, server)
+	defer server.Close()
+
+	tests := []struct {
+		name     string
+		headers  map[string]string
+		expected string
+	}{
+		{
+			name: "preserves request id",
+			headers: map[string]string{
+				requestIDHeader: "request-id-123",
+			},
+			expected: "request-id-123",
+		},
+		{
+			name: "uses correlation id fallback",
+			headers: map[string]string{
+				correlationIDHeader: "correlation-id-123",
+			},
+			expected: "correlation-id-123",
+		},
+		{
+			name: "request id wins when both are set",
+			headers: map[string]string{
+				requestIDHeader:     "request-id-123",
+				correlationIDHeader: "correlation-id-123",
+			},
+			expected: "request-id-123",
+		},
+		{
+			name: "invalid request id falls back to valid correlation id",
+			headers: map[string]string{
+				requestIDHeader:     "bad\nrequest",
+				correlationIDHeader: "correlation-id-123",
+			},
+			expected: "correlation-id-123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+			for key, value := range tt.headers {
+				req.Header.Set(key, value)
+			}
+			w := httptest.NewRecorder()
+			server.gin.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expected, w.Header().Get(requestIDHeader))
+			assert.Empty(t, w.Header().Get(correlationIDHeader))
+		})
+	}
+
+	t.Run("invalid correlation id is replaced", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+		req.Header.Set(correlationIDHeader, "bad\ncorrelation")
+		w := httptest.NewRecorder()
+		server.gin.ServeHTTP(w, req)
+
+		got := w.Header().Get(requestIDHeader)
+		assert.NotEqual(t, "bad\ncorrelation", got)
+		assert.True(t, isValidRequestID(got), "generated request ID must be valid")
+	})
+}
+
 // TestRespondHelpers_JSONErrorShape verifies that error response helpers produce
 // the standardized JSON error body with both "error" and "code" fields.
 func TestRespondHelpers_JSONErrorShape(t *testing.T) {
