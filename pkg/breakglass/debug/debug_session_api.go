@@ -379,8 +379,9 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	// Apply filters
 	var filtered []breakglassv1alpha1.DebugSession
 	readAuthorizer := c.newDebugSessionReadAuthorizer(identity)
-	for _, s := range sessionList.Items {
-		canRead, err := readAuthorizer.canRead(apiCtx, &s)
+	for i := range sessionList.Items {
+		s := &sessionList.Items[i]
+		canRead, err := readAuthorizer.canRead(apiCtx, s)
 		if err != nil {
 			reqLog.Errorw("Failed to evaluate debug session read authorization",
 				"session", s.Name,
@@ -417,7 +418,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		if mine && !debugSessionIdentityMatches(identity, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
 			continue
 		}
-		filtered = append(filtered, s)
+		filtered = append(filtered, *s)
 	}
 
 	// Build response summaries
