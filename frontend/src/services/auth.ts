@@ -239,17 +239,22 @@ function getOIDCStorage(): Storage {
   }
   if (getTokenPersistenceMode() === "persistent") {
     if (isProductionBuild()) {
-      warn("AuthService", "Persistent OIDC token storage is disabled in production; using sessionStorage");
       const localStorage = getBrowserStorage("localStorage");
+      const sessionStorage = getBrowserStorage("sessionStorage");
       setTokenPersistencePreference("session");
       purgeLegacyLocalOIDCArtifacts(localStorage);
-    } else {
-      const localStorage = getBrowserStorage("localStorage");
       warn(
         "AuthService",
-        "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
+        `Persistent OIDC token storage is disabled in production; using ${sessionStorage ? "sessionStorage" : "in-memory fallback storage"}`,
       );
+      return sessionStorage ?? fallbackStorage;
+    } else {
+      const localStorage = getBrowserStorage("localStorage");
       if (localStorage) {
+        warn(
+          "AuthService",
+          "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
+        );
         return localStorage;
       }
     }
