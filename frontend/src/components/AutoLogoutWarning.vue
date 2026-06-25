@@ -81,7 +81,7 @@ export default {
     }
 
     async function reauthenticate() {
-      if (!auth || renewing.value) return;
+      if (renewing.value) return;
       renewing.value = true;
       try {
         const path = window.location.pathname + window.location.search + window.location.hash;
