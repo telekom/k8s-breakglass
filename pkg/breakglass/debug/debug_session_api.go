@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1022,7 +1023,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 }
 
 func buildDebugSessionName(user, cluster string, now time.Time) string {
-	return fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(user), naming.ToRFC1123Subdomain(cluster), now.UnixNano())
+	return fmt.Sprintf("debug-%s-%s-%s", naming.ToRFC1123Subdomain(user), naming.ToRFC1123Subdomain(cluster), strconv.FormatInt(now.UnixNano(), 36))
 }
 
 // validDebugSessionStates is the canonical set of allowed DebugSession state values
