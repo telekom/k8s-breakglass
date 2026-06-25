@@ -3372,6 +3372,61 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.True(t, foundSchedulingWarning, "expected warning about scheduling option defaulting to 'default-option'")
 	})
 
+	t.Run("create session rejects restricted scheduling option for unauthorized requester", func(t *testing.T) {
+		templateWithRestrictedScheduling := breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "template-with-restricted-scheduling",
+			},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "test-ns",
+				},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"production"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{Name: "tenant-safe", DisplayName: "Tenant Safe"},
+						{
+							Name:          "platform-node",
+							DisplayName:   "Platform Node",
+							AllowedGroups: []string{"platform-admins"},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithRestrictedScheduling).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"tenant-admins"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"template-with-restricted-scheduling","cluster":"production","reason":"testing","targetNamespace":"test-ns","selectedSchedulingOption":"platform-node"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "not allowed to select scheduling option")
+		assert.Contains(t, w.Body.String(), "platform-node")
+	})
+
 	t.Run("create session returns warning when scheduling option is ignored", func(t *testing.T) {
 		// Template without scheduling options
 		templateNoScheduling := breakglassv1alpha1.DebugSessionTemplate{

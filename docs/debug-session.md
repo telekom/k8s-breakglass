@@ -828,6 +828,8 @@ schedulingOptions:
       schedulingConstraints: {}  # No additional constraints
 ```
 
+`allowedGroups` and `allowedUsers` are enforced when a `DebugSession` request is created. The API checks the selected option, including a required option that is selected by default, against the authenticated user's username, email, and groups. Requests for restricted options return `403 Forbidden` when the requester does not match. Leave both fields empty only for options that are safe for every requester who can use the template.
+
 **Merge Logic**: When a user selects an option, the constraints are merged in this order:
 1. Base constraints from `DebugPodTemplate`
 2. Overrides from `DebugSessionTemplate`

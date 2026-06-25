@@ -7,6 +7,20 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+type schedulingOptionRequester struct {
+	Username string
+	Email    string
+	Groups   []string
+}
+
+type schedulingOptionAccessError struct {
+	optionName string
+}
+
+func (e *schedulingOptionAccessError) Error() string {
+	return fmt.Sprintf("user is not allowed to select scheduling option '%s'", e.optionName)
+}
+
 func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv1alpha1.DebugSessionTemplate, requestedNamespace string, binding *breakglassv1alpha1.DebugSessionClusterBinding) (string, error) {
 	// Start with template's namespace constraints
 	nc := template.Spec.NamespaceConstraints
@@ -214,6 +228,7 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	selectedOption string,
 	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	requester schedulingOptionRequester,
 ) (*breakglassv1alpha1.SchedulingConstraints, string, error) {
 	// Start with the template's base scheduling constraints and merge in binding-level
 	// base constraints (which are documented as mandatory additions on top of the template).
@@ -278,10 +293,39 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 		return nil, "", fmt.Errorf("scheduling option '%s' not found in template or binding", selectedOption)
 	}
 
+	if !isSchedulingOptionAllowedForRequester(selectedOpt, requester) {
+		return nil, "", &schedulingOptionAccessError{optionName: selectedOption}
+	}
+
 	// Merge base constraints with option's constraints
 	merged := mergeSchedulingConstraints(baseConstraints, selectedOpt.SchedulingConstraints)
 
 	return merged, selectedOption, nil
+}
+
+func isSchedulingOptionAllowedForRequester(opt *breakglassv1alpha1.SchedulingOption, requester schedulingOptionRequester) bool {
+	if opt == nil || (len(opt.AllowedUsers) == 0 && len(opt.AllowedGroups) == 0) {
+		return true
+	}
+
+	for _, allowedUser := range opt.AllowedUsers {
+		if matchPattern(allowedUser, requester.Username) {
+			return true
+		}
+		if requester.Email != "" && matchPattern(allowedUser, requester.Email) {
+			return true
+		}
+	}
+
+	for _, allowedGroup := range opt.AllowedGroups {
+		for _, userGroup := range requester.Groups {
+			if matchPattern(allowedGroup, userGroup) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // mergeSchedulingConstraints merges base constraints with option constraints.

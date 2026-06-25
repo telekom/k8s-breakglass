@@ -899,14 +899,14 @@ POST /api/debugSessions
 | `nodeSelector` | object | No | Additional node selector labels |
 | `reason` | string | No | Explanation for the debug session request |
 | `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |
-| `selectedSchedulingOption` | string | No | Name of a scheduling option from template's `schedulingOptions` |
+| `selectedSchedulingOption` | string | No | Name of a scheduling option from template's `schedulingOptions`; restricted options must allow the requester's username, email, or group |
 | `invitedParticipants` | array | No | List of users to invite to the session |
 
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**
 - `400 Bad Request`: Invalid template, malformed or missing binding, invalid cluster, invalid duration, or invalid scheduling option
-- `403 Forbidden`: Requester, namespace, cluster readiness, or binding is not allowed by the effective template/binding constraints
+- `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints
 
 ### Join Debug Session
 

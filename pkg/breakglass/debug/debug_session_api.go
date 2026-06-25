@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -665,13 +666,22 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Validate and resolve scheduling option
-	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption, resolvedBinding)
+	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption, resolvedBinding, schedulingOptionRequester{
+		Username: currentUserStr,
+		Email:    userEmail,
+		Groups:   userGroups,
+	})
 	if err != nil {
 		reqLog.Warnw("Scheduling option validation failed",
 			"templateRef", req.TemplateRef,
 			"selectedSchedulingOption", req.SelectedSchedulingOption,
 			"error", err,
 		)
+		var accessErr *schedulingOptionAccessError
+		if errors.As(err, &accessErr) {
+			apiresponses.RespondForbidden(ctx, err.Error())
+			return
+		}
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **DebugSession scheduling option ACL enforcement**: `DebugSessionTemplate` and `DebugSessionClusterBinding` scheduling option `allowedUsers` and `allowedGroups` are now enforced at session creation for selected options and required defaults. Unauthorized requests receive `403 Forbidden` instead of creating a debug session with restricted scheduling constraints.
 - **OIDC group path matching hardening**: JWT group claims now preserve hierarchical group paths such as `/tenant/admin` instead of collapsing them to the leaf name `admin`, keeping `BreakglassEscalation` group matching exact and preventing same-leaf group collisions across OIDC hierarchies.
 - **Debug session authorization hardening**: Debug session creation now enforces `DebugSessionTemplate`/`DebugSessionClusterBinding` requester allowlists, validates explicit `bindingRef` values against the selected template and cluster, requires invited users plus enabled terminal sharing for join requests, prevents join callers from self-selecting the privileged `participant` role, and ignores stale `Active` debug sessions after `status.expiresAt` for renewals and pod-operation authorization.
 - **Frontend dependency audit fixes**: Updated vulnerable Babel and brace-expansion transitive dependencies in the frontend lockfile, deduplicated Babel parser/types resolutions, and raised the frontend Node.js minimum plus CI runtime baseline to 24.11.0.
