@@ -48,28 +48,31 @@ func TestSessionsList(t *testing.T) {
 
 func TestSessionsList_ApproverQuery(t *testing.T) {
 	tests := []struct {
-		name     string
-		opts     SessionListOptions
-		expected string
+		name          string
+		opts          SessionListOptions
+		expected      string
+		expectPresent bool
 	}{
 		{
-			name:     "unset omits approver query",
-			opts:     SessionListOptions{},
-			expected: "",
+			name:          "unset omits approver query",
+			opts:          SessionListOptions{},
+			expectPresent: false,
 		},
 		{
 			name: "true sends true",
 			opts: SessionListOptions{
 				Approver: boolPtr(true),
 			},
-			expected: "true",
+			expected:      "true",
+			expectPresent: true,
 		},
 		{
 			name: "false sends false",
 			opts: SessionListOptions{
 				Approver: boolPtr(false),
 			},
-			expected: "false",
+			expected:      "false",
+			expectPresent: true,
 		},
 	}
 
@@ -78,7 +81,11 @@ func TestSessionsList_ApproverQuery(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/breakglassSessions", r.URL.Path)
 				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, tt.expected, r.URL.Query().Get("approver"))
+				approverValues, approverPresent := r.URL.Query()["approver"]
+				require.Equal(t, tt.expectPresent, approverPresent)
+				if tt.expectPresent {
+					require.Equal(t, []string{tt.expected}, approverValues)
+				}
 
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte("[]"))
