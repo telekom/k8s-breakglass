@@ -2955,10 +2955,23 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		},
 	}
 
+	readyProductionCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+					Status: metav1.ConditionTrue,
+					Reason: "Verified",
+				},
+			},
+		},
+	}
+
 	t.Run("create session successfully", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&template).
+			WithObjects(&template, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -2985,6 +2998,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Contains(t, response.Name, "debug-")
+		assert.Equal(t, "breakglass", response.Namespace)
 		assert.Equal(t, "production", response.Spec.Cluster)
 		assert.Equal(t, "alice@example.com", response.Spec.RequestedBy)
 	})
@@ -3101,6 +3115,75 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Contains(t, w.Body.String(), "not ready")
+	})
+
+	t.Run("rejects session for unready ClusterConfig matched by tenant", func(t *testing.T) {
+		unreadyCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-production", Namespace: "tenant-control"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "production",
+			},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionFalse,
+						Reason: "ConnectionFailed",
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template, unreadyCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "not ready")
+	})
+
+	t.Run("rejects session when ClusterConfig is missing", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "not configured")
 	})
 
 	t.Run("create session with invalid body", func(t *testing.T) {
@@ -3349,7 +3432,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 	t.Run("create session rejects malformed bindingRef", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&template).
+			WithObjects(&template, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -3435,7 +3518,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 	t.Run("create session rejects non-positive requested duration", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&template).
+			WithObjects(&template, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -3617,7 +3700,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithNsDefaults).
+			WithObjects(&templateWithNsDefaults, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -3678,7 +3761,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithScheduling).
+			WithObjects(&templateWithScheduling, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -3748,7 +3831,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithRestrictedScheduling).
+			WithObjects(&templateWithRestrictedScheduling, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -3796,7 +3879,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateNoScheduling).
+			WithObjects(&templateNoScheduling, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
