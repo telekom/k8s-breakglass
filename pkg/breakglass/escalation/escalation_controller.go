@@ -112,6 +112,18 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	}
 	reqLog.Debugw("Successfully fetched escalations from manager", "escalationCount", len(escalations))
 
+	clusterReadiness := map[string]bool{}
+	if activeOnly {
+		var readinessErr error
+		clusterReadiness, readinessErr = ec.clusterConfigReadiness(c.Request.Context())
+		if readinessErr != nil {
+			reqLog.Errorw("Failed to load ClusterConfig readiness for active escalations", "error", readinessErr)
+			metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
+			apiresponses.RespondInternalErrorSimple(c, "failed to load cluster readiness")
+			return
+		}
+	}
+
 	// Policy: hide "read-only" escalation if user already possesses the read-only group (no privilege gain)
 	filtered := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
 	userGroupSet := map[string]struct{}{}
@@ -131,6 +143,9 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		// Filter by active status if requested
 		if activeOnly {
 			if !isEscalationReady(&esc) {
+				continue
+			}
+			if !escalationHasReadyCluster(esc, clusterFilter, clusterReadiness) {
 				continue
 			}
 		}
@@ -185,6 +200,47 @@ func (*BreakglassEscalationController) BasePath() string {
 
 func (b *BreakglassEscalationController) Handlers() []gin.HandlerFunc {
 	return []gin.HandlerFunc{b.middleware}
+}
+
+func (ec *BreakglassEscalationController) clusterConfigReadiness(ctx context.Context) (map[string]bool, error) {
+	readiness := map[string]bool{}
+	if ec == nil || ec.manager == nil || ec.manager.Client == nil {
+		return readiness, nil
+	}
+
+	var list breakglassv1alpha1.ClusterConfigList
+	if err := ec.manager.List(ctx, &list); err != nil {
+		return nil, err
+	}
+	for i := range list.Items {
+		cc := &list.Items[i]
+		if _, exists := readiness[cc.Name]; exists {
+			readiness[cc.Name] = false
+			continue
+		}
+		readiness[cc.Name] = breakglass.IsClusterConfigReady(cc)
+	}
+	return readiness, nil
+}
+
+func escalationHasReadyCluster(esc breakglassv1alpha1.BreakglassEscalation, clusterFilter string, readiness map[string]bool) bool {
+	if len(readiness) == 0 {
+		return true
+	}
+
+	matchedKnownCluster := false
+	for clusterName, ready := range readiness {
+		if clusterFilter != "" && !clusterMatchesPatterns(clusterName, []string{clusterFilter}) {
+			continue
+		}
+		if escalationMatchesCluster(esc, clusterName) {
+			matchedKnownCluster = true
+			if ready {
+				return true
+			}
+		}
+	}
+	return !matchedKnownCluster
 }
 
 func NewBreakglassEscalationController(log *zap.SugaredLogger,

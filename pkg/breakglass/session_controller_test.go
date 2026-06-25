@@ -542,6 +542,155 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRejectsUnreadyClusterConfig(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	clusterName := "unready-cluster"
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "esc-unready-cluster",
+			UID:       "1234",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{clusterName},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "esc-group",
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "default"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionFalse,
+			}},
+		},
+	}
+	builder.WithObjects(esc, clusterConfig)
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "requester@example.com")
+			c.Set("username", "requester")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	reqData := BreakglassSessionRequest{
+		Clustername: clusterName,
+		Username:    "requester@example.com",
+		GroupName:   "esc-group",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Result().StatusCode)
+
+	var sessions breakglassv1alpha1.BreakglassSessionList
+	require.NoError(t, cli.List(context.Background(), &sessions))
+	require.Empty(t, sessions.Items)
+}
+
+func TestCreateSessionRejectsDuplicateClusterConfigName(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	clusterName := "duplicate-cluster"
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "esc-duplicate-cluster",
+			UID:       "1234",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{clusterName},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "esc-group",
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+	firstCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "first"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}
+	secondCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "second"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}
+	builder.WithObjects(esc, firstCluster, secondCluster)
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "requester@example.com")
+			c.Set("username", "requester")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	reqData := BreakglassSessionRequest{
+		Clustername: clusterName,
+		Username:    "requester@example.com",
+		GroupName:   "esc-group",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Result().StatusCode)
+
+	var sessions breakglassv1alpha1.BreakglassSessionList
+	require.NoError(t, cli.List(context.Background(), &sessions))
+	require.Empty(t, sessions.Items)
+}
+
 // Test that creating a session without a matching escalation returns 403 and no session is created
 func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)

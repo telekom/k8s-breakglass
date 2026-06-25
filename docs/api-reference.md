@@ -565,7 +565,7 @@ Authorization: Bearer <token>
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `activeOnly` | boolean | Only return ready escalations (default: `true`). Unready escalations are hidden by default to prevent session requests to broken clusters. |
+| `activeOnly` | boolean | Only return ready escalations for ready clusters (default: `true`). With a concrete or glob `cluster` filter, escalations are hidden when every matching registered `ClusterConfig` is `Ready=False` or has an ambiguous duplicate name. Unfiltered multi-cluster/global escalations can still be returned when they match at least one ready registered cluster. |
 | `cluster` | string | Filter by target cluster name. Supports exact matching and glob patterns. |
 
 **Response:** Array of `BreakglassEscalation` resources filtered by user's groups and readiness:

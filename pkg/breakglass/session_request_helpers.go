@@ -162,8 +162,39 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	}
 	escalations = readyEscalations
 
+	if !wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog) {
+		apiresponses.RespondForbidden(c, "requested ClusterConfig is not ready or is ambiguous")
+		return nil, false
+	}
+
 	reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(escalations))
 	return escalations, true
+}
+
+func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) bool {
+	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
+		return true
+	}
+
+	clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, clusterName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			reqLog.Debugw("No ClusterConfig found while enforcing session readiness; preserving legacy escalation-based matching",
+				"cluster", clusterName,
+				"error", err)
+			return true
+		}
+		reqLog.Warnw("Failed to resolve ClusterConfig while enforcing session readiness; blocking request",
+			"cluster", clusterName,
+			"error", err)
+		return false
+	}
+	if IsClusterConfigReady(clusterConfig) {
+		return true
+	}
+
+	reqLog.Warnw("Requested ClusterConfig is not ready", "cluster", clusterName)
+	return false
 }
 
 // collectApproversFromEscalations performs a single pass over filtered escalations to
