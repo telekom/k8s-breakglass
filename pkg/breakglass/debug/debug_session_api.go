@@ -18,8 +18,10 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -201,6 +203,39 @@ type RenewDebugSessionRequest struct {
 // ApprovalRequest represents the request body for approve/reject actions
 type ApprovalRequest struct {
 	Reason string `json:"reason,omitempty"`
+}
+
+func decodeDebugJSONStrict(r io.Reader, dest interface{}) error {
+	if r == nil {
+		return io.EOF
+	}
+
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(dest); err != nil {
+		return err
+	}
+
+	var extra struct{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected extra JSON input")
+		}
+		return err
+	}
+
+	return nil
+}
+
+func validateCreateDebugSessionRequest(req CreateDebugSessionRequest) error {
+	if req.TemplateRef == "" {
+		return fmt.Errorf("templateRef is required")
+	}
+	if req.Cluster == "" {
+		return fmt.Errorf("cluster is required")
+	}
+	return nil
 }
 
 // InjectEphemeralContainerRequest represents the request to inject an ephemeral container
@@ -406,8 +441,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 
 	var req CreateDebugSessionRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
 		reqLog.Warnw("Failed to parse CreateDebugSession request", "error", err)
+		apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
+		return
+	}
+	if err := validateCreateDebugSessionRequest(req); err != nil {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}

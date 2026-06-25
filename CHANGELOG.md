@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **DebugSession API request body validation**: Debug session create, approve, and reject endpoints now reject unknown JSON fields, trailing JSON values, and malformed optional approval bodies instead of silently ignoring client typos or invalid payloads.
 - **DebugSession scheduling option ACL enforcement**: `DebugSessionTemplate` and `DebugSessionClusterBinding` scheduling option `allowedUsers` and `allowedGroups` are now enforced at session creation for selected options and required defaults. Unauthorized requests receive `403 Forbidden` instead of creating a debug session with restricted scheduling constraints.
 - **OIDC group path matching hardening**: JWT group claims now preserve hierarchical group paths such as `/tenant/admin` instead of collapsing them to the leaf name `admin`, keeping `BreakglassEscalation` group matching exact and preventing same-leaf group collisions across OIDC hierarchies.
 - **DenyPolicy webhook evaluation now fails closed**: Authorization requests are denied when DenyPolicy listing/evaluation fails or when namespace labels required for selector-based DenyPolicy rules cannot be loaded, preventing policy bypass during cache or spoke-cluster lookup errors.
