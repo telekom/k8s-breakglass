@@ -47,6 +47,8 @@ jobs:
   unit-tests-controller:
     name: Controller Unit Tests
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Set up Go
@@ -58,9 +60,9 @@ jobs:
         run: make test-controller
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: ${{ always() && github.actor != 'dependabot[bot]' }}
+        if: ${{ always() && env.CODECOV_TOKEN != '' }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: cover-controller.out
           flags: controller
           fail_ci_if_error: false
@@ -68,6 +70,8 @@ jobs:
   unit-tests-cli:
     name: CLI Unit Tests
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Set up Go
@@ -81,9 +85,9 @@ jobs:
         run: make test-cli-e2e
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: ${{ always() && github.actor != 'dependabot[bot]' }}
+        if: ${{ always() && env.CODECOV_TOKEN != '' }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: cover-cli.out
           flags: cli
           fail_ci_if_error: false
@@ -310,6 +314,8 @@ jobs:
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     defaults:
       run:
         working-directory: frontend
@@ -350,9 +356,9 @@ jobs:
           retention-days: 7
       - name: Upload frontend coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: ${{ always() && github.actor != 'dependabot[bot]' }}
+        if: ${{ always() && env.CODECOV_TOKEN != '' }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           directory: frontend
           files: coverage/coverage-final.json
           flags: frontend
