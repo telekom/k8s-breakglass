@@ -42,9 +42,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const debugSessionNamePrefix = "debug"
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
@@ -171,7 +174,10 @@ func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, n
 		// Fallback: try default namespace
 		session := &breakglassv1alpha1.DebugSession{}
 		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: "default"}, session); err != nil {
-			return nil, apierrors.NewNotFound(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, name)
+			if apierrors.IsNotFound(err) {
+				return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions"}, name)
+			}
+			return nil, err
 		}
 		return session, nil
 	}
@@ -1023,7 +1029,47 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 }
 
 func buildDebugSessionName(user, cluster string, now time.Time) string {
-	return fmt.Sprintf("debug-%s-%s-%s", naming.ToRFC1123Subdomain(user), naming.ToRFC1123Subdomain(cluster), strconv.FormatInt(now.UnixNano(), 36))
+	suffix := strconv.FormatInt(now.UnixNano(), 36)
+	userPart, clusterPart := fitDebugSessionNameParts(
+		naming.ToRFC1123Label(user),
+		naming.ToRFC1123Label(cluster),
+		suffix,
+	)
+	return fmt.Sprintf("%s-%s-%s-%s", debugSessionNamePrefix, userPart, clusterPart, suffix)
+}
+
+func fitDebugSessionNameParts(userPart, clusterPart, suffix string) (string, string) {
+	partsBudget := validation.LabelValueMaxLength - len(debugSessionNamePrefix) - len(suffix) - 3
+	if partsBudget < 2 {
+		return "x", "x"
+	}
+
+	userBudget := partsBudget / 2
+	clusterBudget := partsBudget - userBudget
+	if len(userPart) < userBudget {
+		clusterBudget += userBudget - len(userPart)
+		userBudget = len(userPart)
+	}
+	if len(clusterPart) < clusterBudget {
+		userBudget += clusterBudget - len(clusterPart)
+		clusterBudget = len(clusterPart)
+	}
+
+	return truncateDebugSessionNamePart(userPart, userBudget), truncateDebugSessionNamePart(clusterPart, clusterBudget)
+}
+
+func truncateDebugSessionNamePart(part string, maxLen int) string {
+	if maxLen <= 0 {
+		return "x"
+	}
+	if len(part) > maxLen {
+		part = part[:maxLen]
+	}
+	part = strings.Trim(part, "-.")
+	if part == "" {
+		return "x"
+	}
+	return part
 }
 
 // validDebugSessionStates is the canonical set of allowed DebugSession state values

@@ -34,6 +34,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -75,6 +76,19 @@ func TestBuildDebugSessionNameUsesCompactSubsecondEntropy(t *testing.T) {
 	require.True(t, strings.HasPrefix(first, "debug-debug-session-requester-tenant-a-"))
 	require.True(t, strings.HasPrefix(second, "debug-debug-session-requester-tenant-a-"))
 	require.LessOrEqual(t, len(multiCluster), 63)
+	require.Empty(t, validation.IsDNS1123Subdomain(multiCluster))
+	require.Empty(t, validation.IsValidLabelValue(multiCluster))
+}
+
+func TestBuildDebugSessionNameTruncatesLongPartsToLabelValue(t *testing.T) {
+	base := time.Unix(1782420779, 1)
+	first := buildDebugSessionName(strings.Repeat("user", 40), strings.Repeat("cluster", 40), base)
+	second := buildDebugSessionName(strings.Repeat("user", 40), strings.Repeat("cluster", 40), base.Add(100*time.Millisecond))
+
+	require.NotEqual(t, first, second)
+	require.LessOrEqual(t, len(first), validation.LabelValueMaxLength)
+	require.Empty(t, validation.IsDNS1123Subdomain(first))
+	require.Empty(t, validation.IsValidLabelValue(first))
 }
 
 // Helper to create a test Gin context with user info

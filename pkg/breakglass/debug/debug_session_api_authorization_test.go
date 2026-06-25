@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // ============================================================================
@@ -1093,6 +1094,30 @@ func TestGetDebugSessionByName_DefaultNamespaceFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "simple-session", found.Name)
+}
+
+func TestGetDebugSessionByName_DefaultNamespaceFallbackPropagatesGetError(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	expectedErr := errors.New("default namespace lookup failed")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+				if key.Name == "error-session" && key.Namespace == "default" {
+					return expectedErr
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	ctx := context.Background()
+	found, err := ctrl.getDebugSessionByName(ctx, "error-session", "")
+	require.ErrorIs(t, err, expectedErr)
+	require.Nil(t, found)
 }
 
 // ============================================================================
