@@ -909,6 +909,7 @@ POST /api/debugSessions
 | `nodeSelector` | object | No | Additional node selector labels |
 | `reason` | string | No | Explanation for the debug session request |
 | `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |
+| `namespace` | string | No | Deprecated alias for `targetNamespace`; if both fields are sent they must match. This field does not control the namespace of the DebugSession object. |
 | `selectedSchedulingOption` | string | No | Name of a scheduling option from template's `schedulingOptions`; restricted options must allow the requester's username, email, or group |
 | `invitedParticipants` | array | No | List of users to invite to the session |
 
