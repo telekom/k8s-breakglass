@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -172,14 +173,26 @@ func TestCanReadDebugSession_RequesterParticipantInviteeAndApprover(t *testing.T
 	}
 
 	ctx := context.Background()
-	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "alice"}), "requester username can read")
-	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "subject", email: "alice@example.com"}), "requester email can read")
-	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "subject", email: "bob@example.com"}), "active participant email can read")
-	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "invitee@example.com"}), "invited participant can read")
-	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "historical-approver@example.com"}), "historical approver can read")
-	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "historical-rejector@example.com"}), "historical rejector can read")
-	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "approver@example.com", groups: []string{"debug-approvers"}}), "configured approver group can read")
-	assert.False(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "mallory@example.com"}), "unrelated user cannot read")
+	for _, tt := range []struct {
+		name     string
+		identity debugSessionReadIdentity
+		want     bool
+	}{
+		{name: "requester username", identity: debugSessionReadIdentity{username: "alice"}, want: true},
+		{name: "requester email", identity: debugSessionReadIdentity{username: "subject", email: "alice@example.com"}, want: true},
+		{name: "active participant email", identity: debugSessionReadIdentity{username: "subject", email: "bob@example.com"}, want: true},
+		{name: "invited participant", identity: debugSessionReadIdentity{username: "invitee@example.com"}, want: true},
+		{name: "historical approver", identity: debugSessionReadIdentity{username: "historical-approver@example.com"}, want: true},
+		{name: "historical rejector", identity: debugSessionReadIdentity{username: "historical-rejector@example.com"}, want: true},
+		{name: "configured approver group", identity: debugSessionReadIdentity{username: "approver@example.com", groups: []string{"debug-approvers"}}, want: true},
+		{name: "unrelated user", identity: debugSessionReadIdentity{username: "mallory@example.com"}, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ctrl.canReadDebugSession(ctx, session, tt.identity)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestCanReadDebugSession_EmptyApproversDoNotGrantReadAccess(t *testing.T) {
@@ -209,7 +222,8 @@ func TestCanReadDebugSession_EmptyApproversDoNotGrantReadAccess(t *testing.T) {
 		},
 	}
 
-	result := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "anyuser@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "anyuser@example.com"})
+	require.NoError(t, err)
 	assert.False(t, result, "empty approvers must not make debug session reads world-readable")
 }
 
@@ -238,8 +252,13 @@ func TestCanReadDebugSession_BindingApproverCanRead(t *testing.T) {
 		},
 	}
 
-	assert.True(t, ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "binding-approver@example.com"}))
-	assert.False(t, ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "other@example.com"}))
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "binding-approver@example.com"})
+	require.NoError(t, err)
+	assert.True(t, result)
+
+	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "other@example.com"})
+	require.NoError(t, err)
+	assert.False(t, result)
 }
 
 type debugSessionReadCountingClient struct {
@@ -253,6 +272,26 @@ func (c *debugSessionReadCountingClient) Get(ctx context.Context, key ctrlclient
 		c.gets["template:"+key.Name]++
 	case *breakglassv1alpha1.DebugSessionClusterBinding:
 		c.gets["binding:"+key.String()]++
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+type debugSessionReadFailingClient struct {
+	ctrlclient.Client
+	failBinding  bool
+	failTemplate bool
+}
+
+func (c *debugSessionReadFailingClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	switch obj.(type) {
+	case *breakglassv1alpha1.DebugSessionClusterBinding:
+		if c.failBinding {
+			return errors.New("binding reader unavailable")
+		}
+	case *breakglassv1alpha1.DebugSessionTemplate:
+		if c.failTemplate {
+			return errors.New("template reader unavailable")
+		}
 	}
 	return c.Client.Get(ctx, key, obj, opts...)
 }
@@ -296,9 +335,63 @@ func TestDebugSessionReadAuthorizerCachesTemplateApprovers(t *testing.T) {
 		},
 	}
 
-	require.True(t, authorizer.canRead(context.Background(), sessionA))
-	require.True(t, authorizer.canRead(context.Background(), sessionB))
+	result, err := authorizer.canRead(context.Background(), sessionA)
+	require.NoError(t, err)
+	require.True(t, result)
+
+	result, err = authorizer.canRead(context.Background(), sessionB)
+	require.NoError(t, err)
+	require.True(t, result)
 	require.Equal(t, 1, countingClient.gets["template:shared-template"])
+}
+
+func TestCanReadDebugSession_ReturnsErrorWhenBindingApproverLookupFails(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, &debugSessionReadFailingClient{
+		Client:      baseClient,
+		failBinding: true,
+	}, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "alice@example.com",
+			BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+		},
+	}
+
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "approver@example.com"})
+	require.Error(t, err)
+	assert.False(t, result)
+	assert.Contains(t, err.Error(), "fetch debug session binding")
+}
+
+func TestCanReadDebugSession_ReturnsErrorWhenTemplateApproverLookupFails(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, &debugSessionReadFailingClient{
+		Client:       baseClient,
+		failTemplate: true,
+	}, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "alice@example.com",
+		},
+	}
+
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "approver@example.com"})
+	require.Error(t, err)
+	assert.False(t, result)
+	assert.Contains(t, err.Error(), "fetch debug session template")
 }
 
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {

@@ -1866,6 +1866,49 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, "session-1", response.Sessions[0].Name)
 	})
 
+	t.Run("filter by user matches requested by email", func(t *testing.T) {
+		emailSession := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "session-email",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:          "production",
+				TemplateRef:      "standard-debug",
+				RequestedBy:      "oidc-subject-123",
+				RequestedByEmail: "carol@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&emailSession).
+			WithStatusSubresource(&emailSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?user=carol@example.com", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+		assert.Equal(t, "session-email", response.Sessions[0].Name)
+	})
+
 	t.Run("user filter does not leak unauthorized sessions", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
