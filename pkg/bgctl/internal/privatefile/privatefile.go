@@ -45,6 +45,9 @@ func Write(path string, content []byte) (err error) {
 }
 
 func shouldWriteInPlace(path string, writeErr error) bool {
+	if !supportsSecureInPlaceRewrite() {
+		return false
+	}
 	if !os.IsPermission(writeErr) {
 		return false
 	}
