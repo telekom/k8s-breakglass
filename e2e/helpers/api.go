@@ -696,7 +696,7 @@ type DebugSessionRequest struct {
 	Cluster                  string            `json:"cluster"`
 	RequestedDuration        string            `json:"requestedDuration,omitempty"`
 	NodeSelector             map[string]string `json:"nodeSelector,omitempty"`
-	Namespace                string            `json:"namespace,omitempty"`
+	Namespace                string            `json:"namespace,omitempty"` // Deprecated: API alias for targetNamespace
 	Reason                   string            `json:"reason,omitempty"`
 	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
 	TargetNamespace          string            `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)

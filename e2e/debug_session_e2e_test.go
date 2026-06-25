@@ -2004,7 +2004,6 @@ func TestDebugSession_E2E_TargetNamespaceSelection(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing target namespace selection",
 		TargetNamespace:   "debug-custom", // User selects custom namespace
 	})
@@ -2099,7 +2098,6 @@ func TestDebugSession_E2E_InvalidTargetNamespaceRejected(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing invalid namespace rejection",
 		TargetNamespace:   "production", // This should be rejected (doesn't match debug-*)
 	})
