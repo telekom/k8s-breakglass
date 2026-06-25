@@ -120,8 +120,10 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 	// Activate scheduled sessions first (before expiry checks)
 	if cr.Manager != nil {
 		activator := NewScheduledSessionActivator(cr.Log, cr.Manager).
-			WithMailService(cr.MailService, cr.BrandingName, cr.DisableEmail).
-			WithAuditService(cr.AuditService)
+			WithMailService(cr.MailService, cr.BrandingName, cr.DisableEmail)
+		if cr.AuditService != nil {
+			activator = activator.WithAuditService(cr.AuditService)
+		}
 		activator.ActivateScheduledSessions()
 	}
 
