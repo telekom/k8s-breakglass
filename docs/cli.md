@@ -271,7 +271,7 @@ permissions (`0600`). When updating an existing config or token cache file, the
 CLI tightens the file mode before writing secrets such as inline OIDC client
 secrets or cached bearer/refresh tokens. If the containing directory is not
 writable but the existing file is writable, `bgctl` falls back to rewriting that
-file in place after tightening it to `0600`.
+file in place after tightening it to `0600` on Unix platforms.
 
 ## Shell Completion
 

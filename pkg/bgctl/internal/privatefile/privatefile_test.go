@@ -31,7 +31,9 @@ func TestWriteDoesNotFollowSymlinkWhenFallingBack(t *testing.T) {
 	path := filepath.Join(dir, "secret.json")
 	victim := filepath.Join(victimDir, "victim.json")
 	require.NoError(t, os.WriteFile(victim, []byte(`{"keep":true}`), 0o600))
-	require.NoError(t, os.Symlink(victim, path))
+	if err := os.Symlink(victim, path); err != nil {
+		t.Skipf("symlink creation is not permitted in this environment: %v", err)
+	}
 	requireUnwritableDir(t, dir)
 
 	require.Error(t, Write(path, []byte(`{"replace":true}`)))
