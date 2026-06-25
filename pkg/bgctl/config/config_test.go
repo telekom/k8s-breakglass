@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -136,18 +135,11 @@ func TestSaveTightensExistingFileMode(t *testing.T) {
 }
 
 func TestSaveExistingWritableFileInReadOnlyDir(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("directory write permission semantics differ on Windows")
-	}
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("version: v1\n"), 0o600))
 	require.NoError(t, os.Chmod(path, 0o600))
-	require.NoError(t, os.Chmod(dir, 0o500))
-	t.Cleanup(func() {
-		_ = os.Chmod(dir, 0o700)
-	})
+	requireUnwritableDir(t, dir)
 
 	cfg := DefaultConfig()
 	cfg.CurrentContext = "prod"
@@ -160,6 +152,23 @@ func TestSaveExistingWritableFileInReadOnlyDir(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func requireUnwritableDir(t *testing.T, dir string) {
+	t.Helper()
+
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+	})
+
+	probe, err := os.CreateTemp(dir, "probe-*")
+	if err == nil {
+		_ = probe.Close()
+		_ = os.Remove(probe.Name())
+		t.Skip("directory write permission is not enforced for this test user")
+	}
+	require.True(t, os.IsPermission(err), "expected permission error, got %v", err)
 }
 
 func TestFindContext(t *testing.T) {

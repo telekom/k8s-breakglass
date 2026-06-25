@@ -3,7 +3,6 @@ package auth
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -74,18 +73,11 @@ func TestSaveTokenCacheTightensExistingFileMode(t *testing.T) {
 }
 
 func TestSaveTokenCacheExistingWritableFileInReadOnlyDir(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("directory write permission semantics differ on Windows")
-	}
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
 	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
 	require.NoError(t, os.Chmod(path, 0o600))
-	require.NoError(t, os.Chmod(dir, 0o500))
-	t.Cleanup(func() {
-		_ = os.Chmod(dir, 0o700)
-	})
+	requireUnwritableDir(t, dir)
 
 	cache := &TokenCache{Tokens: map[string]StoredToken{
 		"provider": {
@@ -102,4 +94,21 @@ func TestSaveTokenCacheExistingWritableFileInReadOnlyDir(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func requireUnwritableDir(t *testing.T, dir string) {
+	t.Helper()
+
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+	})
+
+	probe, err := os.CreateTemp(dir, "probe-*")
+	if err == nil {
+		_ = probe.Close()
+		_ = os.Remove(probe.Name())
+		t.Skip("directory write permission is not enforced for this test user")
+	}
+	require.True(t, os.IsPermission(err), "expected permission error, got %v", err)
 }
