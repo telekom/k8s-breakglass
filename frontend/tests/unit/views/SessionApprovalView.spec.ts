@@ -145,7 +145,7 @@ describe("SessionApprovalView", () => {
     expect(mockPush).toHaveBeenCalled();
   });
 
-  it("does not approve direct approval links when a required note is empty", async () => {
+  it("does not approve or reject direct approval links when a required note is empty", async () => {
     mockGetSessionByName.mockResolvedValue({
       data: {
         session: {
@@ -181,7 +181,10 @@ describe("SessionApprovalView", () => {
         },
         stubs: {
           ApprovalModalContent: {
-            template: '<button data-testid="emit-approve" @click="$emit(\'approve\')">Approve</button>',
+            template: `
+              <button data-testid="emit-approve" @click="$emit('approve')">Approve</button>
+              <button data-testid="emit-reject" @click="$emit('reject')">Reject</button>
+            `,
           },
           "scale-loading-spinner": true,
           "scale-notification": true,
@@ -194,8 +197,12 @@ describe("SessionApprovalView", () => {
 
     await flushPromises();
     await wrapper.find('[data-testid="emit-approve"]').trigger("click");
+    await wrapper.find('[data-testid="emit-reject"]').trigger("click");
 
     expect(mockApproveReview).not.toHaveBeenCalled();
-    expect(pushError).toHaveBeenCalledWith("Approval note is required for this escalation");
+    expect(mockRejectReview).not.toHaveBeenCalled();
+    expect(pushError).toHaveBeenCalledTimes(2);
+    expect(pushError).toHaveBeenNthCalledWith(1, "Approval note is required for this escalation");
+    expect(pushError).toHaveBeenNthCalledWith(2, "Approval note is required for this escalation");
   });
 });

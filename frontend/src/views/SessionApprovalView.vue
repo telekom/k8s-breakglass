@@ -26,6 +26,10 @@ interface ApprovalReasonConfig {
   description?: string;
 }
 
+type EnrichedApprovalReasonSession = SessionCR & {
+  approvalReason?: ApprovalReasonConfig;
+};
+
 // Denial reason categories for specific UI treatment
 type DenialCategory = "self-approval" | "domain-restriction" | "not-approver" | "no-matching-escalation" | "other";
 
@@ -78,12 +82,7 @@ const isSelfApprovalBlocked = computed(() => {
 });
 
 function getApprovalReasonConfig(reviewSession: SessionCR): ApprovalReasonConfig | undefined {
-  const sessionRecord = reviewSession as Record<string, unknown>;
-  if (sessionRecord.approvalReason) {
-    return sessionRecord.approvalReason as ApprovalReasonConfig;
-  }
-  const spec = sessionRecord.spec as Record<string, unknown> | undefined;
-  return spec?.approvalReasonConfig as ApprovalReasonConfig | undefined;
+  return (reviewSession as EnrichedApprovalReasonSession).approvalReason ?? reviewSession.spec?.approvalReasonConfig;
 }
 
 const isApprovalNoteMissing = computed(() => {
