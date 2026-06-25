@@ -2106,6 +2106,7 @@ func TestDebugSession_E2E_InvalidTargetNamespaceRejected(t *testing.T) {
 	require.Error(t, err, "Expected error when creating session with invalid namespace")
 	t.Logf("Session creation correctly rejected with error: %v", err)
 	assert.Contains(t, err.Error(), "status=400", "Expected 400 Bad Request for invalid namespace")
+	assert.Contains(t, err.Error(), "namespace 'production' is not in the allowed namespaces")
 }
 
 // D-025: DebugSession with cluster selector in allowed section
