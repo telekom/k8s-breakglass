@@ -1502,20 +1502,20 @@ Debug sessions can be managed via the REST API:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/v1/debug-sessions` | List debug sessions visible to the caller |
-| `GET` | `/api/v1/debug-sessions/{name}` | Get a specific visible session |
-| `POST` | `/api/v1/debug-sessions` | Create a new session |
-| `POST` | `/api/v1/debug-sessions/{name}/join` | Join an existing session |
-| `POST` | `/api/v1/debug-sessions/{name}/leave` | Leave an existing session |
-| `POST` | `/api/v1/debug-sessions/{name}/renew` | Renew session duration |
-| `POST` | `/api/v1/debug-sessions/{name}/terminate` | Terminate session |
-| `POST` | `/api/v1/debug-sessions/{name}/approve` | Approve session |
-| `POST` | `/api/v1/debug-sessions/{name}/reject` | Reject session |
-| `GET` | `/api/v1/debug-session-templates` | List available templates |
-| `GET` | `/api/v1/debug-pod-templates` | List pod templates |
-| `POST` | `/api/v1/debug-sessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
-| `POST` | `/api/v1/debug-sessions/{name}/createPodCopy` | Create a debug copy of a pod |
-| `POST` | `/api/v1/debug-sessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
+| `GET` | `/api/v1/debugSessions` | List debug sessions visible to the caller |
+| `GET` | `/api/v1/debugSessions/{name}` | Get a specific visible session |
+| `POST` | `/api/v1/debugSessions` | Create a new session |
+| `POST` | `/api/v1/debugSessions/{name}/join` | Join an existing session |
+| `POST` | `/api/v1/debugSessions/{name}/leave` | Leave an existing session |
+| `POST` | `/api/v1/debugSessions/{name}/renew` | Renew session duration |
+| `POST` | `/api/v1/debugSessions/{name}/terminate` | Terminate session |
+| `POST` | `/api/v1/debugSessions/{name}/approve` | Approve session |
+| `POST` | `/api/v1/debugSessions/{name}/reject` | Reject session |
+| `GET` | `/api/v1/debugSessions/templates` | List available templates |
+| `GET` | `/api/v1/debugSessions/podTemplates` | List pod templates |
+| `POST` | `/api/v1/debugSessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
+| `POST` | `/api/v1/debugSessions/{name}/createPodCopy` | Create a debug copy of a pod |
+| `POST` | `/api/v1/debugSessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
 
 List and detail responses require an authenticated caller. A caller can read a
 debug session when they are the requester, an active participant, an invited
@@ -1528,7 +1528,7 @@ These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode:
 
 #### Inject Ephemeral Container
 
-**POST** `/api/v1/debug-sessions/{name}/injectEphemeralContainer`
+**POST** `/api/v1/debugSessions/{name}/injectEphemeralContainer`
 
 Inject a debug container into a running pod without restarting it.
 
@@ -1554,7 +1554,7 @@ Inject a debug container into a running pod without restarting it.
 
 #### Create Pod Copy
 
-**POST** `/api/v1/debug-sessions/{name}/createPodCopy`
+**POST** `/api/v1/debugSessions/{name}/createPodCopy`
 
 Create a copy of an existing pod for debugging without affecting the original.
 
@@ -1577,7 +1577,7 @@ Create a copy of an existing pod for debugging without affecting the original.
 
 #### Create Node Debug Pod
 
-**POST** `/api/v1/debug-sessions/{name}/createNodeDebugPod`
+**POST** `/api/v1/debugSessions/{name}/createNodeDebugPod`
 
 Create a privileged debug pod on a specific node for node-level debugging.
 
