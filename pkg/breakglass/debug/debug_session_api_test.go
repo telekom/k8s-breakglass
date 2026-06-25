@@ -44,6 +44,27 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, username, email string, groups []string) *gin.Engine {
+	t.Helper()
+	router := gin.New()
+	if username != "" {
+		router.Use(func(c *gin.Context) {
+			c.Set("username", username)
+			if email != "" {
+				c.Set("email", email)
+			}
+			if groups != nil {
+				c.Set("groups", groups)
+			}
+			c.Next()
+		})
+	}
+	rg := router.Group("/api/v1/" + ctrl.BasePath())
+	err := ctrl.Register(rg)
+	require.NoError(t, err)
+	return router
+}
+
 // Helper to create a test Gin context with user info
 // Keeping for potential future use in tests
 var _ = func(w *httptest.ResponseRecorder, user, email string, groups []string) (*gin.Context, *gin.Engine) {
@@ -1621,6 +1642,11 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 				State:     breakglassv1alpha1.DebugSessionStateActive,
 				StartsAt:  &now,
 				ExpiresAt: &expiresAt,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
 			},
 		},
 		{
@@ -1635,9 +1661,31 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
 				State: breakglassv1alpha1.DebugSessionStatePending,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
 			},
 		},
 	}
+
+	t.Run("list requires authenticated user context", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
 
 	t.Run("list all sessions via HTTP", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
@@ -1647,11 +1695,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
 		w := httptest.NewRecorder()
@@ -1660,7 +1704,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 2, response.Total)
 	})
@@ -1673,11 +1717,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?cluster=production", nil)
 		w := httptest.NewRecorder()
@@ -1686,7 +1726,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 1, response.Total)
 		assert.Equal(t, "session-1", response.Sessions[0].Name)
@@ -1700,11 +1740,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Pending", nil)
 		w := httptest.NewRecorder()
@@ -1713,7 +1749,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 1, response.Total)
 		assert.Equal(t, "session-2", response.Sessions[0].Name)
@@ -1727,11 +1763,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active&state=Pending", nil)
 		w := httptest.NewRecorder()
@@ -1740,7 +1772,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 2, response.Total)
 		names := []string{response.Sessions[0].Name, response.Sessions[1].Name}
@@ -1755,11 +1787,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active,Pending", nil)
 		w := httptest.NewRecorder()
@@ -1768,7 +1796,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 2, response.Total)
 		names := []string{response.Sessions[0].Name, response.Sessions[1].Name}
@@ -1783,11 +1811,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=pending", nil)
 		w := httptest.NewRecorder()
@@ -1796,7 +1820,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 1, response.Total)
 		assert.Equal(t, "session-2", response.Sessions[0].Name)
@@ -1831,11 +1855,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?user=alice@example.com", nil)
 		w := httptest.NewRecorder()
@@ -1844,10 +1864,33 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 1, response.Total)
 		assert.Equal(t, "session-1", response.Sessions[0].Name)
+	})
+
+	t.Run("user filter does not leak unauthorized sessions", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?user=bob@example.com", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response DebugSessionListResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 0, response.Total)
+		assert.Empty(t, response.Sessions)
 	})
 
 	t.Run("filter mine=true with username context", func(t *testing.T) {
@@ -1858,16 +1901,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		// Add middleware to set username
-		router.Use(func(c *gin.Context) {
-			c.Set("username", "alice@example.com")
-			c.Next()
-		})
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?mine=true", nil)
 		w := httptest.NewRecorder()
@@ -1876,7 +1910,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, 1, response.Total)
 		assert.Equal(t, "session-1", response.Sessions[0].Name)
@@ -1890,9 +1924,10 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 				Namespace: "breakglass",
 			},
 			Spec: breakglassv1alpha1.DebugSessionSpec{
-				Cluster:     "production",
-				TemplateRef: "standard-debug",
-				RequestedBy: "alice@example.com",
+				Cluster:             "production",
+				TemplateRef:         "standard-debug",
+				RequestedBy:         "alice@example.com",
+				InvitedParticipants: []string{"dave@example.com", "charlie@example.com"},
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
 				State:     breakglassv1alpha1.DebugSessionStateActive,
@@ -1915,14 +1950,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
 		// Test 1: current user matches by User field
-		router := gin.New()
-		router.Use(func(c *gin.Context) {
-			c.Set("username", "alice@example.com")
-			c.Next()
-		})
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
 		w := httptest.NewRecorder()
@@ -1930,21 +1958,14 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 
 		assert.Equal(t, 200, w.Code)
 		var response DebugSessionListResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		require.Equal(t, 1, response.Total)
 		assert.True(t, response.Sessions[0].IsParticipant, "alice should be recognized as active participant")
 		assert.Equal(t, 2, response.Sessions[0].Participants, "should count only active participants (alice + bob), not charlie who left")
 
 		// Test 2: current user is not a participant
-		router2 := gin.New()
-		router2.Use(func(c *gin.Context) {
-			c.Set("username", "dave@example.com")
-			c.Next()
-		})
-		rg2 := router2.Group("/api/v1/" + ctrl.BasePath())
-		err = ctrl.Register(rg2)
-		require.NoError(t, err)
+		router2 := debugSessionAPITestRouter(t, ctrl, "dave@example.com", "", nil)
 
 		req2 := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
 		w2 := httptest.NewRecorder()
@@ -1953,17 +1974,12 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		var response2 DebugSessionListResponse
 		err = json.Unmarshal(w2.Body.Bytes(), &response2)
 		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w2.Code)
+		require.Equal(t, 1, response2.Total)
 		assert.False(t, response2.Sessions[0].IsParticipant, "dave should not be recognized as participant")
 
 		// Test 3: user who left (LeftAt != nil) should not be isParticipant
-		router3 := gin.New()
-		router3.Use(func(c *gin.Context) {
-			c.Set("username", "charlie@example.com")
-			c.Next()
-		})
-		rg3 := router3.Group("/api/v1/" + ctrl.BasePath())
-		err = ctrl.Register(rg3)
-		require.NoError(t, err)
+		router3 := debugSessionAPITestRouter(t, ctrl, "charlie@example.com", "", nil)
 
 		req3 := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
 		w3 := httptest.NewRecorder()
@@ -1972,6 +1988,8 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		var response3 DebugSessionListResponse
 		err = json.Unmarshal(w3.Body.Bytes(), &response3)
 		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w3.Code)
+		require.Equal(t, 1, response3.Total)
 		assert.False(t, response3.Sessions[0].IsParticipant, "charlie left the session, should not be isParticipant")
 	})
 }
@@ -2023,11 +2041,7 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
 		w := httptest.NewRecorder()
@@ -2036,11 +2050,141 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 		assert.Equal(t, 200, w.Code)
 
 		var response DebugSessionDetailResponse
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, "test-session", response.Name)
 		assert.Equal(t, "production", response.Spec.Cluster)
 		assert.Equal(t, 1, len(response.Status.Participants))
+	})
+
+	t.Run("get existing session requires authenticated user context", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("get existing session rejects unrelated user", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "mallory@example.com", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("get existing session allows active participant email", func(t *testing.T) {
+		participantSession := session.DeepCopy()
+		participantSession.Status.Participants = append(participantSession.Status.Participants, breakglassv1alpha1.DebugSessionParticipant{
+			User:     "opaque-subject",
+			Email:    "bob@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleViewer,
+			JoinedAt: now,
+		})
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(participantSession).
+			WithStatusSubresource(participantSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "opaque-subject", "bob@example.com", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("get existing session allows invited participant", func(t *testing.T) {
+		invitedSession := session.DeepCopy()
+		invitedSession.Spec.InvitedParticipants = []string{"dave@example.com"}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(invitedSession).
+			WithStatusSubresource(invitedSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "dave@example.com", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("get existing session allows configured approver group", func(t *testing.T) {
+		approverSession := session.DeepCopy()
+		approverSession.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Groups: []string{"debug-approvers"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(approverSession).
+			WithStatusSubresource(approverSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "approver@example.com", "", []string{"debug-approvers"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("get existing session rejects participant after leaving", func(t *testing.T) {
+		leftAt := metav1.NewTime(now.Add(-30 * time.Minute))
+		leftSession := session.DeepCopy()
+		leftSession.Spec.RequestedBy = "alice@example.com"
+		leftSession.Status.Participants = append(leftSession.Status.Participants, breakglassv1alpha1.DebugSessionParticipant{
+			User:     "charlie@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleViewer,
+			JoinedAt: metav1.NewTime(now.Add(-1 * time.Hour)),
+			LeftAt:   &leftAt,
+		})
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(leftSession).
+			WithStatusSubresource(leftSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "charlie@example.com", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
 	t.Run("get non-existent session", func(t *testing.T) {
@@ -5914,13 +6058,16 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 		},
 	}
 
-	buildRouter := func() *gin.Engine {
+	buildRouter := func(username string) *gin.Engine {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(&sessions[0]).
 			WithStatusSubresource(&sessions[0]).
 			Build()
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		if username != "" {
+			return debugSessionAPITestRouter(t, ctrl, username, "", nil)
+		}
 		router := gin.New()
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
 		require.NoError(t, ctrl.Register(rg))
@@ -5928,7 +6075,7 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 	}
 
 	t.Run("invalid state returns 400", func(t *testing.T) {
-		router := buildRouter()
+		router := buildRouter("")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=INVALID_VALUE", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -5941,7 +6088,7 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 	})
 
 	t.Run("combo valid+invalid state returns 400", func(t *testing.T) {
-		router := buildRouter()
+		router := buildRouter("")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active&state=BOGUS", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -5953,7 +6100,7 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 	})
 
 	t.Run("valid state returns 200", func(t *testing.T) {
-		router := buildRouter()
+		router := buildRouter("alice")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -5965,7 +6112,7 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 	})
 
 	t.Run("empty state param returns 200 with all sessions", func(t *testing.T) {
-		router := buildRouter()
+		router := buildRouter("alice")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -5977,7 +6124,7 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 	})
 
 	t.Run("case-insensitive valid state returns 200", func(t *testing.T) {
-		router := buildRouter()
+		router := buildRouter("alice")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=active", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)

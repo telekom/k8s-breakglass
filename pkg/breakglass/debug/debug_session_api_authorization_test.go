@@ -140,6 +140,107 @@ func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {
 	assert.True(t, result, "any authenticated user should be able to approve when no approvers configured")
 }
 
+func TestCanReadDebugSession_RequesterParticipantInviteeAndApprover(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	now := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:         "test-template",
+			RequestedBy:         "alice",
+			RequestedByEmail:    "alice@example.com",
+			InvitedParticipants: []string{"invitee@example.com"},
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "opaque-bob", Email: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+			},
+			Approval: &breakglassv1alpha1.DebugSessionApproval{
+				ApprovedBy: "historical-approver@example.com",
+				RejectedBy: "historical-rejector@example.com",
+			},
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Groups: []string{"debug-approvers"},
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "alice"}), "requester username can read")
+	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "subject", email: "alice@example.com"}), "requester email can read")
+	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "subject", email: "bob@example.com"}), "active participant email can read")
+	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "invitee@example.com"}), "invited participant can read")
+	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "historical-approver@example.com"}), "historical approver can read")
+	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "historical-rejector@example.com"}), "historical rejector can read")
+	assert.True(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "approver@example.com", groups: []string{"debug-approvers"}}), "configured approver group can read")
+	assert.False(t, ctrl.canReadDebugSession(ctx, session, debugSessionReadIdentity{username: "mallory@example.com"}), "unrelated user cannot read")
+}
+
+func TestCanReadDebugSession_EmptyApproversDoNotGrantReadAccess(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-approvers-template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(template).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "empty-approvers-template",
+			RequestedBy: "alice@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{},
+			},
+		},
+	}
+
+	result := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "anyuser@example.com"})
+	assert.False(t, result, "empty approvers must not make debug session reads world-readable")
+}
+
+func TestCanReadDebugSession_BindingApproverCanRead(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-binding", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"binding-approver@example.com"},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(binding).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "alice@example.com",
+			BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+		},
+	}
+
+	assert.True(t, ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "binding-approver@example.com"}))
+	assert.False(t, ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "other@example.com"}))
+}
+
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {
 	// When session has ResolvedTemplate, use that instead of fetching
 

@@ -55,6 +55,26 @@ func setupTestRouter(t *testing.T, objects ...client.Object) (*gin.Engine, *Debu
 	return router, ctrl
 }
 
+func setupAuthenticatedDebugSessionRouter(t *testing.T, ctrl *DebugSessionAPIController, username, email string, groups []string) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("username", username)
+		if email != "" {
+			c.Set("email", email)
+		}
+		if groups != nil {
+			c.Set("groups", groups)
+		}
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	require.NoError(t, ctrl.Register(rg))
+	return router
+}
+
 // assertErrorResponse unmarshals the response body and verifies the JSON
 // shape contains both "error" and "code" fields as required by the APIError
 // contract defined in pkg/apiresponses.
@@ -694,12 +714,7 @@ func TestHandleListDebugSessions_Empty(t *testing.T) {
 		Build()
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	api := router.Group("/api")
-	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "viewer@example.com", "", nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/debugSessions", nil)
 	rr := httptest.NewRecorder()
@@ -726,6 +741,11 @@ func TestHandleListDebugSessions_WithSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
 				State: breakglassv1alpha1.DebugSessionStateActive,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
 			},
 		},
 		&breakglassv1alpha1.DebugSession{
@@ -737,6 +757,11 @@ func TestHandleListDebugSessions_WithSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
 				State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
 			},
 		},
 	}
@@ -749,12 +774,7 @@ func TestHandleListDebugSessions_WithSessions(t *testing.T) {
 		Build()
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	api := router.Group("/api")
-	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "admin@example.com", "", nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/debugSessions", nil)
 	rr := httptest.NewRecorder()
@@ -777,7 +797,14 @@ func TestHandleListDebugSessions_FilterByCluster(t *testing.T) {
 				Cluster:     "cluster-1",
 				RequestedBy: "user1@example.com",
 			},
-			Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
+			},
 		},
 		&breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-2", Namespace: "default"},
@@ -785,7 +812,14 @@ func TestHandleListDebugSessions_FilterByCluster(t *testing.T) {
 				Cluster:     "cluster-2",
 				RequestedBy: "user2@example.com",
 			},
-			Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
+			},
 		},
 	}
 
@@ -797,12 +831,7 @@ func TestHandleListDebugSessions_FilterByCluster(t *testing.T) {
 		Build()
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	api := router.Group("/api")
-	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "admin@example.com", "", nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/debugSessions?cluster=cluster-1", nil)
 	rr := httptest.NewRecorder()
@@ -850,12 +879,7 @@ func TestHandleListDebugSessions_WithAllowedPodOperations(t *testing.T) {
 		Build()
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	api := router.Group("/api")
-	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "user1@example.com", "", nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/debugSessions", nil)
 	rr := httptest.NewRecorder()
@@ -911,12 +935,7 @@ func TestHandleGetDebugSession_Found(t *testing.T) {
 		Build()
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	api := router.Group("/api")
-	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user@example.com", "", nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/debugSessions/test-session?namespace=default", nil)
 	rr := httptest.NewRecorder()
