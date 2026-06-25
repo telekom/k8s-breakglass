@@ -2997,6 +2997,15 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		}
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass-control"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
 		}
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
