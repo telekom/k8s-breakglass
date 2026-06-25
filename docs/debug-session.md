@@ -1502,8 +1502,8 @@ Debug sessions can be managed via the REST API:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/v1/debug-sessions` | List all debug sessions |
-| `GET` | `/api/v1/debug-sessions/{name}` | Get a specific session |
+| `GET` | `/api/v1/debug-sessions` | List debug sessions visible to the caller |
+| `GET` | `/api/v1/debug-sessions/{name}` | Get a specific visible session |
 | `POST` | `/api/v1/debug-sessions` | Create a new session |
 | `POST` | `/api/v1/debug-sessions/{name}/join` | Join an existing session |
 | `POST` | `/api/v1/debug-sessions/{name}/leave` | Leave an existing session |
@@ -1516,6 +1516,11 @@ Debug sessions can be managed via the REST API:
 | `POST` | `/api/v1/debug-sessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
 | `POST` | `/api/v1/debug-sessions/{name}/createPodCopy` | Create a debug copy of a pod |
 | `POST` | `/api/v1/debug-sessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
+
+List and detail responses require an authenticated caller. A caller can read a
+debug session when they are the requester, an active participant, an invited
+participant, a configured approver, or a recorded approver/rejector for that
+session.
 
 ### Kubectl Debug API Endpoints
 

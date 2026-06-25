@@ -271,6 +271,63 @@ type DebugSessionDetailResponse struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
+type debugSessionReadIdentity struct {
+	username string
+	email    string
+	groups   []string
+}
+
+func debugSessionRequestIdentity(ctx *gin.Context) (debugSessionReadIdentity, bool) {
+	usernameValue, exists := ctx.Get("username")
+	if !exists || usernameValue == nil {
+		return debugSessionReadIdentity{}, false
+	}
+	username, ok := usernameValue.(string)
+	if !ok || username == "" {
+		return debugSessionReadIdentity{}, false
+	}
+
+	identity := debugSessionReadIdentity{username: username}
+	if emailValue, exists := ctx.Get("email"); exists && emailValue != nil {
+		if email, ok := emailValue.(string); ok {
+			identity.email = email
+		}
+	}
+	if groupsValue, exists := ctx.Get("groups"); exists && groupsValue != nil {
+		identity.groups = debugSessionGroupsFromContext(groupsValue)
+	}
+	return identity, true
+}
+
+func debugSessionGroupsFromContext(groupsValue interface{}) []string {
+	switch groups := groupsValue.(type) {
+	case []string:
+		return groups
+	case []interface{}:
+		out := make([]string, 0, len(groups))
+		for _, group := range groups {
+			if groupStr, ok := group.(string); ok {
+				out = append(out, groupStr)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func debugSessionIdentityMatches(identity debugSessionReadIdentity, values ...string) bool {
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if value == identity.username || (identity.email != "" && value == identity.email) {
+			return true
+		}
+	}
+	return false
+}
+
 // handleListDebugSessions returns a list of debug sessions
 func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
@@ -298,12 +355,10 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	user := ctx.Query("user")
 	mine := ctx.Query("mine") == "true"
 
-	// Get current user from context with safe type assertion
-	currentUserStr := ""
-	if currentUser, exists := ctx.Get("username"); exists && currentUser != nil {
-		if userStr, ok := currentUser.(string); ok {
-			currentUserStr = userStr
-		}
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
+		return
 	}
 
 	sessionList := &breakglassv1alpha1.DebugSessionList{}
@@ -324,6 +379,9 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	// Apply filters
 	var filtered []breakglassv1alpha1.DebugSession
 	for _, s := range sessionList.Items {
+		if !c.canReadDebugSession(apiCtx, &s, identity) {
+			continue
+		}
 		// Cluster filter
 		if cluster != "" && s.Spec.Cluster != cluster {
 			continue
@@ -346,7 +404,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			continue
 		}
 		// Mine filter
-		if mine && s.Spec.RequestedBy != currentUserStr {
+		if mine && !debugSessionIdentityMatches(identity, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
 			continue
 		}
 		filtered = append(filtered, s)
@@ -361,7 +419,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		for _, p := range s.Status.Participants {
 			if p.LeftAt == nil {
 				activeParticipants++
-				if !isParticipant && (p.User == currentUserStr || p.Email == currentUserStr) {
+				if !isParticipant && debugSessionIdentityMatches(identity, p.User, p.Email) {
 					isParticipant = true
 				}
 			}
@@ -411,6 +469,16 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
+		return
+	}
+
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
+	if !c.canReadDebugSession(apiCtx, session, identity) {
+		apiresponses.RespondForbidden(ctx, "user is not authorized to read this debug session")
 		return
 	}
 
@@ -979,6 +1047,67 @@ func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllo
 		}
 	}
 	return false
+}
+
+func (c *DebugSessionAPIController) canReadDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+		return true
+	}
+	for _, participant := range session.Status.Participants {
+		if participant.LeftAt == nil && debugSessionIdentityMatches(identity, participant.User, participant.Email) {
+			return true
+		}
+	}
+	for _, invitee := range session.Spec.InvitedParticipants {
+		if debugSessionIdentityMatches(identity, invitee) {
+			return true
+		}
+	}
+	if session.Status.Approval != nil &&
+		debugSessionIdentityMatches(identity, session.Status.Approval.ApprovedBy, session.Status.Approval.RejectedBy) {
+		return true
+	}
+	return c.isExplicitDebugSessionApprover(ctx, session, identity)
+}
+
+func (c *DebugSessionAPIController) isExplicitDebugSessionApprover(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if approvers := c.readApproversFromBinding(ctx, session); approvers != nil &&
+		debugSessionApproversConfigured(approvers) &&
+		c.checkApproverAuthorization(approvers, identity.username, identity.groups) {
+		return true
+	}
+	if session.Status.ResolvedTemplate != nil &&
+		debugSessionApproversConfigured(session.Status.ResolvedTemplate.Approvers) &&
+		c.checkApproverAuthorization(session.Status.ResolvedTemplate.Approvers, identity.username, identity.groups) {
+		return true
+	}
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
+	if err := c.reader().Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+		c.log.Debugw("Could not fetch template while checking debug session read authorization",
+			"session", session.Name, "template", session.Spec.TemplateRef, "error", err)
+		return false
+	}
+	return debugSessionApproversConfigured(template.Spec.Approvers) &&
+		c.checkApproverAuthorization(template.Spec.Approvers, identity.username, identity.groups)
+}
+
+func (c *DebugSessionAPIController) readApproversFromBinding(ctx context.Context, session *breakglassv1alpha1.DebugSession) *breakglassv1alpha1.DebugSessionApprovers {
+	if session.Spec.BindingRef == nil {
+		return nil
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	key := ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}
+	if err := c.reader().Get(ctx, key, binding); err != nil {
+		c.log.Debugw("Could not fetch binding while checking debug session read authorization",
+			"session", session.Name, "binding", key.String(), "error", err)
+		return nil
+	}
+	return binding.Spec.Approvers
+}
+
+func debugSessionApproversConfigured(approvers *breakglassv1alpha1.DebugSessionApprovers) bool {
+	return approvers != nil && (len(approvers.Users) > 0 || len(approvers.Groups) > 0)
 }
 
 func stringInSlice(value string, values []string) bool {
