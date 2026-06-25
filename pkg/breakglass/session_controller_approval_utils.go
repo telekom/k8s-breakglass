@@ -41,6 +41,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	reqLog.Debugw("Approver identity verified", "email", email, "cluster", session.Spec.Cluster)
 	ctx := c.Request.Context()
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
+	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
 
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
@@ -111,7 +112,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		}
 
 		// Check self-approval restriction
-		if effectiveBlockSelf && email == session.Spec.User {
+		if effectiveBlockSelf && matchesAuthIdentifier(session.Spec.User, authIdentifiers) {
 			reqLog.Debugw("Self-approval blocked by escalation/cluster setting", "escalation", esc.Name, "approver", email)
 			// Track this as the most specific denial (highest priority)
 			mostSpecificDenial = ApprovalCheckResult{
