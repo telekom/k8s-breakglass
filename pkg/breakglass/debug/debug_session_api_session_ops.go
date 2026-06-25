@@ -14,6 +14,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -401,7 +402,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	var req ApprovalRequest
 	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
-		if !errors.Is(err, io.EOF) {
+		if !errors.Is(err, jsonutil.ErrEmptyBody) {
 			reqLog.Warnw("Failed to parse ApproveDebugSession request", "error", err)
 			apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
 			return
@@ -483,7 +484,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	var req ApprovalRequest
 	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
-		if !errors.Is(err, io.EOF) {
+		if !errors.Is(err, jsonutil.ErrEmptyBody) {
 			reqLog.Warnw("Failed to parse RejectDebugSession request", "error", err)
 			apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
 			return
