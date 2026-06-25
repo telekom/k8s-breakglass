@@ -60,12 +60,16 @@
       <scale-button
         data-testid="reject-button"
         variant="danger"
-        :disabled="isApproving || (isNoteRequired && !approverNote.trim())"
+        :disabled="isApproving || isRequiredNoteMissing"
         @click="$emit('reject')"
       >
         Reject
       </scale-button>
-      <scale-button data-testid="approve-button" :disabled="isApproving" @click="$emit('approve')">
+      <scale-button
+        data-testid="approve-button"
+        :disabled="isApproving || isRequiredNoteMissing"
+        @click="$emit('approve')"
+      >
         Confirm Approve
       </scale-button>
     </div>
@@ -118,6 +122,7 @@ const approvalReason = computed(() => {
 });
 
 const isNoteRequired = computed(() => approvalReason.value?.mandatory ?? false);
+const isRequiredNoteMissing = computed(() => isNoteRequired.value && !props.approverNote.trim());
 
 const approvalReasonPlaceholder = computed(() => {
   return approvalReason.value?.description || "Optional approver note";

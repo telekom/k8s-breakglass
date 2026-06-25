@@ -21,6 +21,15 @@ interface SessionApprovalMeta {
   stateMessage?: string;
 }
 
+interface ApprovalReasonConfig {
+  mandatory?: boolean;
+  description?: string;
+}
+
+type EnrichedApprovalReasonSession = SessionCR & {
+  approvalReason?: ApprovalReasonConfig;
+};
+
 // Denial reason categories for specific UI treatment
 type DenialCategory = "self-approval" | "domain-restriction" | "not-approver" | "no-matching-escalation" | "other";
 
@@ -70,6 +79,15 @@ const denialCategory = computed<DenialCategory>(() => {
 // Computed: is this a self-approval blocked scenario?
 const isSelfApprovalBlocked = computed(() => {
   return denialCategory.value === "self-approval" && approvalMeta.value?.isRequester;
+});
+
+function getApprovalReasonConfig(reviewSession: SessionCR): ApprovalReasonConfig | undefined {
+  return (reviewSession as EnrichedApprovalReasonSession).approvalReason ?? reviewSession.spec?.approvalReasonConfig;
+}
+
+const isApprovalNoteMissing = computed(() => {
+  if (!session.value) return false;
+  return !!getApprovalReasonConfig(session.value)?.mandatory && !approverNote.value.trim();
 });
 
 const loadSession = async () => {
@@ -180,6 +198,10 @@ const loadSession = async () => {
 
 const handleApprove = async () => {
   if (!session.value || !session.value.metadata || isApproving.value) return;
+  if (isApprovalNoteMissing.value) {
+    pushError("Approval note is required for this escalation");
+    return;
+  }
 
   isApproving.value = true;
   try {
@@ -216,6 +238,10 @@ const handleApprove = async () => {
 
 const handleReject = async () => {
   if (!session.value || !session.value.metadata || isApproving.value) return;
+  if (isApprovalNoteMissing.value) {
+    pushError("Approval note is required for this escalation");
+    return;
+  }
 
   isApproving.value = true;
   try {

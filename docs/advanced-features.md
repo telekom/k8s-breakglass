@@ -70,7 +70,7 @@ spec:
 **Behavior:**
 
 - When configured, approvers see the description when approving/rejecting
-- If `mandatory: true`, approval/rejection fails if reason is empty/whitespace
+- If `mandatory: true`, approval/rejection fails if reason is empty/whitespace; both the pending approvals modal and direct email approval links keep approve/reject actions blocked until a note is entered
 - Reason is stored with the session for audit trail
 
 ### Examples
