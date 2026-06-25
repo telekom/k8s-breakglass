@@ -1327,11 +1327,11 @@ func validateDebugReasonLength(reason string, minLength, maxLength int32) error 
 	if reason == "" {
 		return nil
 	}
-	reasonLength := int32(len([]rune(reason)))
-	if minLength > 0 && reasonLength < minLength {
+	reasonLength := len([]rune(reason))
+	if minLength > 0 && reasonLength < int(minLength) {
 		return fmt.Errorf("reason must be at least %d characters", minLength)
 	}
-	if maxLength > 0 && reasonLength > maxLength {
+	if maxLength > 0 && reasonLength > int(maxLength) {
 		return fmt.Errorf("reason must be at most %d characters", maxLength)
 	}
 	return nil
