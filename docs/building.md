@@ -61,6 +61,7 @@ Output: `./frontend/dist/`
 ### Debug panel
 
 The UI includes a developer-only debug panel for authentication diagnostics. It is **disabled in production builds** by default.
+When an application modal is open, the debug panel toggle is disabled and any open debug panel closes automatically so development diagnostics do not stack a second dialog over user workflows.
 
 To explicitly enable it in a non-dev build, set the following Vite environment variables at build time:
 

@@ -8,7 +8,7 @@
  * Can be toggled with a debug button in the UI.
  */
 
-import { computed, ref, inject, onMounted } from "vue";
+import { computed, ref, inject, onMounted, onBeforeUnmount } from "vue";
 import { decodeJwt } from "jose";
 import { AuthKey } from "@/keys";
 import { useUser, currentIDPName } from "@/services/auth";
@@ -17,6 +17,7 @@ import { debug, warn, error } from "@/services/logger";
 const auth = inject(AuthKey);
 const user = useUser();
 const showDebug = ref(false);
+const appModalOpen = ref(false);
 const usedMockAccessToken = ref(false);
 const allowMockAccessToken =
   import.meta.env.DEV === true || import.meta.env.VITE_DEBUG_PANEL_ALLOW_MOCK_TOKEN === "true";
@@ -44,6 +45,86 @@ const debugInfo = ref<DebugInfo>({
   groups: [],
   error: null,
 });
+
+let modalObserver: MutationObserver | undefined;
+let modalRefreshQueued = false;
+
+type ScaleModalElement = Element & {
+  open?: unknown;
+  opened?: unknown;
+};
+
+function isOpenState(propertyValue: unknown, attributeValue: string | null): boolean {
+  if (typeof propertyValue === "boolean") {
+    return propertyValue;
+  }
+  if (typeof propertyValue === "string" && propertyValue !== "") {
+    return propertyValue !== "false";
+  }
+  if (propertyValue !== undefined && propertyValue !== null) {
+    return Boolean(propertyValue);
+  }
+  return attributeValue !== null && attributeValue !== "false";
+}
+
+function isScaleModalElement(node: Node): node is Element {
+  return node instanceof Element && node.tagName.toLowerCase() === "scale-modal";
+}
+
+function nodeTouchesScaleModal(node: Node): boolean {
+  return isScaleModalElement(node) || (node instanceof Element && node.querySelector("scale-modal") !== null);
+}
+
+function mutationTouchesScaleModal(mutation: MutationRecord): boolean {
+  if (mutation.type === "attributes") {
+    return isScaleModalElement(mutation.target);
+  }
+  return (
+    Array.from(mutation.addedNodes).some(nodeTouchesScaleModal) ||
+    Array.from(mutation.removedNodes).some(nodeTouchesScaleModal)
+  );
+}
+
+function hasOpenAppModal(): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  return Array.from(document.querySelectorAll("scale-modal")).some((modal) => {
+    const scaleModal = modal as ScaleModalElement;
+    const opened = modal.getAttribute("opened");
+    const open = modal.getAttribute("open");
+    return isOpenState(scaleModal.opened, opened) || isOpenState(scaleModal.open, open);
+  });
+}
+
+function refreshAppModalState() {
+  appModalOpen.value = hasOpenAppModal();
+  if (appModalOpen.value) {
+    showDebug.value = false;
+  }
+}
+
+function scheduleAppModalRefresh() {
+  if (modalRefreshQueued) {
+    return;
+  }
+  modalRefreshQueued = true;
+  void Promise.resolve().then(() => {
+    modalRefreshQueued = false;
+    refreshAppModalState();
+  });
+}
+
+function toggleDebugPanel() {
+  refreshAppModalState();
+  if (appModalOpen.value) {
+    return;
+  }
+  showDebug.value = !showDebug.value;
+  if (showDebug.value) {
+    void collectDebugInfo();
+  }
+}
 
 function extractGroups(claims: Record<string, unknown> | null): string[] {
   if (!claims) return [];
@@ -138,7 +219,27 @@ async function collectDebugInfo() {
 
 onMounted(() => {
   debug("DebugPanel", "Component mounted");
-  collectDebugInfo();
+  void collectDebugInfo();
+  refreshAppModalState();
+  if (typeof document !== "undefined" && typeof MutationObserver !== "undefined") {
+    modalObserver = new MutationObserver((mutations) => {
+      if (mutations.some(mutationTouchesScaleModal)) {
+        scheduleAppModalRefresh();
+      }
+    });
+    modalObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["open", "opened"],
+      childList: true,
+      subtree: true,
+    });
+  }
+});
+
+onBeforeUnmount(() => {
+  modalObserver?.disconnect();
+  modalObserver = undefined;
+  modalRefreshQueued = false;
 });
 
 const tokenSummary = computed(() => {
@@ -153,6 +254,10 @@ const groupsDisplay = computed(() => {
   }
   return debugInfo.value.groups.join(", ");
 });
+
+const debugToggleTitle = computed(() =>
+  appModalOpen.value ? "Close the open dialog before using the debug panel" : "Toggle debug panel",
+);
 </script>
 
 <template>
@@ -160,10 +265,12 @@ const groupsDisplay = computed(() => {
     <button
       type="button"
       class="debug-toggle"
-      title="Toggle debug panel"
+      :title="debugToggleTitle"
       aria-label="Toggle debug panel"
+      :aria-disabled="appModalOpen"
+      :disabled="appModalOpen"
       data-testid="debug-toggle-button"
-      @click="showDebug = !showDebug"
+      @click="toggleDebugPanel"
     >
       <scale-icon-service-settings size="20" decorative />
     </button>
@@ -301,6 +408,15 @@ const groupsDisplay = computed(() => {
 
 .debug-toggle:hover {
   background-color: var(--telekom-color-ui-subtle, #2a2a2a);
+}
+
+.debug-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.debug-toggle:disabled:hover {
+  background-color: var(--surface-card, #1a1a1a);
 }
 
 .debug-toggle:active {
