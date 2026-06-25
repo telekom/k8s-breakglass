@@ -380,7 +380,16 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	var filtered []breakglassv1alpha1.DebugSession
 	readAuthorizer := c.newDebugSessionReadAuthorizer(identity)
 	for _, s := range sessionList.Items {
-		if !readAuthorizer.canRead(apiCtx, &s) {
+		canRead, err := readAuthorizer.canRead(apiCtx, &s)
+		if err != nil {
+			reqLog.Errorw("Failed to evaluate debug session read authorization",
+				"session", s.Name,
+				"namespace", s.Namespace,
+				"error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to evaluate debug session read authorization")
+			return
+		}
+		if !canRead {
 			continue
 		}
 		// Cluster filter
@@ -401,7 +410,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			}
 		}
 		// User filter
-		if user != "" && s.Spec.RequestedBy != user {
+		if user != "" && !debugSessionIdentityMatches(debugSessionReadIdentity{username: user, email: user}, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
 			continue
 		}
 		// Mine filter
@@ -479,7 +488,16 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	if !c.canReadDebugSession(apiCtx, session, identity) {
+	canRead, err := c.canReadDebugSession(apiCtx, session, identity)
+	if err != nil {
+		reqLog.Errorw("Failed to evaluate debug session read authorization",
+			"name", name,
+			"namespace", session.Namespace,
+			"error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to evaluate debug session read authorization")
+		return
+	}
+	if !canRead {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to read this debug session")
 		return
 	}
@@ -1067,88 +1085,101 @@ func (c *DebugSessionAPIController) newDebugSessionReadAuthorizer(identity debug
 	}
 }
 
-func (c *DebugSessionAPIController) canReadDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+func (c *DebugSessionAPIController) canReadDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) (bool, error) {
 	return c.newDebugSessionReadAuthorizer(identity).canRead(ctx, session)
 }
 
-func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *breakglassv1alpha1.DebugSession) bool {
+func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
 	identity := a.identity
 	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
-		return true
+		return true, nil
 	}
 	for _, participant := range session.Status.Participants {
 		if participant.LeftAt == nil && debugSessionIdentityMatches(identity, participant.User, participant.Email) {
-			return true
+			return true, nil
 		}
 	}
 	for _, invitee := range session.Spec.InvitedParticipants {
 		if debugSessionIdentityMatches(identity, invitee) {
-			return true
+			return true, nil
 		}
 	}
 	if session.Status.Approval != nil &&
 		debugSessionIdentityMatches(identity, session.Status.Approval.ApprovedBy, session.Status.Approval.RejectedBy) {
-		return true
+		return true, nil
 	}
 	return a.isExplicitDebugSessionApprover(ctx, session)
 }
 
-func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.Context, session *breakglassv1alpha1.DebugSession) bool {
+func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
 	identity := a.identity
-	if approvers := a.readApproversFromBinding(ctx, session); approvers != nil &&
+	approvers, err := a.readApproversFromBinding(ctx, session)
+	if err != nil {
+		return false, err
+	}
+	if approvers != nil &&
 		debugSessionApproversConfigured(approvers) &&
 		a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups) {
-		return true
+		return true, nil
 	}
 	if session.Status.ResolvedTemplate != nil &&
 		debugSessionApproversConfigured(session.Status.ResolvedTemplate.Approvers) &&
 		a.controller.checkApproverAuthorization(session.Status.ResolvedTemplate.Approvers, identity.username, identity.groups) {
-		return true
+		return true, nil
 	}
 
-	approvers := a.readApproversFromTemplate(ctx, session)
+	approvers, err = a.readApproversFromTemplate(ctx, session)
+	if err != nil {
+		return false, err
+	}
 	return debugSessionApproversConfigured(approvers) &&
-		a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups)
+		a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups), nil
 }
 
-func (a *debugSessionReadAuthorizer) readApproversFromBinding(ctx context.Context, session *breakglassv1alpha1.DebugSession) *breakglassv1alpha1.DebugSessionApprovers {
+func (a *debugSessionReadAuthorizer) readApproversFromBinding(ctx context.Context, session *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.DebugSessionApprovers, error) {
 	if session.Spec.BindingRef == nil {
-		return nil
+		return nil, nil
 	}
 	key := ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}
 	if approvers, ok := a.bindingApprovers[key]; ok {
-		return approvers
+		return approvers, nil
 	}
 
 	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
 	if err := a.controller.reader().Get(ctx, key, binding); err != nil {
-		a.controller.log.Debugw("Could not fetch binding while checking debug session read authorization",
-			"session", session.Name, "binding", key.String(), "error", err)
+		if !apierrors.IsNotFound(err) {
+			a.controller.log.Warnw("Could not fetch binding while checking debug session read authorization",
+				"session", session.Name, "binding", key.String(), "error", err)
+			return nil, fmt.Errorf("fetch debug session binding %s: %w", key.String(), err)
+		}
 		a.bindingApprovers[key] = nil
-		return nil
+		return nil, nil
 	}
 	a.bindingApprovers[key] = binding.Spec.Approvers
-	return binding.Spec.Approvers
+	return binding.Spec.Approvers, nil
 }
 
-func (a *debugSessionReadAuthorizer) readApproversFromTemplate(ctx context.Context, session *breakglassv1alpha1.DebugSession) *breakglassv1alpha1.DebugSessionApprovers {
+func (a *debugSessionReadAuthorizer) readApproversFromTemplate(ctx context.Context, session *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.DebugSessionApprovers, error) {
 	templateRef := session.Spec.TemplateRef
 	if templateRef == "" {
-		return nil
+		return nil, nil
 	}
 	if approvers, ok := a.templateApprovers[templateRef]; ok {
-		return approvers
+		return approvers, nil
 	}
 
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	if err := a.controller.reader().Get(ctx, ctrlclient.ObjectKey{Name: templateRef}, template); err != nil {
-		a.controller.log.Debugw("Could not fetch template while checking debug session read authorization",
-			"session", session.Name, "template", templateRef, "error", err)
+		if !apierrors.IsNotFound(err) {
+			a.controller.log.Warnw("Could not fetch template while checking debug session read authorization",
+				"session", session.Name, "template", templateRef, "error", err)
+			return nil, fmt.Errorf("fetch debug session template %s: %w", templateRef, err)
+		}
 		a.templateApprovers[templateRef] = nil
-		return nil
+		return nil, nil
 	}
 	a.templateApprovers[templateRef] = template.Spec.Approvers
-	return template.Spec.Approvers
+	return template.Spec.Approvers, nil
 }
 
 func debugSessionApproversConfigured(approvers *breakglassv1alpha1.DebugSessionApprovers) bool {
