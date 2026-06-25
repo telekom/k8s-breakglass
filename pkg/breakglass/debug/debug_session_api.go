@@ -153,7 +153,7 @@ func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, n
 		session := &breakglassv1alpha1.DebugSession{}
 		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespaceHint}, session); err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil, apierrors.NewNotFound(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, name)
+				return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions"}, name)
 			}
 			return nil, err
 		}
@@ -639,6 +639,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		)
 		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' is not ready for debug sessions", req.Cluster))
 		return
+	}
+	if req.Cluster != requestedClusterConfig.Name {
+		reqLog.Debugw("Resolved debug session cluster alias",
+			"requestedCluster", req.Cluster,
+			"clusterConfig", requestedClusterConfig.Name,
+			"tenant", requestedClusterConfig.Spec.Tenant,
+		)
+		req.Cluster = requestedClusterConfig.Name
 	}
 	readyClusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 

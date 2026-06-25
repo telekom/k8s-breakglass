@@ -3159,6 +3159,58 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "not ready")
 	})
 
+	t.Run("normalizes tenant match to ClusterConfig name", func(t *testing.T) {
+		templateWithCanonicalCluster := template.DeepCopy()
+		templateWithCanonicalCluster.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Clusters: []string{"cluster-config-production"},
+		}
+		tenantCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-production", Namespace: "tenant-control"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "production",
+			},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateWithCanonicalCluster, tenantCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "tenant-control", response.Namespace)
+		assert.Equal(t, "cluster-config-production", response.Spec.Cluster)
+		assert.Equal(t, "cluster-config-production", response.Labels[DebugClusterLabelKey])
+	})
+
 	t.Run("rejects session when ClusterConfig is missing", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
