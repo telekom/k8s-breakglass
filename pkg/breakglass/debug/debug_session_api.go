@@ -18,7 +18,6 @@ package debug
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +30,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
@@ -206,26 +206,7 @@ type ApprovalRequest struct {
 }
 
 func decodeDebugJSONStrict(r io.Reader, dest interface{}) error {
-	if r == nil {
-		return io.EOF
-	}
-
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(dest); err != nil {
-		return err
-	}
-
-	var extra struct{}
-	if err := dec.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("unexpected extra JSON input")
-		}
-		return err
-	}
-
-	return nil
+	return jsonutil.DecodeStrict(r, dest)
 }
 
 func validateCreateDebugSessionRequest(req CreateDebugSessionRequest) error {

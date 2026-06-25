@@ -1210,10 +1210,11 @@ func TestHandleApproveDebugSession_RejectsUnknownJSONFields(t *testing.T) {
 	})
 	api := router.Group("/api")
 	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	require.NoError(t, ctrl.Register(rg))
 
 	body := bytes.NewBuffer([]byte(`{"reason":"valid","ignored":true}`))
-	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", body)
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", body)
+	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
@@ -1480,10 +1481,11 @@ func TestHandleRejectDebugSession_RejectsTrailingJSON(t *testing.T) {
 	})
 	api := router.Group("/api")
 	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	require.NoError(t, ctrl.Register(rg))
 
 	body := bytes.NewBuffer([]byte(`{"reason":"valid"} {"reason":"extra"}`))
-	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/reject?namespace=default", body)
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/reject?namespace=default", body)
+	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 

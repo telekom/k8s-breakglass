@@ -998,7 +998,7 @@ Approves a session in `PendingApproval` state.
 POST /api/debugSessions/:name/reject
 ```
 
-**Request Body:**
+**Request Body (optional):**
 
 ```json
 {
