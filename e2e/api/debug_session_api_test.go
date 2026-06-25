@@ -3611,9 +3611,17 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
+		foundCreatedSession := false
 		for _, s := range result.Sessions {
-			assert.Equal(t, helpers.TestUsers.DebugSessionRequester.Email, s.RequestedBy)
+			assert.Contains(t,
+				[]string{helpers.TestUsers.DebugSessionRequester.Username, helpers.TestUsers.DebugSessionRequester.Email},
+				s.RequestedBy,
+				"user filter should only return sessions for the requested identity")
+			if s.Name == session.Name {
+				foundCreatedSession = true
+			}
 		}
+		assert.True(t, foundCreatedSession, "user filter should include the session created by the queried identity")
 		t.Logf("Filter by user: found %d sessions", result.Total)
 	})
 
