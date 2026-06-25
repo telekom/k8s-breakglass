@@ -558,53 +558,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		req.Reason = breakglass.SanitizeReasonText(req.Reason)
 	}
 
-	// Validate template exists
-	template := &breakglassv1alpha1.DebugSessionTemplate{}
-	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
-	defer cancel()
-	authorizationReader := c.reader()
-
-	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
-		if apierrors.IsNotFound(err) {
-			reqLog.Warnw("Template not found", "templateRef", req.TemplateRef)
-			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("template '%s' not found", req.TemplateRef))
-			return
-		}
-		reqLog.Errorw("Failed to get template", "template", req.TemplateRef, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate template")
-		return
-	}
-
-	// Fetch bindings and cluster configs to check if cluster is allowed via template or binding
-	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
-	var clusterConfigList breakglassv1alpha1.ClusterConfigList
-	if err := authorizationReader.List(apiCtx, &bindingList); err != nil {
-		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
-		return
-	}
-	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
-		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
-		return
-	}
-
-	// Build cluster name -> ClusterConfig map for binding resolution
-	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(clusterConfigList.Items))
-	for i := range clusterConfigList.Items {
-		cc := &clusterConfigList.Items[i]
-		clusterMap[cc.Name] = cc
-	}
-	if cc, exists := clusterMap[req.Cluster]; exists && !isDebugClusterConfigReady(cc) {
-		reqLog.Warnw("ClusterConfig is not ready for debug session creation",
-			"cluster", req.Cluster,
-			"namespace", cc.Namespace,
-		)
-		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' is not ready for debug sessions", req.Cluster))
-		return
-	}
-	readyClusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
-
 	// Get current user from context before authorization checks.
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
@@ -640,6 +593,54 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			userGroups = g
 		}
 	}
+
+	// Validate template exists
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
+	defer cancel()
+	authorizationReader := c.reader()
+
+	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
+		if apierrors.IsNotFound(err) {
+			reqLog.Warnw("Template not found", "templateRef", req.TemplateRef)
+			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("template '%s' not found", req.TemplateRef))
+			return
+		}
+		reqLog.Errorw("Failed to get template", "template", req.TemplateRef, "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate template")
+		return
+	}
+
+	// Fetch bindings and cluster configs to check if cluster is allowed via template or binding
+	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
+	if err := authorizationReader.List(apiCtx, &bindingList); err != nil {
+		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
+		return
+	}
+	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
+		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
+		return
+	}
+
+	requestedClusterConfig := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
+	if requestedClusterConfig == nil {
+		reqLog.Warnw("ClusterConfig not found for debug session creation", "cluster", req.Cluster)
+		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' is not configured for debug sessions", req.Cluster))
+		return
+	}
+	if !isDebugClusterConfigReady(requestedClusterConfig) {
+		reqLog.Warnw("ClusterConfig is not ready for debug session creation",
+			"cluster", req.Cluster,
+			"namespace", requestedClusterConfig.Namespace,
+			"clusterConfig", requestedClusterConfig.Name,
+		)
+		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' is not ready for debug sessions", req.Cluster))
+		return
+	}
+	readyClusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
 	// Check if cluster is allowed by template or any binding
 	var resolvedBinding *breakglassv1alpha1.DebugSessionClusterBinding
@@ -871,18 +872,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	sessionName := fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(currentUserStr), naming.ToRFC1123Subdomain(req.Cluster), time.Now().Unix())
 
-	// Determine namespace from ClusterConfig for the requested cluster
-	// DebugSessions should be in the same namespace as the ClusterConfig
-	namespace := ""
-	for _, cc := range clusterConfigList.Items {
-		if cc.Name == req.Cluster || cc.Spec.Tenant == req.Cluster {
-			namespace = cc.Namespace
-			break
-		}
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	// DebugSessions live in the namespace of the ready ClusterConfig selected above.
+	namespace := requestedClusterConfig.Namespace
 
 	// Create the debug session
 	session := &breakglassv1alpha1.DebugSession{
