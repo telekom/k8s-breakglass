@@ -912,10 +912,12 @@ POST /api/debugSessions
 | `selectedSchedulingOption` | string | No | Name of a scheduling option from template's `schedulingOptions`; restricted options must allow the requester's username, email, or group |
 | `invitedParticipants` | array | No | List of users to invite to the session |
 
+JSON bodies for debug-session create requests must contain only known field names and exactly one JSON object. Unknown fields, malformed JSON, and trailing JSON values are rejected with `400 Bad Request`.
+
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**
-- `400 Bad Request`: Invalid template, malformed or missing binding, invalid cluster, invalid duration, or invalid scheduling option
+- `400 Bad Request`: Unknown JSON fields, malformed request body, invalid template, malformed or missing binding, invalid cluster, invalid duration, or invalid scheduling option
 - `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints
 
 ### Join Debug Session
@@ -984,6 +986,8 @@ POST /api/debugSessions/:name/approve
 }
 ```
 
+When present, the optional approval body must contain only the known `reason` field and exactly one JSON object.
+
 Approves a session in `PendingApproval` state.
 
 **Response:** Updated `DebugSession` object with `state: Approved`.
@@ -994,7 +998,7 @@ Approves a session in `PendingApproval` state.
 POST /api/debugSessions/:name/reject
 ```
 
-**Request Body:**
+**Request Body (optional):**
 
 ```json
 {
@@ -1003,6 +1007,8 @@ POST /api/debugSessions/:name/reject
 ```
 
 Rejects a session in `PendingApproval` state.
+
+When present, the rejection body must contain only the known `reason` field and exactly one JSON object.
 
 **Response:** Updated `DebugSession` object with `state: Rejected`.
 

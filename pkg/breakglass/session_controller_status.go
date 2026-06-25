@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
@@ -47,7 +47,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// Ignore errors; payload is optional. Guard against nil Request.Body which can occur in tests/clients.
 	if c.Request != nil && c.Request.Body != nil {
 		if err := decodeJSONStrict(c.Request.Body, &approverPayload); err != nil {
-			if !errors.Is(err, io.EOF) {
+			if !errors.Is(err, jsonutil.ErrEmptyBody) {
 				reqLog.Debugw("Failed to decode optional approver payload (using empty values)", "error", err)
 			}
 		}

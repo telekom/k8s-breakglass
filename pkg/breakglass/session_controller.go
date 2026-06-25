@@ -2,7 +2,6 @@ package breakglass
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
@@ -173,23 +173,7 @@ func (wc *BreakglassSessionController) Register(rg *gin.RouterGroup) error {
 // It also ensures that the body contains exactly one JSON value and no trailing
 // non-whitespace content.
 func decodeJSONStrict(r io.Reader, dest interface{}) error {
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(dest); err != nil {
-		return err
-	}
-
-	// Ensure there is no extra non-whitespace data after the first JSON value.
-	var extra struct{}
-	if err := dec.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("unexpected extra JSON input")
-		}
-		return err
-	}
-
-	return nil
+	return jsonutil.DecodeStrict(r, dest)
 }
 
 // validateSessionRequest validates the session request input
