@@ -73,7 +73,7 @@ func newSessionWatchCommand() *cobra.Command {
 					User:       user,
 					Group:      group,
 					Mine:       mine,
-					Approver:   approver,
+					Approver:   sessionApproverOption(cmd, approver),
 					ActiveOnly: activeOnly,
 				}
 				if state != "" {
@@ -160,7 +160,7 @@ func newSessionListCommand() *cobra.Command {
 				User:         user,
 				Group:        group,
 				Mine:         mine,
-				Approver:     approver,
+				Approver:     sessionApproverOption(cmd, approver),
 				ApprovedByMe: approvedByMe,
 				ActiveOnly:   activeOnly,
 			}
@@ -209,6 +209,14 @@ func newSessionListCommand() *cobra.Command {
 	cmd.Flags().IntVar(&pageSize, "page-size", 0, "Items per page")
 	cmd.Flags().BoolVar(&allPages, "all", false, "Disable pagination")
 	return cmd
+}
+
+func sessionApproverOption(cmd *cobra.Command, approver bool) *bool {
+	if !cmd.Flags().Changed("approver") {
+		return nil
+	}
+	value := approver
+	return &value
 }
 
 func newSessionGetCommand() *cobra.Command {
