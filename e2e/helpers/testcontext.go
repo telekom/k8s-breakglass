@@ -75,7 +75,8 @@ func (tc *TestContext) WithClient(cli client.Client, namespace string) *TestCont
 func (tc *TestContext) RequesterClient() *APIClient {
 	if tc.requesterClient == nil {
 		token := tc.tokenCache.GetToken(tc.t, tc.ctx, TestUsers.Requester)
-		tc.requesterClient = NewAPIClientWithAuth(token)
+		tc.requesterClient = NewAPIClientWithAuth(token).
+			WithTokenRefresh(tc.refreshTokenForUser(TestUsers.Requester))
 		if tc.cli != nil {
 			tc.requesterClient.WithCleanupClient(tc.cli, tc.namespace)
 		}
@@ -88,7 +89,8 @@ func (tc *TestContext) RequesterClient() *APIClient {
 func (tc *TestContext) ApproverClient() *APIClient {
 	if tc.approverClient == nil {
 		token := tc.tokenCache.GetToken(tc.t, tc.ctx, TestUsers.Approver)
-		tc.approverClient = NewAPIClientWithAuth(token)
+		tc.approverClient = NewAPIClientWithAuth(token).
+			WithTokenRefresh(tc.refreshTokenForUser(TestUsers.Approver))
 		if tc.cli != nil {
 			tc.approverClient.WithCleanupClient(tc.cli, tc.namespace)
 		}
@@ -99,7 +101,8 @@ func (tc *TestContext) ApproverClient() *APIClient {
 // ClientForUser returns an API client authenticated as the specified user.
 func (tc *TestContext) ClientForUser(user TestUser) *APIClient {
 	token := tc.tokenCache.GetToken(tc.t, tc.ctx, user)
-	c := NewAPIClientWithAuth(token)
+	c := NewAPIClientWithAuth(token).
+		WithTokenRefresh(tc.refreshTokenForUser(user))
 	if tc.cli != nil {
 		c.WithCleanupClient(tc.cli, tc.namespace)
 	}
@@ -143,4 +146,11 @@ func (tc *TestContext) RefreshApproverClient() *APIClient {
 	delete(tc.tokenCache.cache, TestUsers.Approver.Username)
 	tc.approverClient = nil
 	return tc.ApproverClient()
+}
+
+func (tc *TestContext) refreshTokenForUser(user TestUser) func(context.Context) string {
+	return func(ctx context.Context) string {
+		delete(tc.tokenCache.cache, user.Username)
+		return tc.tokenCache.GetToken(tc.t, ctx, user)
+	}
 }
