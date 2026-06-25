@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -239,6 +240,65 @@ func TestCanReadDebugSession_BindingApproverCanRead(t *testing.T) {
 
 	assert.True(t, ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "binding-approver@example.com"}))
 	assert.False(t, ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "other@example.com"}))
+}
+
+type debugSessionReadCountingClient struct {
+	ctrlclient.Client
+	gets map[string]int
+}
+
+func (c *debugSessionReadCountingClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	switch obj.(type) {
+	case *breakglassv1alpha1.DebugSessionTemplate:
+		c.gets["template:"+key.Name]++
+	case *breakglassv1alpha1.DebugSessionClusterBinding:
+		c.gets["binding:"+key.String()]++
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func TestDebugSessionReadAuthorizerCachesTemplateApprovers(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Groups: []string{"debug-approvers"},
+			},
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(template).
+		Build()
+	countingClient := &debugSessionReadCountingClient{
+		Client: baseClient,
+		gets:   map[string]int{},
+	}
+	ctrl := NewDebugSessionAPIController(logger, countingClient, nil, nil)
+	authorizer := ctrl.newDebugSessionReadAuthorizer(debugSessionReadIdentity{
+		username: "approver@example.com",
+		groups:   []string{"debug-approvers"},
+	})
+
+	sessionA := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "shared-template",
+			RequestedBy: "alice@example.com",
+		},
+	}
+	sessionB := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-b"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "shared-template",
+			RequestedBy: "bob@example.com",
+		},
+	}
+
+	require.True(t, authorizer.canRead(context.Background(), sessionA))
+	require.True(t, authorizer.canRead(context.Background(), sessionB))
+	require.Equal(t, 1, countingClient.gets["template:shared-template"])
 }
 
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {

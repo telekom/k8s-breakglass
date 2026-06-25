@@ -1834,11 +1834,7 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "alice", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=InvalidState", nil)
 		w := httptest.NewRecorder()
@@ -2074,6 +2070,21 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
+	t.Run("get missing session requires authenticated user context", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "", "", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/non-existent", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
 	t.Run("get existing session rejects unrelated user", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -2193,11 +2204,7 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-		router := gin.New()
-		rg := router.Group("/api/v1/" + ctrl.BasePath())
-		err := ctrl.Register(rg)
-		require.NoError(t, err)
+		router := debugSessionAPITestRouter(t, ctrl, "alice", "", nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/non-existent", nil)
 		w := httptest.NewRecorder()
@@ -6075,7 +6082,7 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 	}
 
 	t.Run("invalid state returns 400", func(t *testing.T) {
-		router := buildRouter("")
+		router := buildRouter("alice")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=INVALID_VALUE", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -6088,7 +6095,7 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 	})
 
 	t.Run("combo valid+invalid state returns 400", func(t *testing.T) {
-		router := buildRouter("")
+		router := buildRouter("alice")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Active&state=BOGUS", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -6097,6 +6104,15 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 		var resp map[string]interface{}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Contains(t, resp["error"], "BOGUS")
+	})
+
+	t.Run("unauthenticated invalid state returns 401 before validation", func(t *testing.T) {
+		router := buildRouter("")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=INVALID_VALUE", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
 	t.Run("valid state returns 200", func(t *testing.T) {
