@@ -75,7 +75,7 @@ func writeInPlace(path string, content []byte) (err error) {
 	if err := file.Truncate(0); err != nil {
 		return err
 	}
-	if _, err := file.Seek(0, 0); err != nil {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	return writeAll(file, content)
