@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -23,7 +24,7 @@ type SessionListOptions struct {
 	User         string
 	Group        string
 	Mine         bool
-	Approver     bool
+	Approver     *bool
 	ApprovedByMe bool
 	ActiveOnly   bool
 	State        []string
@@ -57,8 +58,8 @@ func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]b
 	if opts.Mine {
 		params.Set("mine", "true")
 	}
-	if opts.Approver {
-		params.Set("approver", "true")
+	if opts.Approver != nil {
+		params.Set("approver", strconv.FormatBool(*opts.Approver))
 	}
 	if opts.ApprovedByMe {
 		params.Set("approvedByMe", "true")

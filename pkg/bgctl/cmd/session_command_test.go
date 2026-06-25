@@ -40,6 +40,37 @@ func TestSessionListCommand_DefaultFlags(t *testing.T) {
 	assert.False(t, activeOnly)
 }
 
+func TestSessionApproverOption(t *testing.T) {
+	t.Run("unset flag omits option", func(t *testing.T) {
+		cmd := newSessionListCommand()
+		approver, _ := cmd.Flags().GetBool("approver")
+
+		assert.Nil(t, sessionApproverOption(cmd, approver))
+	})
+
+	t.Run("explicit true sets option true", func(t *testing.T) {
+		cmd := newSessionListCommand()
+		assert.NoError(t, cmd.ParseFlags([]string{"--approver=true"}))
+		approver, _ := cmd.Flags().GetBool("approver")
+
+		option := sessionApproverOption(cmd, approver)
+		if assert.NotNil(t, option) {
+			assert.True(t, *option)
+		}
+	})
+
+	t.Run("explicit false sets option false", func(t *testing.T) {
+		cmd := newSessionListCommand()
+		assert.NoError(t, cmd.ParseFlags([]string{"--approver=false"}))
+		approver, _ := cmd.Flags().GetBool("approver")
+
+		option := sessionApproverOption(cmd, approver)
+		if assert.NotNil(t, option) {
+			assert.False(t, *option)
+		}
+	})
+}
+
 func TestSessionWatchCommand_DefaultFlags(t *testing.T) {
 	cmd := newSessionWatchCommand()
 

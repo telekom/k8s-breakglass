@@ -46,6 +46,54 @@ func TestSessionsList(t *testing.T) {
 	require.Equal(t, "session-1", result[0].Name)
 }
 
+func TestSessionsList_ApproverQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     SessionListOptions
+		expected string
+	}{
+		{
+			name:     "unset omits approver query",
+			opts:     SessionListOptions{},
+			expected: "",
+		},
+		{
+			name: "true sends true",
+			opts: SessionListOptions{
+				Approver: boolPtr(true),
+			},
+			expected: "true",
+		},
+		{
+			name: "false sends false",
+			opts: SessionListOptions{
+				Approver: boolPtr(false),
+			},
+			expected: "false",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/api/breakglassSessions", r.URL.Path)
+				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, tt.expected, r.URL.Query().Get("approver"))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte("[]"))
+			}))
+			defer server.Close()
+
+			client, err := New(WithServer(server.URL))
+			require.NoError(t, err)
+
+			_, err = client.Sessions().List(context.Background(), tt.opts)
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestSessionsGet(t *testing.T) {
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
@@ -274,4 +322,8 @@ func TestSessionsList_WithFilters(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, result, 1)
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

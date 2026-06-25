@@ -180,6 +180,9 @@ bgctl session watch --approver --interval 2s
 # Watch your own sessions
 bgctl session watch --mine --interval 2s
 
+# Watch your own sessions without approver-only sessions
+bgctl session watch --mine --approver=false --interval 2s
+
 # Show full session JSON on changes
 bgctl session watch --mine --show-full
 
@@ -333,6 +336,9 @@ bgctl session request \
 # As approver
 bgctl session list --approver --state pending -o wide
 bgctl session approve session-abc123 --reason "Approved for emergency maintenance"
+
+# As requester, exclude sessions included only because you can approve them
+bgctl session list --mine --approver=false -o wide
 ```
 
 ### Debug a Pod
