@@ -25,6 +25,6 @@ jobs:
         with:
           # Avoid the moving latest tag breaking all PRs when an upstream ORT
           # image release is bad.
-          image: 'ghcr.io/oss-review-toolkit/ort:89.2.0'
+          image: 'ghcr.io/oss-review-toolkit/ort@sha256:e5ac80500e8f8e996f7e2163a1f7dcce133141bef581d24dc1f610254705d6e7'
           ort-config-repository: 'https://github.com/telekom/ort-config.git'
           log-level: info
