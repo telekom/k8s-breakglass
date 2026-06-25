@@ -625,7 +625,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	requestedClusterConfig := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
+	requestedClusterConfig, ambiguousTenant := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
+	if ambiguousTenant {
+		reqLog.Warnw("ClusterConfig tenant alias is ambiguous for debug session creation", "cluster", req.Cluster)
+		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' matches multiple ClusterConfig tenants", req.Cluster))
+		return
+	}
 	if requestedClusterConfig == nil {
 		reqLog.Warnw("ClusterConfig not found for debug session creation", "cluster", req.Cluster)
 		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' is not configured for debug sessions", req.Cluster))

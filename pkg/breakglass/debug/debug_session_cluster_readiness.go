@@ -30,12 +30,24 @@ func readyDebugClusterConfigMap(items []breakglassv1alpha1.ClusterConfig) (map[s
 	return clusterMap, clusterNames
 }
 
-func findDebugClusterConfigByNameOrTenant(items []breakglassv1alpha1.ClusterConfig, cluster string) *breakglassv1alpha1.ClusterConfig {
+func findDebugClusterConfigByNameOrTenant(items []breakglassv1alpha1.ClusterConfig, cluster string) (*breakglassv1alpha1.ClusterConfig, bool) {
 	for i := range items {
 		cc := &items[i]
-		if cc.Name == cluster || cc.Spec.Tenant == cluster {
-			return cc
+		if cc.Name == cluster {
+			return cc, false
 		}
 	}
-	return nil
+
+	var tenantMatch *breakglassv1alpha1.ClusterConfig
+	for i := range items {
+		cc := &items[i]
+		if cc.Spec.Tenant != cluster {
+			continue
+		}
+		if tenantMatch != nil {
+			return nil, true
+		}
+		tenantMatch = cc
+	}
+	return tenantMatch, false
 }

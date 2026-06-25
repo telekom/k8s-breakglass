@@ -3211,6 +3211,63 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, "cluster-config-production", response.Labels[DebugClusterLabelKey])
 	})
 
+	t.Run("rejects ambiguous ClusterConfig tenant aliases", func(t *testing.T) {
+		firstTenantCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-prod-a", Namespace: "tenant-a"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "production",
+			},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		secondTenantCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-prod-b", Namespace: "tenant-b"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "production",
+			},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template, firstTenantCluster, secondTenantCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "matches multiple ClusterConfig tenants")
+	})
+
 	t.Run("rejects session when ClusterConfig is missing", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
