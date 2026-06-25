@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
@@ -154,6 +155,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	}
 
 	logger, _ := zap.NewDevelopment()
+	mockAudit := NewMockAuditEmitter(true)
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
 		&sesmanager, &escmanager,
 		func(c *gin.Context) {
@@ -178,7 +180,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 			}
 
 			c.Next()
-		}, "/config/config.yaml", nil, cli)
+		}, "/config/config.yaml", nil, cli).WithAuditService(mockAudit)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated", "breakglass-standard-user"}, nil
@@ -237,6 +239,9 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status OK (200) got '%d' instead", response.StatusCode)
 	}
+	events := mockAudit.GetEvents()
+	assert.Contains(t, eventTypes(events), audit.EventSessionApproved)
+	assert.Contains(t, eventTypes(events), audit.EventSessionActivated)
 
 	// check if session status is approved
 	ses = getSession()
@@ -2479,6 +2484,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
+	mockAudit := NewMockAuditEmitter(true)
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			if c.Request.Method == http.MethodPost {
@@ -2496,7 +2502,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 				c.Set("username", "Owner")
 			}
 			c.Next()
-		}, "/config/config.yaml", nil, cli)
+		}, "/config/config.yaml", nil, cli).WithAuditService(mockAudit)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2541,6 +2547,9 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	if sessions[0].Status.State != breakglassv1alpha1.SessionStateRejected {
 		t.Fatalf("expected state rejected, got %s", sessions[0].Status.State)
 	}
+	types := eventTypes(mockAudit.GetEvents())
+	assert.Contains(t, types, audit.EventSessionDenied)
+	assert.NotContains(t, types, audit.EventSessionRejected)
 }
 
 func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {

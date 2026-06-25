@@ -66,6 +66,14 @@ func (m *MockAuditEmitter) Clear() {
 	m.events = make([]*audit.Event, 0)
 }
 
+func eventTypes(events []*audit.Event) []audit.EventType {
+	types := make([]audit.EventType, 0, len(events))
+	for _, event := range events {
+		types = append(types, event.Type)
+	}
+	return types
+}
+
 // testEscalationLookup implements EscalationLookup for root tests by wrapping a
 // controller-runtime client. It performs the same List+filter that EscalationManager
 // does, so tests using pre-seeded fake clients work identically.

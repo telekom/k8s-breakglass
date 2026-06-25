@@ -22,6 +22,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
@@ -35,6 +36,7 @@ type ScheduledSessionActivator struct {
 	log            *zap.SugaredLogger
 	sessionManager *SessionManager
 	mailService    MailEnqueuer
+	auditService   AuditEmitter
 	brandingName   string
 	disableEmail   bool
 }
@@ -52,6 +54,12 @@ func (ssa *ScheduledSessionActivator) WithMailService(mailService MailEnqueuer, 
 	ssa.mailService = mailService
 	ssa.brandingName = brandingName
 	ssa.disableEmail = disableEmail
+	return ssa
+}
+
+// WithAuditService sets the audit service for scheduled activation events.
+func (ssa *ScheduledSessionActivator) WithAuditService(auditService AuditEmitter) *ScheduledSessionActivator {
+	ssa.auditService = auditService
 	return ssa
 }
 
@@ -137,12 +145,47 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 		// Record metric for successful activation
 		metrics.SessionActivated.WithLabelValues(ses.Spec.Cluster).Inc()
 
+		ssa.emitSessionActivatedAuditEvent(ses)
+
 		// Send activation notification email
 		ssa.sendSessionActivatedEmail(ses)
 
 		// RBAC group will now be applied by the authorization controller
 		// (same mechanism as immediate sessions)
 	}
+}
+
+func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(session breakglassv1alpha1.BreakglassSession) {
+	if ssa.auditService == nil || !ssa.auditService.IsEnabled() {
+		return
+	}
+
+	ssa.auditService.Emit(context.Background(), &audit.Event{
+		Type:      audit.EventSessionActivated,
+		Severity:  audit.SeverityInfo,
+		Timestamp: time.Now().UTC(),
+		Actor: audit.Actor{
+			User: "system",
+		},
+		Target: audit.Target{
+			Kind:      "BreakglassSession",
+			Name:      session.Name,
+			Namespace: session.Namespace,
+			Cluster:   session.Spec.Cluster,
+		},
+		RequestContext: &audit.RequestContext{
+			SessionName:    session.Name,
+			EscalationName: session.Spec.GrantedGroup,
+		},
+		Details: map[string]interface{}{
+			"message":            "Scheduled session activated",
+			"cluster":            session.Spec.Cluster,
+			"grantedGroup":       session.Spec.GrantedGroup,
+			"state":              string(session.Status.State),
+			"scheduledStartTime": session.Spec.ScheduledStartTime,
+			"actualStartTime":    session.Status.ActualStartTime,
+		},
+	})
 }
 
 // sendSessionActivatedEmail sends a notification when a scheduled session becomes active

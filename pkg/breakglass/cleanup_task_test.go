@@ -869,6 +869,56 @@ func TestCleanupRoutine_clean(t *testing.T) {
 	routine.clean(context.Background())
 }
 
+func TestCleanupRoutine_cleanActivatesScheduledSessionWithoutAuditService(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	now := time.Now()
+	scheduledSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "scheduled-session",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:            "test-cluster",
+			User:               "alice@example.com",
+			GrantedGroup:       "admin",
+			ScheduledStartTime: &metav1.Time{Time: now.Add(-time.Minute)},
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			ApprovedAt: metav1.NewTime(now.Add(-2 * time.Minute)),
+			ExpiresAt:  metav1.NewTime(now.Add(time.Hour)),
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(scheduledSession).
+		WithStatusSubresource(
+			&breakglassv1alpha1.BreakglassSession{},
+			&breakglassv1alpha1.DebugSession{},
+		).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
+		Build()
+
+	manager := NewSessionManagerWithClient(fakeClient)
+	routine := CleanupRoutine{Log: logger, Manager: manager}
+
+	require.NotPanics(t, func() {
+		routine.clean(context.Background())
+	})
+
+	var updated breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{
+		Name:      scheduledSession.Name,
+		Namespace: scheduledSession.Namespace,
+	}, &updated))
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updated.Status.State)
+}
+
 func TestCleanupRoutine_DebugSessionRetentionPeriod(t *testing.T) {
 	// Verify the default retention period is set correctly
 	assert.Equal(t, 168*time.Hour, DebugSessionRetentionPeriod, "Default retention period should be 7 days")

@@ -121,6 +121,9 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 	if cr.Manager != nil {
 		activator := NewScheduledSessionActivator(cr.Log, cr.Manager).
 			WithMailService(cr.MailService, cr.BrandingName, cr.DisableEmail)
+		if cr.AuditService != nil {
+			activator = activator.WithAuditService(cr.AuditService)
+		}
 		activator.ActivateScheduledSessions()
 	}
 
