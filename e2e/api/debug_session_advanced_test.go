@@ -154,8 +154,9 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
-							Name:  "debug",
-							Image: helpers.GetTmuxDebugImage(),
+							Name:            "debug",
+							Image:           helpers.GetTmuxDebugImage(),
+							ImagePullPolicy: corev1.PullIfNotPresent,
 						},
 					},
 				},
