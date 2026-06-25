@@ -958,12 +958,7 @@ func TestHandleGetDebugSession_NotFound(t *testing.T) {
 		Build()
 
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	api := router.Group("/api")
-	rg := api.Group("/debugSessions")
-	_ = ctrl.Register(rg)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user@example.com", "", nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/debugSessions/non-existent", nil)
 	rr := httptest.NewRecorder()
