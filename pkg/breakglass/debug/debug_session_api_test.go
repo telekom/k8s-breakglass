@@ -5789,10 +5789,23 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		},
 	}
 
+	readyProductionCluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+					Status: metav1.ConditionTrue,
+					Reason: "Verified",
+				},
+			},
+		},
+	}
+
 	t.Run("create session with valid extraDeployValues", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -5836,7 +5849,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	t.Run("create session fails with invalid boolean value", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -5870,7 +5883,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	t.Run("create session fails with missing required variable", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -5904,7 +5917,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	t.Run("create session fails with invalid select option", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -5938,7 +5951,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	t.Run("create session fails with number out of range", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -5973,7 +5986,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	t.Run("create session fails with pattern validation failure", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -6007,7 +6020,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	t.Run("create session with defaults for optional variables", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -6046,7 +6059,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	t.Run("create session fails with invalid storage size", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithVariables).
+			WithObjects(&templateWithVariables, readyProductionCluster.DeepCopy()).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
