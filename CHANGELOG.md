@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI: pin ORT scan image**: The ORT workflow now uses a digest-pinned `ghcr.io/oss-review-toolkit/ort:89.2.0` image instead of the moving `latest` tag, avoiding transient ORT CLI startup failures from mutable container image updates.
 - **Session drop preserves terminal audit history**: Owner `POST /api/breakglassSessions/{name}/drop` now rejects sessions that are already in a terminal state instead of rewriting Rejected, Expired, IdleExpired, Withdrawn, or ApprovalTimeout sessions to `Withdrawn`.
 - **Session retention is terminal-state only**: `RetainedUntil` is no longer set while sessions are pending, active, or waiting for a scheduled start. Cleanup and webhook session filtering now ignore stale retained-until timestamps on live sessions, and automatic time/idle expiry stamps retention only after the session enters a terminal state.
 - **Debug session renewal max duration enforcement**: Renewing a debug session now rejects extensions that would move `status.expiresAt` past `status.startsAt + maxDuration`, closing a gap where near-limit sessions could be extended beyond the configured maximum total duration.
