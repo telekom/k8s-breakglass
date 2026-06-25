@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/privatefile"
 	"github.com/zalando/go-keyring"
 )
 
@@ -127,7 +127,7 @@ func SaveTokenCache(path string, cache *TokenCache) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal token cache: %w", err)
 	}
-	if err := writePrivateFile(path, content); err != nil {
+	if err := privatefile.Write(path, content); err != nil {
 		return fmt.Errorf("failed to write token cache: %w", err)
 	}
 	return nil
@@ -139,44 +139,4 @@ func normalizeTokenStorage(mode string) string {
 		return tokenStoreKeychain
 	}
 	return val
-}
-
-func writePrivateFile(path string, content []byte) (err error) {
-	dir := filepath.Dir(path)
-	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := file.Name()
-	closed := false
-	defer func() {
-		if !closed && err != nil {
-			_ = file.Close()
-		} else if !closed {
-			if closeErr := file.Close(); err == nil && closeErr != nil {
-				err = closeErr
-			}
-		}
-		if err != nil {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := file.Chmod(0o600); err != nil {
-		return err
-	}
-	for len(content) > 0 {
-		n, err := file.Write(content)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-		content = content[n:]
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	closed = true
-	return os.Rename(tmpPath, path)
 }

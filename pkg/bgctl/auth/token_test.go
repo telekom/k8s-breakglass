@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -55,6 +56,7 @@ func TestSaveTokenCacheInitializesMap(t *testing.T) {
 func TestSaveTokenCacheTightensExistingFileMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tokens.json")
 	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o644))
 
 	cache := &TokenCache{Tokens: map[string]StoredToken{
 		"provider": {
@@ -66,6 +68,37 @@ func TestSaveTokenCacheTightensExistingFileMode(t *testing.T) {
 	}}
 	require.NoError(t, SaveTokenCache(path, cache))
 
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestSaveTokenCacheExistingWritableFileInReadOnlyDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permission semantics differ on Windows")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
+	require.NoError(t, os.Chmod(path, 0o600))
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+	})
+
+	cache := &TokenCache{Tokens: map[string]StoredToken{
+		"provider": {
+			AccessToken: "access-token",
+			TokenType:   "Bearer",
+			Expiry:      time.Now().UTC(),
+		},
+	}}
+	require.NoError(t, SaveTokenCache(path, cache))
+
+	loaded, err := LoadTokenCache(path)
+	require.NoError(t, err)
+	require.Equal(t, "access-token", loaded.Tokens["provider"].AccessToken)
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
