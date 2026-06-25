@@ -65,6 +65,16 @@ func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, us
 	return router
 }
 
+func TestBuildDebugSessionNameUsesSubsecondEntropy(t *testing.T) {
+	base := time.Unix(1782420779, 1)
+	first := buildDebugSessionName("debug-session-requester", "tenant-a", base)
+	second := buildDebugSessionName("debug-session-requester", "tenant-a", base.Add(100*time.Millisecond))
+
+	require.NotEqual(t, first, second)
+	require.True(t, strings.HasPrefix(first, "debug-debug-session-requester-tenant-a-"))
+	require.True(t, strings.HasPrefix(second, "debug-debug-session-requester-tenant-a-"))
+}
+
 // Helper to create a test Gin context with user info
 // Keeping for potential future use in tests
 var _ = func(w *httptest.ResponseRecorder, user, email string, groups []string) (*gin.Context, *gin.Engine) {

@@ -883,7 +883,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	sessionName := fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(currentUserStr), naming.ToRFC1123Subdomain(req.Cluster), time.Now().Unix())
+	sessionName := buildDebugSessionName(currentUserStr, req.Cluster, time.Now())
 
 	// DebugSessions live in the namespace of the ready ClusterConfig selected above.
 	namespace := requestedClusterConfig.Namespace
@@ -1019,6 +1019,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
 	}
 	ctx.JSON(http.StatusCreated, response)
+}
+
+func buildDebugSessionName(user, cluster string, now time.Time) string {
+	return fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(user), naming.ToRFC1123Subdomain(cluster), now.UnixNano())
 }
 
 // validDebugSessionStates is the canonical set of allowed DebugSession state values
