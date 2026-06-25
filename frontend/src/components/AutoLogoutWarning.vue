@@ -198,6 +198,7 @@ export default {
 
       if (nearestExpiryMs === null) {
         show.value = false;
+        dismissed.value = false;
         return;
       }
 

@@ -37,6 +37,8 @@ type MockAuth = {
 
 type AutoLogoutWarningVm = {
   reauthenticate: () => Promise<void>;
+  dismiss: () => void;
+  show: boolean;
 };
 
 describe("AutoLogoutWarning", () => {
@@ -206,6 +208,44 @@ describe("AutoLogoutWarning", () => {
     await wrapper.vm.$nextTick();
 
     expect((wrapper.vm as unknown as { show: boolean }).show).toBe(true);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
+  });
+
+  it("resets dismissal when active OIDC user storage disappears", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const userKey = "oidc.user:/api/oidc/authority:corp-ui";
+    const auth = createMockAuth({
+      getActiveOIDCUserStorageKeys: vi.fn(() => [userKey]),
+    });
+    const setExpiringUser = () => {
+      sessionStorage.setItem(
+        userKey,
+        JSON.stringify({
+          expires_at: Math.floor((Date.now() + 10_000) / 1000),
+        }),
+      );
+    };
+    setExpiringUser();
+    wrapper = mountWithAuth(auth);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(true);
+
+    (wrapper.vm as unknown as AutoLogoutWarningVm).dismiss();
+    await wrapper.vm.$nextTick();
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(false);
+
+    sessionStorage.removeItem(userKey);
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(false);
+
+    setExpiringUser();
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(true);
     expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
   });
 
