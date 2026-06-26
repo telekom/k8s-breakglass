@@ -1433,6 +1433,95 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 	}
 }
 
+func TestSessionApproveRejectInvalidOptionalBody(t *testing.T) {
+	tests := []struct {
+		name         string
+		action       string
+		body         string
+		wantResponse string
+	}{
+		{
+			name:         "approve rejects unknown fields",
+			action:       "approve",
+			body:         `{"reasn":"typo"}`,
+			wantResponse: "unknown field",
+		},
+		{
+			name:         "reject rejects trailing JSON",
+			action:       "reject",
+			body:         `{"reason":"valid"} {"reason":"extra"}`,
+			wantResponse: "invalid request body",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+			}
+
+			session := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "pending-session", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "test-cluster",
+					User:         "requester@example.com",
+					GrantedGroup: "test-group",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:         breakglassv1alpha1.SessionStatePending,
+					TimeoutAt:     metav1.Now(),
+					RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+				},
+			}
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-escalation", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+					EscalatedGroup: "test-group",
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+				},
+			}
+
+			cli := builder.
+				WithObjects(session, escalation).
+				WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+				Build()
+			sesmanager := SessionManager{Client: cli}
+			escmanager := testEscalationLookup{Client: cli}
+
+			logger, _ := zap.NewDevelopment()
+			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+				func(c *gin.Context) {
+					c.Set("email", "approver@example.com")
+					c.Set("username", "approver@example.com")
+					c.Next()
+				}, "/config/config.yaml", nil, cli)
+			ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+				return []string{"system:authenticated"}, nil
+			}
+
+			engine := gin.New()
+			require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+			req, err := http.NewRequest(http.MethodPost, "/breakglassSessions/pending-session/"+tt.action, bytes.NewBufferString(tt.body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Contains(t, w.Body.String(), tt.wantResponse)
+
+			var fetched breakglassv1alpha1.BreakglassSession
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &fetched))
+			require.Equal(t, breakglassv1alpha1.SessionStatePending, fetched.Status.State)
+			require.Empty(t, fetched.Status.Approver)
+			require.Empty(t, fetched.Status.ApprovalReason)
+		})
+	}
+}
+
 // TestApprovalAuthorizationDetailedResponses verifies that approval denials return appropriate
 // HTTP status codes and specific error messages based on the denial reason.
 // - 401 Unauthorized: authentication failures (can't identify user)

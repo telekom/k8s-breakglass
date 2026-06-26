@@ -44,11 +44,13 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	var approverPayload struct {
 		Reason string `json:"reason,omitempty"`
 	}
-	// Ignore errors; payload is optional. Guard against nil Request.Body which can occur in tests/clients.
+	// Empty bodies are valid, but malformed non-empty bodies must fail closed
+	// so client typos cannot silently approve or reject a session.
 	if c.Request != nil && c.Request.Body != nil {
 		if err := decodeJSONStrict(c.Request.Body, &approverPayload); err != nil {
 			if !errors.Is(err, jsonutil.ErrEmptyBody) {
-				reqLog.Debugw("Failed to decode optional approver payload (using empty values)", "error", err)
+				apiresponses.RespondBadRequest(c, "invalid request body: "+err.Error())
+				return
 			}
 		}
 	}

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **BreakglassSession approval body validation**: Classic session approve and reject endpoints now reject malformed optional approver bodies, unknown JSON fields, and trailing JSON values instead of approving or rejecting with silently discarded payloads.
 - **DebugSession API request body validation**: Debug session create, approve, and reject endpoints now reject unknown JSON fields, trailing JSON values, and malformed optional approval bodies instead of silently ignoring client typos or invalid payloads.
 - **Debug session read authorization**: `GET /api/v1/debugSessions` now returns only sessions visible to the authenticated caller, and `GET /api/v1/debugSessions/{name}` rejects unrelated authenticated users with `403 Forbidden` instead of exposing debug session spec/status details.
 - **DebugSession scheduling option ACL enforcement**: `DebugSessionTemplate` and `DebugSessionClusterBinding` scheduling option `allowedUsers` and `allowedGroups` are now enforced at session creation for selected options and required defaults. Unauthorized requests receive `403 Forbidden` instead of creating a debug session with restricted scheduling constraints.
