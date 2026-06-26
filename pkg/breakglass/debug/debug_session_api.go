@@ -785,6 +785,18 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	effectiveRequestReason := effectiveDebugRequestReasonConfig(template, resolvedBinding)
+	if err := validateDebugRequestReason(req.Reason, effectiveRequestReason); err != nil {
+		reqLog.Warnw("Debug session request reason is invalid",
+			"templateRef", req.TemplateRef,
+			"bindingRef", req.BindingRef,
+			"error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+
+	effectiveApprovalReason := effectiveDebugApprovalReasonConfig(template, resolvedBinding)
+
 	// Track warnings for defaults that were applied
 	var warnings []string
 
@@ -931,12 +943,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Copy reason configurations as snapshots so session is self-contained
-	// This avoids needing to look up the template later
-	if template.Spec.RequestReason != nil {
-		session.Spec.RequestReasonConfig = template.Spec.RequestReason.DeepCopy()
+	// This avoids needing to look up the template or binding later.
+	if effectiveRequestReason != nil {
+		session.Spec.RequestReasonConfig = effectiveRequestReason.DeepCopy()
 	}
-	if template.Spec.ApprovalReason != nil {
-		session.Spec.ApprovalReasonConfig = template.Spec.ApprovalReason.DeepCopy()
+	if effectiveApprovalReason != nil {
+		session.Spec.ApprovalReasonConfig = effectiveApprovalReason.DeepCopy()
 	}
 
 	// Check binding session limits if a binding is resolved
@@ -1263,6 +1275,66 @@ func (a *debugSessionReadAuthorizer) readApproversFromTemplate(ctx context.Conte
 
 func debugSessionApproversConfigured(approvers *breakglassv1alpha1.DebugSessionApprovers) bool {
 	return approvers != nil && (len(approvers.Users) > 0 || len(approvers.Groups) > 0)
+}
+
+func effectiveDebugRequestReasonConfig(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugRequestReasonConfig {
+	if binding != nil && binding.Spec.RequestReason != nil {
+		return binding.Spec.RequestReason
+	}
+	if template != nil {
+		return template.Spec.RequestReason
+	}
+	return nil
+}
+
+func effectiveDebugApprovalReasonConfig(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugApprovalReasonConfig {
+	if binding != nil && binding.Spec.ApprovalReason != nil {
+		return binding.Spec.ApprovalReason
+	}
+	if template != nil {
+		return template.Spec.ApprovalReason
+	}
+	return nil
+}
+
+func validateDebugRequestReason(reason string, cfg *breakglassv1alpha1.DebugRequestReasonConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	reason = strings.TrimSpace(reason)
+	if cfg.Mandatory && reason == "" {
+		return errors.New("missing required request reason")
+	}
+	return validateDebugReasonLength(reason, cfg.MinLength, cfg.MaxLength)
+}
+
+func validateDebugApprovalReason(reason string, cfg *breakglassv1alpha1.DebugApprovalReasonConfig, rejection bool) error {
+	if cfg == nil {
+		return nil
+	}
+	reason = strings.TrimSpace(reason)
+	required := cfg.Mandatory || (rejection && cfg.MandatoryForRejection)
+	if required && reason == "" {
+		if rejection {
+			return errors.New("missing required rejection reason")
+		}
+		return errors.New("missing required approval reason")
+	}
+	return validateDebugReasonLength(reason, cfg.MinLength, 0)
+}
+
+func validateDebugReasonLength(reason string, minLength, maxLength int32) error {
+	if reason == "" {
+		return nil
+	}
+	reasonLength := len([]rune(reason))
+	if minLength > 0 && reasonLength < int(minLength) {
+		return fmt.Errorf("reason must be at least %d characters", minLength)
+	}
+	if maxLength > 0 && reasonLength > int(maxLength) {
+		return fmt.Errorf("reason must be at most %d characters", maxLength)
+	}
+	return nil
 }
 
 func stringInSlice(value string, values []string) bool {

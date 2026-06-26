@@ -149,6 +149,16 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		}
 	}
 
+	approverReasonAction := "approval"
+	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+		approverReasonAction = "rejection"
+	}
+	if err := validateBreakglassApprovalReason(approverPayload.Reason, bs.Spec.ApprovalReasonConfig, approverReasonAction); err != nil {
+		reqLog.Warnw("Breakglass session approver reason is invalid", "session", bs.Name, "action", approverReasonAction, "error", err)
+		apiresponses.RespondUnprocessableEntity(c, err.Error())
+		return
+	}
+
 	switch sesCondition {
 	case breakglassv1alpha1.SessionConditionTypeApproved:
 		// Clear any previous rejection timestamp so the approved state is canonical.
@@ -559,6 +569,16 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 		return fmt.Errorf("session limit reached: maximum %d total active sessions allowed (%s)", limit, source)
 	}
 
+	return nil
+}
+
+func validateBreakglassApprovalReason(reason string, cfg *breakglassv1alpha1.ReasonConfig, action string) error {
+	if cfg == nil || !cfg.Mandatory {
+		return nil
+	}
+	if strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("missing required %s reason", action)
+	}
 	return nil
 }
 

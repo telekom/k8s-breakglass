@@ -3104,6 +3104,121 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "namespace is deprecated alias for targetNamespace")
 	})
 
+	t.Run("create session rejects missing mandatory request reason", func(t *testing.T) {
+		mandatoryTemplate := template.DeepCopy()
+		mandatoryTemplate.Name = "mandatory-reason-debug"
+		mandatoryTemplate.Spec.RequestReason = &breakglassv1alpha1.DebugRequestReasonConfig{
+			Mandatory: true,
+			MinLength: 5,
+			MaxLength: 100,
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(mandatoryTemplate, readyProductionCluster.DeepCopy()).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"mandatory-reason-debug","cluster":"production","reason":"   "}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "missing required request reason")
+	})
+
+	t.Run("create session enforces and stores binding request reason override", func(t *testing.T) {
+		templateViaBinding := template.DeepCopy()
+		templateViaBinding.Name = "binding-reason-debug"
+		templateViaBinding.Spec.Allowed = nil
+		templateViaBinding.Spec.RequestReason = &breakglassv1alpha1.DebugRequestReasonConfig{
+			Mandatory: false,
+			MinLength: 0,
+			MaxLength: 100,
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "reason-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "binding-reason-debug"},
+				Clusters:    []string{"production"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+				RequestReason: &breakglassv1alpha1.DebugRequestReasonConfig{
+					Mandatory: true,
+					MinLength: 12,
+					MaxLength: 80,
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaBinding, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		missingBody := `{"templateRef":"binding-reason-debug","cluster":"production","bindingRef":"breakglass/reason-binding"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(missingBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "missing required request reason")
+
+		shortBody := `{"templateRef":"binding-reason-debug","cluster":"production","bindingRef":"breakglass/reason-binding","reason":"too short"}`
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(shortBody))
+		req.Header.Set("Content-Type", "application/json")
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "reason must be at least 12 characters")
+
+		validBody := `{"templateRef":"binding-reason-debug","cluster":"production","bindingRef":"breakglass/reason-binding","reason":"Investigating node network packet loss"}`
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.NotNil(t, response.Spec.RequestReasonConfig)
+		assert.True(t, response.Spec.RequestReasonConfig.Mandatory)
+		assert.Equal(t, int32(12), response.Spec.RequestReasonConfig.MinLength)
+		assert.Equal(t, int32(80), response.Spec.RequestReasonConfig.MaxLength)
+	})
+
 	t.Run("rejects session for unready ClusterConfig", func(t *testing.T) {
 		unreadyCluster := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},

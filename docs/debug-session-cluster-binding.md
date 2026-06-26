@@ -327,8 +327,16 @@ spec:
   approvalReason:
     mandatory: true
     mandatoryForRejection: true
+    minLength: 20
     description: "Explain why this access is approved or rejected"
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mandatory` | bool | Whether a reason is required for approvals and rejections |
+| `mandatoryForRejection` | bool | Whether a reason is required specifically for rejections |
+| `minLength` | int32 | Minimum character length |
+| `description` | string | Help text shown to approvers |
 
 ### Notification Configuration
 

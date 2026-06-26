@@ -421,11 +421,12 @@ type ClusterStatusInfo struct {
 
 // ReasonConfigInfo contains reason configuration for API responses
 type ReasonConfigInfo struct {
-	Mandatory        bool     `json:"mandatory"`
-	Description      string   `json:"description,omitempty"`
-	MinLength        int32    `json:"minLength,omitempty"`
-	MaxLength        int32    `json:"maxLength,omitempty"`
-	SuggestedReasons []string `json:"suggestedReasons,omitempty"`
+	Mandatory             bool     `json:"mandatory"`
+	MandatoryForRejection bool     `json:"mandatoryForRejection,omitempty"`
+	Description           string   `json:"description,omitempty"`
+	MinLength             int32    `json:"minLength,omitempty"`
+	MaxLength             int32    `json:"maxLength,omitempty"`
+	SuggestedReasons      []string `json:"suggestedReasons,omitempty"`
 }
 
 // NotificationConfigInfo contains notification configuration for API responses
