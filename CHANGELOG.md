@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **BreakglassSession approval body validation**: Classic session approve and reject endpoints now reject malformed optional approver bodies, unknown JSON fields, and trailing JSON values instead of approving or rejecting with silently discarded payloads.
 - **DebugSession API request body validation**: Debug session create, approve, and reject endpoints now reject unknown JSON fields, trailing JSON values, and malformed optional approval bodies instead of silently ignoring client typos or invalid payloads.
 - **DebugSession scheduling option ACL enforcement**: `DebugSessionTemplate` and `DebugSessionClusterBinding` scheduling option `allowedUsers` and `allowedGroups` are now enforced at session creation for selected options and required defaults. Unauthorized requests receive `403 Forbidden` instead of creating a debug session with restricted scheduling constraints.
 - **OIDC group path matching hardening**: JWT group claims now preserve hierarchical group paths such as `/tenant/admin` instead of collapsing them to the leaf name `admin`, keeping `BreakglassEscalation` group matching exact and preventing same-leaf group collisions across OIDC hierarchies.
