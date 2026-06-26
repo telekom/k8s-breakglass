@@ -915,6 +915,8 @@ POST /api/debugSessions
 
 JSON bodies for debug-session create requests must contain only known field names and exactly one JSON object. Unknown fields, malformed JSON, and trailing JSON values are rejected with `400 Bad Request`.
 
+ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned only after the request is authorized by the selected template or binding.
+
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**

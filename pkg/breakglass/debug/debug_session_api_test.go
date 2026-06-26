@@ -3143,6 +3143,48 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "not ready")
 	})
 
+	t.Run("checks template access before exposing unready ClusterConfig", func(t *testing.T) {
+		stagingOnlyTemplate := templateWithClusterRestriction.DeepCopy()
+		stagingOnlyTemplate.Spec.Allowed.Clusters = []string{"staging"}
+		unreadyCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionFalse,
+						Reason: "ConnectionFailed",
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(stagingOnlyTemplate, unreadyCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"restricted-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "not allowed")
+		assert.NotContains(t, w.Body.String(), "not ready")
+	})
+
 	t.Run("rejects session for unready ClusterConfig matched by tenant", func(t *testing.T) {
 		unreadyCluster := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-production", Namespace: "tenant-control"},
