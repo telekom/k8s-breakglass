@@ -37,7 +37,6 @@ async function expectNoHorizontalOverflow(page: Page, context: string) {
     bodyClientWidth: document.body.clientWidth,
     bodyScrollWidth: document.body.scrollWidth,
   }));
-
   expect(dimensions.documentScrollWidth, `${context}: document should not overflow horizontally`).toBeLessThanOrEqual(
     dimensions.documentClientWidth + 1,
   );
