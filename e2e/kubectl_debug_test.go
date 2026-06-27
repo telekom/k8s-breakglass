@@ -225,7 +225,7 @@ func TestTerminalSharingMode(t *testing.T) {
 	err = cli.Get(ctx, client.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &activeSession)
 	require.NoError(t, err)
 	require.NotNil(t, activeSession.Status.TerminalSharing, "Terminal sharing status should be set")
-	require.True(t, activeSession.Status.TerminalSharing.Enabled)
+	require.True(t, activeSession.Status.TerminalSharing.Enabled, "Terminal sharing should be enabled")
 	require.NotEmpty(t, activeSession.Status.TerminalSharing.AttachCommand)
 
 	t.Logf("Terminal sharing configured with attach command: %s", activeSession.Status.TerminalSharing.AttachCommand)

@@ -1218,6 +1218,7 @@ jobs:
           # TEST RESULTS
           # ===========================================
           echo "--- Test results ---"
+          cp e2e-core-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           
