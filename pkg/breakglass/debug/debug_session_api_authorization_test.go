@@ -510,9 +510,41 @@ func TestCanActOnDebugSessionApproval_DeniesMissingIdentity(t *testing.T) {
 		},
 	}
 
-	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{})
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{}, nil)
 
 	assert.False(t, result)
+}
+
+func TestCanActOnDebugSessionApproval_UsesEmailAuthorization(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:      "test-template",
+			RequestedBy:      "requester-subject",
+			RequestedByEmail: "requester@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{
+		username: "opaque-subject",
+		email:    "approver@example.com",
+	}, nil)
+
+	assert.True(t, result)
 }
 
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {

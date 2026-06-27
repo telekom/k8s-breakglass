@@ -490,8 +490,9 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 
 	// Build response summaries
 	summaries := make([]DebugSessionSummary, 0, len(filtered))
+	approvalAuthorizer := c.newDebugSessionApprovalAuthorizer()
 	for _, s := range filtered {
-		canApprove := c.canActOnDebugSessionApproval(apiCtx, &s, identity)
+		canApprove := c.canActOnDebugSessionApproval(apiCtx, &s, identity, approvalAuthorizer)
 		// Compute isParticipant and activeParticipants in a single pass
 		isParticipant := false
 		activeParticipants := 0
@@ -574,7 +575,7 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity)
+	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity, nil)
 	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{
 		DebugSession: *session,
 		CanApprove:   canApprove,
