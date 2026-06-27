@@ -17,7 +17,7 @@ import {
 // Approver: ui-e2e-approver
 const ESCALATION_NAME = "ui-e2e-my-requests-group";
 
-test.describe.serial("My Pending Requests View", () => {
+test.describe.serial("My Requests View", () => {
   test("user can view my requests page", async ({ page }) => {
     const auth = new AuthHelper(page);
     // Use ui-e2e-my-requests-user (isolated from other tests)
@@ -42,10 +42,10 @@ test.describe.serial("My Pending Requests View", () => {
     // Should see header with title
     const header = page.locator('[data-testid="my-requests-header"]');
     await expect(header).toBeVisible();
-    await expect(header).toContainText(/pending requests/i);
+    await expect(header).toContainText(/outstanding requests/i);
   });
 
-  test("empty state shown when no pending requests", async ({ page }) => {
+  test("empty state shown when no outstanding requests", async ({ page }) => {
     const auth = new AuthHelper(page);
     await auth.loginViaKeycloak(TEST_USERS.uiE2eMyRequests);
 

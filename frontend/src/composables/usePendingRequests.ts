@@ -20,17 +20,17 @@ export function usePendingRequests(service: BreakglassService | null) {
     }
 
     loading.value = true;
-    debug(`${TAG}.loadRequests`, "Loading pending requests");
+    debug(`${TAG}.loadRequests`, "Loading outstanding requests");
 
     try {
       const data = await service.fetchMyOutstandingRequests();
       requests.value = data;
       error.value = "";
-      debug(`${TAG}.loadRequests`, "Loaded pending requests", { count: data.length });
+      debug(`${TAG}.loadRequests`, "Loaded outstanding requests", { count: data.length });
     } catch (err: unknown) {
       const message = (err instanceof Error ? err.message : undefined) || "Failed to load requests";
       error.value = message;
-      warn(`${TAG}.loadRequests`, "Failed to load pending requests", { errorMessage: message });
+      warn(`${TAG}.loadRequests`, "Failed to load outstanding requests", { errorMessage: message });
     } finally {
       loading.value = false;
     }

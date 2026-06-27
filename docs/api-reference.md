@@ -582,8 +582,8 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 
 **Authorization:**
 
-- **Session owner/requester**: Can drop pending, approved scheduled, or active
-  non-terminal sessions
+- **Session owner/requester**: Can drop pending requests, approved scheduled
+  sessions waiting for their start, or active non-terminal sessions
 
 Requester/owner matching uses the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
 

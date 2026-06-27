@@ -35,7 +35,7 @@ export default class BreakglassService {
     debug("BreakglassService.fetchMyOutstandingRequests", "Fetching outstanding requests");
     try {
       const r = await this.client.get("/breakglassSessions", {
-        params: { mine: true, approver: false, state: "pending" },
+        params: { mine: true, approver: false, state: "pending,waitingforscheduledtime" },
       });
       const sessions = normalizeList<SessionCR>(r.data);
       debug("BreakglassService.fetchMyOutstandingRequests", "Fetched outstanding requests", {
@@ -531,6 +531,20 @@ export default class BreakglassService {
     } catch (e) {
       handleAxiosError("BreakglassService.withdrawMyRequest", e, "Failed to withdraw request");
       debug("BreakglassService.withdrawMyRequest", "Withdraw failed", { errorMessage: (e as Error)?.message });
+      throw e;
+    }
+  }
+
+  public async dropMySession(req: SessionCR): Promise<void> {
+    const sessionName = req.metadata?.name;
+    if (!sessionName) throw new Error("Missing session name");
+    try {
+      debug("BreakglassService.dropMySession", "Dropping own session", { sessionName });
+      await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/drop`, {});
+      debug("BreakglassService.dropMySession", "Drop complete");
+    } catch (e) {
+      handleAxiosError("BreakglassService.dropMySession", e, "Failed to drop session");
+      debug("BreakglassService.dropMySession", "Drop failed", { errorMessage: (e as Error)?.message });
       throw e;
     }
   }

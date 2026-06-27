@@ -48,6 +48,11 @@ The review UI exposes approve/reject actions only while a session is `Pending`.
 scheduled activation time, so review cards and direct review modals show them
 without approval actions.
 
+The frontend "My Outstanding Requests" view lists owner sessions that still require
+action or future activation: `Pending` requests can be withdrawn, while approved
+sessions in `WaitingForScheduledTime` use **Drop** to cancel the scheduled
+activation before access starts.
+
 ### Terminal States
 
 Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**, **IdleExpired**, **ApprovalTimeout**), it can NEVER return to an active state:

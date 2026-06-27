@@ -14,8 +14,11 @@ import { useModalBehavior } from "@/composables/useModalBehavior";
 const props = defineProps<{
   /** Whether the dialog is visible */
   opened: boolean;
-  /** Display name for the request being withdrawn */
+  /** Display name for the request or session being confirmed */
   sessionName?: string;
+  heading?: string;
+  message?: string;
+  confirmLabel?: string;
 }>();
 
 const emit = defineEmits<{
@@ -29,19 +32,19 @@ useModalBehavior(toRef(props, "opened"), () => emit("cancel"));
 <template>
   <scale-modal
     :opened="opened"
-    heading="Withdraw Request"
+    :heading="heading || 'Withdraw Request'"
     size="small"
     data-testid="withdraw-confirm-modal"
     @scale-close="emit('cancel')"
   >
-    <p>Are you sure you want to withdraw this request? This action cannot be undone.</p>
+    <p>{{ message || "Are you sure you want to withdraw this request? This action cannot be undone." }}</p>
     <p v-if="sessionName" class="withdraw-detail"><strong>Request:</strong> {{ sessionName }}</p>
     <div slot="action" class="modal-actions">
       <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="emit('cancel')">
         Cancel
       </scale-button>
       <scale-button variant="primary" data-testid="withdraw-confirm-btn" @click="emit('confirm')">
-        Withdraw
+        {{ confirmLabel || "Withdraw" }}
       </scale-button>
     </div>
   </scale-modal>

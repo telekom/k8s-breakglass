@@ -1,9 +1,9 @@
 <template>
   <div class="ui-page pending-page" data-testid="my-requests-view">
     <PageHeader
-      title="My Pending Requests"
-      subtitle="Track your pending access requests and cancel anything you no longer need."
-      :badge="`${requests.length} pending`"
+      title="My Outstanding Requests"
+      subtitle="Track access requests that are pending approval or waiting for their scheduled start."
+      :badge="`${requests.length} outstanding`"
       badge-variant="secondary"
       data-testid="my-requests-header"
     />
@@ -15,8 +15,8 @@
       <EmptyState
         v-if="requests.length === 0"
         data-testid="empty-state"
-        title="No pending requests"
-        description="You don't have any access requests waiting for approval."
+        title="No outstanding requests"
+        description="You don't have any access requests waiting for approval or scheduled activation."
         icon="communication-inbox"
       />
 
@@ -75,13 +75,13 @@
           <template #footer>
             <div class="request-card__footer">
               <ActionButton
-                data-testid="withdraw-button"
-                label="Withdraw"
-                loading-label="Withdrawing..."
+                :data-testid="isScheduled(req) ? 'drop-button' : 'withdraw-button'"
+                :label="isScheduled(req) ? 'Drop' : 'Withdraw'"
+                :loading-label="isScheduled(req) ? 'Dropping...' : 'Withdrawing...'"
                 variant="secondary"
-                :loading="isActionRunning(req, 'withdraw')"
+                :loading="isActionRunning(req, isScheduled(req) ? 'drop' : 'withdraw')"
                 :disabled="isSessionBusy(req)"
-                @click="handleWithdraw(req)"
+                @click="requestOwnerAction(req)"
               />
             </div>
           </template>
@@ -93,8 +93,11 @@
     <WithdrawConfirmDialog
       :opened="withdrawDialogOpen"
       :session-name="withdrawTarget?.metadata?.name"
-      @confirm="confirmWithdraw"
-      @cancel="cancelWithdraw"
+      :heading="getConfirmHeading(withdrawTarget)"
+      :message="getConfirmMessage(withdrawTarget)"
+      :confirm-label="getConfirmLabel(withdrawTarget)"
+      @confirm="confirmOwnerAction"
+      @cancel="cancelOwnerAction"
     />
   </div>
 </template>
@@ -133,6 +136,7 @@ import {
   getSessionGroup,
   formatDateTime,
   isFuture,
+  isScheduled,
   type ActionHandlers,
 } from "@/composables";
 
@@ -163,18 +167,47 @@ const actionHandlers: ActionHandlers = {
       requests.value.splice(idx, 1);
     }
   },
+  drop: async (session: SessionCR) => {
+    await breakglassService.dropMySession(session);
+    const idx = requests.value.findIndex((r) => getSessionKey(r) === getSessionKey(session));
+    if (idx >= 0) {
+      requests.value.splice(idx, 1);
+    }
+  },
 };
 
-const { isSessionBusy, isActionRunning, withdraw } = useSessionActions(actionHandlers);
+const { isSessionBusy, isActionRunning, withdraw, drop } = useSessionActions(actionHandlers, {
+  canDrop: isScheduled,
+});
 
 // Withdraw confirmation dialog (shared composable)
 const {
   withdrawDialogOpen,
   withdrawTarget,
-  requestWithdraw: handleWithdraw,
-  confirmWithdraw,
-  cancelWithdraw,
-} = useWithdrawConfirmation((session) => withdraw(session, { skipConfirm: true }));
+  requestWithdraw: requestOwnerAction,
+  confirmWithdraw: confirmOwnerAction,
+  cancelWithdraw: cancelOwnerAction,
+} = useWithdrawConfirmation((session) => {
+  if (isScheduled(session)) {
+    return drop(session, { skipConfirm: true });
+  }
+  return withdraw(session, { skipConfirm: true });
+});
+
+function getConfirmHeading(session: SessionCR | null): string {
+  return session && isScheduled(session) ? "Drop Scheduled Session" : "Withdraw Request";
+}
+
+function getConfirmMessage(session: SessionCR | null): string {
+  if (session && isScheduled(session)) {
+    return "This session is already approved and waiting for its scheduled start. Dropping it will cancel the scheduled activation.";
+  }
+  return "Are you sure you want to withdraw this request? This action cannot be undone.";
+}
+
+function getConfirmLabel(session: SessionCR | null): string {
+  return session && isScheduled(session) ? "Drop" : "Withdraw";
+}
 
 // Helper functions
 function getRequestReason(req: SessionCR): string {

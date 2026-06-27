@@ -218,7 +218,7 @@ const primaryNavItems: PrimaryNavItem[] = [
   },
   {
     id: "requests",
-    label: "My Pending Requests",
+    label: "My Requests",
     to: { name: "myPendingRequests" },
     matches: ["myPendingRequests"],
   },
