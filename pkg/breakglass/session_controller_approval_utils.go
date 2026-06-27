@@ -55,16 +55,19 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	} else {
 		var gerr error
 		approverGroups, gerr = wc.getUserGroupsFn(ctx, approverID)
-		if raw, ok := c.Get("groups"); ok {
-			if arr, ok2 := raw.([]string); ok2 && len(arr) > 0 {
-				approverGroups = append(approverGroups, arr...)
+		if gerr != nil {
+			if raw, ok := c.Get("groups"); ok {
+				if arr, ok2 := raw.([]string); ok2 && len(arr) > 0 {
+					approverGroups = arr
+				}
 			}
-		} else if gerr != nil {
-			reqLog.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
-			return ApprovalCheckResult{
-				Allowed: false,
-				Reason:  ApprovalDenialUnauthenticated,
-				Message: "Unable to retrieve user groups",
+			if len(approverGroups) == 0 {
+				reqLog.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
+				return ApprovalCheckResult{
+					Allowed: false,
+					Reason:  ApprovalDenialUnauthenticated,
+					Message: "Unable to retrieve user groups",
+				}
 			}
 		}
 		c.Set(cacheKey, approverGroups)
