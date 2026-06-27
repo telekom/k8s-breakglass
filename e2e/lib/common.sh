@@ -266,6 +266,8 @@ e2e_load_image_into_kind() {
   else
     load_status=$?
   fi
+  load_status=$?
+  printf '%s\n' "$load_output" >&2
 
   printf '%s\n' "$load_output" >&2
   if printf '%s\n' "$load_output" | grep -q "failed to detect containerd snapshotter"; then
