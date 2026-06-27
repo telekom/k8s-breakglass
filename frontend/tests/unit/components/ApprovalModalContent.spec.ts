@@ -101,4 +101,27 @@ describe("ApprovalModalContent", () => {
     expect(wrapper.find('[data-testid="approve-button"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="reject-button"]').exists()).toBe(false);
   });
+
+  it("hides approval controls for non-pending sessions", () => {
+    const wrapper = mount(ApprovalModalContent, {
+      props: {
+        session: {
+          ...requiredNoteSession,
+          status: { state: "Approved" },
+        },
+        approverNote: "INC-123 reviewed",
+        isApproving: false,
+      },
+      global: {
+        stubs: {
+          "scale-button": ScaleButtonStub,
+          "scale-textarea": true,
+        },
+      },
+    });
+
+    expect(wrapper.find('[data-testid="rejection-reason-input"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="approve-button"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="reject-button"]').exists()).toBe(false);
+  });
 });

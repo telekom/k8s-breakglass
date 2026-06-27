@@ -135,7 +135,7 @@ const approvalReason = computed(() => {
 const isNoteRequired = computed(() => approvalReason.value?.mandatory ?? false);
 const isRequiredNoteMissing = computed(() => isNoteRequired.value && !props.approverNote.trim());
 const isAwaitingScheduledStart = computed(() => props.session.status?.state === "WaitingForScheduledTime");
-const canReview = computed(() => !isAwaitingScheduledStart.value);
+const canReview = computed(() => props.session.status?.state === "Pending");
 
 const approvalReasonPlaceholder = computed(() => {
   return approvalReason.value?.description || "Optional approver note";
