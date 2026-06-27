@@ -2007,6 +2007,10 @@ reader users are placed in the newly rendered workflow context.
 
 The Debug Session browser and detail routes are covered by mobile Playwright screenshots. Their responsive layouts must not introduce document-level horizontal scrolling; long pod names, participant identifiers, and kubectl command snippets wrap or scroll inside their local controls instead.
 
+`DebugSessionDetails` reloads by the `:name` route parameter, so navigating
+between detail URLs in the same browser view always shows the session named in
+the current URL.
+
 **Routes:**
 
 - `/debug-sessions` - Browse all debug sessions
