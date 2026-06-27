@@ -19,15 +19,11 @@ package config
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strings"
 
 	"go.uber.org/zap"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -38,6 +34,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/clusterconfiglookup"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -345,7 +342,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 			return nil, err
 		}
 
-		ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, "Ready")
+		ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
 
 		resolved = append(resolved, breakglassv1alpha1.ResolvedClusterRef{
 			Name:      clusterConfig.Name,
@@ -381,7 +378,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 					continue
 				}
 
-				clusterConfig, err := singleClusterConfigByName(clusterList.Items, cluster.Name)
+				clusterConfig, err := clusterconfiglookup.SingleByName(clusterList.Items, cluster.Name)
 				if err != nil {
 					return nil, err
 				}
@@ -389,7 +386,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 					continue
 				}
 
-				ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, "Ready")
+				ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
 
 				resolved = append(resolved, breakglassv1alpha1.ResolvedClusterRef{
 					Name:      clusterConfig.Name,
@@ -407,8 +404,8 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 func (r *DebugSessionClusterBindingReconciler) getClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
 	clusterList := &breakglassv1alpha1.ClusterConfigList{}
 	if err := r.client.List(ctx, clusterList, client.MatchingFields{"metadata.name": name}); err == nil {
-		return singleClusterConfigByNameOrNotFound(clusterList.Items, name)
-	} else if !isClusterConfigNameIndexError(err) {
+		return clusterconfiglookup.SingleByNameOrNotFound(clusterList.Items, name)
+	} else if !clusterconfiglookup.IsNameIndexError(err) {
 		return nil, fmt.Errorf("list clusterconfigs by name: %w", err)
 	}
 
@@ -417,58 +414,11 @@ func (r *DebugSessionClusterBindingReconciler) getClusterConfigByName(ctx contex
 		return nil, fmt.Errorf("list clusterconfigs: %w", err)
 	}
 
-	clusterConfig, err := singleClusterConfigByName(clusterList.Items, name)
+	clusterConfig, err := clusterconfiglookup.SingleByName(clusterList.Items, name)
 	if clusterConfig != nil || err != nil {
 		return clusterConfig, err
 	}
-	return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}, name)
-}
-
-func singleClusterConfigByNameOrNotFound(items []breakglassv1alpha1.ClusterConfig, name string) (*breakglassv1alpha1.ClusterConfig, error) {
-	clusterConfig, err := singleClusterConfigByName(items, name)
-	if clusterConfig != nil || err != nil {
-		return clusterConfig, err
-	}
-	return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}, name)
-}
-
-func singleClusterConfigByName(items []breakglassv1alpha1.ClusterConfig, name string) (*breakglassv1alpha1.ClusterConfig, error) {
-	matching := make([]*breakglassv1alpha1.ClusterConfig, 0, len(items))
-	for i := range items {
-		if items[i].Name == name {
-			matching = append(matching, &items[i])
-		}
-	}
-
-	switch len(matching) {
-	case 0:
-		return nil, nil
-	case 1:
-		return matching[0], nil
-	default:
-		namespaces := make([]string, 0, len(matching))
-		for _, clusterConfig := range matching {
-			namespaces = append(namespaces, clusterConfig.Namespace)
-		}
-		sort.Strings(namespaces)
-		return nil, apierrors.NewConflict(
-			schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"},
-			name,
-			fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ",")),
-		)
-	}
-}
-
-func isClusterConfigNameIndexError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "field index") ||
-		strings.Contains(msg, "no indexer") ||
-		strings.Contains(msg, "no index with name") ||
-		strings.Contains(msg, "field label not supported") ||
-		strings.Contains(msg, "Index with name")
+	return nil, clusterconfiglookup.NotFound(name)
 }
 
 // SetupWithManager registers this reconciler with the controller-runtime manager.

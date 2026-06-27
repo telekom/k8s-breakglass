@@ -2,6 +2,8 @@ package debug
 
 import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/clusterconfiglookup"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 )
 
@@ -56,21 +58,27 @@ func debugClusterConfigNameCounts(items []breakglassv1alpha1.ClusterConfig) map[
 	return nameCounts
 }
 
-func findDebugClusterConfigByNameOrTenant(items []breakglassv1alpha1.ClusterConfig, cluster string) (*breakglassv1alpha1.ClusterConfig, bool) {
-	var nameMatch *breakglassv1alpha1.ClusterConfig
-	for i := range items {
-		cc := &items[i]
-		if cc.Name == cluster {
-			if nameMatch != nil {
-				return nil, true
-			}
-			nameMatch = cc
+type debugClusterConfigAmbiguity string
+
+const (
+	debugClusterConfigAmbiguityNone   debugClusterConfigAmbiguity = ""
+	debugClusterConfigAmbiguityName   debugClusterConfigAmbiguity = "name"
+	debugClusterConfigAmbiguityTenant debugClusterConfigAmbiguity = "tenant"
+)
+
+func findDebugClusterConfigByNameOrTenant(items []breakglassv1alpha1.ClusterConfig, cluster string) (*breakglassv1alpha1.ClusterConfig, debugClusterConfigAmbiguity) {
+	nameMatch, err := clusterconfiglookup.SingleByName(items, cluster)
+	if err != nil {
+		if apierrors.IsConflict(err) {
+			return nil, debugClusterConfigAmbiguityName
 		}
+		return nil, debugClusterConfigAmbiguityName
 	}
 	if nameMatch != nil {
-		return nameMatch, false
+		return nameMatch, debugClusterConfigAmbiguityNone
 	}
 
+	nameCounts := debugClusterConfigNameCounts(items)
 	var tenantMatch *breakglassv1alpha1.ClusterConfig
 	for i := range items {
 		cc := &items[i]
@@ -78,9 +86,12 @@ func findDebugClusterConfigByNameOrTenant(items []breakglassv1alpha1.ClusterConf
 			continue
 		}
 		if tenantMatch != nil {
-			return nil, true
+			return nil, debugClusterConfigAmbiguityTenant
 		}
 		tenantMatch = cc
 	}
-	return tenantMatch, false
+	if tenantMatch != nil && nameCounts[tenantMatch.Name] != 1 {
+		return tenantMatch, debugClusterConfigAmbiguityName
+	}
+	return tenantMatch, debugClusterConfigAmbiguityNone
 }

@@ -848,6 +848,31 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 	return result
 }
 
+func bindingReferencesAmbiguousClusterName(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfigs []breakglassv1alpha1.ClusterConfig) bool {
+	if debugClusterConfigNameCounts(clusterConfigs)[clusterName] < 2 {
+		return false
+	}
+	for _, explicitCluster := range binding.Spec.Clusters {
+		if explicitCluster == clusterName {
+			return true
+		}
+	}
+	if binding.Spec.ClusterSelector == nil {
+		return false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	if err != nil {
+		return false
+	}
+	for i := range clusterConfigs {
+		clusterConfig := &clusterConfigs[i]
+		if clusterConfig.Name == clusterName && selector.Matches(labelSetFromMap(clusterConfig.Labels)) {
+			return true
+		}
+	}
+	return false
+}
+
 // mergeConstraints merges template and binding constraints
 func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *breakglassv1alpha1.DebugSessionConstraints, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionConstraints {
 	if binding == nil || binding.Spec.Constraints == nil {

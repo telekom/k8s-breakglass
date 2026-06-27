@@ -696,6 +696,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	clusterName string,
 	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	clusterConfigs map[string]*breakglassv1alpha1.ClusterConfig,
+	clusterConfigItems []breakglassv1alpha1.ClusterConfig,
 ) ClusterAllowedResult {
 	result := ClusterAllowedResult{}
 
@@ -761,6 +762,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	for i := range applicableBindings {
 		binding := &applicableBindings[i]
 		bindingClusters := c.resolveClustersFromBinding(binding, clusterConfigs)
+		bindingAllowsCluster := false
 		c.log.Debugw("Binding cluster resolution",
 			"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
 			"resolvedClusters", bindingClusters,
@@ -768,16 +770,23 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 		)
 		for _, bc := range bindingClusters {
 			if bc == clusterName {
-				result.AllBindings = append(result.AllBindings, *binding)
-				if !result.Allowed {
-					result.Allowed = true
-					result.AllowedBySource = fmt.Sprintf("binding:%s/%s", binding.Namespace, binding.Name)
-					result.MatchingBinding = binding
-					c.log.Debugw("Cluster allowed by binding",
-						"cluster", clusterName,
-						"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
-					)
-				}
+				bindingAllowsCluster = true
+				break
+			}
+		}
+		if !bindingAllowsCluster && bindingReferencesAmbiguousClusterName(binding, clusterName, clusterConfigItems) {
+			bindingAllowsCluster = true
+		}
+		if bindingAllowsCluster {
+			result.AllBindings = append(result.AllBindings, *binding)
+			if !result.Allowed {
+				result.Allowed = true
+				result.AllowedBySource = fmt.Sprintf("binding:%s/%s", binding.Namespace, binding.Name)
+				result.MatchingBinding = binding
+				c.log.Debugw("Cluster allowed by binding",
+					"cluster", clusterName,
+					"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
+				)
 			}
 		}
 	}

@@ -42,15 +42,29 @@ func TestDebugClusterConfigMapsExcludeDuplicateNames(t *testing.T) {
 	require.ElementsMatch(t, []string{"unique"}, readyNames)
 }
 
-func TestFindDebugClusterConfigByNameReportsDuplicateNamesAsAmbiguous(t *testing.T) {
+func TestFindDebugClusterConfigByNameReportsDuplicateNamesAsNameAmbiguity(t *testing.T) {
 	items := []breakglassv1alpha1.ClusterConfig{
 		readyDebugClusterConfig("team-a", "shared", nil),
 		readyDebugClusterConfig("team-b", "shared", nil),
 	}
 
-	cc, ambiguous := findDebugClusterConfigByNameOrTenant(items, "shared")
-	require.True(t, ambiguous)
+	cc, ambiguity := findDebugClusterConfigByNameOrTenant(items, "shared")
+	require.Equal(t, debugClusterConfigAmbiguityName, ambiguity)
 	require.Nil(t, cc)
+}
+
+func TestFindDebugClusterConfigByTenantReportsDuplicateMatchedNameAsNameAmbiguity(t *testing.T) {
+	items := []breakglassv1alpha1.ClusterConfig{
+		readyDebugClusterConfig("team-a", "shared", nil),
+		readyDebugClusterConfig("team-b", "shared", nil),
+	}
+	items[0].Spec.Tenant = "tenant-a"
+	items[1].Spec.Tenant = "tenant-b"
+
+	cc, ambiguity := findDebugClusterConfigByNameOrTenant(items, "tenant-a")
+	require.Equal(t, debugClusterConfigAmbiguityName, ambiguity)
+	require.NotNil(t, cc)
+	require.Equal(t, "shared", cc.Name)
 }
 
 func TestResolveClustersFromBindingSkipsAmbiguousClusterConfigNames(t *testing.T) {

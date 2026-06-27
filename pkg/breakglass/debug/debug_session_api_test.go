@@ -3451,6 +3451,147 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "matches multiple ClusterConfig tenants")
 	})
 
+	t.Run("rejects ambiguous ClusterConfig names with conflict", func(t *testing.T) {
+		firstCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-a"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		secondCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-b"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template, firstCluster, secondCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		assert.Contains(t, w.Body.String(), "matches multiple ClusterConfig names")
+	})
+
+	t.Run("rejects tenant alias that resolves to duplicate ClusterConfig name with conflict", func(t *testing.T) {
+		templateWithCanonicalCluster := template.DeepCopy()
+		templateWithCanonicalCluster.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Clusters: []string{"production"},
+		}
+		firstCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-a"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-a",
+			},
+		}
+		secondCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-b"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-b",
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateWithCanonicalCluster, firstCluster, secondCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"prod-a","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		assert.Contains(t, w.Body.String(), "cluster 'production' matches multiple ClusterConfig names")
+	})
+
+	t.Run("does not disclose tenant alias duplicate ClusterConfig name to unauthorized template requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "tenant-ambiguous-user-restricted"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"production"},
+		}
+		firstCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-a"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-a",
+			},
+		}
+		secondCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-b"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-b",
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, firstCluster, secondCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"tenant-ambiguous-user-restricted","cluster":"prod-a","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "matches multiple ClusterConfig names")
+	})
+
 	t.Run("rejects session when ClusterConfig is missing", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -3733,6 +3874,166 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, "binding-debug", created.Labels[DebugTemplateLabelKey])
 		assert.Equal(t, "production", created.Labels[DebugClusterLabelKey])
 		assert.Equal(t, "platform-sre", created.Labels["team"])
+	})
+
+	t.Run("create session rejects duplicate ClusterConfig name through explicit binding with conflict", func(t *testing.T) {
+		templateViaBinding := template.DeepCopy()
+		templateViaBinding.Name = "binding-debug-ambiguous"
+		templateViaBinding.Spec.Allowed = nil
+		firstCluster := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-a"},
+		}
+		secondCluster := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-b"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "sre-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "binding-debug-ambiguous"},
+				Clusters:    []string{"production"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaBinding, &firstCluster, &secondCluster, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"binding-debug-ambiguous","cluster":"production","bindingRef":"breakglass/sre-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		assert.Contains(t, w.Body.String(), "matches multiple ClusterConfig names")
+	})
+
+	t.Run("create session rejects tenant alias duplicate ClusterConfig name through auto-discovered binding with conflict", func(t *testing.T) {
+		templateViaBinding := template.DeepCopy()
+		templateViaBinding.Name = "binding-debug-tenant-ambiguous"
+		templateViaBinding.Spec.Allowed = nil
+		firstCluster := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-a"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-a",
+			},
+		}
+		secondCluster := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-b"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-b",
+			},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "sre-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "binding-debug-tenant-ambiguous"},
+				Clusters:    []string{"production"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaBinding, &firstCluster, &secondCluster, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"binding-debug-tenant-ambiguous","cluster":"prod-a","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		assert.Contains(t, w.Body.String(), "cluster 'production' matches multiple ClusterConfig names")
+	})
+
+	t.Run("create session does not disclose tenant alias duplicate ClusterConfig name to unauthorized binding requester", func(t *testing.T) {
+		templateViaBinding := template.DeepCopy()
+		templateViaBinding.Name = "binding-debug-tenant-ambiguous-denied"
+		templateViaBinding.Spec.Allowed = nil
+		firstCluster := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-a"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-a",
+			},
+		}
+		secondCluster := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "tenant-b"},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{
+				Tenant: "prod-b",
+			},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "sre-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "binding-debug-tenant-ambiguous-denied"},
+				Clusters:    []string{"production"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaBinding, &firstCluster, &secondCluster, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"developers"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"binding-debug-tenant-ambiguous-denied","cluster":"prod-a","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "matches multiple ClusterConfig names")
 	})
 
 	t.Run("create session rejects malformed bindingRef", func(t *testing.T) {
@@ -5789,6 +6090,10 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "dev-cluster", Labels: map[string]string{"env": "dev"}},
 		},
 	}
+	clusterConfigItems := make([]breakglassv1alpha1.ClusterConfig, 0, len(clusterConfigs))
+	for _, clusterConfig := range clusterConfigs {
+		clusterConfigItems = append(clusterConfigItems, *clusterConfig)
+	}
 
 	tests := []struct {
 		name          string
@@ -5961,13 +6266,61 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := controller.isClusterAllowedByTemplateOrBinding(tt.template, tt.clusterName, tt.bindings, clusterConfigs)
+			result := controller.isClusterAllowedByTemplateOrBinding(tt.template, tt.clusterName, tt.bindings, clusterConfigs, clusterConfigItems)
 			assert.Equal(t, tt.expectAllowed, result.Allowed, "expected Allowed=%v, got %v", tt.expectAllowed, result.Allowed)
 			if tt.expectSource != "" {
 				assert.Equal(t, tt.expectSource, result.AllowedBySource, "expected source=%q, got %q", tt.expectSource, result.AllowedBySource)
 			}
 		})
 	}
+
+	t.Run("binding grants ambiguous cluster name so caller reaches conflict response", func(t *testing.T) {
+		ambiguousClusterConfigs := []breakglassv1alpha1.ClusterConfig{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "shared-cluster",
+					Namespace: "tenant-a",
+					Labels: map[string]string{
+						"env": "prod",
+					},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "shared-cluster",
+					Namespace: "tenant-b",
+					Labels: map[string]string{
+						"env": "prod",
+					},
+				},
+			},
+		}
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template1"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template1"},
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"env": "prod",
+					},
+				},
+			},
+		}
+
+		result := controller.isClusterAllowedByTemplateOrBinding(
+			template,
+			"shared-cluster",
+			[]breakglassv1alpha1.DebugSessionClusterBinding{binding},
+			debugClusterConfigMap(ambiguousClusterConfigs),
+			ambiguousClusterConfigs,
+		)
+
+		assert.True(t, result.Allowed)
+		assert.Equal(t, "binding:default/binding1", result.AllowedBySource)
+	})
 }
 
 // TestDebugSessionAPIController_CreateWithExtraDeployValues tests session creation with extra deploy values
