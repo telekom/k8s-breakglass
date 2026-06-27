@@ -2511,6 +2511,164 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		assert.Equal(t, 3, response.Total)
 	})
 
+	t.Run("list templates enforces allowed users and filters requester-scoped fields", func(t *testing.T) {
+		userTemplate := templates[0].DeepCopy()
+		userTemplate.Name = "user-restricted-template"
+		userTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users: []string{"alice@example.com"},
+		}
+		userTemplate.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{
+			Options: []breakglassv1alpha1.SchedulingOption{
+				{Name: "tenant-safe", DisplayName: "Tenant Safe"},
+				{Name: "alice-only", DisplayName: "Alice Only", AllowedUsers: []string{"alice@example.com"}},
+				{Name: "platform-only", DisplayName: "Platform Only", AllowedGroups: []string{"platform-admins"}},
+			},
+		}
+		userTemplate.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{
+			{
+				Name:      "logLevel",
+				InputType: breakglassv1alpha1.InputTypeText,
+			},
+			{
+				Name:          "privilegedMode",
+				InputType:     breakglassv1alpha1.InputTypeBoolean,
+				AllowedGroups: []string{"platform-admins"},
+			},
+			{
+				Name:      "targetPool",
+				InputType: breakglassv1alpha1.InputTypeSelect,
+				Options: []breakglassv1alpha1.SelectOption{
+					{Value: "tenant"},
+					{Value: "platform", AllowedGroups: []string{"platform-admins"}},
+				},
+			},
+		}
+
+		buildRouter := func(username, email string, groups []string) *gin.Engine {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(userTemplate).
+				Build()
+
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("username", username)
+				c.Set("email", email)
+				c.Set("groups", groups)
+				c.Next()
+			})
+			rg := router.Group("/api/v1/" + ctrl.BasePath())
+			err := ctrl.Register(rg)
+			require.NoError(t, err)
+			return router
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w := httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		require.Len(t, response.Templates, 1)
+		require.NotNil(t, response.Templates[0].SchedulingOptions)
+		require.Len(t, response.Templates[0].SchedulingOptions.Options, 2)
+		assert.Equal(t, []string{"tenant-safe", "alice-only"}, []string{
+			response.Templates[0].SchedulingOptions.Options[0].Name,
+			response.Templates[0].SchedulingOptions.Options[1].Name,
+		})
+		require.Len(t, response.Templates[0].ExtraDeployVariables, 2)
+		assert.Equal(t, "logLevel", response.Templates[0].ExtraDeployVariables[0].Name)
+		assert.Equal(t, "targetPool", response.Templates[0].ExtraDeployVariables[1].Name)
+		require.Len(t, response.Templates[0].ExtraDeployVariables[1].Options, 1)
+		assert.Equal(t, "tenant", response.Templates[0].ExtraDeployVariables[1].Options[0].Value)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
+		buildRouter("bob@example.com", "bob@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 0, response.Total)
+	})
+
+	t.Run("list templates includes binding-granted templates without direct allowlist metadata", func(t *testing.T) {
+		bindingGrantedTemplate := templates[0].DeepCopy()
+		bindingGrantedTemplate.Name = "binding-granted-template"
+		bindingGrantedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Groups:   []string{"platform-admins"},
+			Clusters: []string{"prod-*"},
+		}
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "sre-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "binding-granted-template"},
+				Clusters:    []string{"prod-east"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(bindingGrantedTemplate, cluster, binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		assert.Equal(t, "binding-granted-template", response.Templates[0].Name)
+		assert.Equal(t, 1, response.Templates[0].AvailableClusterCount)
+		assert.Empty(t, response.Templates[0].AllowedClusters)
+		assert.Empty(t, response.Templates[0].AllowedGroups)
+	})
+
 	t.Run("list templates resolves cluster patterns to actual cluster names", func(t *testing.T) {
 		// Create ClusterConfigs that will be used for pattern resolution
 		clusterConfigs := []client.Object{
@@ -2929,6 +3087,59 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 404, w.Code)
+	})
+
+	t.Run("get restricted template requires requester allowlist", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users: []string{"alice@example.com"},
+		}
+		restrictedTemplate.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{
+			Options: []breakglassv1alpha1.SchedulingOption{
+				{Name: "safe"},
+				{Name: "platform", AllowedGroups: []string{"platform-admins"}},
+			},
+		}
+
+		buildRouter := func(username, email string, groups []string) *gin.Engine {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(restrictedTemplate).
+				Build()
+
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("username", username)
+				c.Set("email", email)
+				c.Set("groups", groups)
+				c.Next()
+			})
+			rg := router.Group("/api/v1/" + ctrl.BasePath())
+			err := ctrl.Register(rg)
+			require.NoError(t, err)
+			return router
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/standard-debug", nil)
+		w := httptest.NewRecorder()
+		buildRouter("bob@example.com", "bob@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/standard-debug", nil)
+		w = httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response DebugSessionTemplateResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.NotNil(t, response.SchedulingOptions)
+		require.Len(t, response.SchedulingOptions.Options, 1)
+		assert.Equal(t, "safe", response.SchedulingOptions.Options[0].Name)
 	})
 }
 

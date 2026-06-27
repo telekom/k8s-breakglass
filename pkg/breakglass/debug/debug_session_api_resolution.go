@@ -114,6 +114,18 @@ func (c *DebugSessionAPIController) resolveSchedulingOptions(template *breakglas
 	return response
 }
 
+func (c *DebugSessionAPIController) resolveSchedulingOptionsForRequester(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, requester debugTemplateRequester) *SchedulingOptionsResponse {
+	var so *breakglassv1alpha1.SchedulingOptions
+
+	if binding != nil && binding.Spec.SchedulingOptions != nil {
+		so = binding.Spec.SchedulingOptions
+	} else if template.Spec.SchedulingOptions != nil {
+		so = template.Spec.SchedulingOptions
+	}
+
+	return buildSchedulingOptionsResponseForRequester(so, requester)
+}
+
 // resolveNamespaceConstraints builds API-visible namespace constraint hints.
 // Runtime validation still checks template and binding constraints separately;
 // response allow filters are only surfaced when they are safe static hints.

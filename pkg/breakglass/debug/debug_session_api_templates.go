@@ -185,6 +185,188 @@ type NotificationConfigInfo struct {
 	Enabled bool `json:"enabled"`
 }
 
+type debugTemplateRequester struct {
+	username string
+	email    string
+	groups   []string
+}
+
+func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester {
+	requester := debugTemplateRequester{}
+
+	if username, ok := ctx.Get("username"); ok {
+		if value, ok := username.(string); ok {
+			requester.username = value
+		}
+	}
+	if email, ok := ctx.Get("email"); ok {
+		if value, ok := email.(string); ok {
+			requester.email = value
+		}
+	}
+	if groups, ok := ctx.Get("groups"); ok {
+		if value, ok := groups.([]string); ok {
+			requester.groups = value
+		}
+	}
+
+	return requester
+}
+
+func (r debugTemplateRequester) canRequest(allowed *breakglassv1alpha1.DebugSessionAllowed) bool {
+	return isDebugSessionRequesterAllowed(allowed, r.username, r.email, r.groups)
+}
+
+func (r debugTemplateRequester) schedulingOptionRequester() schedulingOptionRequester {
+	return schedulingOptionRequester{
+		Username: r.username,
+		Email:    r.email,
+		Groups:   r.groups,
+	}
+}
+
+func (c *DebugSessionAPIController) canReadTemplateWithBindings(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	requester debugTemplateRequester,
+) bool {
+	hasDirectClusters := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
+	if hasDirectClusters && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
+		return true
+	}
+	if !hasDirectClusters && len(bindings) == 0 && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
+		return true
+	}
+	for i := range bindings {
+		if requester.canRequest(effectiveDebugSessionAllowed(template, &bindings[i])) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildSchedulingOptionsResponseForRequester(so *breakglassv1alpha1.SchedulingOptions, requester debugTemplateRequester) *SchedulingOptionsResponse {
+	if so == nil {
+		return nil
+	}
+
+	response := &SchedulingOptionsResponse{
+		Required: so.Required,
+		Options:  make([]SchedulingOptionResponse, 0, len(so.Options)),
+	}
+	optionRequester := requester.schedulingOptionRequester()
+	for _, opt := range so.Options {
+		if !isSchedulingOptionAllowedForRequester(&opt, optionRequester) {
+			continue
+		}
+		response.Options = append(response.Options, SchedulingOptionResponse{
+			Name:                  opt.Name,
+			DisplayName:           opt.DisplayName,
+			Description:           opt.Description,
+			Default:               opt.Default,
+			SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
+		})
+	}
+
+	return response
+}
+
+func userHasAnyExactGroup(userGroups, allowedGroups []string) bool {
+	if len(allowedGroups) == 0 {
+		return true
+	}
+	for _, allowedGroup := range allowedGroups {
+		for _, userGroup := range userGroups {
+			if allowedGroup == userGroup {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func filterExtraDeployVariablesForRequester(vars []breakglassv1alpha1.ExtraDeployVariable, requester debugTemplateRequester) []breakglassv1alpha1.ExtraDeployVariable {
+	if len(vars) == 0 {
+		return nil
+	}
+
+	filtered := make([]breakglassv1alpha1.ExtraDeployVariable, 0, len(vars))
+	for _, variable := range vars {
+		if !userHasAnyExactGroup(requester.groups, variable.AllowedGroups) {
+			continue
+		}
+
+		filteredVariable := *variable.DeepCopy()
+		if len(filteredVariable.Options) > 0 {
+			filteredOptions := make([]breakglassv1alpha1.SelectOption, 0, len(filteredVariable.Options))
+			for _, option := range filteredVariable.Options {
+				if userHasAnyExactGroup(requester.groups, option.AllowedGroups) {
+					filteredOptions = append(filteredOptions, option)
+				}
+			}
+			filteredVariable.Options = filteredOptions
+		}
+		filtered = append(filtered, filteredVariable)
+	}
+
+	return filtered
+}
+
+func (c *DebugSessionAPIController) buildTemplateResponse(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	requester debugTemplateRequester,
+	allClusterNames []string,
+	availableClusterCount int,
+) DebugSessionTemplateResponse {
+	resp := DebugSessionTemplateResponse{
+		Name:                  template.Name,
+		DisplayName:           template.Spec.DisplayName,
+		Description:           template.Spec.Description,
+		Mode:                  template.Spec.Mode,
+		WorkloadType:          template.Spec.WorkloadType,
+		TargetNamespace:       template.Spec.TargetNamespace,
+		Constraints:           template.Spec.Constraints,
+		RequiresApproval:      template.Spec.Approvers != nil && (len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0),
+		ExtraDeployVariables:  filterExtraDeployVariablesForRequester(template.Spec.ExtraDeployVariables, requester),
+		Priority:              template.Spec.Priority,
+		Hidden:                template.Spec.Hidden,
+		Deprecated:            template.Spec.Deprecated,
+		DeprecationMessage:    template.Spec.DeprecationMessage,
+		HasAvailableClusters:  availableClusterCount > 0,
+		AvailableClusterCount: availableClusterCount,
+	}
+
+	if template.Spec.PodTemplateRef != nil {
+		resp.PodTemplateRef = template.Spec.PodTemplateRef.Name
+	}
+	if template.Spec.Allowed != nil && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
+		if allClusterNames != nil {
+			resp.AllowedClusters = resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
+		} else {
+			resp.AllowedClusters = template.Spec.Allowed.Clusters
+		}
+		resp.AllowedGroups = template.Spec.Allowed.Groups
+	}
+	resp.SchedulingOptions = buildSchedulingOptionsResponseForRequester(template.Spec.SchedulingOptions, requester)
+
+	if template.Spec.NamespaceConstraints != nil {
+		resp.NamespaceConstraints = &NamespaceConstraintsResponse{
+			DefaultNamespace:   template.Spec.NamespaceConstraints.DefaultNamespace,
+			AllowUserNamespace: template.Spec.NamespaceConstraints.AllowUserNamespace,
+		}
+		if template.Spec.NamespaceConstraints.AllowedNamespaces != nil {
+			resp.NamespaceConstraints.AllowedPatterns = template.Spec.NamespaceConstraints.AllowedNamespaces.Patterns
+			resp.NamespaceConstraints.AllowedLabelSelectors = convertSelectorTerms(template.Spec.NamespaceConstraints.AllowedNamespaces.SelectorTerms)
+		}
+		if template.Spec.NamespaceConstraints.DeniedNamespaces != nil {
+			resp.NamespaceConstraints.DeniedPatterns = template.Spec.NamespaceConstraints.DeniedNamespaces.Patterns
+			resp.NamespaceConstraints.DeniedLabelSelectors = convertSelectorTerms(template.Spec.NamespaceConstraints.DeniedNamespaces.SelectorTerms)
+		}
+	}
+
+	return resp
+}
+
 // handleListTemplates returns available debug session templates
 // Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
@@ -215,14 +397,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		// Continue without binding resolution
 	}
 
-	// Get user's groups for filtering
-	userGroups, _ := ctx.Get("groups")
-	groups := []string{}
-	if userGroups != nil {
-		if g, ok := userGroups.([]string); ok {
-			groups = g
-		}
-	}
+	requester := debugTemplateRequesterFromContext(ctx)
 
 	includeHidden := ctx.Query("includeHidden") == "true"
 	includeUnavailable := ctx.Query("includeUnavailable") == "true"
@@ -233,31 +408,14 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		if t.Spec.Hidden && !includeHidden {
 			continue
 		}
-		// Check if user has access to this template
-		if t.Spec.Allowed != nil && len(t.Spec.Allowed.Groups) > 0 {
-			hasAccess := false
-			for _, allowedGroup := range t.Spec.Allowed.Groups {
-				if allowedGroup == "*" {
-					hasAccess = true
-					break
-				}
-				for _, userGroup := range groups {
-					if matchPattern(allowedGroup, userGroup) {
-						hasAccess = true
-						break
-					}
-				}
-				if hasAccess {
-					break
-				}
-			}
-			if !hasAccess {
-				continue
-			}
+
+		applicableBindings := c.findBindingsForTemplate(&t, bindingList.Items)
+		if !c.canReadTemplateWithBindings(&t, applicableBindings, requester) {
+			continue
 		}
 
 		// Calculate available cluster count for this template
-		availableClusterCount := c.countAvailableClustersForTemplate(&t, bindingList.Items, clusterMap, allClusterNames)
+		availableClusterCount := c.countAvailableClustersForTemplate(&t, applicableBindings, clusterMap, allClusterNames, requester)
 		hasAvailableClusters := availableClusterCount > 0
 
 		// Skip templates without available clusters unless explicitly requested
@@ -269,67 +427,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			continue
 		}
 
-		resp := DebugSessionTemplateResponse{
-			Name:                  t.Name,
-			DisplayName:           t.Spec.DisplayName,
-			Description:           t.Spec.Description,
-			Mode:                  t.Spec.Mode,
-			WorkloadType:          t.Spec.WorkloadType,
-			TargetNamespace:       t.Spec.TargetNamespace,
-			Constraints:           t.Spec.Constraints,
-			RequiresApproval:      t.Spec.Approvers != nil && (len(t.Spec.Approvers.Groups) > 0 || len(t.Spec.Approvers.Users) > 0),
-			ExtraDeployVariables:  t.Spec.ExtraDeployVariables,
-			Priority:              t.Spec.Priority,
-			Hidden:                t.Spec.Hidden,
-			Deprecated:            t.Spec.Deprecated,
-			DeprecationMessage:    t.Spec.DeprecationMessage,
-			HasAvailableClusters:  hasAvailableClusters,
-			AvailableClusterCount: availableClusterCount,
-		}
-
-		if t.Spec.PodTemplateRef != nil {
-			resp.PodTemplateRef = t.Spec.PodTemplateRef.Name
-		}
-		if t.Spec.Allowed != nil {
-			// Resolve cluster patterns to actual cluster names
-			resp.AllowedClusters = resolveClusterPatterns(t.Spec.Allowed.Clusters, allClusterNames)
-			resp.AllowedGroups = t.Spec.Allowed.Groups
-		}
-
-		// Include scheduling options if present
-		if t.Spec.SchedulingOptions != nil {
-			resp.SchedulingOptions = &SchedulingOptionsResponse{
-				Required: t.Spec.SchedulingOptions.Required,
-				Options:  make([]SchedulingOptionResponse, 0, len(t.Spec.SchedulingOptions.Options)),
-			}
-			for _, opt := range t.Spec.SchedulingOptions.Options {
-				resp.SchedulingOptions.Options = append(resp.SchedulingOptions.Options, SchedulingOptionResponse{
-					Name:                  opt.Name,
-					DisplayName:           opt.DisplayName,
-					Description:           opt.Description,
-					Default:               opt.Default,
-					SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
-				})
-			}
-		}
-
-		// Include namespace constraints if present
-		if t.Spec.NamespaceConstraints != nil {
-			resp.NamespaceConstraints = &NamespaceConstraintsResponse{
-				DefaultNamespace:   t.Spec.NamespaceConstraints.DefaultNamespace,
-				AllowUserNamespace: t.Spec.NamespaceConstraints.AllowUserNamespace,
-			}
-			if t.Spec.NamespaceConstraints.AllowedNamespaces != nil {
-				resp.NamespaceConstraints.AllowedPatterns = t.Spec.NamespaceConstraints.AllowedNamespaces.Patterns
-				resp.NamespaceConstraints.AllowedLabelSelectors = convertSelectorTerms(t.Spec.NamespaceConstraints.AllowedNamespaces.SelectorTerms)
-			}
-			if t.Spec.NamespaceConstraints.DeniedNamespaces != nil {
-				resp.NamespaceConstraints.DeniedPatterns = t.Spec.NamespaceConstraints.DeniedNamespaces.Patterns
-				resp.NamespaceConstraints.DeniedLabelSelectors = convertSelectorTerms(t.Spec.NamespaceConstraints.DeniedNamespaces.SelectorTerms)
-			}
-		}
-
-		templates = append(templates, resp)
+		templates = append(templates, c.buildTemplateResponse(&t, requester, allClusterNames, availableClusterCount))
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
@@ -371,65 +469,21 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 		return
 	}
 
-	// Build response using same format as list endpoint
-	resp := DebugSessionTemplateResponse{
-		Name:                 template.Name,
-		DisplayName:          template.Spec.DisplayName,
-		Description:          template.Spec.Description,
-		Mode:                 template.Spec.Mode,
-		WorkloadType:         template.Spec.WorkloadType,
-		TargetNamespace:      template.Spec.TargetNamespace,
-		Constraints:          template.Spec.Constraints,
-		RequiresApproval:     template.Spec.Approvers != nil && (len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0),
-		ExtraDeployVariables: template.Spec.ExtraDeployVariables,
-		Priority:             template.Spec.Priority,
-		Hidden:               template.Spec.Hidden,
-		Deprecated:           template.Spec.Deprecated,
-		DeprecationMessage:   template.Spec.DeprecationMessage,
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
+	if err := c.reader().List(apiCtx, bindingList); err != nil {
+		reqLog.Errorw("Failed to list bindings for template authorization", "name", name, "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to authorize template")
+		return
 	}
 
-	if template.Spec.PodTemplateRef != nil {
-		resp.PodTemplateRef = template.Spec.PodTemplateRef.Name
-	}
-	if template.Spec.Allowed != nil {
-		resp.AllowedClusters = template.Spec.Allowed.Clusters
-		resp.AllowedGroups = template.Spec.Allowed.Groups
-	}
-
-	// Include scheduling options if present
-	if template.Spec.SchedulingOptions != nil {
-		resp.SchedulingOptions = &SchedulingOptionsResponse{
-			Required: template.Spec.SchedulingOptions.Required,
-			Options:  make([]SchedulingOptionResponse, 0, len(template.Spec.SchedulingOptions.Options)),
-		}
-		for _, opt := range template.Spec.SchedulingOptions.Options {
-			resp.SchedulingOptions.Options = append(resp.SchedulingOptions.Options, SchedulingOptionResponse{
-				Name:                  opt.Name,
-				DisplayName:           opt.DisplayName,
-				Description:           opt.Description,
-				Default:               opt.Default,
-				SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
-			})
-		}
+	requester := debugTemplateRequesterFromContext(ctx)
+	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)
+	if !c.canReadTemplateWithBindings(template, applicableBindings, requester) {
+		apiresponses.RespondForbidden(ctx, "access denied to this template")
+		return
 	}
 
-	// Include namespace constraints if present
-	if template.Spec.NamespaceConstraints != nil {
-		resp.NamespaceConstraints = &NamespaceConstraintsResponse{
-			DefaultNamespace:   template.Spec.NamespaceConstraints.DefaultNamespace,
-			AllowUserNamespace: template.Spec.NamespaceConstraints.AllowUserNamespace,
-		}
-		if template.Spec.NamespaceConstraints.AllowedNamespaces != nil {
-			resp.NamespaceConstraints.AllowedPatterns = template.Spec.NamespaceConstraints.AllowedNamespaces.Patterns
-			resp.NamespaceConstraints.AllowedLabelSelectors = convertSelectorTerms(template.Spec.NamespaceConstraints.AllowedNamespaces.SelectorTerms)
-		}
-		if template.Spec.NamespaceConstraints.DeniedNamespaces != nil {
-			resp.NamespaceConstraints.DeniedPatterns = template.Spec.NamespaceConstraints.DeniedNamespaces.Patterns
-			resp.NamespaceConstraints.DeniedLabelSelectors = convertSelectorTerms(template.Spec.NamespaceConstraints.DeniedNamespaces.SelectorTerms)
-		}
-	}
-
-	ctx.JSON(http.StatusOK, resp)
+	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, nil, 0))
 }
 
 // handleGetTemplateClusters returns cluster-specific details for a template
@@ -457,38 +511,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 		return
 	}
 
-	// Get user's groups for filtering
-	userGroups, _ := ctx.Get("groups")
-	groups := []string{}
-	if userGroups != nil {
-		if g, ok := userGroups.([]string); ok {
-			groups = g
-		}
-	}
-
-	// Check if user has access to this template
-	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Groups) > 0 {
-		hasAccess := false
-		for _, allowedGroup := range template.Spec.Allowed.Groups {
-			if allowedGroup == "*" {
-				hasAccess = true
-				break
-			}
-			for _, userGroup := range groups {
-				if matchPattern(allowedGroup, userGroup) {
-					hasAccess = true
-					break
-				}
-			}
-			if hasAccess {
-				break
-			}
-		}
-		if !hasAccess {
-			apiresponses.RespondForbidden(ctx, "access denied to this template")
-			return
-		}
-	}
+	requester := debugTemplateRequesterFromContext(ctx)
 
 	// Fetch ClusterConfigs and ClusterBindings in parallel for performance
 	var clusterConfigList breakglassv1alpha1.ClusterConfigList
@@ -530,9 +553,13 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	// still be used through explicit API bindingRef requests, but are not offered
 	// as selectable cluster options.
 	applicableBindings := c.findVisibleBindingsForTemplate(template, bindingList.Items)
+	if !c.canReadTemplateWithBindings(template, applicableBindings, requester) {
+		apiresponses.RespondForbidden(ctx, "access denied to this template")
+		return
+	}
 
 	// Build the response - resolve clusters from bindings and template's allowed.clusters
-	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap, groups)
+	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap, requester)
 
 	// Apply optional query filters
 	environment := ctx.Query("environment")
@@ -566,20 +593,19 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 // It considers both bindings and direct template.Spec.Allowed.Clusters patterns.
 func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 	template *breakglassv1alpha1.DebugSessionTemplate,
-	allBindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	applicableBindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	clusterMap map[string]*breakglassv1alpha1.ClusterConfig,
 	allClusterNames []string,
+	requester debugTemplateRequester,
 ) int {
 	seenClusters := make(map[string]bool)
-
-	// Count only UI-visible bindings. Hidden bindings can still be used through
-	// explicit API bindingRef requests, but should not make templates appear
-	// available in UI discovery.
-	applicableBindings := c.findVisibleBindingsForTemplate(template, allBindings)
 
 	// Collect clusters from bindings
 	for i := range applicableBindings {
 		binding := &applicableBindings[i]
+		if !requester.canRequest(effectiveDebugSessionAllowed(template, binding)) {
+			continue
+		}
 		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
 		for _, clusterName := range bindingClusters {
 			if clusterMap[clusterName] != nil {
@@ -589,7 +615,7 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 	}
 
 	// Also check template's direct allowed.clusters patterns
-	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) && template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
 		resolvedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
 		for _, clusterName := range resolvedClusters {
 			if clusterMap[clusterName] != nil {
@@ -670,13 +696,16 @@ func (c *DebugSessionAPIController) findVisibleBindingsForTemplate(template *bre
 // resolveTemplateClusters resolves all available clusters for a template.
 // When multiple bindings match the same cluster, all binding options are returned
 // so users can select which binding configuration to use.
-func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig, userGroups []string) []AvailableClusterDetail {
+func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig, requester debugTemplateRequester) []AvailableClusterDetail {
 	// Build a map of cluster -> all matching bindings
 	clusterBindings := make(map[string][]*breakglassv1alpha1.DebugSessionClusterBinding)
 
 	// Collect all bindings for each cluster
 	for i := range bindings {
 		binding := &bindings[i]
+		if !requester.canRequest(effectiveDebugSessionAllowed(template, binding)) {
+			continue
+		}
 		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
 		for _, clusterName := range bindingClusters {
 			clusterBindings[clusterName] = append(clusterBindings[clusterName], binding)
@@ -699,12 +728,12 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 		}
 
 		// Build detail with all binding options
-		detail := c.buildClusterDetailWithBindings(template, matchingBindings, cc, userGroups)
+		detail := c.buildClusterDetailWithBindings(template, matchingBindings, cc, requester)
 		result = append(result, detail)
 	}
 
 	// Then, resolve clusters from template's allowed.clusters (fallback, no binding)
-	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) && template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
 		allClusterNames := make([]string, 0, len(clusterMap))
 		for name := range clusterMap {
 			allClusterNames = append(allClusterNames, name)
@@ -722,7 +751,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 			}
 
 			// No binding - use template defaults
-			detail := c.buildClusterDetailWithBindings(template, nil, cc, userGroups)
+			detail := c.buildClusterDetailWithBindings(template, nil, cc, requester)
 			result = append(result, detail)
 		}
 	}
@@ -732,7 +761,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 
 // buildClusterDetailWithBindings creates a cluster detail with all matching binding options.
 // The first binding becomes the default (for backward compatibility with BindingRef).
-func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *breakglassv1alpha1.DebugSessionTemplate, matchingBindings []*breakglassv1alpha1.DebugSessionClusterBinding, cc *breakglassv1alpha1.ClusterConfig, userGroups []string) AvailableClusterDetail {
+func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *breakglassv1alpha1.DebugSessionTemplate, matchingBindings []*breakglassv1alpha1.DebugSessionClusterBinding, cc *breakglassv1alpha1.ClusterConfig, requester debugTemplateRequester) AvailableClusterDetail {
 	detail := AvailableClusterDetail{
 		Name:        cc.Name,
 		DisplayName: cc.Name,
@@ -747,10 +776,10 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		// No bindings - use template defaults
 		detail.Constraints = template.Spec.Constraints
 		detail.SchedulingConstraints = c.getSchedulingConstraintsSummary(template, nil)
-		detail.SchedulingOptions = c.resolveSchedulingOptions(template, nil)
+		detail.SchedulingOptions = c.resolveSchedulingOptionsForRequester(template, nil, requester)
 		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, nil)
 		detail.Impersonation = c.resolveImpersonation(template, nil)
-		detail.Approval = c.resolveApproval(template, nil, cc, userGroups)
+		detail.Approval = c.resolveApproval(template, nil, cc, requester.groups)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, nil)
 		return detail
 	}
@@ -768,11 +797,11 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 			DisplayName:                   effectiveDisplayName,
 			Constraints:                   c.mergeConstraints(template.Spec.Constraints, binding),
 			SchedulingConstraints:         c.getSchedulingConstraintsSummary(template, binding),
-			SchedulingOptions:             c.resolveSchedulingOptions(template, binding),
+			SchedulingOptions:             c.resolveSchedulingOptionsForRequester(template, binding, requester),
 			NamespaceConstraints:          c.resolveNamespaceConstraints(template, binding),
 			Impersonation:                 c.resolveImpersonation(template, binding),
 			RequiredAuxResourceCategories: c.resolveRequiredAuxResourceCategories(template, binding),
-			Approval:                      c.resolveApproval(template, binding, cc, userGroups),
+			Approval:                      c.resolveApproval(template, binding, cc, requester.groups),
 			RequestReason:                 c.resolveRequestReason(template, binding),
 			ApprovalReason:                c.resolveApprovalReason(template, binding),
 			Notification:                  c.resolveNotification(template, binding),
@@ -791,10 +820,10 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		// Set default constraints from primary binding for backward compatibility
 		detail.Constraints = c.mergeConstraints(template.Spec.Constraints, primaryBinding)
 		detail.SchedulingConstraints = c.getSchedulingConstraintsSummary(template, primaryBinding)
-		detail.SchedulingOptions = c.resolveSchedulingOptions(template, primaryBinding)
+		detail.SchedulingOptions = c.resolveSchedulingOptionsForRequester(template, primaryBinding, requester)
 		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, primaryBinding)
 		detail.Impersonation = c.resolveImpersonation(template, primaryBinding)
-		detail.Approval = c.resolveApproval(template, primaryBinding, cc, userGroups)
+		detail.Approval = c.resolveApproval(template, primaryBinding, cc, requester.groups)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, primaryBinding)
 		detail.RequestReason = c.resolveRequestReason(template, primaryBinding)
 		detail.ApprovalReason = c.resolveApprovalReason(template, primaryBinding)
