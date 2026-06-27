@@ -81,30 +81,23 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 			ssa.log.Errorw("expiring session in WaitingForScheduledTime state with no ScheduledStartTime",
 				"session", ses.Name,
 				"namespace", ses.Namespace)
-			ses.Status.State = breakglassv1alpha1.SessionStateExpired
-			ses.Status.ReasonEnded = "missingScheduledStartTime"
-			ses.Status.ExpiresAt = metav1.NewTime(now)
-			retainFor := ParseRetainFor(ses.Spec, ssa.log)
-			ses.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
-			ses.SetCondition(metav1.Condition{
-				Type:               string(breakglassv1alpha1.SessionConditionTypeSessionExpired),
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: metav1.Now(),
-				Reason:             "MissingScheduledStartTime",
-				Message:            "Session expired: WaitingForScheduledTime with no ScheduledStartTime set",
-			})
-			if err := ssa.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err != nil {
-				ssa.log.Errorw("failed to expire stuck scheduled session",
-					"session", ses.Name, "namespace", ses.Namespace, "error", err)
-			} else {
-				metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
-			}
+			ssa.expireScheduledSession(ses, now, "missingScheduledStartTime", "MissingScheduledStartTime", "Session expired: WaitingForScheduledTime with no ScheduledStartTime set")
 			continue
 		}
 
 		scheduledTime := ses.Spec.ScheduledStartTime.Time
 		if now.Before(scheduledTime) {
 			// Not yet time for this session
+			continue
+		}
+		if !ses.Status.ExpiresAt.IsZero() && !now.Before(ses.Status.ExpiresAt.Time) {
+			ssa.log.Infow("Expiring scheduled session whose validity ended before activation",
+				"session", ses.Name,
+				"namespace", ses.Namespace,
+				"scheduledStartTime", scheduledTime,
+				"expiresAt", ses.Status.ExpiresAt.Time,
+				"now", now)
+			ssa.expireScheduledSession(ses, now, "scheduledSessionExpiredBeforeActivation", "ScheduledSessionExpiredBeforeActivation", "Session expired before its scheduled activation was processed")
 			continue
 		}
 
@@ -153,6 +146,29 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 		// RBAC group will now be applied by the authorization controller
 		// (same mechanism as immediate sessions)
 	}
+}
+
+func (ssa *ScheduledSessionActivator) expireScheduledSession(session breakglassv1alpha1.BreakglassSession, now time.Time, reasonEnded, conditionReason, message string) {
+	session.Status.State = breakglassv1alpha1.SessionStateExpired
+	session.Status.ReasonEnded = reasonEnded
+	if session.Status.ExpiresAt.IsZero() || now.Before(session.Status.ExpiresAt.Time) {
+		session.Status.ExpiresAt = metav1.NewTime(now)
+	}
+	retainFor := ParseRetainFor(session.Spec, ssa.log)
+	session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
+	session.SetCondition(metav1.Condition{
+		Type:               string(breakglassv1alpha1.SessionConditionTypeSessionExpired),
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.NewTime(now),
+		Reason:             conditionReason,
+		Message:            message,
+	})
+	if err := ssa.sessionManager.UpdateBreakglassSessionStatus(context.Background(), session); err != nil {
+		ssa.log.Errorw("failed to expire scheduled session",
+			"session", session.Name, "namespace", session.Namespace, "reason", reasonEnded, "error", err)
+		return
+	}
+	metrics.SessionExpired.WithLabelValues(session.Spec.Cluster).Inc()
 }
 
 func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(session breakglassv1alpha1.BreakglassSession) {

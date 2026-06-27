@@ -94,6 +94,56 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.True(t, hasCondition, "expected ScheduledStartTimeReached condition")
 	})
 
+	t.Run("expires session whose validity ended before activation", func(t *testing.T) {
+		now := time.Now()
+		expiredAt := metav1.NewTime(now.Add(-1 * time.Minute))
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "scheduled-already-expired",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:               "test@example.com",
+				Cluster:            "test-cluster",
+				GrantedGroup:       "admin",
+				ScheduledStartTime: &metav1.Time{Time: now.Add(-10 * time.Minute)},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(now.Add(-30 * time.Minute)),
+				ExpiresAt:  expiredAt,
+			},
+		}
+
+		fakeClient := newFakeActivationClient(session)
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		activator := NewScheduledSessionActivator(logger, mgr).
+			WithMailService(nil, "TestBranding", true)
+
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		err := fakeClient.Get(context.Background(),
+			client.ObjectKey{Namespace: "breakglass", Name: "scheduled-already-expired"},
+			&updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
+		assert.True(t, updated.Status.ActualStartTime.IsZero(), "expired scheduled session must not be activated")
+		assert.Equal(t, "scheduledSessionExpiredBeforeActivation", updated.Status.ReasonEnded)
+		assert.WithinDuration(t, expiredAt.Time, updated.Status.ExpiresAt.Time, time.Second)
+		assert.False(t, updated.Status.RetainedUntil.IsZero(), "RetainedUntil should be set for cleanup")
+
+		var hasCondition bool
+		for _, cond := range updated.Status.Conditions {
+			if cond.Type == string(breakglassv1alpha1.SessionConditionTypeSessionExpired) {
+				hasCondition = true
+				assert.Equal(t, "ScheduledSessionExpiredBeforeActivation", cond.Reason)
+			}
+		}
+		assert.True(t, hasCondition, "expected SessionExpired condition")
+	})
+
 	t.Run("does not activate session before scheduledStartTime", func(t *testing.T) {
 		futureTime := time.Now().Add(1 * time.Hour)
 		session := &breakglassv1alpha1.BreakglassSession{
