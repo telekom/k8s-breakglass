@@ -816,12 +816,12 @@ Understanding the difference between cluster name matching and `ClusterConfig` l
 
 | Aspect | `clusters` (name list) | `clusterSelector` (labels) |
 |--------|----------------------|---------------------------|
-| Matching | Exact string match | Label selector on ClusterConfig |
+| Matching | Exact `ClusterConfig.metadata.name` match across namespaces | Label selector on ClusterConfig |
 | Dynamic | No - must update binding | Yes - new clusters auto-match |
-| Prerequisite | None | ClusterConfig must exist |
+| Prerequisite | ClusterConfig must exist and its name must be globally unique | ClusterConfig must exist |
 | Glob patterns | Not supported | Use label expressions |
 
-**Important:** If `clusterSelector` is used but no `ClusterConfig` exists for a cluster, that cluster will NOT match the binding (even if it would logically fit the selector).
+**Important:** If `clusterSelector` is used but no `ClusterConfig` exists for a cluster, that cluster will NOT match the binding (even if it would logically fit the selector). Explicit `clusters` entries are resolved by `ClusterConfig` name across namespaces; duplicate names are ambiguous and prevent resolution until the names are made unique.
 
 ### Configuration Merge Rules
 

@@ -149,6 +149,44 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateRefValid(t *test
 	assert.Equal(t, "explicit", updated.Status.ResolvedClusters[0].MatchedBy)
 }
 
+func TestDebugSessionClusterBindingReconciler_ResolveClusters_FindsNamespacedClusterConfig(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+
+	cluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-a",
+		},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue},
+			},
+		},
+	}
+
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-binding",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Clusters: []string{"tenant-cluster"},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, binding).
+		Build()
+
+	resolved, err := r.resolveClusters(context.Background(), binding)
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, "tenant-cluster", resolved[0].Name)
+	assert.True(t, resolved[0].Ready)
+	assert.Equal(t, "explicit", resolved[0].MatchedBy)
+}
+
 func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateNotFound(t *testing.T) {
 	r, scheme := newTestClusterBindingReconciler()
 

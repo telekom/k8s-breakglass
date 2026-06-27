@@ -723,7 +723,8 @@ func TestClusterBindingAPIController_GetBindingsForCluster(t *testing.T) {
 
 	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-cluster",
+			Name:      "test-cluster",
+			Namespace: "tenant-a",
 			Labels: map[string]string{
 				"env": "production",
 			},
@@ -1396,7 +1397,8 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 	// Create a ClusterConfig for cluster-a
 	clusterConfigA := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "cluster-a",
+			Name:      "cluster-a",
+			Namespace: "tenant-a",
 		},
 		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			Tenant: "test-tenant",
@@ -1442,7 +1444,8 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 		// Create a ClusterConfig for cluster-b but no bindings reference it
 		clusterConfigB := breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "cluster-b",
+				Name:      "cluster-b",
+				Namespace: "tenant-b",
 			},
 			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				Tenant: "test-tenant",

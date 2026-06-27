@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -218,8 +220,8 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 	}
 
 	// First get the ClusterConfig to access its labels
-	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
+	clusterConfig, err := c.getClusterConfigByName(ctx, clusterName)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			apiresponses.RespondNotFoundSimple(ctx, fmt.Sprintf("cluster %s not found", clusterName))
 			return
@@ -338,8 +340,8 @@ func (c *ClusterBindingAPIController) bindingToResponse(binding *breakglassv1alp
 // This is a helper method for internal use
 func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context, clusterName string) ([]breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	// Get the ClusterConfig
-	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
+	clusterConfig, err := c.getClusterConfigByName(ctx, clusterName)
+	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster config: %w", err)
 	}
 
@@ -358,6 +360,49 @@ func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context,
 	}
 
 	return matching, nil
+}
+
+func (c *ClusterBindingAPIController) getClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	clusterList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.client.List(ctx, clusterList, ctrlclient.MatchingFields{"metadata.name": name}); err == nil {
+		if clusterConfig, err := singleClusterConfigByName(clusterList.Items, name); clusterConfig != nil || err != nil {
+			return clusterConfig, err
+		}
+	}
+
+	clusterList = &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.client.List(ctx, clusterList); err != nil {
+		return nil, fmt.Errorf("list clusterconfigs: %w", err)
+	}
+
+	clusterConfig, err := singleClusterConfigByName(clusterList.Items, name)
+	if clusterConfig != nil || err != nil {
+		return clusterConfig, err
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}, name)
+}
+
+func singleClusterConfigByName(items []breakglassv1alpha1.ClusterConfig, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	matching := make([]*breakglassv1alpha1.ClusterConfig, 0, len(items))
+	for i := range items {
+		if items[i].Name == name {
+			matching = append(matching, &items[i])
+		}
+	}
+
+	switch len(matching) {
+	case 0:
+		return nil, nil
+	case 1:
+		return matching[0], nil
+	default:
+		namespaces := make([]string, 0, len(matching))
+		for _, clusterConfig := range matching {
+			namespaces = append(namespaces, clusterConfig.Namespace)
+		}
+		sort.Strings(namespaces)
+		return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
+	}
 }
 
 // IsBindingActive checks if a binding is currently active.

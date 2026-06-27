@@ -18,11 +18,16 @@ package config
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -335,8 +340,8 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 			continue
 		}
 
-		clusterConfig := &breakglassv1alpha1.ClusterConfig{}
-		if err := r.client.Get(ctx, client.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
+		clusterConfig, err := r.getClusterConfigByName(ctx, clusterName)
+		if err != nil {
 			return nil, err
 		}
 
@@ -389,6 +394,49 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 	}
 
 	return resolved, nil
+}
+
+func (r *DebugSessionClusterBindingReconciler) getClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	clusterList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := r.client.List(ctx, clusterList, client.MatchingFields{"metadata.name": name}); err == nil {
+		if clusterConfig, err := singleClusterConfigByName(clusterList.Items, name); clusterConfig != nil || err != nil {
+			return clusterConfig, err
+		}
+	}
+
+	clusterList = &breakglassv1alpha1.ClusterConfigList{}
+	if err := r.client.List(ctx, clusterList); err != nil {
+		return nil, fmt.Errorf("list clusterconfigs: %w", err)
+	}
+
+	clusterConfig, err := singleClusterConfigByName(clusterList.Items, name)
+	if clusterConfig != nil || err != nil {
+		return clusterConfig, err
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}, name)
+}
+
+func singleClusterConfigByName(items []breakglassv1alpha1.ClusterConfig, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	matching := make([]*breakglassv1alpha1.ClusterConfig, 0, len(items))
+	for i := range items {
+		if items[i].Name == name {
+			matching = append(matching, &items[i])
+		}
+	}
+
+	switch len(matching) {
+	case 0:
+		return nil, nil
+	case 1:
+		return matching[0], nil
+	default:
+		namespaces := make([]string, 0, len(matching))
+		for _, clusterConfig := range matching {
+			namespaces = append(namespaces, clusterConfig.Namespace)
+		}
+		sort.Strings(namespaces)
+		return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
+	}
 }
 
 // SetupWithManager registers this reconciler with the controller-runtime manager.
