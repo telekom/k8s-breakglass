@@ -580,6 +580,9 @@ func (m *AuxiliaryResourceManager) deployResource(
 			status.APIVersion = obj.GetAPIVersion()
 			status.ResourceName = obj.GetName()
 			status.Namespace = obj.GetNamespace()
+			status.Created = true
+			now := time.Now().UTC().Format(time.RFC3339)
+			status.CreatedAt = &now
 		} else {
 			// Track additional resources from multi-document YAML
 			status.AdditionalResources = append(status.AdditionalResources, breakglassv1alpha1.AdditionalResourceRef{
@@ -590,10 +593,6 @@ func (m *AuxiliaryResourceManager) deployResource(
 			})
 		}
 	}
-
-	status.Created = true
-	now := time.Now().UTC().Format(time.RFC3339)
-	status.CreatedAt = &now
 
 	if len(deployedResources) > 1 {
 		m.log.Infow("Deployed multiple resources from single auxiliary resource",

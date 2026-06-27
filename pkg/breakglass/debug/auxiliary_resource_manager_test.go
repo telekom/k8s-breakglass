@@ -1996,6 +1996,14 @@ name: invalid - no indentation
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "doc 2")
 	assert.Contains(t, status.Error, "YAML parsing failed")
+	assert.True(t, status.Created, "first applied document must remain cleanup-visible after a later document fails")
+	assert.NotNil(t, status.CreatedAt)
+	assert.Equal(t, "ConfigMap", status.Kind)
+	assert.Equal(t, "valid-config", status.ResourceName)
+	assert.Equal(t, "debug-ns", status.Namespace)
+
+	var applied corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "valid-config"}, &applied))
 }
 
 func TestDeployResource_MultiDocumentYAML_ConditionalAllExcluded(t *testing.T) {
