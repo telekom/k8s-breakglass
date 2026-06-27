@@ -5038,6 +5038,78 @@ func TestClusterConfig_AllowedApproverDomains_CrossNamespaceRestrictsDomain(t *t
 	}
 }
 
+func TestClusterConfig_DuplicateNameFailsClosedForApprovalPolicy(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	pending := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "duplicate-clusterconfig-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "duplicate-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "g-duplicate",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+	}
+
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-duplicate-escalation", Namespace: "tenant-a"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"duplicate-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "g-duplicate",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@external.example"}},
+		},
+	}
+
+	restrictiveClusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "duplicate-cluster", Namespace: "platform-a"},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"internal.example"}},
+	}
+	permissiveDuplicate := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "duplicate-cluster", Namespace: "platform-b"},
+	}
+
+	cli := builder.WithObjects(pending, esc, restrictiveClusterConfig, permissiveDuplicate).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", "approver@external.example")
+		c.Set("username", "approver")
+		c.Next()
+	}
+
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	var sessions []breakglassv1alpha1.BreakglassSession
+	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
+		t.Fatalf("failed decode response: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected no sessions visible when ClusterConfig name is ambiguous, got: %#v", sessions)
+	}
+}
+
 // Exhaustive permutations combining cluster/user/group with mine and state filters.
 func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)

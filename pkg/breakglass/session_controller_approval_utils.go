@@ -18,6 +18,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -47,12 +48,19 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
 	var baseAllowedApproverDomains []string
-	if wc.clusterConfigManager != nil {
+	if wc.clusterConfigManager != nil && wc.clusterConfigManager.hasClient() {
 		if cc, cerr := wc.clusterConfigManager.GetClusterConfigByName(ctx, session.Spec.Cluster); cerr == nil && cc != nil {
 			baseBlockSelfApproval = cc.Spec.BlockSelfApproval
 			baseAllowedApproverDomains = cc.Spec.AllowedApproverDomains
+		} else if cerr != nil && !apierrors.IsNotFound(cerr) {
+			reqLog.Warnw("Unable to resolve unique ClusterConfig for approval policy", "cluster", session.Spec.Cluster, "error", cerr)
+			return ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialNoMatchingEscalation,
+				Message: "Cluster approval policy is ambiguous",
+			}
 		} else if cerr != nil {
-			reqLog.Debugw("No unique ClusterConfig found for approval policy, continuing with defaults", "cluster", session.Spec.Cluster, "error", cerr)
+			reqLog.Debugw("No ClusterConfig found for approval policy, continuing with defaults", "cluster", session.Spec.Cluster, "error", cerr)
 		}
 	}
 
