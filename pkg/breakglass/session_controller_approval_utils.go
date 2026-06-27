@@ -48,7 +48,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	var baseAllowedApproverDomains []string
 
 	// Gather approver groups with caching
-	cacheKey := "approverGroups_" + email
+	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, email)
 	var approverGroups []string
 	if cached, ok := c.Get(cacheKey); ok {
 		approverGroups = cached.([]string)
