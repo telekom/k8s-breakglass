@@ -6,6 +6,7 @@ package breakglass
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +43,24 @@ func newFakeActivationClient(objects ...client.Object) client.Client {
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexerActivation).
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerActivation).
 		Build()
+}
+
+type staleScheduledActivationClient struct {
+	client.Client
+	mutateOnce sync.Once
+	mutate     func(context.Context, client.Client)
+}
+
+func (c *staleScheduledActivationClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	err := c.Client.List(ctx, list, opts...)
+	if err == nil {
+		if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); ok && c.mutate != nil {
+			c.mutateOnce.Do(func() {
+				c.mutate(ctx, c.Client)
+			})
+		}
+	}
+	return err
 }
 
 func TestActivateScheduledSessions(t *testing.T) {
@@ -272,6 +291,59 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateWaitingForScheduledTime, updated.Status.State)
 		assert.Empty(t, updated.Status.ReasonEnded)
 		assert.True(t, updated.Status.RetainedUntil.IsZero(), "failed expiry update must not persist retention")
+	})
+
+	t.Run("skips session whose live state changed after list", func(t *testing.T) {
+		scheduledTime := time.Now().Add(-5 * time.Minute)
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "scheduled-withdrawn-after-list",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:               "test@example.com",
+				Cluster:            "test-cluster",
+				GrantedGroup:       "admin",
+				ScheduledStartTime: &metav1.Time{Time: scheduledTime},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(scheduledTime.Add(-30 * time.Minute)),
+				ExpiresAt:  metav1.NewTime(time.Now().Add(1 * time.Hour)),
+			},
+		}
+
+		baseClient := newFakeActivationClient(session)
+		staleClient := &staleScheduledActivationClient{
+			Client: baseClient,
+			mutate: func(ctx context.Context, c client.Client) {
+				current := &breakglassv1alpha1.BreakglassSession{}
+				err := c.Get(ctx, client.ObjectKey{Namespace: "breakglass", Name: "scheduled-withdrawn-after-list"}, current)
+				require.NoError(t, err)
+				current.Status.State = breakglassv1alpha1.SessionStateWithdrawn
+				current.Status.WithdrawnAt = metav1.NewTime(time.Now())
+				err = c.Status().Update(ctx, current)
+				require.NoError(t, err)
+			},
+		}
+		mgr := NewSessionManagerWithClient(staleClient)
+
+		activator := NewScheduledSessionActivator(logger, mgr).
+			WithMailService(nil, "TestBranding", true)
+
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		err := baseClient.Get(context.Background(),
+			client.ObjectKey{Namespace: "breakglass", Name: "scheduled-withdrawn-after-list"},
+			&updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, updated.Status.State)
+		assert.True(t, updated.Status.ActualStartTime.IsZero(), "stale scheduled activation must not reactivate withdrawn sessions")
+
+		for _, condition := range updated.Status.Conditions {
+			assert.NotEqual(t, "ScheduledStartTimeReached", condition.Type)
+		}
 	})
 
 	t.Run("does not activate session before scheduledStartTime", func(t *testing.T) {

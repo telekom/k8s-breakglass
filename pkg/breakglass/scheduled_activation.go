@@ -27,6 +27,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ScheduledSessionActivator handles activation of scheduled sessions.
@@ -67,8 +68,10 @@ func (ssa *ScheduledSessionActivator) WithAuditService(auditService AuditEmitter
 // Sessions whose ScheduledStartTime has arrived transition to Approved so the RBAC group can be applied.
 // Sessions that can no longer be valid are expired instead of being activated late.
 func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
+	ctx := context.Background()
+
 	// Use indexed query to fetch only sessions waiting for scheduled time
-	sessions, err := ssa.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStateWaitingForScheduledTime)
+	sessions, err := ssa.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateWaitingForScheduledTime)
 	if err != nil {
 		ssa.log.Error("error listing sessions for scheduled activation", zap.String("error", err.Error()))
 		return
@@ -76,6 +79,12 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 
 	now := time.Now()
 	for _, ses := range sessions {
+		var ok bool
+		ses, ok = ssa.currentWaitingScheduledSession(ctx, ses)
+		if !ok {
+			continue
+		}
+
 		// Sanity check: session should have a scheduledStartTime
 		if ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero() {
 			ssa.log.Errorw("expiring session in WaitingForScheduledTime state with no ScheduledStartTime",
@@ -169,6 +178,28 @@ func (ssa *ScheduledSessionActivator) expireScheduledSession(session breakglassv
 		return
 	}
 	metrics.SessionExpired.WithLabelValues(session.Spec.Cluster).Inc()
+}
+
+func (ssa *ScheduledSessionActivator) currentWaitingScheduledSession(
+	ctx context.Context,
+	listed breakglassv1alpha1.BreakglassSession,
+) (breakglassv1alpha1.BreakglassSession, bool) {
+	current := breakglassv1alpha1.BreakglassSession{}
+	if err := ssa.sessionManager.Reader().Get(ctx, client.ObjectKey{Name: listed.Name, Namespace: listed.Namespace}, &current); err != nil {
+		ssa.log.Errorw("skipping scheduled session activation because live session could not be read",
+			"session", listed.Name,
+			"namespace", listed.Namespace,
+			"error", err)
+		return listed, false
+	}
+	if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
+		ssa.log.Infow("skipping scheduled session activation because state changed",
+			"session", current.Name,
+			"namespace", current.Namespace,
+			"state", current.Status.State)
+		return current, false
+	}
+	return current, true
 }
 
 func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(session breakglassv1alpha1.BreakglassSession) {
