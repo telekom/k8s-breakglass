@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,9 +14,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -349,12 +353,33 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
 	}
 
+	dependencyPredicate := dependencyChangePredicate()
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&breakglassv1alpha1.BreakglassEscalation{}).
+		For(&breakglassv1alpha1.BreakglassEscalation{}, builder.WithPredicates(specChangePredicate)).
+		Watches(
+			&breakglassv1alpha1.ClusterConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForClusterConfig),
+			builder.WithPredicates(dependencyPredicate),
+		).
+		Watches(
+			&breakglassv1alpha1.IdentityProvider{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForIdentityProvider),
+			builder.WithPredicates(dependencyPredicate),
+		).
+		Watches(
+			&breakglassv1alpha1.DenyPolicy{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForDenyPolicy),
+			builder.WithPredicates(dependencyPredicate),
+		).
+		Watches(
+			&breakglassv1alpha1.MailProvider{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForMailProvider),
+			builder.WithPredicates(dependencyPredicate),
+		).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 1, // Process one escalation at a time
 		}).
-		WithEventFilter(specChangePredicate).
 		Complete(r)
 }
 
@@ -382,6 +407,150 @@ func shouldReconcileEscalationUpdate(oldObj, newObj client.Object) bool {
 	default:
 		return !oldDeletionTimestamp.Equal(newDeletionTimestamp)
 	}
+}
+
+func dependencyChangePredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return true
+			}
+			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
+				return true
+			}
+			oldDeleting := e.ObjectOld.GetDeletionTimestamp()
+			newDeleting := e.ObjectNew.GetDeletionTimestamp()
+			switch {
+			case oldDeleting == nil && newDeleting == nil:
+				return false
+			case oldDeleting == nil || newDeleting == nil:
+				return true
+			default:
+				return !oldDeleting.Equal(newDeleting)
+			}
+		},
+		CreateFunc: func(e event.CreateEvent) bool { return true },
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+	}
+}
+
+func (r *EscalationReconciler) escalationsForClusterConfig(ctx context.Context, obj client.Object) []reconcile.Request {
+	clusterName := strings.TrimSpace(obj.GetName())
+	if clusterName == "" {
+		return nil
+	}
+
+	var listOpts []client.ListOption
+	if namespace := obj.GetNamespace(); namespace != "" {
+		listOpts = append(listOpts, client.InNamespace(namespace))
+	}
+
+	return r.escalationRequestsMatching(ctx, listOpts, "ClusterConfig", clusterName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+		return clusterRefListMatchesName(esc.Spec.ClusterConfigRefs, clusterName)
+	})
+}
+
+func (r *EscalationReconciler) escalationsForIdentityProvider(ctx context.Context, obj client.Object) []reconcile.Request {
+	idpName := strings.TrimSpace(obj.GetName())
+	if idpName == "" {
+		return nil
+	}
+
+	return r.escalationRequestsMatching(ctx, nil, "IdentityProvider", idpName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+		return containsTrimmedString(esc.Spec.AllowedIdentityProviders, idpName) ||
+			containsTrimmedString(esc.Spec.AllowedIdentityProvidersForRequests, idpName) ||
+			containsTrimmedString(esc.Spec.AllowedIdentityProvidersForApprovers, idpName)
+	})
+}
+
+func (r *EscalationReconciler) escalationsForDenyPolicy(ctx context.Context, obj client.Object) []reconcile.Request {
+	policyName := strings.TrimSpace(obj.GetName())
+	if policyName == "" {
+		return nil
+	}
+
+	return r.escalationRequestsMatching(ctx, nil, "DenyPolicy", policyName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+		return containsTrimmedString(esc.Spec.DenyPolicyRefs, policyName)
+	})
+}
+
+func (r *EscalationReconciler) escalationsForMailProvider(ctx context.Context, obj client.Object) []reconcile.Request {
+	providerName := strings.TrimSpace(obj.GetName())
+	if providerName == "" {
+		return nil
+	}
+
+	return r.escalationRequestsMatching(ctx, nil, "MailProvider", providerName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+		return strings.TrimSpace(esc.Spec.MailProvider) == providerName
+	})
+}
+
+func (r *EscalationReconciler) escalationRequestsMatching(
+	ctx context.Context,
+	listOpts []client.ListOption,
+	dependencyKind string,
+	dependencyName string,
+	matches func(*breakglassv1alpha1.BreakglassEscalation) bool,
+) []reconcile.Request {
+	var list breakglassv1alpha1.BreakglassEscalationList
+	if err := r.client.List(ctx, &list, listOpts...); err != nil {
+		if r.logger != nil {
+			r.logger.Warnw("Failed to list BreakglassEscalations for dependency change",
+				"dependencyKind", dependencyKind,
+				"dependencyName", dependencyName,
+				"error", err)
+		}
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		esc := &list.Items[i]
+		if !matches(esc) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(esc),
+		})
+	}
+
+	sort.Slice(requests, func(i, j int) bool {
+		if requests[i].Namespace == requests[j].Namespace {
+			return requests[i].Name < requests[j].Name
+		}
+		return requests[i].Namespace < requests[j].Namespace
+	})
+	return requests
+}
+
+func containsTrimmedString(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func clusterRefListMatchesName(refs []string, clusterName string) bool {
+	for _, ref := range refs {
+		if clusterRefMatchesName(ref, clusterName) {
+			return true
+		}
+	}
+	return false
+}
+
+func clusterRefMatchesName(ref string, clusterName string) bool {
+	pattern := strings.TrimSpace(ref)
+	if pattern == "" {
+		return false
+	}
+	if pattern == clusterName {
+		return true
+	}
+	matched, err := filepath.Match(pattern, clusterName)
+	return err == nil && matched
 }
 
 // validateEscalationConfig validates the escalation's configuration structure.
@@ -412,6 +581,18 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 			continue
 		}
 
+		if strings.ContainsAny(name, "*?[") {
+			matched, err := r.clusterConfigRefHasMatch(ctx, esc.Namespace, name)
+			if err != nil {
+				return err
+			}
+			if matched {
+				continue
+			}
+			missing = append(missing, fmt.Sprintf("%s/%s", esc.Namespace, name))
+			continue
+		}
+
 		clusterKey := client.ObjectKey{Namespace: esc.Namespace, Name: name}
 		cluster := &breakglassv1alpha1.ClusterConfig{}
 		if err := r.client.Get(ctx, clusterKey, cluster); err != nil {
@@ -428,6 +609,21 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 	}
 
 	return nil
+}
+
+func (r *EscalationReconciler) clusterConfigRefHasMatch(ctx context.Context, namespace, pattern string) (bool, error) {
+	var clusters breakglassv1alpha1.ClusterConfigList
+	if err := r.client.List(ctx, &clusters, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("failed to list ClusterConfigs in namespace %q for pattern %q: %w", namespace, pattern, err)
+	}
+
+	for i := range clusters.Items {
+		if clusterRefMatchesName(pattern, clusters.Items[i].Name) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // validateIDPRefs validates that all referenced IDPs exist

@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -173,6 +175,125 @@ func TestShouldReconcileEscalationUpdate(t *testing.T) {
 			&breakglassv1alpha1.ClusterConfig{},
 		))
 	})
+}
+
+func TestEscalationDependencyChangePredicate(t *testing.T) {
+	pred := dependencyChangePredicate()
+
+	assert.True(t, pred.Create(event.CreateEvent{Object: &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail"},
+	}}))
+	assert.True(t, pred.Delete(event.DeleteEvent{Object: &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail"},
+	}}))
+
+	oldProvider := &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail", Generation: 1},
+	}
+	sameProvider := oldProvider.DeepCopy()
+	sameProvider.ResourceVersion = "2"
+
+	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: oldProvider, ObjectNew: sameProvider}))
+
+	newGeneration := oldProvider.DeepCopy()
+	newGeneration.Generation = 2
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldProvider, ObjectNew: newGeneration}))
+
+	deletingProvider := oldProvider.DeepCopy()
+	deletingAt := metav1.Now()
+	deletingProvider.DeletionTimestamp = &deletingAt
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldProvider, ObjectNew: deletingProvider}))
+}
+
+func TestEscalationReconciler_DependencyMapFunctions(t *testing.T) {
+	scheme := newTestEscalationReconcilerScheme()
+	logger := zap.NewNop().Sugar()
+
+	escalation := func(name, namespace string, spec breakglassv1alpha1.BreakglassEscalationSpec) *breakglassv1alpha1.BreakglassEscalation {
+		return &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec:       spec,
+		}
+	}
+
+	clusterExact := escalation("cluster-exact", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"prod-a"},
+	})
+	clusterGlob := escalation("cluster-glob", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"prod-*"},
+	})
+	clusterWildcard := escalation("cluster-wildcard", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"*"},
+	})
+	clusterOtherNamespace := escalation("cluster-other-namespace", "team-b", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"prod-a"},
+	})
+	idpLegacy := escalation("idp-legacy", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProviders: []string{"corp-idp"},
+	})
+	idpRequester := escalation("idp-requester", "team-b", breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProvidersForRequests: []string{"corp-idp"},
+	})
+	idpApprover := escalation("idp-approver", "team-b", breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProvidersForApprovers: []string{"corp-idp"},
+	})
+	denyPolicy := escalation("deny-policy", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		DenyPolicyRefs: []string{"prod-deny"},
+	})
+	mailProvider := escalation("mail-provider", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		MailProvider: "prod-mail",
+	})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			clusterExact,
+			clusterGlob,
+			clusterWildcard,
+			clusterOtherNamespace,
+			idpLegacy,
+			idpRequester,
+			idpApprover,
+			denyPolicy,
+			mailProvider,
+		).
+		Build()
+	r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+	ctx := context.Background()
+
+	assert.Equal(t,
+		[]string{"team-a/cluster-exact", "team-a/cluster-glob", "team-a/cluster-wildcard"},
+		requestKeys(r.escalationsForClusterConfig(ctx, &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-a", Namespace: "team-a"},
+		})),
+	)
+	assert.Equal(t,
+		[]string{"team-a/idp-legacy", "team-b/idp-approver", "team-b/idp-requester"},
+		requestKeys(r.escalationsForIdentityProvider(ctx, &breakglassv1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: "corp-idp"},
+		})),
+	)
+	assert.Equal(t,
+		[]string{"team-a/deny-policy"},
+		requestKeys(r.escalationsForDenyPolicy(ctx, &breakglassv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-deny"},
+		})),
+	)
+	assert.Equal(t,
+		[]string{"team-a/mail-provider"},
+		requestKeys(r.escalationsForMailProvider(ctx, &breakglassv1alpha1.MailProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-mail"},
+		})),
+	)
+}
+
+func requestKeys(requests []reconcile.Request) []string {
+	keys := make([]string, 0, len(requests))
+	for _, req := range requests {
+		keys = append(keys, req.NamespacedName.String())
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func TestEscalationReconciler_Reconcile(t *testing.T) {
@@ -705,6 +826,53 @@ func TestEscalationReconciler_ValidateClusterRef(t *testing.T) {
 
 		err := r.validateClusterRef(context.Background(), esc)
 		require.NoError(t, err)
+	})
+
+	t.Run("glob cluster ref passes when matching ClusterConfig exists", func(t *testing.T) {
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-eu", Namespace: "default"},
+			Spec:       breakglassv1alpha1.ClusterConfigSpec{},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-*"},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.NoError(t, err)
+	})
+
+	t.Run("glob cluster ref fails when no matching ClusterConfig exists", func(t *testing.T) {
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "staging-eu", Namespace: "default"},
+			Spec:       breakglassv1alpha1.ClusterConfigSpec{},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-*"},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ClusterConfigRefs not found: default/prod-*")
 	})
 }
 

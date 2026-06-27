@@ -198,7 +198,7 @@ mailProvider: "prod-mail-provider"
 
 If omitted, Breakglass uses the cluster-level mail provider, and if that is unset, the default MailProvider. This allows sensitive escalations to route via hardened SMTP relays while everything else uses the default.
 
-> **Runtime validation:** The webhook no longer blocks missing MailProviders. The Escalation controller re-checks the reference after admission and flips the `MailProviderValid` condition (and emits a warning event) if the provider is missing or disabled. Create/enable the provider to restore the condition to `True` and re-enable notifications.
+> **Runtime validation:** The webhook no longer blocks missing MailProviders. The Escalation controller re-checks the reference after admission and flips the `MailProviderValid` condition (and emits a warning event) if the provider is missing or disabled. The controller watches referenced MailProvider changes and deletions, so creating or enabling the provider refreshes the condition and re-enables notifications.
 
 ### notificationExclusions
 
@@ -465,6 +465,8 @@ allowedIdentityProvidersForApprovers:
 - Cannot be mixed with legacy `allowedIdentityProviders` field
 - All referenced IdentityProviders must exist
 
+> **Runtime validation:** The Escalation controller watches referenced IdentityProvider changes and deletions and refreshes the `IDPRefsValid` condition when a provider is created, disabled, enabled, or removed.
+
 **Behavior:**
 
 - If `allowedIdentityProvidersForRequests` is empty, all IDPs can request (default)
@@ -661,7 +663,7 @@ clusterConfigRefs: ["*"]         # ALL clusters (global escalation)
 
 **Glob patterns**: Supports `*` (any characters), `?` (single character), and `[abc]` (character class). See [Glob Pattern Matching](#glob-pattern-matching) for details.
 
-> **Runtime validation:** The admission webhook intentionally accepts escalations even if the referenced `ClusterConfig` objects are missing. The Escalation controller re-validates these references and updates the `ClusterRefsValid` condition (and emits warning events) whenever a reference cannot be resolved.
+> **Runtime validation:** The admission webhook intentionally accepts escalations even if the referenced `ClusterConfig` objects are missing. The Escalation controller re-validates exact and glob references, watches matching `ClusterConfig` changes and deletions, and updates the `ClusterRefsValid` condition (and emits warning events) whenever a reference cannot be resolved.
 
 The Escalation API defaults `activeOnly=true`. With a concrete or glob `cluster`
 filter, escalations are hidden when every matching registered `ClusterConfig`
@@ -678,7 +680,7 @@ Default deny policies attached to any session created via this escalation:
 denyPolicyRefs: ["deny-production-secrets", "deny-destructive-actions"]
 ```
 
-> **Runtime validation:** Missing or misconfigured `DenyPolicy` references do not block creation. Instead, the Escalation controller surfaces problems through the `DenyPolicyRefsValid` condition and warning events so operators can react without being prevented from applying manifests.
+> **Runtime validation:** Missing or misconfigured `DenyPolicy` references do not block creation. Instead, the Escalation controller watches referenced DenyPolicy changes and deletions, then surfaces problems through the `DenyPolicyRefsValid` condition and warning events so operators can react without being prevented from applying manifests.
 
 ### podSecurityOverrides
 
