@@ -333,6 +333,100 @@ func TestDeployAuxiliaryResources_EmptyResources(t *testing.T) {
 	assert.Nil(t, statuses)
 }
 
+func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	tests := []struct {
+		name        string
+		resource    breakglassv1alpha1.AuxiliaryResource
+		expectError bool
+	}{
+		{
+			name: "default policy fails closed",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:         "default-fail",
+				Category:     "config",
+				CreateBefore: true,
+			},
+			expectError: true,
+		},
+		{
+			name: "explicit fail policy returns error",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "explicit-fail",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+			},
+			expectError: true,
+		},
+		{
+			name: "ignore policy continues",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "ignore",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore,
+			},
+		},
+		{
+			name: "warn policy continues",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "warn",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn,
+			},
+		},
+		{
+			name: "deprecated optional continues",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "optional",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+				Optional:      true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				Build()
+			mgr := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), fakeClient)
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-session",
+					Namespace: "breakglass-system",
+				},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					Cluster: "prod",
+				},
+			}
+			template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+				AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{tt.resource},
+				AuxiliaryResourceDefaults: map[string]bool{
+					tt.resource.Name: true,
+				},
+			}
+
+			statuses, err := mgr.DeployAuxiliaryResources(context.Background(), session, template, nil, fakeClient, "debug-ns")
+			require.Len(t, statuses, 1)
+			assert.Contains(t, statuses[0].Error, "no template defined")
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to deploy required auxiliary resource")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestCleanupAuxiliaryResources_NoResources(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 

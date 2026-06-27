@@ -1145,6 +1145,8 @@ auxiliaryResources:
 | `ignore` | Continue session regardless of failure |
 | `warn` | Log warning and continue |
 
+The controller also treats an omitted `failurePolicy` as `fail`. The deprecated `optional: true` field is honored as `ignore` for backwards compatibility.
+
 ### Cluster Binding Overrides
 
 Cluster bindings can require specific auxiliary resource categories:

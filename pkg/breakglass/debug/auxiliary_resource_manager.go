@@ -102,7 +102,7 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 				"error", err)
 			deployErrors = append(deployErrors, err)
 
-			if auxRes.FailurePolicy == breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
+			if effectiveAuxiliaryResourceFailurePolicy(auxRes) == breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
 				metrics.AuxiliaryResourceDeployments.WithLabelValues(session.Spec.Cluster, auxRes.Category, "failure").Inc()
 				return statuses, fmt.Errorf("failed to deploy required auxiliary resource %s: %w", auxRes.Name, err)
 			}
@@ -273,6 +273,16 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 	}
 
 	return enabled
+}
+
+func effectiveAuxiliaryResourceFailurePolicy(auxRes breakglassv1alpha1.AuxiliaryResource) breakglassv1alpha1.AuxiliaryResourceFailurePolicy {
+	if auxRes.Optional {
+		return breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore
+	}
+	if auxRes.FailurePolicy == "" {
+		return breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail
+	}
+	return auxRes.FailurePolicy
 }
 
 // buildRenderContext creates the context used for template rendering.
