@@ -688,9 +688,10 @@ type ClusterAllowedResult struct {
 
 // isClusterAllowedByTemplateOrBinding checks if a cluster is allowed by the template's allowed.clusters
 // or by any active binding that references this template.
-// This function requires the caller to pass in the bindings and clusterConfigs.
+// This function requires the caller to pass in the bindings, unique ClusterConfig map,
+// and full ClusterConfig item list used for ambiguous-name binding checks.
 // If the template has no allowed.clusters, cluster access depends on bindings.
-// If there are no bindings either, access is implicitly allowed (backward compatibility).
+// If there are no applicable bindings either, access is denied as an unavailable template.
 func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	clusterName string,

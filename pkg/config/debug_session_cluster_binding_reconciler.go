@@ -366,6 +366,11 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 				return nil, err
 			}
 
+			nameCounts := make(map[string]int, len(clusterList.Items))
+			for i := range clusterList.Items {
+				nameCounts[clusterList.Items[i].Name]++
+			}
+
 			for i := range clusterList.Items {
 				cluster := &clusterList.Items[i]
 
@@ -378,22 +383,19 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 					continue
 				}
 
-				clusterConfig, err := clusterconfiglookup.SingleByName(clusterList.Items, cluster.Name)
-				if err != nil {
+				if nameCounts[cluster.Name] > 1 {
+					_, err := clusterconfiglookup.SingleByName(clusterList.Items, cluster.Name)
 					return nil, err
 				}
-				if clusterConfig == nil {
-					continue
-				}
 
-				ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
+				ready := apimeta.IsStatusConditionTrue(cluster.Status.Conditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
 
 				resolved = append(resolved, breakglassv1alpha1.ResolvedClusterRef{
-					Name:      clusterConfig.Name,
+					Name:      cluster.Name,
 					Ready:     ready,
 					MatchedBy: "selector",
 				})
-				seenClusters[clusterConfig.Name] = true
+				seenClusters[cluster.Name] = true
 			}
 		}
 	}
