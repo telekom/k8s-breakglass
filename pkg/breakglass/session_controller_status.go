@@ -636,8 +636,22 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 		pendingApproval := IsSessionPendingApproval(ses)
 		approvalTimedOut := IsSessionApprovalTimedOut(ses)
-		canApprove := pendingApproval && wc.isSessionApprover(c, ses)
-		alreadyActive := IsSessionActive(ses) && !approvalTimedOut
+		sessionForAuth := ses
+		sessionForAuth.Name = "[REDACTED]"
+		approvalMeta := wc.getSessionApprovalMeta(c, sessionForAuth)
+		canRead, err := wc.canReadBreakglassSession(c, sessionForAuth, approvalMeta)
+		if err != nil {
+			reqLog.Warnw("Token validation: unable to verify session read authorization", "tokenLen", len(token), "error", err)
+			apiresponses.RespondUnauthorizedWithMessage(c, "unable to verify user identity")
+			return
+		}
+		if !canRead {
+			reqLog.Warnw("Token validation: user is not authorized to read session", "tokenLen", len(token))
+			apiresponses.RespondForbidden(c, "not allowed to read this breakglass session")
+			return
+		}
+		canApprove := pendingApproval && approvalMeta.CanApprove
+		alreadyActive := IsSessionAccessActive(ses)
 		valid := true
 		if approvalTimedOut || IsSessionExpired(ses) || IsSessionTerminalState(ses.Status.State) {
 			valid = false
