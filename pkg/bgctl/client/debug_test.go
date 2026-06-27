@@ -9,6 +9,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -244,9 +245,9 @@ func TestDebugSessionsJoin(t *testing.T) {
 		require.Equal(t, "/api/debugSessions/debug-session-123/join", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
 
-		var req JoinDebugSessionRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		assert.Equal(t, "viewer", req.Role)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body)
 
 		response := DebugSessionDetailResponse{
 			DebugSession: breakglassv1alpha1.DebugSession{

@@ -215,11 +215,6 @@ func normalizeCreateDebugSessionNamespace(req *CreateDebugSessionRequest) error 
 	return nil
 }
 
-// JoinDebugSessionRequest represents the request to join an existing debug session
-type JoinDebugSessionRequest struct {
-	Role string `json:"role,omitempty"` // "viewer" or "participant"
-}
-
 // RenewDebugSessionRequest represents the request to extend session duration
 type RenewDebugSessionRequest struct {
 	ExtendBy string `json:"extendBy" binding:"required"` // Duration like "1h", "30m"

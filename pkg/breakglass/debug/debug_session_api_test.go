@@ -4911,9 +4911,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -4972,9 +4970,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -5026,16 +5022,14 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 403, w.Code)
 	})
 
-	t.Run("join rejects participant role self-selection", func(t *testing.T) {
+	t.Run("join rejects unexpected body", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -5080,13 +5074,19 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"participant"}`
+		body := `{"role":"viewer"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, 403, w.Code)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "request body must be empty")
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Len(t, updatedSession.Status.Participants, 1)
 	})
 
 	t.Run("join rejects expired active session", func(t *testing.T) {
@@ -5135,9 +5135,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 

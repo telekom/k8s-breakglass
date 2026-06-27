@@ -97,11 +97,12 @@ export default class BreakglassSessionService {
     review: BreakglassSessionRequest,
     action: string,
     errorMessage: string,
-    body: Record<string, string> = {},
+    body?: Record<string, string>,
   ) {
     if (!review.name) throw new Error(`Missing session name for ${action}`);
     try {
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/${action}`, body);
+      const endpoint = `/breakglassSessions/${encodeURIComponent(review.name)}/${action}`;
+      return body === undefined ? await this.client.post(endpoint) : await this.client.post(endpoint, body);
     } catch (e) {
       handleAxiosError(`BreakglassSessionService.${action}`, e, errorMessage);
       throw e;

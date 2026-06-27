@@ -347,7 +347,7 @@ export default class BreakglassService {
     if (!name) throw new Error("Missing session name for drop");
     try {
       debug("BreakglassService.dropBreakglass", "Dropping breakglass", { name });
-      const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(name)}/drop`, {});
+      const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(name)}/drop`);
       debug("BreakglassService.dropBreakglass", "Drop submitted", { status: response.status });
       return response;
     } catch (e) {
@@ -524,9 +524,9 @@ export default class BreakglassService {
     const sessionName = req.metadata?.name;
     if (!sessionName) throw new Error("Missing session name");
     try {
-      // backend withdraw endpoint requires only the session name path; additional body is optional
+      // backend withdraw endpoint requires only the session name path.
       debug("BreakglassService.withdrawMyRequest", "Withdrawing request", { sessionName });
-      await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/withdraw`, {});
+      await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/withdraw`);
       debug("BreakglassService.withdrawMyRequest", "Withdraw complete");
     } catch (e) {
       handleAxiosError("BreakglassService.withdrawMyRequest", e, "Failed to withdraw request");

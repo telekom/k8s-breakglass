@@ -108,10 +108,11 @@ export default class DebugSessionService {
     body?: unknown,
   ): Promise<DebugSession> {
     try {
-      const response = await this.client.post<DebugSession>(
-        `/debugSessions/${encodeURIComponent(name)}/${action}`,
-        body,
-      );
+      const endpoint = `/debugSessions/${encodeURIComponent(name)}/${action}`;
+      const response =
+        body === undefined
+          ? await this.client.post<DebugSession>(endpoint)
+          : await this.client.post<DebugSession>(endpoint, body);
       return response.data;
     } catch (e) {
       handleAxiosError(`DebugSessionService.${action}Session`, e, errorMessage);
@@ -119,8 +120,8 @@ export default class DebugSessionService {
     }
   }
 
-  public async joinSession(name: string, request?: JoinDebugSessionRequest): Promise<DebugSession> {
-    return this.postSessionAction(name, "join", "Failed to join debug session", request || { role: "viewer" });
+  public async joinSession(name: string, _request?: JoinDebugSessionRequest): Promise<DebugSession> {
+    return this.postSessionAction(name, "join", "Failed to join debug session");
   }
 
   public async leaveSession(name: string): Promise<DebugSession> {

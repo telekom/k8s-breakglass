@@ -5,6 +5,7 @@
 package jsonutil
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 
 // ErrEmptyBody indicates that a required JSON request body was empty.
 var ErrEmptyBody = errors.New("empty JSON body")
+
+// ErrUnexpectedBody indicates that a no-body endpoint received payload content.
+var ErrUnexpectedBody = errors.New("request body must be empty")
 
 // DecodeStrict decodes exactly one JSON value and rejects unknown fields and
 // trailing non-whitespace content.
@@ -40,4 +44,29 @@ func DecodeStrict(r io.Reader, dest interface{}) error {
 	}
 
 	return nil
+}
+
+// RequireEmptyBody accepts nil, empty, or JSON-whitespace-only request bodies.
+func RequireEmptyBody(r io.Reader) error {
+	if r == nil {
+		return nil
+	}
+
+	reader := bufio.NewReader(r)
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+		if !isJSONWhitespace(b) {
+			return ErrUnexpectedBody
+		}
+	}
+}
+
+func isJSONWhitespace(b byte) bool {
+	return b == ' ' || b == '\n' || b == '\r' || b == '\t'
 }

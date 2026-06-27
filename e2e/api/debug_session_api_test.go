@@ -55,11 +55,6 @@ type DebugSessionCreateRequest struct {
 	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"`
 }
 
-// DebugSessionJoinRequest represents the request to join an existing debug session
-type DebugSessionJoinRequest struct {
-	Role string `json:"role,omitempty"` // "viewer" or "participant"
-}
-
 // DebugSessionRenewRequest represents the request to extend session duration
 type DebugSessionRenewRequest struct {
 	ExtendBy string `json:"extendBy"` // Duration like "1h", "30m"
@@ -319,9 +314,8 @@ func (c *DebugSessionAPIClient) CreateDebugSession(ctx context.Context, t *testi
 // JoinDebugSession joins an existing debug session
 func (c *DebugSessionAPIClient) JoinDebugSession(ctx context.Context, t *testing.T, name string, role string) (int, error) {
 	path := fmt.Sprintf("%s/%s/join", debugSessionsBasePath, name)
-	req := DebugSessionJoinRequest{Role: role}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, path, req)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to join debug session: %w", err)
 	}
@@ -3093,23 +3087,17 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 	sessionName := session.Name
 
 	t.Run("JoinAsParticipant", func(t *testing.T) {
-		status, err := approverClient.JoinDebugSession(ctx, t, sessionName, "participant")
+		status, err := approverClient.JoinDebugSession(ctx, t, sessionName, "viewer")
 		// May succeed or fail depending on whether invites are required
-		t.Logf("Join as participant: status=%d, err=%v", status, err)
+		t.Logf("Join as viewer: status=%d, err=%v", status, err)
 		assert.True(t, status == http.StatusOK || status == http.StatusForbidden,
-			"Join as participant should return 200 or 403")
+			"Join as viewer should return 200 or 403")
 	})
 
 	t.Run("LeaveAfterJoin", func(t *testing.T) {
 		// Leave the session
 		status, err := approverClient.LeaveDebugSession(ctx, t, sessionName)
 		t.Logf("Leave after join: status=%d, err=%v", status, err)
-	})
-
-	t.Run("JoinWithInvalidRole", func(t *testing.T) {
-		status, err := approverClient.JoinDebugSession(ctx, t, sessionName, "invalid-role")
-		t.Logf("Join with invalid role: status=%d, err=%v", status, err)
-		// Should either reject invalid role or default to viewer
 	})
 
 	t.Run("LeaveSessionNotJoined", func(t *testing.T) {

@@ -108,40 +108,6 @@ func FuzzApprovalRequest(f *testing.F) {
 	})
 }
 
-// FuzzJoinDebugSessionRequest tests join request deserialization
-func FuzzJoinDebugSessionRequest(f *testing.F) {
-	seeds := []string{
-		`{"role":"viewer"}`,
-		`{"role":"participant"}`,
-		`{"role":""}`,
-		`{"role":"admin"}`,
-		`{"role":"<script>"}`,
-		`{}`,
-		`null`,
-	}
-
-	for _, seed := range seeds {
-		f.Add([]byte(seed))
-	}
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		var req JoinDebugSessionRequest
-		// Should never panic on any input
-		_ = json.Unmarshal(data, &req)
-
-		// Validate role if present
-		if req.Role != "" {
-			// Check that we handle unexpected roles gracefully
-			switch req.Role {
-			case "viewer", "participant":
-				// Valid roles
-			default:
-				// Invalid role - should be handled by the API handler
-			}
-		}
-	})
-}
-
 // FuzzMatchPattern tests the pattern matching utility function
 func FuzzMatchPattern(f *testing.F) {
 	// Add seed pairs of (pattern, value)

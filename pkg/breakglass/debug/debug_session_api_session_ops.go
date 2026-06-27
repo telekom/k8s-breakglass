@@ -25,24 +25,13 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	var req JoinDebugSessionRequest
-	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
-		// Allow an empty body — default to viewer role.
-		// Reject malformed JSON with 400 to surface client bugs.
-		if !errors.Is(err, jsonutil.ErrEmptyBody) {
-			apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
-			return
-		}
-		req.Role = string(breakglassv1alpha1.ParticipantRoleViewer)
-	}
-	if req.Role == "" {
-		req.Role = string(breakglassv1alpha1.ParticipantRoleViewer)
-	}
-
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
 		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
+	if rejectUnexpectedDebugActionBody(ctx) {
 		return
 	}
 
@@ -113,16 +102,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Determine role
 	role := breakglassv1alpha1.ParticipantRoleViewer
-	if req.Role == string(breakglassv1alpha1.ParticipantRoleParticipant) {
-		apiresponses.RespondForbidden(ctx, "participant role requires owner assignment")
-		return
-	}
-	if req.Role != string(breakglassv1alpha1.ParticipantRoleViewer) {
-		apiresponses.RespondBadRequest(ctx, "invalid participant role")
-		return
-	}
 
 	// Get display name from context (set by auth middleware from "name" claim)
 	displayName := ""
@@ -308,6 +288,14 @@ func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Ti
 	return session != nil && session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now)
 }
 
+func rejectUnexpectedDebugActionBody(ctx *gin.Context) bool {
+	if err := jsonutil.RequireEmptyBody(ctx.Request.Body); err != nil {
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return true
+	}
+	return false
+}
+
 func isTerminalSharingEnabledForJoin(session *breakglassv1alpha1.DebugSession) bool {
 	if session == nil {
 		return false
@@ -379,6 +367,9 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	}
 	if isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot terminate expired session")
+		return
+	}
+	if rejectUnexpectedDebugActionBody(ctx) {
 		return
 	}
 
@@ -640,6 +631,9 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	}
 	if isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot leave expired session")
+		return
+	}
+	if rejectUnexpectedDebugActionBody(ctx) {
 		return
 	}
 
