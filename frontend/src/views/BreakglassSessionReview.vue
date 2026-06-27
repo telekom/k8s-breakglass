@@ -279,8 +279,18 @@ const filteredBreakglasses = computed(() => {
 });
 
 const currentUserEmail = computed(() => {
-  const u = user.value as { email?: string; preferred_username?: string } | null;
-  return u?.email || u?.preferred_username || "";
+  const currentUser = user.value as {
+    profile?: { email?: string; preferred_username?: string };
+    email?: string;
+    preferred_username?: string;
+  } | null;
+  return (
+    currentUser?.profile?.email ||
+    currentUser?.profile?.preferred_username ||
+    currentUser?.email ||
+    currentUser?.preferred_username ||
+    ""
+  );
 });
 
 async function onDrop(bg: SessionCR) {

@@ -18,7 +18,17 @@ const mockRejectReview = vi.fn();
 const mockDropSession = vi.fn();
 const mockCancelSession = vi.fn();
 
-const mockUser = ref<{ email: string; expired?: boolean } | null>(null);
+type MockUser = {
+  email?: string;
+  preferred_username?: string;
+  expired?: boolean;
+  profile?: {
+    email?: string;
+    preferred_username?: string;
+  };
+};
+
+const mockUser = ref<MockUser | null>(null);
 
 vi.mock("@/services/auth", () => ({
   useUser: vi.fn(() => mockUser),
@@ -59,9 +69,10 @@ function deferred<T>() {
 }
 
 const BreakglassSessionCardStub = {
-  props: ["breakglass"],
+  props: ["breakglass", "currentUserEmail"],
   emits: ["review"],
-  template: '<button type="button" data-testid="review-card" @click="$emit(\'review\')">Review</button>',
+  template:
+    '<button type="button" data-testid="review-card" @click="$emit(\'review\')">Review <span data-testid="session-card-email">{{ currentUserEmail }}</span></button>',
 };
 
 const ApprovalModalContentStub = {
@@ -203,5 +214,33 @@ describe("BreakglassSessionReview", () => {
 
     expect(vi.mocked(pushSuccess)).toHaveBeenCalledWith("Approved session for requester@example.com");
     expect(wrapper.find('[data-testid="approval-modal-content"]').exists()).toBe(false);
+  });
+
+  it("passes profile email to session cards for owner actions", async () => {
+    mockUser.value = {
+      profile: {
+        email: "owner@example.com",
+        preferred_username: "owner",
+      },
+      expired: false,
+    };
+    mockGetSessionStatus.mockResolvedValueOnce({
+      status: 200,
+      data: [
+        {
+          metadata: { name: "owned-active-session" },
+          spec: {
+            user: "owner@example.com",
+            cluster: "prod",
+            grantedGroup: "breakglass-admin",
+          },
+          status: { state: "Active" },
+        },
+      ],
+    });
+
+    const wrapper = await createWrapper();
+
+    expect(wrapper.find('[data-testid="session-card-email"]').text()).toBe("owner@example.com");
   });
 });

@@ -587,6 +587,9 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 
 Requester/owner matching uses the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
 
+The UI matches owner actions against the authenticated user's OIDC profile
+identity, preferring `profile.email` before legacy top-level email fields.
+
 Terminal sessions (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, `ApprovalTimeout`)
 return `400 Bad Request` and are not modified.
 
