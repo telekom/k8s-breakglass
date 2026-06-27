@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mount, flushPromises } from "@vue/test-utils";
-import { ref } from "vue";
+import { mount, flushPromises, enableAutoUnmount } from "@vue/test-utils";
+import { reactive, ref } from "vue";
 import SessionApprovalView from "@/views/SessionApprovalView.vue";
 import { AuthKey } from "@/keys";
 import { pushError } from "@/services/toast";
@@ -16,12 +16,13 @@ const mockLogin = vi.fn();
 const mockGetSessionByName = vi.fn();
 const mockApproveReview = vi.fn();
 const mockRejectReview = vi.fn();
+const mockRoute = reactive({
+  params: { sessionName: "session-1" },
+  fullPath: "/session/session-1/approve",
+});
 
 vi.mock("vue-router", () => ({
-  useRoute: () => ({
-    params: { sessionName: "session-1" },
-    fullPath: "/session/session-1/approve",
-  }),
+  useRoute: () => mockRoute,
   useRouter: () => ({
     push: mockPush,
   }),
@@ -50,6 +51,8 @@ vi.mock("@/services/logger", () => ({
   handleAxiosError: vi.fn().mockReturnValue({ message: "error" }),
 }));
 
+enableAutoUnmount(afterEach);
+
 describe("SessionApprovalView", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -58,6 +61,8 @@ describe("SessionApprovalView", () => {
     mockGetSessionByName.mockReset();
     mockApproveReview.mockReset();
     mockRejectReview.mockReset();
+    mockRoute.params.sessionName = "session-1";
+    mockRoute.fullPath = "/session/session-1/approve";
   });
 
   afterEach(() => {
@@ -205,4 +210,69 @@ describe("SessionApprovalView", () => {
     expect(pushError).toHaveBeenNthCalledWith(1, "Approval note is required for this escalation");
     expect(pushError).toHaveBeenNthCalledWith(2, "Approval note is required for this escalation");
   });
+
+  it("reloads session data when navigating between approval links in the same component", async () => {
+    mockGetSessionByName
+      .mockResolvedValueOnce(approvalResponse("session-1", "requester-1@example.com"))
+      .mockResolvedValueOnce(approvalResponse("session-2", "requester-2@example.com"));
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: {
+            props: ["session"],
+            template: '<div data-testid="approval-session">{{ session.metadata.name }} {{ session.spec.user }}</div>',
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSessionByName).toHaveBeenCalledWith("session-1");
+    expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-1 requester-1@example.com");
+
+    mockRoute.params.sessionName = "session-2";
+    mockRoute.fullPath = "/session/session-2/approve";
+    await flushPromises();
+    await flushPromises();
+
+    expect(mockGetSessionByName).toHaveBeenCalledWith("session-2");
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-2 requester-2@example.com");
+    });
+  });
 });
+
+function approvalResponse(name: string, requester: string) {
+  return {
+    data: {
+      session: {
+        metadata: { name },
+        spec: {
+          user: requester,
+          cluster: "prod",
+          grantedGroup: "cluster-admin",
+        },
+        status: { state: "pending" },
+      },
+      approvalMeta: {
+        canApprove: true,
+        canReject: true,
+        isRequester: false,
+        isApprover: true,
+        sessionState: "pending",
+      },
+    },
+  };
+}

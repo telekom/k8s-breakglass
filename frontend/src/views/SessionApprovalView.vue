@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, inject } from "vue";
+import { ref, computed, onMounted, onUnmounted, inject, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
@@ -70,6 +70,7 @@ const errorDetails = ref<string | null>(null);
 const approverNote = ref("");
 const isApproving = ref(false);
 let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+let loadRequestId = 0;
 
 // Computed: categorize the denial reason for specialized UI treatment
 const denialCategory = computed<DenialCategory>(() => {
@@ -90,14 +91,28 @@ const isApprovalNoteMissing = computed(() => {
   return !!getApprovalReasonConfig(session.value)?.mandatory && !approverNote.value.trim();
 });
 
+const clearRedirectTimer = () => {
+  if (redirectTimer) {
+    clearTimeout(redirectTimer);
+    redirectTimer = null;
+  }
+};
+
 const loadSession = async () => {
+  const requestId = ++loadRequestId;
+  const requestedSessionName = sessionName.value;
+  clearRedirectTimer();
   loading.value = true;
+  session.value = null;
+  approvalMeta.value = null;
   error.value = null;
   errorDetails.value = null;
+  approverNote.value = "";
+  isApproving.value = false;
 
-  debug("SessionApprovalView", "Loading session:", sessionName.value);
+  debug("SessionApprovalView", "Loading session:", requestedSessionName);
 
-  if (!sessionName.value) {
+  if (!requestedSessionName) {
     error.value = "No session name provided in URL";
     loading.value = false;
     return;
@@ -105,7 +120,10 @@ const loadSession = async () => {
 
   try {
     // Use dedicated endpoint GET /breakglassSessions/:name to get the specific session
-    const response = await service.getSessionByName(sessionName.value);
+    const response = await service.getSessionByName(requestedSessionName);
+    if (requestId !== loadRequestId) {
+      return;
+    }
 
     debug("SessionApprovalView", "Response:", response.data);
 
@@ -118,7 +136,7 @@ const loadSession = async () => {
 
     if (!foundSession || !foundSession.metadata) {
       error.value = "Session Not Found";
-      errorDetails.value = `Session "${sessionName.value}" does not exist or has been deleted.`;
+      errorDetails.value = `Session "${requestedSessionName}" does not exist or has been deleted.`;
       debug("SessionApprovalView", "Session not found");
     } else if (meta) {
       // Use approval metadata to determine if user can approve
@@ -165,11 +183,14 @@ const loadSession = async () => {
       }
     }
   } catch (e: unknown) {
+    if (requestId !== loadRequestId) {
+      return;
+    }
     const axiosLike = e as AxiosLikeError;
     logError("SessionApprovalView", "Failed to load session:", e);
     if (axiosLike.response?.status === 404) {
       error.value = "Session Not Found";
-      errorDetails.value = `Session "${sessionName.value}" does not exist. It may have been deleted or the link is incorrect.`;
+      errorDetails.value = `Session "${requestedSessionName}" does not exist. It may have been deleted or the link is incorrect.`;
     } else if (axiosLike.response?.status === 403) {
       error.value = "Access Denied";
       errorDetails.value = "You are not authorized to view this session.";
@@ -192,7 +213,9 @@ const loadSession = async () => {
       errorDetails.value = message;
     }
   } finally {
-    loading.value = false;
+    if (requestId === loadRequestId) {
+      loading.value = false;
+    }
   }
 };
 
@@ -304,11 +327,15 @@ onMounted(async () => {
   await loadSession();
 });
 
-onUnmounted(() => {
-  if (redirectTimer) {
-    clearTimeout(redirectTimer);
-    redirectTimer = null;
+watch(sessionName, async (newSessionName, previousSessionName) => {
+  if (newSessionName === previousSessionName || !authenticated.value) {
+    return;
   }
+  await loadSession();
+});
+
+onUnmounted(() => {
+  clearRedirectTimer();
 });
 </script>
 
