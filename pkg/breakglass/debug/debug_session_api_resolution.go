@@ -545,24 +545,24 @@ func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx contex
 		return false
 	}
 
-	// First try to find the binding that granted this session - it may have its own approvers
-	bindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := c.client.List(ctx, bindings); err == nil {
-		for i := range bindings.Items {
-			binding := &bindings.Items[i]
-			// Check if this binding applies to this session
-			if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == session.Spec.TemplateRef {
-				// Check if this binding covers the session's cluster
-				for _, cluster := range binding.Spec.Clusters {
-					if matchPattern(cluster, session.Spec.Cluster) {
-						// Found a matching binding - check if it has approvers
-						if binding.Spec.Approvers != nil && (len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0) {
-							return c.checkApproverIdentityAuthorization(binding.Spec.Approvers, username, email, userGroupsInterface)
-						}
-						break
-					}
-				}
-			}
+	// First try the exact binding that granted this session. Binding-level approvers
+	// are scoped to that binding and must not bleed across sibling bindings that
+	// happen to match the same template and cluster.
+	if session.Spec.BindingRef != nil {
+		key := ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+		if err := c.reader().Get(ctx, key, binding); err != nil {
+			c.log.Warnw("Could not fetch recorded binding while checking debug session approval authorization",
+				"session", session.Name, "binding", key.String(), "error", err)
+			return false
+		}
+		if !breakglass.IsBindingActive(binding) {
+			c.log.Infow("Recorded binding is not active; denying debug session approval authorization",
+				"session", session.Name, "binding", key.String())
+			return false
+		}
+		if debugSessionApproversConfigured(binding.Spec.Approvers) {
+			return c.checkApproverIdentityAuthorization(binding.Spec.Approvers, username, email, userGroupsInterface)
 		}
 	}
 

@@ -1108,6 +1108,7 @@ When multiple bindings match a cluster, the UI displays an "Access Configuration
 - Target namespace
 
 The selected binding's configuration is then used for the session's constraints, approval flow, and impersonation settings.
+Approval and rejection of a binding-backed session are scoped to the recorded binding reference; approvers from other matching bindings are ignored.
 
 ### CLI Binding Selection
 
