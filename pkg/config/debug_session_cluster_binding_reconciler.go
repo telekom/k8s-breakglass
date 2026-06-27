@@ -381,14 +381,22 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 					continue
 				}
 
-				ready := apimeta.IsStatusConditionTrue(cluster.Status.Conditions, "Ready")
+				clusterConfig, err := singleClusterConfigByName(clusterList.Items, cluster.Name)
+				if err != nil {
+					return nil, err
+				}
+				if clusterConfig == nil {
+					continue
+				}
+
+				ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, "Ready")
 
 				resolved = append(resolved, breakglassv1alpha1.ResolvedClusterRef{
-					Name:      cluster.Name,
+					Name:      clusterConfig.Name,
 					Ready:     ready,
 					MatchedBy: "selector",
 				})
-				seenClusters[cluster.Name] = true
+				seenClusters[clusterConfig.Name] = true
 			}
 		}
 	}
@@ -443,7 +451,11 @@ func singleClusterConfigByName(items []breakglassv1alpha1.ClusterConfig, name st
 			namespaces = append(namespaces, clusterConfig.Namespace)
 		}
 		sort.Strings(namespaces)
-		return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
+		return nil, apierrors.NewConflict(
+			schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"},
+			name,
+			fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ",")),
+		)
 	}
 }
 

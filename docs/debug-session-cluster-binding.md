@@ -821,7 +821,7 @@ Understanding the difference between cluster name matching and `ClusterConfig` l
 | Prerequisite | ClusterConfig must exist and its name must be globally unique | ClusterConfig must exist |
 | Glob patterns | Not supported | Use label expressions |
 
-**Important:** If `clusterSelector` is used but no unique, ready `ClusterConfig` exists for a cluster, that cluster will NOT match the binding (even if it would logically fit the selector). Explicit `clusters` entries are resolved by `ClusterConfig` name across namespaces; duplicate names are ambiguous and prevent resolution until the names are made unique.
+**Important:** If `clusterSelector` is used but no unique, ready `ClusterConfig` exists for a cluster, that cluster will NOT match the binding (even if it would logically fit the selector). Explicit `clusters` entries are resolved by `ClusterConfig` name across namespaces; duplicate names are ambiguous and prevent resolution until the names are made unique. The cluster-binding API returns `409 Conflict` for a cluster lookup whose `ClusterConfig` name is duplicated.
 
 ### Configuration Merge Rules
 

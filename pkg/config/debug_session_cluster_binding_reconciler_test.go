@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -185,6 +186,90 @@ func TestDebugSessionClusterBindingReconciler_ResolveClusters_FindsNamespacedClu
 	assert.Equal(t, "tenant-cluster", resolved[0].Name)
 	assert.True(t, resolved[0].Ready)
 	assert.Equal(t, "explicit", resolved[0].MatchedBy)
+}
+
+func TestDebugSessionClusterBindingReconciler_ResolveClusters_DuplicateClusterConfigNameConflict(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+
+	clusterA := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-a",
+		},
+	}
+	clusterB := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-b",
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-binding",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Clusters: []string{"tenant-cluster"},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterA, clusterB, binding).
+		Build()
+
+	resolved, err := r.resolveClusters(context.Background(), binding)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict error, got %v", err)
+	assert.Contains(t, err.Error(), "tenant-a,tenant-b")
+	assert.Nil(t, resolved)
+}
+
+func TestDebugSessionClusterBindingReconciler_ResolveClusters_ClusterSelectorDuplicateClusterConfigNameConflict(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+
+	clusterA := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-a",
+			Labels: map[string]string{
+				"env": "production",
+			},
+		},
+	}
+	clusterB := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-b",
+			Labels: map[string]string{
+				"env": "staging",
+			},
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-binding",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"env": "production",
+				},
+			},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterA, clusterB, binding).
+		Build()
+
+	resolved, err := r.resolveClusters(context.Background(), binding)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict error, got %v", err)
+	assert.Contains(t, err.Error(), "tenant-a,tenant-b")
+	assert.Nil(t, resolved)
 }
 
 func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateNotFound(t *testing.T) {

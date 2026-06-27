@@ -226,6 +226,10 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 			apiresponses.RespondNotFoundSimple(ctx, fmt.Sprintf("cluster %s not found", clusterName))
 			return
 		}
+		if apierrors.IsConflict(err) {
+			apiresponses.RespondConflict(ctx, fmt.Sprintf("cluster %s is ambiguous", clusterName))
+			return
+		}
 		c.log.Errorw("Failed to get cluster config", "cluster", clusterName, "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to get cluster")
 		return
@@ -409,7 +413,11 @@ func singleClusterConfigByName(items []breakglassv1alpha1.ClusterConfig, name st
 			namespaces = append(namespaces, clusterConfig.Namespace)
 		}
 		sort.Strings(namespaces)
-		return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
+		return nil, apierrors.NewConflict(
+			schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"},
+			name,
+			fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ",")),
+		)
 	}
 }
 
