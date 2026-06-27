@@ -162,13 +162,19 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		// Multi-IDP aware group checking
 		approverGroupsToCheck := esc.Spec.Approvers.Groups
 		var dedupMembers []string
+		fallbackApproverGroups := approverGroupsToCheck
 
 		if esc.Status.ApproverGroupMembers != nil {
+			if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+				fallbackApproverGroups = nil
+			}
 			for _, g := range approverGroupsToCheck {
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
 					reqLog.Debugw("Using resolved approver group members from escalation status",
 						"escalation", esc.Name, "group", system.RedactGroupName(g), "memberCount", len(members))
+				} else if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+					fallbackApproverGroups = append(fallbackApproverGroups, g)
 				}
 			}
 
@@ -181,10 +187,11 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			}
 		}
 
-		if len(esc.Spec.AllowedIdentityProvidersForApprovers) == 0 {
-			for _, g := range approverGroupsToCheck {
+		if len(fallbackApproverGroups) > 0 {
+			for _, g := range fallbackApproverGroups {
 				if slices.Contains(approverGroups, g) {
-					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(g))
+					reqLog.Debugw("User is session approver (target cluster group)",
+						"session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(g))
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}

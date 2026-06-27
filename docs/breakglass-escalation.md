@@ -461,6 +461,10 @@ allowedIdentityProvidersForApprovers:
 - If `allowedIdentityProvidersForApprovers` is empty, all IDPs can approve (default)
 - Users can only request via their authenticated IDP
 - Approvers can only approve if their IDP is in the allowed list
+- While approver group membership status is not populated yet, approval falls
+  back to the target-cluster group lookup for the missing groups. Once
+  `status.approverGroupMembers` contains an approver group entry, that resolved
+  member list is authoritative for that group.
 
 #### Example: Restrict to Corporate OIDC only
 
