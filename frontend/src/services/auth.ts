@@ -26,7 +26,7 @@ const DEFAULT_MOCK_PROFILE: MockProfile = {
 
 const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   "production-keycloak": {
-    email: "mock.keycloak.user@breakglass.dev",
+    email: "mock.user@breakglass.dev",
     displayName: "Production Keycloak (Mock)",
     groups: ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"],
   },

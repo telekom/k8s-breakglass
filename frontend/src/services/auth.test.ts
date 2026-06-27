@@ -504,10 +504,10 @@ describe("AuthService", () => {
       await mockAuthService.login({ path: "/pending", idpName: "production-keycloak" });
 
       const user = await mockAuthService.getUser();
-      expect(user?.profile?.email).toBe("mock.keycloak.user@breakglass.dev");
+      expect(user?.profile?.email).toBe("mock.user@breakglass.dev");
       const token = await mockAuthService.getAccessToken();
       expect(token?.split(".")[2]).toBe("bW9jay1zaWduYXR1cmU");
-      expect(await mockAuthService.getUserEmail()).toBe("mock.keycloak.user@breakglass.dev");
+      expect(await mockAuthService.getUserEmail()).toBe("mock.user@breakglass.dev");
       expect(mockAuthService.getIdentityProviderName()).toBe("production-keycloak");
     });
 
@@ -546,7 +546,7 @@ describe("AuthService", () => {
     it("returns the mock user when handling callbacks", async () => {
       await mockAuthService.login({ path: "/pending", idpName: "production-keycloak" });
       const result = await mockAuthService.handleSigninCallback();
-      expect(result?.profile?.email).toBe("mock.keycloak.user@breakglass.dev");
+      expect(result?.profile?.email).toBe("mock.user@breakglass.dev");
     });
   });
 });

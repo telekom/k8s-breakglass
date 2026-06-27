@@ -56,6 +56,8 @@ The frontend proxies `http://localhost:5173/api/*` traffic to `http://localhost:
 changes you make to Vue components or the mock data refresh instantly without rebuilding a
 container. The mock backend preloads sample breakglass escalations, sessions, and multi-IDP data
 so you can tweak UI layouts WYSIWYG-style.
+The production Keycloak mock profile uses `mock.user@breakglass.dev`, matching the mock API's
+current user so owner-only debug session controls are visible in the local UI.
 
 ### Switching UI flavours locally
 

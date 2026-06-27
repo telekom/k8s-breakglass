@@ -411,6 +411,8 @@ spec:
 
 The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.
 
+The web UI mirrors these permissions in the session details view. For example, when `exec` is disabled, running debug pods show the operation as unavailable and do not offer a copyable `kubectl exec` command.
+
 ### Configuration
 
 | Field | Type | Default | Description |

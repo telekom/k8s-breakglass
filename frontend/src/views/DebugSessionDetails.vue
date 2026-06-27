@@ -27,6 +27,10 @@ function getExecCommand(pod: DebugPodInfo): string {
 }
 
 function copyExecCommand(pod: DebugPodInfo) {
+  if (!isOperationAllowed("exec")) {
+    pushError("Exec is not allowed for this debug session");
+    return;
+  }
   clipboardCopy(getExecCommand(pod)).then((ok) => {
     if (ok) {
       copiedPodKey.value = podKey(pod);
@@ -675,7 +679,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                   </span>
                 </div>
               </div>
-              <div v-if="pod.phase === 'Running'" class="pod-actions">
+              <div v-if="pod.phase === 'Running' && isOperationAllowed('exec')" class="pod-actions">
                 <div class="exec-command-row">
                   <code class="exec-command">{{ getExecCommand(pod) }}</code>
                   <scale-button
@@ -689,6 +693,11 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                     {{ isCopied(pod) ? "Copied!" : "Copy" }}
                   </scale-button>
                 </div>
+              </div>
+              <div v-else-if="pod.phase === 'Running'" class="pod-actions">
+                <p class="operation-unavailable" data-testid="exec-unavailable-message">
+                  Exec is not allowed for this debug session.
+                </p>
               </div>
             </li>
           </ul>
@@ -1150,6 +1159,15 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .pod-actions {
   margin-top: var(--space-sm);
+}
+
+.operation-unavailable {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--telekom-color-background-surface-subtle);
+  color: var(--telekom-color-text-and-icon-additional);
+  font: var(--telekom-text-style-small);
 }
 
 .exec-command {
