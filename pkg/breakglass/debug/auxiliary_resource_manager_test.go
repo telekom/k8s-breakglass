@@ -333,6 +333,41 @@ func TestDeployAuxiliaryResources_EmptyResources(t *testing.T) {
 	assert.Nil(t, statuses)
 }
 
+func TestDeployAuxiliaryResources_AllResourcesDisabledClearsStaleStatuses(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+				{Name: "old-config", Kind: "ConfigMap", Created: true},
+			},
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+			{
+				Name:           "new-config",
+				Category:       "debug-config",
+				TemplateString: "kind: ConfigMap\nmetadata:\n  name: new-config\n",
+			},
+		},
+	}
+
+	statuses, err := mgr.DeployAuxiliaryResources(
+		context.Background(),
+		session,
+		template,
+		nil,
+		nil,
+		"target-ns",
+	)
+
+	require.NoError(t, err)
+	require.Empty(t, statuses)
+	session.Status.AuxiliaryResourceStatuses = statuses
+	assert.Empty(t, session.Status.AuxiliaryResourceStatuses)
+}
+
 func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
