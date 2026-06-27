@@ -1482,6 +1482,10 @@ Debug sessions support multiple participant roles:
 
 Joining an existing session requires an entry in `spec.invitedParticipants`, an active unexpired session, and terminal sharing enabled by the resolved template/status. Self-service join requests always create `viewer` entries; users cannot request the `participant` role for themselves.
 
+Leaving a session sets `status.participants[].leftAt`. Participants with
+`leftAt` set are no longer treated as active participants for kubectl-debug
+lookup or authorization webhook pod operations.
+
 ## Audit Logging
 
 Enable command logging for compliance:
@@ -1863,8 +1867,9 @@ Active debug sessions take precedence over [deny policies](deny-policy.md) for p
 
 This means:
 
-- A debug session participant can exec into their allowed pods even if a `DenyPolicy` would normally block exec operations.
+- An active debug session participant can exec into their allowed pods even if a `DenyPolicy` would normally block exec operations.
 - The bypass applies **only** to pods listed in `status.allowedPods` and operations resolved in `status.allowedPodOperations` (derived from the template/binding configuration).
+- Participants with `status.participants[].leftAt` set no longer receive this bypass.
 - All other operations (e.g., `get`, `delete`, `create` on non-pod resources) still go through normal deny policy evaluation.
 
 This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:

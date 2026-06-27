@@ -327,6 +327,9 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 			if p.User != username {
 				continue
 			}
+			if p.LeftAt != nil {
+				continue
+			}
 			if !canDebugSessionParticipantAccessPodOperations(p.Role) {
 				reqLog.Debugw("Debug session participant role cannot perform pod operation",
 					"session", ds.Name,

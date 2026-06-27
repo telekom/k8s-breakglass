@@ -968,6 +968,9 @@ POST /api/debugSessions/:name/leave
 ```
 
 Allows a participant (not owner) to leave a session. Owners must use terminate instead.
+The API sets the participant's `leftAt` timestamp; users with `leftAt` set are
+excluded from active participant checks and cannot use debug-session pod
+operations.
 
 ### Renew Debug Session
 
