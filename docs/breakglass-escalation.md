@@ -590,6 +590,26 @@ When `False`:
   message: "Referenced cluster 'missing-cluster' does not exist"
 ```
 
+#### ApprovalGroupMembersResolved Condition
+
+Tracks whether approver group members were resolved by the escalation status updater.
+This condition is separate from `Ready`: transient group-sync failures are surfaced
+for operators without changing validation/reference readiness.
+
+```yaml
+conditions:
+- type: ApprovalGroupMembersResolved
+  status: "True"
+  reason: "GroupMembersResolved"
+  message: "Resolved approver group members for 2 group(s) from 2 identity provider(s)."
+```
+
+When group synchronization fails for at least one configured approver group or IDP,
+the condition becomes `False` with `GroupSyncPartialFailure` or `GroupSyncFailed`.
+Check related `BreakglassEscalation` and `IdentityProvider` events for the specific
+failing group or provider. Escalations with no approver groups report
+`NoApproverGroupsConfigured` because no group member lookup is required.
+
 #### Condition Reasons
 
 | Reason | Status | Description |
@@ -599,7 +619,10 @@ When `False`:
 | `IdentityProviderReferenceInvalid` | False | Referenced IDP doesn't exist or is disabled |
 | `DenyPolicyReferenceInvalid` | False | Referenced deny policy doesn't exist |
 | `MailProviderValidationFailed` | False | Referenced MailProvider is missing or disabled |
-| `GroupSyncFailed` | False | Failed to sync approver groups from IDP |
+| `GroupMembersResolved` | True | Approver group members were resolved |
+| `NoApproverGroupsConfigured` | True | No approver groups require member resolution |
+| `GroupSyncPartialFailure` | False | Some approver groups or IDPs failed during group sync |
+| `GroupSyncFailed` | False | All approver group resolution failed |
 | `ValidationInProgress` | Unknown | Configuration being validated |
 
 ### Viewing Status
@@ -1111,7 +1134,7 @@ kubectl get identityprovider <name> -o yaml | grep -E '(name:|disabled:)'
 - Check if referenced IDP is disabled (`spec.disabled: true`)
 - Enable the IDP or update the escalation references
 
-#### Ready Condition: False (GroupSyncFailed)
+#### ApprovalGroupMembersResolved Condition: False (GroupSyncFailed)
 
 **Cause:** Failed to synchronize approver groups from identity provider.
 
@@ -1120,6 +1143,9 @@ kubectl get identityprovider <name> -o yaml | grep -E '(name:|disabled:)'
 ```bash
 # Check sync error details
 kubectl describe breakglassescalation <name> | grep -A 3 "GroupSyncFailed"
+
+# Check the dedicated group-sync condition
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
 
 # Check related IdentityProvider status
 kubectl describe identityprovider <idp-name>

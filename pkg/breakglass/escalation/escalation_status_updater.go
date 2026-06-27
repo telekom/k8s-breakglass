@@ -12,6 +12,8 @@ import (
 
 	"github.com/Nerzal/gocloak/v13"
 	"go.uber.org/zap"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -25,6 +27,15 @@ import (
 const (
 	DefaultEscalationStatusUpdateInterval = 10 * time.Minute
 	DefaultClusterConfigCheckInterval     = 10 * time.Minute
+
+	groupSyncStatusSuccess        = "Success"
+	groupSyncStatusPartialFailure = "PartialFailure"
+	groupSyncStatusFailed         = "Failed"
+
+	groupSyncReasonResolved       = "GroupMembersResolved"
+	groupSyncReasonNotRequired    = "NoApproverGroupsConfigured"
+	groupSyncReasonPartialFailure = "GroupSyncPartialFailure"
+	groupSyncReasonFailed         = "GroupSyncFailed"
 )
 
 // KeycloakGroupMemberResolver uses GoCloak client to fetch group members from Keycloak admin API.
@@ -481,6 +492,12 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		groups := esc.Spec.Approvers.Groups
 		if len(groups) == 0 {
 			log.Debugw("Escalation has no approver groups; skipping", "escalation", esc.Name)
+			updated := esc.DeepCopy()
+			if updateNoApproverGroupsCondition(updated) {
+				if err := u.applyStatus(ctx, updated); err != nil {
+					log.Errorw("Failed updating escalation group sync condition", "escalation", esc.Name, "error", err)
+				}
+			}
 			continue
 		}
 		log.Debugw("Processing escalation with approver groups", "escalation", esc.Name, "groupCount", len(groups))
@@ -519,7 +536,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			// Multi-IDP mode: Use multi-IDP group sync with IDP hierarchy storage
 			log.Debugw("Using multi-IDP group sync", "escalation", esc.Name, "idps", idpsToUse)
 
-			hierarchy, _, _ := u.fetchGroupMembersFromMultipleIDPs(
+			hierarchy, syncStatus, syncErrors := u.fetchGroupMembersFromMultipleIDPs(
 				ctx,
 				&esc,
 				idpsToUse,
@@ -546,10 +563,15 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 					changed = true
 				}
 			}
+			if updateApprovalGroupMembersResolvedCondition(updated, syncStatus, len(groups), len(idpsToUse), len(syncErrors)) {
+				changed = true
+			}
 		} else {
 			// Legacy single-resolver mode for backward compatibility
 			log.Debugw("Using legacy single resolver mode", "escalation", esc.Name)
 
+			resolvedGroupCount := 0
+			failedGroupCount := 0
 			for _, g := range groups {
 				log.Debugw("Resolving group for escalation", "escalation", esc.Name, "group", system.RedactGroupName(g), "resolverType", fmt.Sprintf("%T", u.Resolver))
 				var norm []string
@@ -558,6 +580,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 					members, err := u.Resolver.Members(ctx, g)
 					if err != nil {
 						log.Errorw("Failed resolving group members from resolver", "group", system.RedactGroupName(g), "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
+						failedGroupCount++
 						continue
 					}
 					log.Debugw("Group member resolver returned members", "group", system.RedactGroupName(g), "escalation", esc.Name, "rawMemberCount", len(members))
@@ -565,13 +588,18 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 					log.Infow("Resolved approver group members (normalized)", "group", system.RedactGroupName(g), "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm))
 				} else {
 					log.Warnw("No group member resolver configured; skipping group resolution", "group", system.RedactGroupName(g), "escalation", esc.Name)
+					failedGroupCount++
 					continue
 				}
+				resolvedGroupCount++
 				if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
 					log.Debugw("Group members changed; marking for update", "group", system.RedactGroupName(g), "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
 					updated.Status.ApproverGroupMembers[g] = norm
 					changed = true
 				}
+			}
+			if updateApprovalGroupMembersResolvedCondition(updated, legacyGroupSyncStatus(resolvedGroupCount, failedGroupCount), len(groups), 1, failedGroupCount) {
+				changed = true
 			}
 		}
 
@@ -654,7 +682,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 		if len(groupMembers) > 0 {
 			hierarchy[""] = groupMembers
 		}
-		return hierarchy, "Success", nil
+		return hierarchy, groupSyncStatusSuccess, nil
 	}
 
 	// Multi-IDP sync: fetch from each IDP for each group
@@ -746,11 +774,11 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 	// Determine sync status
 	var syncStatus string
 	if failureCount == 0 {
-		syncStatus = "Success"
+		syncStatus = groupSyncStatusSuccess
 	} else if successCount > 0 && failureCount > 0 {
-		syncStatus = "PartialFailure"
+		syncStatus = groupSyncStatusPartialFailure
 	} else {
-		syncStatus = "Failed"
+		syncStatus = groupSyncStatusFailed
 	}
 
 	log.Infow("Multi-IDP group sync completed",
@@ -764,11 +792,90 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 	// Emit event on BreakglassEscalation if there were failures
 	if failureCount > 0 && u.EventRecorder != nil {
 		u.EventRecorder.Eventf(escalation, nil, "Warning", "GroupSyncPartialFailure", "GroupSyncPartialFailure",
-			"Multi-IDP group sync partially failed: %d IDPs succeeded, %d failed. See status.groupSyncErrors for details.",
+			"Multi-IDP group sync partially failed: %d IDPs succeeded, %d failed. Check the ApprovalGroupMembersResolved condition and related events for details.",
 			successCount, failureCount)
 	}
 
 	return hierarchy, syncStatus, syncErrors
+}
+
+func updateNoApproverGroupsCondition(escalation *breakglassv1alpha1.BreakglassEscalation) bool {
+	return setApprovalGroupMembersResolvedCondition(
+		escalation,
+		metav1.ConditionTrue,
+		groupSyncReasonNotRequired,
+		"No approver groups are configured; group member resolution is not required.",
+	)
+}
+
+func updateApprovalGroupMembersResolvedCondition(
+	escalation *breakglassv1alpha1.BreakglassEscalation,
+	syncStatus string,
+	groupCount int,
+	idpCount int,
+	errorCount int,
+) bool {
+	status := metav1.ConditionTrue
+	reason := groupSyncReasonResolved
+	message := fmt.Sprintf("Resolved approver group members for %d group(s).", groupCount)
+	if idpCount > 1 {
+		message = fmt.Sprintf("Resolved approver group members for %d group(s) from %d identity provider(s).", groupCount, idpCount)
+	}
+
+	switch syncStatus {
+	case groupSyncStatusSuccess:
+	case groupSyncStatusPartialFailure:
+		status = metav1.ConditionFalse
+		reason = groupSyncReasonPartialFailure
+		message = fmt.Sprintf("Approver group sync partially failed for %d group(s); %d error(s) recorded in related events.", groupCount, errorCount)
+	case groupSyncStatusFailed:
+		status = metav1.ConditionFalse
+		reason = groupSyncReasonFailed
+		message = fmt.Sprintf("Approver group sync failed for %d group(s); %d error(s) recorded in related events.", groupCount, errorCount)
+	default:
+		status = metav1.ConditionFalse
+		reason = groupSyncReasonFailed
+		message = fmt.Sprintf("Approver group sync returned unknown status %q for %d group(s).", syncStatus, groupCount)
+	}
+
+	return setApprovalGroupMembersResolvedCondition(escalation, status, reason, message)
+}
+
+func setApprovalGroupMembersResolvedCondition(
+	escalation *breakglassv1alpha1.BreakglassEscalation,
+	status metav1.ConditionStatus,
+	reason string,
+	message string,
+) bool {
+	condType := string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved)
+	current := apimeta.FindStatusCondition(escalation.Status.Conditions, condType)
+	if current != nil &&
+		current.Status == status &&
+		current.Reason == reason &&
+		current.Message == message &&
+		current.ObservedGeneration == escalation.Generation {
+		return false
+	}
+
+	escalation.SetCondition(metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		ObservedGeneration: escalation.Generation,
+		Reason:             reason,
+		Message:            message,
+	})
+	return true
+}
+
+func legacyGroupSyncStatus(resolvedGroupCount, failedGroupCount int) string {
+	switch {
+	case failedGroupCount == 0:
+		return groupSyncStatusSuccess
+	case resolvedGroupCount > 0:
+		return groupSyncStatusPartialFailure
+	default:
+		return groupSyncStatusFailed
+	}
 }
 
 // createResolverForIDP creates an appropriate resolver for the given IDP config
