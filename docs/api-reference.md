@@ -304,7 +304,11 @@ Authorization: Bearer <token>
 
 **Status Code:** `200 OK`
 
-**Authorization:** Only users who can approve the owning escalation (approvers or approver groups)
+**Authorization:** Only users who can approve the `BreakglassEscalation`
+referenced by the session's `metadata.ownerReferences` controller reference,
+when present. For legacy sessions without that owner reference, approval falls
+back to the existing cluster/group escalation lookup. Sibling escalations for the
+same cluster and group are not considered when an owner reference is present.
 
 **Request validation:** `reason` is required when the session's stored
 `approvalReasonConfig.mandatory` is `true`.
