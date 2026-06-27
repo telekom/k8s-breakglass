@@ -200,6 +200,16 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
+	var auxStatuses []breakglassv1alpha1.AuxiliaryResourceStatus
+	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForCreateBefore(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
+		auxStatuses = append(auxStatuses, beforeStatuses...)
+		ds.Status.AuxiliaryResourceStatuses = auxStatuses
+		if auxErr != nil {
+			return fmt.Errorf("failed to deploy auxiliary resources before workload: %w", auxErr)
+		}
+	}
+
 	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
@@ -222,12 +232,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		"namespace", targetNs,
 		"kind", gvk.Kind)
 
-	// Deploy auxiliary resources if configured
 	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
-		auxStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResources(ctx, ds, &template.Spec, binding, targetClient, targetNs)
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForCreateBefore(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
+		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
-			return fmt.Errorf("failed to deploy auxiliary resources: %w", auxErr)
+			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
 		}
 	}
 

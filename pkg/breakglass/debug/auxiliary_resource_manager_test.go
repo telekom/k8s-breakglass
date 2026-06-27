@@ -368,6 +368,54 @@ func TestDeployAuxiliaryResources_AllResourcesDisabledClearsStaleStatuses(t *tes
 	assert.Empty(t, session.Status.AuxiliaryResourceStatuses)
 }
 
+func TestDeployAuxiliaryResourcesForCreateBeforeHonorsPhase(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	mgr := newTestAuxiliaryResourceManager()
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "phase-session", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "user@example.com",
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		RequiredAuxiliaryResourceCategories: []string{"before", "after"},
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+			{
+				Name:           "before-config",
+				Category:       "before",
+				CreateBefore:   true,
+				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: before-config\n",
+			},
+			{
+				Name:           "after-config",
+				Category:       "after",
+				CreateBefore:   false,
+				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: after-config\n",
+			},
+		},
+	}
+
+	beforeStatuses, err := mgr.DeployAuxiliaryResourcesForCreateBefore(context.Background(), session, template, nil, fakeClient, "debug-ns", true)
+	require.NoError(t, err)
+	require.Len(t, beforeStatuses, 1)
+	assert.Equal(t, "before-config", beforeStatuses[0].Name)
+
+	afterStatuses, err := mgr.DeployAuxiliaryResourcesForCreateBefore(context.Background(), session, template, nil, fakeClient, "debug-ns", false)
+	require.NoError(t, err)
+	require.Len(t, afterStatuses, 1)
+	assert.Equal(t, "after-config", afterStatuses[0].Name)
+
+	var beforeCM corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "before-config"}, &beforeCM))
+	var afterCM corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "after-config"}, &afterCM))
+}
+
 func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -549,6 +597,44 @@ func TestCleanupAuxiliaryResources_AlreadyDeleted(t *testing.T) {
 
 	err := mgr.CleanupAuxiliaryResources(context.Background(), session, nil)
 	assert.NoError(t, err)
+}
+
+func TestCleanupAuxiliaryResources_RespectsDeleteAfterFalse(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "kept-config", Namespace: "debug-ns"},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
+	mgr := newTestAuxiliaryResourceManager()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "cleanup-session", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+					{Name: "keep-config", DeleteAfter: false},
+				},
+			},
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "keep-config",
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "kept-config",
+					Namespace:    "debug-ns",
+					Created:      true,
+				},
+			},
+		},
+	}
+
+	require.NoError(t, mgr.CleanupAuxiliaryResources(context.Background(), session, fakeClient))
+	require.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	var fetched corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "kept-config"}, &fetched))
 }
 
 func TestAddAuxiliaryResourceToDeployedResources(t *testing.T) {

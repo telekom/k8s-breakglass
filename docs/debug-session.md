@@ -1091,7 +1091,7 @@ spec:
 
 All resources from multi-document YAML are:
 - Tracked in the session status for observability
-- Cleaned up automatically when the session ends
+- Cleaned up automatically when the session ends unless `deleteAfter: false`
 - Monitored for readiness using kstatus
 
 > **Note:** `template` (structured) and `templateString` (Go template) are mutually exclusive. Use `templateString` when you need multi-document YAML or dynamic templating.
@@ -1124,8 +1124,8 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 
 ### Lifecycle
 
-1. **Creation**: Auxiliary resources are created BEFORE debug pods start (when `createBefore: true`, the default)
-2. **Cleanup**: Resources are deleted when the session ends (when `deleteAfter: true`, the default)
+1. **Creation**: Auxiliary resources are created before debug pods start when `createBefore: true` (the default), or after the debug workload is applied when `createBefore: false`
+2. **Cleanup**: Resources are deleted when the session ends when `deleteAfter: true` (the default), and retained when `deleteAfter: false`
 
 ### Failure Policies
 

@@ -155,7 +155,27 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		}
 	}
 
+	ds.Status.AllowedPods = allowedPods
+	patchAuxiliaryResourceStatuses := c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0
+	if err := c.updateAuxiliaryResourceReadiness(ctx, ds, targetClient); err != nil {
+		return err
+	}
+	if patchAuxiliaryResourceStatuses {
+		return c.patchDebugSessionAllowedPodsAndAuxiliaryStatuses(ctx, ds, allowedPods, ds.Status.AuxiliaryResourceStatuses)
+	}
 	return c.patchDebugSessionAllowedPods(ctx, ds, allowedPods)
+}
+
+func (c *DebugSessionController) updateAuxiliaryResourceReadiness(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	targetClient ctrlclient.Client,
+) error {
+	if c.auxiliaryMgr == nil || len(ds.Status.AuxiliaryResourceStatuses) == 0 {
+		return nil
+	}
+	_, err := c.auxiliaryMgr.CheckAuxiliaryResourcesReadiness(ctx, ds, targetClient)
+	return err
 }
 
 // monitorPodHealth checks pod status and emits audit events for failures/restarts

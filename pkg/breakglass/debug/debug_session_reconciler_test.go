@@ -842,6 +842,33 @@ func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrPartic
 	assert.Equal(t, allowedPods, fetchedSession.Status.AllowedPods)
 }
 
+func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
+	scheme := testScheme()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns"},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
+	session := newTestDebugSession("aux-readiness", "test-template", "test-cluster", "user@example.com")
+	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+		{
+			Name:         "ready-config",
+			Kind:         "ConfigMap",
+			APIVersion:   "v1",
+			ResourceName: "ready-config",
+			Namespace:    "debug-ns",
+			Created:      true,
+		},
+	}
+	controller := &DebugSessionController{
+		log:          zap.NewNop().Sugar(),
+		auxiliaryMgr: NewAuxiliaryResourceManager(zap.NewNop().Sugar(), nil),
+	}
+
+	require.NoError(t, controller.updateAuxiliaryResourceReadiness(context.Background(), session, targetClient))
+	require.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	require.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+}
+
 func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 	scheme := testScheme()
 

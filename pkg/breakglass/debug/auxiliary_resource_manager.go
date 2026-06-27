@@ -70,6 +70,33 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	targetClient client.Client,
 	targetNamespace string,
 ) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
+	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, nil)
+}
+
+// DeployAuxiliaryResourcesForCreateBefore deploys enabled auxiliary resources for one createBefore phase.
+func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForCreateBefore(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	targetClient client.Client,
+	targetNamespace string,
+	createBefore bool,
+) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
+	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, func(auxRes breakglassv1alpha1.AuxiliaryResource) bool {
+		return auxRes.CreateBefore == createBefore
+	})
+}
+
+func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	targetClient client.Client,
+	targetNamespace string,
+	shouldDeploy func(breakglassv1alpha1.AuxiliaryResource) bool,
+) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	if template == nil || len(template.AuxiliaryResources) == 0 {
 		return nil, nil
 	}
@@ -86,9 +113,9 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	var statuses []breakglassv1alpha1.AuxiliaryResourceStatus
 	var deployErrors []error
 
-	// Deploy resources that should be created before debug pods
+	// Deploy selected resources. Callers can pass a phase filter to honor createBefore.
 	for _, auxRes := range enabledResources {
-		if !auxRes.CreateBefore {
+		if shouldDeploy != nil && !shouldDeploy(auxRes) {
 			continue
 		}
 
@@ -135,6 +162,13 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 	for i, status := range session.Status.AuxiliaryResourceStatuses {
 		if !status.Created || status.Deleted {
+			continue
+		}
+		if !shouldDeleteAuxiliaryResource(session, status.Name) {
+			log.Debugw("Skipping auxiliary resource cleanup because deleteAfter is false",
+				"resource", status.Name,
+				"resourceName", status.ResourceName,
+				"namespace", status.Namespace)
 			continue
 		}
 
@@ -193,6 +227,18 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 	log.Info("All auxiliary resources cleaned up")
 	return nil
+}
+
+func shouldDeleteAuxiliaryResource(session *breakglassv1alpha1.DebugSession, name string) bool {
+	if session.Status.ResolvedTemplate == nil {
+		return true
+	}
+	for _, auxRes := range session.Status.ResolvedTemplate.AuxiliaryResources {
+		if auxRes.Name == name {
+			return auxRes.DeleteAfter
+		}
+	}
+	return true
 }
 
 // filterEnabledResources determines which auxiliary resources should be deployed.
