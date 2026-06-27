@@ -849,7 +849,7 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 }
 
 func bindingReferencesAmbiguousClusterName(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfigs []breakglassv1alpha1.ClusterConfig) bool {
-	if debugClusterConfigNameCounts(clusterConfigs)[clusterName] < 2 {
+	if !hasDuplicateClusterConfigName(clusterConfigs, clusterName) {
 		return false
 	}
 	for _, explicitCluster := range binding.Spec.Clusters {
@@ -867,6 +867,20 @@ func bindingReferencesAmbiguousClusterName(binding *breakglassv1alpha1.DebugSess
 	for i := range clusterConfigs {
 		clusterConfig := &clusterConfigs[i]
 		if clusterConfig.Name == clusterName && selector.Matches(labelSetFromMap(clusterConfig.Labels)) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDuplicateClusterConfigName(clusterConfigs []breakglassv1alpha1.ClusterConfig, clusterName string) bool {
+	matches := 0
+	for i := range clusterConfigs {
+		if clusterConfigs[i].Name != clusterName {
+			continue
+		}
+		matches++
+		if matches > 1 {
 			return true
 		}
 	}

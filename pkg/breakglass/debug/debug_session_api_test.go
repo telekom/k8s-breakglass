@@ -6323,6 +6323,18 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 	})
 }
 
+func TestHasDuplicateClusterConfigName(t *testing.T) {
+	clusterConfigs := []breakglassv1alpha1.ClusterConfig{
+		{ObjectMeta: metav1.ObjectMeta{Name: "shared-cluster", Namespace: "tenant-a"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "unique-cluster", Namespace: "tenant-a"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "shared-cluster", Namespace: "tenant-b"}},
+	}
+
+	assert.True(t, hasDuplicateClusterConfigName(clusterConfigs, "shared-cluster"))
+	assert.False(t, hasDuplicateClusterConfigName(clusterConfigs, "unique-cluster"))
+	assert.False(t, hasDuplicateClusterConfigName(clusterConfigs, "missing-cluster"))
+}
+
 // TestDebugSessionAPIController_CreateWithExtraDeployValues tests session creation with extra deploy values
 func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 	scheme := testScheme()

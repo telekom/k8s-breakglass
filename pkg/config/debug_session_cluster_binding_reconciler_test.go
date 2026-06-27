@@ -76,7 +76,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateRefValid(t *test
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
 				{
-					Type:   "Ready",
+					Type:   string(breakglassv1alpha1.DebugSessionTemplateConditionReady),
 					Status: metav1.ConditionTrue,
 				},
 			},
@@ -94,7 +94,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateRefValid(t *test
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
 				{
-					Type:   "Ready",
+					Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
 					Status: metav1.ConditionTrue,
 				},
 			},
@@ -160,7 +160,7 @@ func TestDebugSessionClusterBindingReconciler_ResolveClusters_FindsNamespacedClu
 		},
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -316,7 +316,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterNotFound(t *testi
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -370,7 +370,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateSelector(t *test
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -387,7 +387,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateSelector(t *test
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -460,7 +460,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterSelector(t *testi
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -475,7 +475,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterSelector(t *testi
 		},
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -489,7 +489,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterSelector(t *testi
 		},
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionFalse},
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse},
 			},
 		},
 	}
@@ -597,7 +597,7 @@ func TestDebugSessionClusterBindingReconciler_ResolveClusters_DeduplicatesExplic
 		},
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
