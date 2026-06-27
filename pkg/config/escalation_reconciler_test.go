@@ -874,6 +874,22 @@ func TestEscalationReconciler_ValidateClusterRef(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ClusterConfigRefs not found: default/prod-*")
 	})
+
+	t.Run("invalid glob cluster ref reports syntax error", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-["},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid ClusterConfigRefs glob pattern")
+	})
 }
 
 func TestEscalationReconciler_ValidateIDPRefs(t *testing.T) {

@@ -24,6 +24,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/indexer"
 )
 
 // EscalationReconciler watches BreakglassEscalation CRs and validates their configuration.
@@ -445,9 +446,28 @@ func (r *EscalationReconciler) escalationsForClusterConfig(ctx context.Context, 
 		listOpts = append(listOpts, client.InNamespace(namespace))
 	}
 
-	return r.escalationRequestsMatching(ctx, listOpts, "ClusterConfig", clusterName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
-		return clusterRefListMatchesName(esc.Spec.ClusterConfigRefs, clusterName)
-	})
+	exactRequests := r.escalationRequestsMatching(
+		ctx,
+		appendListOptions(listOpts, client.MatchingFields{indexer.BreakglassEscalationClusterConfigRefField: clusterName}),
+		"ClusterConfig",
+		clusterName,
+		func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+			return clusterRefListMatchesName(esc.Spec.ClusterConfigRefs, clusterName)
+		},
+	)
+	patternRequests := r.escalationRequestsMatching(
+		ctx,
+		appendListOptions(listOpts, client.MatchingFields{
+			indexer.BreakglassEscalationClusterConfigRefPatternField: indexer.BreakglassEscalationGlobPatternIndexValue,
+		}),
+		"ClusterConfig",
+		clusterName,
+		func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+			return clusterRefListMatchesName(esc.Spec.ClusterConfigRefs, clusterName)
+		},
+	)
+
+	return deduplicateRequests(append(exactRequests, patternRequests...))
 }
 
 func (r *EscalationReconciler) escalationsForIdentityProvider(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -456,7 +476,9 @@ func (r *EscalationReconciler) escalationsForIdentityProvider(ctx context.Contex
 		return nil
 	}
 
-	return r.escalationRequestsMatching(ctx, nil, "IdentityProvider", idpName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+	return r.escalationRequestsMatching(ctx, []client.ListOption{
+		client.MatchingFields{indexer.BreakglassEscalationIdentityProviderField: idpName},
+	}, "IdentityProvider", idpName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
 		return containsTrimmedString(esc.Spec.AllowedIdentityProviders, idpName) ||
 			containsTrimmedString(esc.Spec.AllowedIdentityProvidersForRequests, idpName) ||
 			containsTrimmedString(esc.Spec.AllowedIdentityProvidersForApprovers, idpName)
@@ -469,7 +491,9 @@ func (r *EscalationReconciler) escalationsForDenyPolicy(ctx context.Context, obj
 		return nil
 	}
 
-	return r.escalationRequestsMatching(ctx, nil, "DenyPolicy", policyName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+	return r.escalationRequestsMatching(ctx, []client.ListOption{
+		client.MatchingFields{indexer.BreakglassEscalationDenyPolicyRefField: policyName},
+	}, "DenyPolicy", policyName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
 		return containsTrimmedString(esc.Spec.DenyPolicyRefs, policyName)
 	})
 }
@@ -480,7 +504,9 @@ func (r *EscalationReconciler) escalationsForMailProvider(ctx context.Context, o
 		return nil
 	}
 
-	return r.escalationRequestsMatching(ctx, nil, "MailProvider", providerName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+	return r.escalationRequestsMatching(ctx, []client.ListOption{
+		client.MatchingFields{indexer.BreakglassEscalationMailProviderField: providerName},
+	}, "MailProvider", providerName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
 		return strings.TrimSpace(esc.Spec.MailProvider) == providerName
 	})
 }
@@ -494,6 +520,9 @@ func (r *EscalationReconciler) escalationRequestsMatching(
 ) []reconcile.Request {
 	var list breakglassv1alpha1.BreakglassEscalationList
 	if err := r.client.List(ctx, &list, listOpts...); err != nil {
+		if isFieldIndexUnavailable(err) {
+			return r.escalationRequestsMatching(ctx, withoutMatchingFields(listOpts), dependencyKind, dependencyName, matches)
+		}
 		if r.logger != nil {
 			r.logger.Warnw("Failed to list BreakglassEscalations for dependency change",
 				"dependencyKind", dependencyKind,
@@ -521,6 +550,58 @@ func (r *EscalationReconciler) escalationRequestsMatching(
 		return requests[i].Namespace < requests[j].Namespace
 	})
 	return requests
+}
+
+func appendListOptions(base []client.ListOption, extra ...client.ListOption) []client.ListOption {
+	out := make([]client.ListOption, 0, len(base)+len(extra))
+	out = append(out, base...)
+	out = append(out, extra...)
+	return out
+}
+
+func withoutMatchingFields(opts []client.ListOption) []client.ListOption {
+	filtered := make([]client.ListOption, 0, len(opts))
+	for _, opt := range opts {
+		if _, ok := opt.(client.MatchingFields); ok {
+			continue
+		}
+		filtered = append(filtered, opt)
+	}
+	return filtered
+}
+
+func isFieldIndexUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "field index") ||
+		strings.Contains(msg, "no indexer") ||
+		strings.Contains(msg, "no index with name") ||
+		strings.Contains(msg, "field label not supported") ||
+		strings.Contains(msg, "Index with name")
+}
+
+func deduplicateRequests(requests []reconcile.Request) []reconcile.Request {
+	if len(requests) < 2 {
+		return requests
+	}
+	seen := make(map[client.ObjectKey]struct{}, len(requests))
+	out := make([]reconcile.Request, 0, len(requests))
+	for _, req := range requests {
+		if _, ok := seen[req.NamespacedName]; ok {
+			continue
+		}
+		seen[req.NamespacedName] = struct{}{}
+		out = append(out, req)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace == out[j].Namespace {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Namespace < out[j].Namespace
+	})
+	return out
 }
 
 func containsTrimmedString(values []string, needle string) bool {
@@ -582,6 +663,9 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 		}
 
 		if strings.ContainsAny(name, "*?[") {
+			if err := validateClusterRefPattern(name); err != nil {
+				return fmt.Errorf("invalid ClusterConfigRefs glob pattern %q: %w", name, err)
+			}
 			matched, err := r.clusterConfigRefHasMatch(ctx, esc.Namespace, name)
 			if err != nil {
 				return err
@@ -609,6 +693,11 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 	}
 
 	return nil
+}
+
+func validateClusterRefPattern(pattern string) error {
+	_, err := filepath.Match(pattern, "")
+	return err
 }
 
 func (r *EscalationReconciler) clusterConfigRefHasMatch(ctx context.Context, namespace, pattern string) (bool, error) {
