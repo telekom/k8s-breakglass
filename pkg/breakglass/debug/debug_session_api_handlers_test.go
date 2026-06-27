@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1472,6 +1473,37 @@ func TestHandleGetDebugSession_NotFound(t *testing.T) {
 // Tests for handleApproveDebugSession
 // ============================================================================
 
+func TestDebugSessionApprovalTimedOut(t *testing.T) {
+	now := time.Now()
+	timeout := breakglass.DebugSessionApprovalTimeout
+
+	tests := []struct {
+		name      string
+		createdAt metav1.Time
+		want      bool
+	}{
+		{name: "zero timestamp is not treated as timed out", createdAt: metav1.Time{}, want: false},
+		{name: "before timeout", createdAt: metav1.NewTime(now.Add(-timeout + time.Second)), want: false},
+		{name: "at timeout", createdAt: metav1.NewTime(now.Add(-timeout)), want: true},
+		{name: "after timeout", createdAt: metav1.NewTime(now.Add(-timeout - time.Second)), want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.createdAt},
+			}
+			got, reason := debugSessionApprovalTimedOut(session, now)
+			assert.Equal(t, tt.want, got)
+			if tt.want {
+				assert.Contains(t, reason, "Approval timed out")
+			} else {
+				assert.Empty(t, reason)
+			}
+		})
+	}
+}
+
 func TestHandleApproveDebugSession_Unauthorized(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
@@ -1672,6 +1704,67 @@ func TestHandleApproveDebugSession_BlocksRequesterEmailSelfApproval(t *testing.T
 	var fetched breakglassv1alpha1.DebugSession
 	require.NoError(t, fakeClient.Get(req.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &fetched))
 	require.Nil(t, fetched.Status.Approval)
+}
+
+func TestHandleApproveDebugSession_ApprovalTimedOut(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pending-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("username", "approver@example.com")
+		c.Set("groups", []string{})
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	_ = ctrl.Register(rg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusConflict, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Approval timed out")
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	assert.Contains(t, updated.Status.Message, "Approval timed out")
+	assert.Nil(t, updated.Status.Approval)
 }
 
 func TestHandleApproveDebugSession_Success(t *testing.T) {
@@ -2105,6 +2198,68 @@ func TestHandleRejectDebugSession_BlocksRequesterEmailSelfApproval(t *testing.T)
 	var fetched breakglassv1alpha1.DebugSession
 	require.NoError(t, fakeClient.Get(req.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &fetched))
 	require.Nil(t, fetched.Status.Approval)
+}
+
+func TestHandleRejectDebugSession_ApprovalTimedOut(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pending-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("username", "approver@example.com")
+		c.Set("groups", []string{})
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	_ = ctrl.Register(rg)
+
+	body := bytes.NewBuffer([]byte(`{"reason": "Too late"}`))
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/reject?namespace=default", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusConflict, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Approval timed out")
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	assert.Contains(t, updated.Status.Message, "Approval timed out")
+	assert.Nil(t, updated.Status.Approval)
 }
 
 func TestHandleRejectDebugSession_Success(t *testing.T) {

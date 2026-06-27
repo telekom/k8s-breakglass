@@ -433,6 +433,16 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		return
 	}
 
+	if timedOut, reason := debugSessionApprovalTimedOut(session, time.Now()); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason); err != nil {
+			reqLog.Errorw("Failed to mark timed-out debug session approval", "session", name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to update timed-out debug session")
+			return
+		}
+		apiresponses.RespondConflict(ctx, reason)
+		return
+	}
+
 	if req.Reason != "" {
 		req.Reason = breakglass.SanitizeReasonText(req.Reason)
 	}
@@ -521,6 +531,16 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	if timedOut, reason := debugSessionApprovalTimedOut(session, time.Now()); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason); err != nil {
+			reqLog.Errorw("Failed to mark timed-out debug session rejection", "session", name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to update timed-out debug session")
+			return
+		}
+		apiresponses.RespondConflict(ctx, reason)
+		return
+	}
+
 	sanitizedReason := req.Reason
 	if req.Reason != "" {
 		sanitizedReason = breakglass.SanitizeReasonText(req.Reason)
@@ -562,6 +582,32 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	// Return updated session - client expects the session object, not just a message
 	ctx.JSON(http.StatusOK, session)
+}
+
+func debugSessionApprovalTimedOut(session *breakglassv1alpha1.DebugSession, now time.Time) (bool, string) {
+	if session.CreationTimestamp.IsZero() {
+		return false, ""
+	}
+
+	timeout := breakglass.DebugSessionApprovalTimeout
+	if now.Before(session.CreationTimestamp.Add(timeout)) {
+		return false, ""
+	}
+
+	return true, fmt.Sprintf("Approval timed out after %s", timeout)
+}
+
+func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context.Context, session *breakglassv1alpha1.DebugSession, actor, reason string) error {
+	session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+	session.Status.Message = reason
+
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, session); err != nil {
+		return fmt.Errorf("mark debug session approval timed out: %w", err)
+	}
+
+	c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, session, actor, reason)
+	metrics.DebugSessionsFailed.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Inc()
+	return nil
 }
 
 // handleLeaveDebugSession allows a participant to leave a session
