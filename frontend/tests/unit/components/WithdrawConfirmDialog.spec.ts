@@ -14,7 +14,13 @@ import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
 
 const mountedWrappers: Array<{ unmount: () => void }> = [];
 
-function mountDialog(props: { opened: boolean; sessionName?: string }) {
+function mountDialog(props: {
+  opened: boolean;
+  sessionName?: string;
+  heading?: string;
+  message?: string;
+  confirmLabel?: string;
+}) {
   const wrapper = shallowMount(WithdrawConfirmDialog, { props });
   mountedWrappers.push(wrapper);
   return wrapper;
@@ -38,7 +44,17 @@ describe("WithdrawConfirmDialog", () => {
 
   it("shows session name when provided", () => {
     const wrapper = mountDialog({ opened: true, sessionName: "req-42" });
+    expect(wrapper.text()).toContain("Session:");
     expect(wrapper.text()).toContain("req-42");
+  });
+
+  it("preserves empty string overrides", () => {
+    const wrapper = mountDialog({ opened: true, heading: "", message: "", confirmLabel: "" });
+    const modal = wrapper.find('[data-testid="withdraw-confirm-modal"]');
+
+    expect(modal.attributes("heading")).toBe("");
+    expect(wrapper.find("p").text()).toBe("");
+    expect(wrapper.find('[data-testid="withdraw-confirm-btn"]').text()).toBe("");
   });
 
   it("does not show session name when not provided", () => {

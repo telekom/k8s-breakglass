@@ -503,7 +503,7 @@ describe("BreakglassService", () => {
   it("drops scheduled own sessions and errors when metadata is missing", async () => {
     mockClient.post.mockResolvedValueOnce({ status: 204 });
     await service.dropMySession({ metadata: { name: "scheduled" } } as SessionCR);
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/scheduled/drop", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/scheduled/drop");
 
     await expect(service.dropMySession({ metadata: {} } as SessionCR)).rejects.toThrow("Missing session name");
   });
@@ -521,7 +521,7 @@ describe("BreakglassService", () => {
     mockClient.post.mockRejectedValueOnce(new Error("drop failed"));
 
     await expect(service.dropMySession({ metadata: { name: "oops" } } as SessionCR)).rejects.toThrow("drop failed");
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/drop", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/drop");
   });
 
   it("sends payloads via testButton helper", async () => {

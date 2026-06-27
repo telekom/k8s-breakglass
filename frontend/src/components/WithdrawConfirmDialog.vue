@@ -32,19 +32,19 @@ useModalBehavior(toRef(props, "opened"), () => emit("cancel"));
 <template>
   <scale-modal
     :opened="opened"
-    :heading="heading || 'Withdraw Request'"
+    :heading="heading ?? 'Withdraw Request'"
     size="small"
     data-testid="withdraw-confirm-modal"
     @scale-close="emit('cancel')"
   >
-    <p>{{ message || "Are you sure you want to withdraw this request? This action cannot be undone." }}</p>
-    <p v-if="sessionName" class="withdraw-detail"><strong>Request:</strong> {{ sessionName }}</p>
+    <p>{{ message ?? "Are you sure you want to withdraw this request? This action cannot be undone." }}</p>
+    <p v-if="sessionName" class="withdraw-detail"><strong>Session:</strong> {{ sessionName }}</p>
     <div slot="action" class="modal-actions">
       <scale-button variant="secondary" data-testid="withdraw-cancel-btn" @click="emit('cancel')">
         Cancel
       </scale-button>
       <scale-button variant="primary" data-testid="withdraw-confirm-btn" @click="emit('confirm')">
-        {{ confirmLabel || "Withdraw" }}
+        {{ confirmLabel ?? "Withdraw" }}
       </scale-button>
     </div>
   </scale-modal>

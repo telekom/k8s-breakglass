@@ -335,6 +335,23 @@ export default class BreakglassService {
     }
   }
 
+  private async dropSessionByName(
+    sessionName: string,
+    logContext: string,
+    errorMessage: string,
+  ): Promise<AxiosResponse> {
+    try {
+      debug(logContext, "Dropping breakglass session", { sessionName });
+      const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/drop`);
+      debug(logContext, "Drop submitted", { status: response.status });
+      return response;
+    } catch (e) {
+      handleAxiosError(logContext, e, errorMessage);
+      debug(logContext, "Drop failed", { errorMessage: (e as Error)?.message });
+      throw e;
+    }
+  }
+
   public async dropBreakglass(breakglass: Breakglass): Promise<AxiosResponse> {
     // Call backend drop endpoint: POST /api/breakglassSessions/:name/drop
     const bg: Breakglass = breakglass;
@@ -345,16 +362,7 @@ export default class BreakglassService {
       bg.sessionActive?.name ||
       bg.sessionPending?.name;
     if (!name) throw new Error("Missing session name for drop");
-    try {
-      debug("BreakglassService.dropBreakglass", "Dropping breakglass", { name });
-      const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(name)}/drop`);
-      debug("BreakglassService.dropBreakglass", "Drop submitted", { status: response.status });
-      return response;
-    } catch (e) {
-      handleAxiosError("BreakglassService.dropBreakglass", e, "Failed to drop breakglass session");
-      debug("BreakglassService.dropBreakglass", "Drop failed", { errorMessage: (e as Error)?.message });
-      throw e;
-    }
+    return this.dropSessionByName(name, "BreakglassService.dropBreakglass", "Failed to drop breakglass session");
   }
 
   public async fetchHistoricalSessions(): Promise<ActiveBreakglass[]> {
@@ -538,15 +546,7 @@ export default class BreakglassService {
   public async dropMySession(req: SessionCR): Promise<void> {
     const sessionName = req.metadata?.name;
     if (!sessionName) throw new Error("Missing session name");
-    try {
-      debug("BreakglassService.dropMySession", "Dropping own session", { sessionName });
-      await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/drop`, {});
-      debug("BreakglassService.dropMySession", "Drop complete");
-    } catch (e) {
-      handleAxiosError("BreakglassService.dropMySession", e, "Failed to drop session");
-      debug("BreakglassService.dropMySession", "Drop failed", { errorMessage: (e as Error)?.message });
-      throw e;
-    }
+    await this.dropSessionByName(sessionName, "BreakglassService.dropMySession", "Failed to drop session");
   }
 }
 
