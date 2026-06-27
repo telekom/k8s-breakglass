@@ -14,6 +14,7 @@ import type { AxiosLikeError } from "@/model/errors";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { useModalBehavior } from "@/composables/useModalBehavior";
+import { currentUserIdentifier } from "@/utils/currentUserIdentity";
 
 const route = useRoute();
 const user = useUser();
@@ -279,18 +280,7 @@ const filteredBreakglasses = computed(() => {
 });
 
 const currentUserEmail = computed(() => {
-  const currentUser = user.value as {
-    profile?: { email?: string; preferred_username?: string };
-    email?: string;
-    preferred_username?: string;
-  } | null;
-  return (
-    currentUser?.profile?.email ||
-    currentUser?.profile?.preferred_username ||
-    currentUser?.email ||
-    currentUser?.preferred_username ||
-    ""
-  );
+  return currentUserIdentifier(user.value);
 });
 
 async function onDrop(bg: SessionCR) {

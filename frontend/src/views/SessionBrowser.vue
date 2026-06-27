@@ -15,6 +15,7 @@ import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
 import { useWithdrawConfirmation } from "@/composables";
+import { currentUserIdentifier } from "@/utils/currentUserIdentity";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -25,16 +26,7 @@ const breakglassService = new BreakglassService(auth);
 const breakglassSessionService = new BreakglassSessionService(auth);
 const user = useUser();
 const currentUserEmail = computed(() => {
-  const profile = (
-    user.value as {
-      profile?: { email?: string; preferred_username?: string };
-      email?: string;
-      preferred_username?: string;
-    } | null
-  )?.profile;
-  const directEmail = (user.value as { email?: string; preferred_username?: string } | null)?.email;
-  const directPreferred = (user.value as { email?: string; preferred_username?: string } | null)?.preferred_username;
-  return profile?.email || profile?.preferred_username || directEmail || directPreferred || "";
+  return currentUserIdentifier(user.value);
 });
 
 type SessionActionKey = "reject" | "withdraw" | "drop" | "cancel";
