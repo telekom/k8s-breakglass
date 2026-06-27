@@ -3190,7 +3190,6 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, func(c *gin.Context) {
-		c.Set("email", "owner@example.com")
 		c.Set("username", "owner-username")
 		c.Set("user_id", "owner-subject")
 		c.Next()

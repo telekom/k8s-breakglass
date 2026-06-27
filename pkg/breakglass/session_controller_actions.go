@@ -21,11 +21,11 @@ import (
 
 func (wc *BreakglassSessionController) authenticatedUserIdentifiers(c *gin.Context) (string, []string, error) {
 	email, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		return "", nil, err
-	}
 	username := wc.identityProvider.GetUsername(c)
 	userID := wc.identityProvider.GetIdentity(c)
+	if err != nil && username == "" && userID == "" {
+		return "", nil, err
+	}
 	return firstNonEmpty(email, username, userID), collectAuthIdentifiers(email, username, userID), nil
 }
 
