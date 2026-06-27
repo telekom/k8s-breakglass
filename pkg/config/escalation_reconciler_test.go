@@ -144,6 +144,68 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 		assert.True(t, onReloadCalled, "onReload callback should be called")
 	})
 
+	t.Run("valid escalation updates stale observed generation", func(t *testing.T) {
+		escalation := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-escalation",
+				Namespace:  "default",
+				Generation: 2,
+			},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup: "test-group",
+				MaxValidFor:    "1h",
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+					Groups: []string{"allowed-group"},
+				},
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+			Status: breakglassv1alpha1.BreakglassEscalationStatus{
+				ObservedGeneration: 1,
+				Conditions: []metav1.Condition{
+					{
+						Type:               string(breakglassv1alpha1.BreakglassEscalationConditionReady),
+						Status:             metav1.ConditionTrue,
+						Reason:             "ValidationSucceeded",
+						Message:            "Validation passed",
+						ObservedGeneration: 1,
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(escalation).
+			WithStatusSubresource(escalation).
+			Build()
+
+		r := NewEscalationReconciler(fakeClient, logger, recorder, nil, nil, 0)
+
+		result, err := r.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated breakglassv1alpha1.BreakglassEscalation
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-escalation", Namespace: "default"}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), updated.Status.ObservedGeneration)
+
+		readyCond := apimeta.FindStatusCondition(updated.Status.Conditions, string(breakglassv1alpha1.BreakglassEscalationConditionReady))
+		require.NotNil(t, readyCond)
+		assert.Equal(t, int64(2), readyCond.ObservedGeneration)
+		assert.Equal(t, metav1.ConditionTrue, readyCond.Status)
+
+		configCond := apimeta.FindStatusCondition(updated.Status.Conditions, string(breakglassv1alpha1.BreakglassEscalationConditionConfigValidated))
+		require.NotNil(t, configCond)
+		assert.Equal(t, int64(2), configCond.ObservedGeneration)
+		assert.Equal(t, metav1.ConditionTrue, configCond.Status)
+	})
+
 	t.Run("escalation with missing cluster ref fails validation", func(t *testing.T) {
 		escalation := &breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
@@ -335,6 +397,82 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 		assert.Equal(t, metav1.ConditionFalse, cond.Status)
 		assert.Contains(t, cond.Message, "DenyPolicy refs not found")
 	})
+}
+
+func TestEscalationReconciler_ShouldReconcileEscalationUpdate(t *testing.T) {
+	baseTime := metav1.Now()
+
+	tests := []struct {
+		name string
+		old  *breakglassv1alpha1.BreakglassEscalation
+		new  *breakglassv1alpha1.BreakglassEscalation
+		want bool
+	}{
+		{
+			name: "status only update keeps same generation",
+			old: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Generation: 1},
+			},
+			new: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Generation: 1},
+				Status: breakglassv1alpha1.BreakglassEscalationStatus{
+					ObservedGeneration: 1,
+				},
+			},
+			want: false,
+		},
+		{
+			name: "spec update reconciles any generation change",
+			old: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Generation: 1},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					MaxValidFor: "1h",
+				},
+			},
+			new: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Generation: 2},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					MaxValidFor: "2h",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "identity provider approver update reconciles generation change",
+			old: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Generation: 1},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					AllowedIdentityProvidersForApprovers: []string{"idp-a"},
+				},
+			},
+			new: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Generation: 2},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					AllowedIdentityProvidersForApprovers: []string{"idp-b"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "deletion timestamp transition reconciles",
+			old: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Generation: 1},
+			},
+			new: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{
+					Generation:        1,
+					DeletionTimestamp: &baseTime,
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, shouldReconcileEscalationUpdate(tt.old, tt.new))
+		})
+	}
 }
 
 func TestEscalationReconciler_GetCachedEscalationIDPMapping(t *testing.T) {

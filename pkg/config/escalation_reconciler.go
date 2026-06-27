@@ -339,19 +339,6 @@ func (r *EscalationReconciler) GetCachedEscalationIDPMapping() map[string][]stri
 
 // SetupWithManager registers this reconciler with the controller-runtime manager.
 func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Helper function to compare two string slices
-	slicesEqual := func(a, b []string) bool {
-		if len(a) != len(b) {
-			return false
-		}
-		for i := range a {
-			if a[i] != b[i] {
-				return false
-			}
-		}
-		return true
-	}
-
 	// Predicate to filter events - only reconcile on spec changes, not status updates
 	specChangePredicate := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
@@ -363,8 +350,7 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			if !ok {
 				return true
 			}
-			return !slicesEqual(oldEsc.Spec.AllowedIdentityProviders, newEsc.Spec.AllowedIdentityProviders) ||
-				oldEsc.DeletionTimestamp != newEsc.DeletionTimestamp
+			return shouldReconcileEscalationUpdate(oldEsc, newEsc)
 		},
 		CreateFunc: func(e event.CreateEvent) bool { return true },
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
@@ -377,6 +363,13 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}).
 		WithEventFilter(specChangePredicate).
 		Complete(r)
+}
+
+func shouldReconcileEscalationUpdate(oldEsc, newEsc *breakglassv1alpha1.BreakglassEscalation) bool {
+	oldDeleting := oldEsc.GetDeletionTimestamp() != nil
+	newDeleting := newEsc.GetDeletionTimestamp() != nil
+
+	return oldEsc.GetGeneration() != newEsc.GetGeneration() || oldDeleting != newDeleting
 }
 
 // validateEscalationConfig validates the escalation's configuration structure.
