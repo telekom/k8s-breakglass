@@ -1480,18 +1480,38 @@ func TestDebugSessionApprovalTimedOut(t *testing.T) {
 	tests := []struct {
 		name      string
 		createdAt metav1.Time
+		approval  *breakglassv1alpha1.DebugSessionApproval
 		want      bool
 	}{
 		{name: "zero timestamp is not treated as timed out", createdAt: metav1.Time{}, want: false},
 		{name: "before timeout", createdAt: metav1.NewTime(now.Add(-timeout + time.Second)), want: false},
-		{name: "at timeout", createdAt: metav1.NewTime(now.Add(-timeout)), want: true},
+		{name: "at timeout", createdAt: metav1.NewTime(now.Add(-timeout)), want: false},
 		{name: "after timeout", createdAt: metav1.NewTime(now.Add(-timeout - time.Second)), want: true},
+		{
+			name:      "approved pending status is not timed out",
+			createdAt: metav1.NewTime(now.Add(-timeout - time.Second)),
+			approval: &breakglassv1alpha1.DebugSessionApproval{
+				ApprovedAt: &metav1.Time{Time: now},
+			},
+			want: false,
+		},
+		{
+			name:      "rejected pending status is not timed out",
+			createdAt: metav1.NewTime(now.Add(-timeout - time.Second)),
+			approval: &breakglassv1alpha1.DebugSessionApproval{
+				RejectedAt: &metav1.Time{Time: now},
+			},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			session := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.createdAt},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					Approval: tt.approval,
+				},
 			}
 			got, reason := debugSessionApprovalTimedOut(session, now)
 			assert.Equal(t, tt.want, got)
@@ -1738,7 +1758,9 @@ func TestHandleApproveDebugSession_ApprovalTimedOut(t *testing.T) {
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	mockMail := NewMockMailEnqueuer(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -1765,6 +1787,11 @@ func TestHandleApproveDebugSession_ApprovalTimedOut(t *testing.T) {
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
 	assert.Contains(t, updated.Status.Message, "Approval timed out")
 	assert.Nil(t, updated.Status.Approval)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
+	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
 }
 
 func TestHandleApproveDebugSession_Success(t *testing.T) {
@@ -2232,7 +2259,9 @@ func TestHandleRejectDebugSession_ApprovalTimedOut(t *testing.T) {
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	mockMail := NewMockMailEnqueuer(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -2260,6 +2289,11 @@ func TestHandleRejectDebugSession_ApprovalTimedOut(t *testing.T) {
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
 	assert.Contains(t, updated.Status.Message, "Approval timed out")
 	assert.Nil(t, updated.Status.Approval)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
+	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
 }
 
 func TestHandleRejectDebugSession_Success(t *testing.T) {

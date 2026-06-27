@@ -234,6 +234,53 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.C
 	}
 }
 
+// sendDebugSessionFailedEmail sends email notification to requester when a debug session fails.
+func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession, reason string) {
+	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	recipientEmail := session.Spec.RequestedByEmail
+	if recipientEmail == "" {
+		recipientEmail = session.Spec.RequestedBy
+	}
+	if !strings.Contains(recipientEmail, "@") {
+		c.log.Warnw("Skipping failure email - no valid email address", "session", session.Name, "recipient", recipientEmail)
+		return
+	}
+
+	requesterName := session.Spec.RequestedByDisplayName
+	if requesterName == "" {
+		requesterName = session.Spec.RequestedBy
+	}
+
+	params := mail.DebugSessionFailedMailParams{
+		RequesterName:  requesterName,
+		RequesterEmail: recipientEmail,
+		SessionID:      session.Name,
+		Cluster:        session.Spec.Cluster,
+		TemplateName:   session.Spec.TemplateRef,
+		Namespace:      session.Namespace,
+		FailedAt:       time.Now().Format(time.RFC3339),
+		FailureReason:  reason,
+		URL:            fmt.Sprintf("%s/debug-sessions", c.baseURL),
+		BrandingName:   c.brandingName,
+	}
+
+	body, err := mail.RenderDebugSessionFailed(params)
+	if err != nil {
+		c.log.Errorw("Failed to render debug session failed email", "session", session.Name, "error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Debug Session Failed: %s", c.brandingName, session.Name)
+	if err := c.mailService.Enqueue(session.Name, []string{recipientEmail}, subject, body); err != nil {
+		c.log.Errorw("Failed to enqueue debug session failed email", "session", session.Name, "error", err)
+	} else {
+		c.log.Infow("Debug session failed email queued", "session", session.Name, "requester", session.Spec.RequestedBy)
+	}
+}
+
 // sendDebugSessionCreatedEmail sends email confirmation to requester when a debug session is created
 func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {

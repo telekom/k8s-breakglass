@@ -588,9 +588,13 @@ func debugSessionApprovalTimedOut(session *breakglassv1alpha1.DebugSession, now 
 	if session.CreationTimestamp.IsZero() {
 		return false, ""
 	}
+	if session.Status.Approval != nil &&
+		(session.Status.Approval.ApprovedAt != nil || session.Status.Approval.RejectedAt != nil) {
+		return false, ""
+	}
 
 	timeout := breakglass.DebugSessionApprovalTimeout
-	if now.Before(session.CreationTimestamp.Add(timeout)) {
+	if !session.CreationTimestamp.Add(timeout).Before(now) {
 		return false, ""
 	}
 
@@ -605,6 +609,7 @@ func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context
 		return fmt.Errorf("mark debug session approval timed out: %w", err)
 	}
 
+	c.sendDebugSessionFailedEmail(ctx, session, reason)
 	c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, session, actor, reason)
 	metrics.DebugSessionsFailed.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Inc()
 	return nil
