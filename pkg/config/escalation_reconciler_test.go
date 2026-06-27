@@ -85,6 +85,69 @@ func (f *escalationFakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object,
 	}
 }
 
+func TestShouldReconcileEscalationUpdate(t *testing.T) {
+	baseEscalation := func() *breakglassv1alpha1.BreakglassEscalation {
+		return &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-escalation",
+				Namespace:  "default",
+				Generation: 1,
+			},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup: "test-group",
+				MaxValidFor:    "1h",
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+					Groups: []string{"allowed-group"},
+				},
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		}
+	}
+
+	t.Run("ignores status only update", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		newEsc := oldEsc.DeepCopy()
+		newEsc.ResourceVersion = "2"
+		newEsc.Status.ObservedGeneration = 1
+		newEsc.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.BreakglassEscalationConditionReady),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: 1,
+			Reason:             "ValidationSucceeded",
+			Message:            "Validation passed",
+		})
+
+		assert.False(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("reconciles any spec generation update", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		newEsc := oldEsc.DeepCopy()
+		newEsc.Generation = 2
+		newEsc.Spec.EscalatedGroup = "updated-group"
+
+		assert.True(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("reconciles deletion timestamp changes", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		newEsc := oldEsc.DeepCopy()
+		now := metav1.Now()
+		newEsc.DeletionTimestamp = &now
+
+		assert.True(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("allows unexpected object types", func(t *testing.T) {
+		assert.True(t, shouldReconcileEscalationUpdate(
+			&breakglassv1alpha1.ClusterConfig{},
+			&breakglassv1alpha1.ClusterConfig{},
+		))
+	})
+}
+
 func TestEscalationReconciler_Reconcile(t *testing.T) {
 	scheme := newTestEscalationReconcilerScheme()
 	logger := zap.NewNop().Sugar()

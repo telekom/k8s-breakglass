@@ -343,15 +343,7 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// changes from apply tools and deletion timestamp transitions.
 	specChangePredicate := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldEsc, ok := e.ObjectOld.(*breakglassv1alpha1.BreakglassEscalation)
-			if !ok {
-				return true
-			}
-			newEsc, ok := e.ObjectNew.(*breakglassv1alpha1.BreakglassEscalation)
-			if !ok {
-				return true
-			}
-			return shouldReconcileEscalationUpdate(oldEsc, newEsc)
+			return shouldReconcileEscalationUpdate(e.ObjectOld, e.ObjectNew)
 		},
 		CreateFunc: func(e event.CreateEvent) bool { return true },
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
@@ -366,11 +358,30 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func shouldReconcileEscalationUpdate(oldEsc, newEsc *breakglassv1alpha1.BreakglassEscalation) bool {
-	oldDeleting := oldEsc.GetDeletionTimestamp() != nil
-	newDeleting := newEsc.GetDeletionTimestamp() != nil
+func shouldReconcileEscalationUpdate(oldObj, newObj client.Object) bool {
+	oldEsc, ok := oldObj.(*breakglassv1alpha1.BreakglassEscalation)
+	if !ok {
+		return true
+	}
+	newEsc, ok := newObj.(*breakglassv1alpha1.BreakglassEscalation)
+	if !ok {
+		return true
+	}
 
-	return oldEsc.GetGeneration() != newEsc.GetGeneration() || oldDeleting != newDeleting
+	if oldEsc.GetGeneration() != newEsc.GetGeneration() {
+		return true
+	}
+
+	oldDeletionTimestamp := oldEsc.GetDeletionTimestamp()
+	newDeletionTimestamp := newEsc.GetDeletionTimestamp()
+	switch {
+	case oldDeletionTimestamp == nil && newDeletionTimestamp == nil:
+		return false
+	case oldDeletionTimestamp == nil || newDeletionTimestamp == nil:
+		return true
+	default:
+		return !oldDeletionTimestamp.Equal(newDeletionTimestamp)
+	}
 }
 
 // validateEscalationConfig validates the escalation's configuration structure.
