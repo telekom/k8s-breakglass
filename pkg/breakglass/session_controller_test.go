@@ -542,7 +542,7 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 	}
 }
 
-func TestCreateSessionSkipsOwnerReferenceWhenEscalationUIDMissing(t *testing.T) {
+func TestCreateSessionRejectsEscalationWithoutUID(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
@@ -564,10 +564,9 @@ func TestCreateSessionSkipsOwnerReferenceWhenEscalationUIDMissing(t *testing.T) 
 			},
 		},
 	}
-	builder.WithObjects(esc)
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
-	escmanager := testEscalationLookup{Client: cli}
+	escmanager := uidlessEscalationLookup{escalation: *esc}
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
@@ -595,13 +594,12 @@ func TestCreateSessionSkipsOwnerReferenceWhenEscalationUIDMissing(t *testing.T) 
 	require.NoError(t, err)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Contains(t, w.Body.String(), "resolve matched escalation identity")
 
 	allSessions, err := sesmanager.GetAllBreakglassSessions(context.Background())
 	require.NoError(t, err)
-	require.Len(t, allSessions, 1)
-	require.Equal(t, "default", allSessions[0].Namespace)
-	require.Empty(t, allSessions[0].OwnerReferences)
+	require.Empty(t, allSessions)
 }
 
 func TestCreateSessionRejectsUnreadyClusterConfig(t *testing.T) {
