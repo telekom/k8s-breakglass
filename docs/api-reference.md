@@ -549,10 +549,14 @@ Authorization: Bearer <token>
 **Authorization:**
 
 - **Requester**: Can drop pending requests
-- **Owner**: Can drop active sessions
+- **Owner**: Can drop active or approved scheduled sessions
 
 Terminal sessions (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, `ApprovalTimeout`)
 return `400 Bad Request` and are not modified.
+
+Pending requests become `Withdrawn`. Approved active sessions and approved sessions
+waiting for their scheduled start become `Expired`; their approval timestamp,
+approver list, and approval reason are preserved for audit history.
 
 **Response:** Complete updated `BreakglassSession` resource with dropped/terminated status
 
