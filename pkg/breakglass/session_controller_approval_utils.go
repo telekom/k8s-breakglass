@@ -51,9 +51,17 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	// Gather approver groups with caching
 	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, email)
 	var approverGroups []string
+	lookupApproverGroups := true
 	if cached, ok := c.Get(cacheKey); ok {
-		approverGroups = cached.([]string)
-	} else {
+		if groups, ok := cached.([]string); ok {
+			approverGroups = groups
+			lookupApproverGroups = false
+		} else {
+			reqLog.Debugw("Ignoring approver group cache entry with unexpected type",
+				"cacheKey", cacheKey, "cachedType", fmt.Sprintf("%T", cached))
+		}
+	}
+	if lookupApproverGroups {
 		var gerr error
 		approverGroups, gerr = wc.getUserGroupsFn(ctx, approverID)
 		if gerr != nil {

@@ -92,8 +92,9 @@ in escalation status when available. Otherwise, authorization resolves the
 approver's groups for the specific target cluster of the session under review
 and caches that lookup per target cluster and approver. Authenticated
 request-token groups are used as a fallback when the target-cluster lookup
-fails or returns only Kubernetes `system:*` groups, because identity-provider
-approver groups may not be visible through Kubernetes SelfSubjectReview.
+fails, returns no groups, or returns only Kubernetes `system:*` groups, because
+identity-provider approver groups may not be visible through Kubernetes
+SelfSubjectReview.
 
 ## Optional Fields
 
@@ -465,8 +466,8 @@ allowedIdentityProvidersForApprovers:
 - Approvers can only approve if their IDP is in the allowed list
 - While approver group membership status is not populated yet, approval falls
   back to target-cluster group lookup for the missing groups. If that lookup
-  cannot expose identity-provider groups and returns only Kubernetes `system:*`
-  groups, the authenticated request-token groups are used. Once
+  cannot expose identity-provider groups and returns no groups or only
+  Kubernetes `system:*` groups, the authenticated request-token groups are used. Once
   `status.approverGroupMembers` contains an approver group entry, that resolved
   member list is authoritative for that group.
 
