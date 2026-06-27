@@ -129,6 +129,30 @@ func TestDebugKubectlOperationsStrictJSON(t *testing.T) {
 			wantText: "invalid request body",
 		},
 		{
+			name:     "inject rejects missing namespace",
+			path:     "/api/debugSessions/test-session/injectEphemeralContainer",
+			body:     `{"podName":"pod-1","containerName":"debug","image":"busybox"}`,
+			wantText: "namespace is required",
+		},
+		{
+			name:     "inject rejects missing podName",
+			path:     "/api/debugSessions/test-session/injectEphemeralContainer",
+			body:     `{"namespace":"default","containerName":"debug","image":"busybox"}`,
+			wantText: "podName is required",
+		},
+		{
+			name:     "inject rejects missing containerName",
+			path:     "/api/debugSessions/test-session/injectEphemeralContainer",
+			body:     `{"namespace":"default","podName":"pod-1","image":"busybox"}`,
+			wantText: "containerName is required",
+		},
+		{
+			name:     "inject rejects missing image",
+			path:     "/api/debugSessions/test-session/injectEphemeralContainer",
+			body:     `{"namespace":"default","podName":"pod-1","containerName":"debug"}`,
+			wantText: "image is required",
+		},
+		{
 			name:     "pod copy rejects unknown fields",
 			path:     "/api/debugSessions/test-session/createPodCopy",
 			body:     `{"namespace":"default","podName":"pod-1","ignored":true}`,
@@ -141,6 +165,18 @@ func TestDebugKubectlOperationsStrictJSON(t *testing.T) {
 			wantText: "invalid request body",
 		},
 		{
+			name:     "pod copy rejects missing namespace",
+			path:     "/api/debugSessions/test-session/createPodCopy",
+			body:     `{"podName":"pod-1"}`,
+			wantText: "namespace is required",
+		},
+		{
+			name:     "pod copy rejects missing podName",
+			path:     "/api/debugSessions/test-session/createPodCopy",
+			body:     `{"namespace":"default"}`,
+			wantText: "podName is required",
+		},
+		{
 			name:     "node debug rejects unknown fields",
 			path:     "/api/debugSessions/test-session/createNodeDebugPod",
 			body:     `{"nodeName":"node-1","ignored":true}`,
@@ -151,6 +187,12 @@ func TestDebugKubectlOperationsStrictJSON(t *testing.T) {
 			path:     "/api/debugSessions/test-session/createNodeDebugPod",
 			body:     `{"nodeName":"node-1"} {"nodeName":"node-2"}`,
 			wantText: "invalid request body",
+		},
+		{
+			name:     "node debug rejects missing nodeName",
+			path:     "/api/debugSessions/test-session/createNodeDebugPod",
+			body:     `{}`,
+			wantText: "nodeName is required",
 		},
 	}
 

@@ -4906,6 +4906,12 @@ func TestDebugSessionAPIController_SessionOperationStrictJSON(t *testing.T) {
 			body:     `{"extendBy":"1h"} {"extendBy":"24h"}`,
 			wantText: "invalid request body",
 		},
+		{
+			name:     "renew rejects missing extendBy",
+			path:     "/api/v1/debugSessions/test-session/renew",
+			body:     `{}`,
+			wantText: "extendBy is required",
+		},
 	}
 
 	for _, tt := range tests {
