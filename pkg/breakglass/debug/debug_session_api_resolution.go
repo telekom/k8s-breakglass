@@ -534,10 +534,14 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 // The user must be in one of the approver groups/users defined in the session's template or binding.
 // Additionally, the requester of the session is not allowed to self-approve.
 func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username string, userGroupsInterface interface{}) bool {
+	return c.isUserIdentityAuthorizedToApprove(ctx, session, username, "", userGroupsInterface)
+}
+
+func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username, email string, userGroupsInterface interface{}) bool {
 	// Block self-approval: the user who requested the session cannot approve it
-	if session.Spec.RequestedBy == username {
+	if debugSessionRequesterMatches(session, username, email) {
 		c.log.Infow("Blocking self-approval attempt",
-			"session", session.Name, "requester", session.Spec.RequestedBy, "approver", username)
+			"session", session.Name, "requester", session.Spec.RequestedBy, "requesterEmail", session.Spec.RequestedByEmail, "approver", username, "approverEmail", email)
 		return false
 	}
 
@@ -553,7 +557,7 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 					if matchPattern(cluster, session.Spec.Cluster) {
 						// Found a matching binding - check if it has approvers
 						if binding.Spec.Approvers != nil && (len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0) {
-							return c.checkApproverAuthorization(binding.Spec.Approvers, username, userGroupsInterface)
+							return c.checkApproverIdentityAuthorization(binding.Spec.Approvers, username, email, userGroupsInterface)
 						}
 						break
 					}
@@ -578,11 +582,39 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 			return true
 		}
 
-		return c.checkApproverAuthorization(template.Spec.Approvers, username, userGroupsInterface)
+		return c.checkApproverIdentityAuthorization(template.Spec.Approvers, username, email, userGroupsInterface)
 	}
 
 	// Use resolved template from status
-	return c.checkApproverAuthorization(session.Status.ResolvedTemplate.Approvers, username, userGroupsInterface)
+	return c.checkApproverIdentityAuthorization(session.Status.ResolvedTemplate.Approvers, username, email, userGroupsInterface)
+}
+
+func debugSessionRequesterMatches(session *breakglassv1alpha1.DebugSession, username, email string) bool {
+	requesterIDs := []string{session.Spec.RequestedBy, session.Spec.RequestedByEmail}
+	callerIDs := []string{username, email}
+	for _, requesterID := range requesterIDs {
+		requesterID = strings.TrimSpace(requesterID)
+		if requesterID == "" {
+			continue
+		}
+		for _, callerID := range callerIDs {
+			callerID = strings.TrimSpace(callerID)
+			if callerID != "" && strings.EqualFold(requesterID, callerID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *DebugSessionAPIController) checkApproverIdentityAuthorization(approvers *breakglassv1alpha1.DebugSessionApprovers, username, email string, userGroupsInterface interface{}) bool {
+	if c.checkApproverAuthorization(approvers, username, userGroupsInterface) {
+		return true
+	}
+	if email == "" || strings.EqualFold(strings.TrimSpace(username), strings.TrimSpace(email)) {
+		return false
+	}
+	return c.checkApproverAuthorization(approvers, email, userGroupsInterface)
 }
 
 // checkApproverAuthorization checks if user is in the approved users/groups

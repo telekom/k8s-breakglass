@@ -106,6 +106,17 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 		assert.True(t, authorized, "Explicitly allowed user should be authorized")
 	})
 
+	t.Run("explicitly allowed email can approve when username is subject", func(t *testing.T) {
+		authorized := controller.isUserIdentityAuthorizedToApprove(
+			ctx,
+			session,
+			"oidc-subject-123",
+			"admin@example.com",
+			nil, // No groups
+		)
+		assert.True(t, authorized, "Configured approver email should authorize even when username is a subject")
+	})
+
 	t.Run("unauthorized user cannot approve", func(t *testing.T) {
 		authorized := controller.isUserAuthorizedToApprove(
 			ctx,
@@ -125,6 +136,21 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 			[]string{"platform-leads"}, // This group IS an approver group, but self-approval should still be blocked
 		)
 		assert.False(t, authorized, "Session requester should not be able to approve their own session even if in approver group")
+	})
+
+	t.Run("requester email cannot approve when username differs", func(t *testing.T) {
+		sessionWithEmail := session.DeepCopy()
+		sessionWithEmail.Spec.RequestedBy = "oidc-subject-123"
+		sessionWithEmail.Spec.RequestedByEmail = "developer@example.com"
+
+		authorized := controller.isUserIdentityAuthorizedToApprove(
+			ctx,
+			sessionWithEmail,
+			"different-username",
+			"developer@example.com",
+			[]string{"platform-leads"}, // This group IS an approver group, but self-approval should still be blocked
+		)
+		assert.False(t, authorized, "Session requester email should be blocked from self-approval even if username differs")
 	})
 }
 
