@@ -77,9 +77,9 @@ export default class DebugSessionService {
   /**
    * Get a single debug session by name
    */
-  public async getSession(name: string): Promise<DebugSession> {
+  public async getSession(name: string): Promise<DebugSessionDetailResponse> {
     try {
-      const response = await this.client.get<DebugSession>(`/debugSessions/${encodeURIComponent(name)}`);
+      const response = await this.client.get<DebugSessionDetailResponse>(`/debugSessions/${encodeURIComponent(name)}`);
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.getSession", e, "Failed to get debug session");

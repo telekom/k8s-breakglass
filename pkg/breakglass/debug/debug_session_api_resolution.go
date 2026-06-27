@@ -626,6 +626,24 @@ func (c *DebugSessionAPIController) checkApproverIdentityAuthorization(approvers
 	return c.checkApproverAuthorization(approvers, email, userGroupsInterface)
 }
 
+func (c *DebugSessionAPIController) canActOnDebugSessionApproval(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
+		return false
+	}
+	if identity.username == "" && identity.email == "" {
+		return false
+	}
+	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+		return false
+	}
+	if c.isUserAuthorizedToApprove(ctx, session, identity.username, identity.groups) {
+		return true
+	}
+	return identity.email != "" &&
+		identity.email != identity.username &&
+		c.isUserAuthorizedToApprove(ctx, session, identity.email, identity.groups)
+}
+
 // checkApproverAuthorization checks if user is in the approved users/groups
 func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakglassv1alpha1.DebugSessionApprovers, username string, userGroupsInterface interface{}) bool {
 	// Check if user is in allowed users list

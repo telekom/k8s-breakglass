@@ -583,6 +583,8 @@ function baseDebugSession({
   rejectedBy,
   rejectionReason,
   scheduledStartTime,
+  canApprove,
+  canReject,
 }) {
   const creationTimestamp = new Date(Date.now() - 30 * 60 * 1000).toISOString();
   const startsAt =
@@ -595,6 +597,8 @@ function baseDebugSession({
         : undefined;
 
   return {
+    canApprove: canApprove ?? (state === "PendingApproval" && requestedByEmail !== CURRENT_USER_EMAIL),
+    canReject: canReject ?? (state === "PendingApproval" && requestedByEmail !== CURRENT_USER_EMAIL),
     metadata: {
       name,
       namespace: "breakglass-system",
@@ -669,6 +673,18 @@ const mockDebugSessions = [
     reason: "Need node-level access for kernel debugging",
     expiresInMinutes: 120,
     // Exec only from node-debug template (for copying core dumps)
+    allowedPodOperations: { exec: true, attach: false, logs: false, portForward: false },
+  }),
+  baseDebugSession({
+    name: "debug-awaiting-approval",
+    templateRef: "node-debug",
+    cluster: "production-eu-central-1",
+    requestedBy: PARTNER_USER_EMAIL,
+    requestedByDisplayName: "Partner User",
+    requestedByEmail: PARTNER_USER_EMAIL,
+    state: "PendingApproval",
+    reason: "Emergency packet capture for a customer-impacting incident",
+    expiresInMinutes: 90,
     allowedPodOperations: { exec: true, attach: false, logs: false, portForward: false },
   }),
   baseDebugSession({
@@ -788,6 +804,9 @@ export function listDebugSessions(query = {}) {
       expiresAt: s.status.expiresAt,
       participants: s.status.participants?.length || 0,
       allowedPods: s.status.allowedPods?.length || 0,
+      allowedPodOperations: s.status.allowedPodOperations,
+      canApprove: s.canApprove === true,
+      canReject: s.canReject === true,
     })),
     total: results.length,
   };

@@ -1735,6 +1735,60 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 2, response.Total)
 	})
 
+	t.Run("list exposes approval actions only to authorized non-requesters", func(t *testing.T) {
+		pendingSession := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pending-approval",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(pendingSession).
+			WithStatusSubresource(pendingSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		approverRouter := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
+		approverReq := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
+		approverW := httptest.NewRecorder()
+		approverRouter.ServeHTTP(approverW, approverReq)
+
+		var approverResponse DebugSessionListResponse
+		err := json.Unmarshal(approverW.Body.Bytes(), &approverResponse)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, approverW.Code)
+		require.Equal(t, 1, approverResponse.Total)
+		assert.True(t, approverResponse.Sessions[0].CanApprove)
+		assert.True(t, approverResponse.Sessions[0].CanReject)
+
+		requesterRouter := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "", nil)
+		requesterReq := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
+		requesterW := httptest.NewRecorder()
+		requesterRouter.ServeHTTP(requesterW, requesterReq)
+
+		var requesterResponse DebugSessionListResponse
+		err = json.Unmarshal(requesterW.Body.Bytes(), &requesterResponse)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, requesterW.Code)
+		require.Equal(t, 1, requesterResponse.Total)
+		assert.False(t, requesterResponse.Sessions[0].CanApprove)
+		assert.False(t, requesterResponse.Sessions[0].CanReject)
+	})
+
 	t.Run("filter by cluster", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -2238,6 +2292,68 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("get existing session reports approval actions for authorized approver", func(t *testing.T) {
+		approverSession := session.DeepCopy()
+		approverSession.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		approverSession.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Groups: []string{"debug-approvers"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(approverSession).
+			WithStatusSubresource(approverSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "approver@example.com", "", []string{"debug-approvers"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		var response DebugSessionDetailResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.True(t, response.CanApprove)
+		assert.True(t, response.CanReject)
+	})
+
+	t.Run("get existing session hides approval actions from email requester", func(t *testing.T) {
+		requesterSession := session.DeepCopy()
+		requesterSession.Spec.RequestedBy = "alice-subject"
+		requesterSession.Spec.RequestedByEmail = "alice@example.com"
+		requesterSession.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		requesterSession.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"alice@example.com"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(requesterSession).
+			WithStatusSubresource(requesterSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "alice-oidc-subject", "alice@example.com", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		var response DebugSessionDetailResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.False(t, response.CanApprove)
+		assert.False(t, response.CanReject)
 	})
 
 	t.Run("get existing session rejects participant after leaving", func(t *testing.T) {

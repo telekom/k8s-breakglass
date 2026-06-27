@@ -488,6 +488,33 @@ func TestCanReadDebugSession_ReturnsErrorWhenTemplateApproverLookupFails(t *test
 	assert.Contains(t, err.Error(), "fetch debug session template")
 }
 
+func TestCanActOnDebugSessionApproval_DeniesMissingIdentity(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(template).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "alice@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{})
+
+	assert.False(t, result)
+}
+
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {
 	// When session has ResolvedTemplate, use that instead of fetching
 

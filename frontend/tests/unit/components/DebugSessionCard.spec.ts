@@ -23,6 +23,14 @@ const SCALE_STUBS = {
 };
 
 function makeSession(name: string, state: DebugSessionSummary["state"] = "PendingApproval"): DebugSessionSummary {
+  const approvalActions =
+    state === "PendingApproval"
+      ? {
+          canApprove: true,
+          canReject: true,
+        }
+      : {};
+
   return {
     name,
     templateRef: "debug-template",
@@ -32,6 +40,7 @@ function makeSession(name: string, state: DebugSessionSummary["state"] = "Pendin
     participants: 0,
     isParticipant: false,
     allowedPods: 1,
+    ...approvalActions,
   };
 }
 
@@ -191,5 +200,23 @@ describe("DebugSessionCard", () => {
     await wrapper.find('[data-testid="reject-button"]').trigger("click");
 
     expect(vm.rejectReason).toBe("");
+  });
+
+  it("hides approval actions when the API does not authorize them", () => {
+    const wrapper = mount(DebugSessionCard, {
+      props: {
+        session: {
+          ...makeSession("team/session-b"),
+          canApprove: false,
+          canReject: false,
+        },
+      },
+      global: {
+        stubs: SCALE_STUBS,
+      },
+    });
+
+    expect(wrapper.find('[data-testid="approve-button"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="reject-button"]').exists()).toBe(false);
   });
 });

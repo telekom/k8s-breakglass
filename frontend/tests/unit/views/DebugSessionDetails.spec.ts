@@ -223,6 +223,62 @@ describe("DebugSessionDetails", () => {
     expect(mockJoinSession).toHaveBeenCalledWith("dbg-1");
   });
 
+  it("shows approval actions only when the API authorizes them", async () => {
+    mockGetSession.mockResolvedValue({
+      status: { state: "PendingApproval" },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster", requestedBy: "owner@example.com" },
+      canApprove: true,
+      canReject: true,
+    });
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="approve-session-button"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="reject-session-button"]').exists()).toBe(true);
+  });
+
+  it("hides approval actions when the API does not authorize them", async () => {
+    mockGetSession.mockResolvedValue({
+      status: { state: "PendingApproval" },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster", requestedBy: "test@example.com" },
+      canApprove: false,
+      canReject: false,
+    });
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="approve-session-button"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="reject-session-button"]').exists()).toBe(false);
+  });
+
   it("calls clipboardCleanup on unmount", async () => {
     mockGetSession.mockResolvedValue({
       status: { state: "Active" },

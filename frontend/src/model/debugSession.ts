@@ -90,6 +90,8 @@ export interface DebugSessionSummary {
   isParticipant: boolean;
   allowedPods: number;
   allowedPodOperations?: AllowedPodOperations;
+  canApprove?: boolean;
+  canReject?: boolean;
 }
 
 export interface DebugSessionTemplateResponse {
@@ -215,6 +217,9 @@ export interface CreateDebugSessionRequest {
 export interface DebugSessionDetailResponse extends DebugSession {
   // Warnings contains non-critical issues or notes about defaults that were applied
   warnings?: string[];
+  // Whether the current user may approve or reject this session.
+  canApprove?: boolean;
+  canReject?: boolean;
 }
 
 export interface RenewDebugSessionRequest {
