@@ -2319,7 +2319,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 //   - Create a new session.
 //   - Approve it once (expect 200 OK).
 //   - Approve it again (expect 409 Conflict).
-	//   - Attempt to reject it as an authorized approver after approval (expect 400 Bad Request).
+//   - Attempt to reject it as an authorized approver after approval (expect 400 Bad Request).
 func TestTerminalStateImmutability(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
@@ -2342,12 +2342,12 @@ func TestTerminalStateImmutability(t *testing.T) {
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
-			if c.Request.Method == http.MethodPost {
-				if strings.Contains(c.Request.URL.String(), "/approve") {
-					c.Set("email", "a@e.com")
-				} else if strings.Contains(c.Request.URL.String(), "/reject") {
-					c.Set("email", "a@e.com")
-				} else {
+		if c.Request.Method == http.MethodPost {
+			if strings.Contains(c.Request.URL.String(), "/approve") {
+				c.Set("email", "a@e.com")
+			} else if strings.Contains(c.Request.URL.String(), "/reject") {
+				c.Set("email", "a@e.com")
+			} else {
 				// plain POST (e.g. session creation) -> set requester email to avoid IDP call
 				c.Set("email", "a@e.com")
 			}
