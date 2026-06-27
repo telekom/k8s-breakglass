@@ -16,6 +16,7 @@ const mockLogin = vi.fn();
 const mockGetSessionByName = vi.fn();
 const mockApproveReview = vi.fn();
 const mockRejectReview = vi.fn();
+const mockUser = ref<{ expired?: boolean; email: string } | null>({ expired: false, email: "approver@example.com" });
 const mockRoute = reactive({
   params: { sessionName: "session-1" },
   fullPath: "/session/session-1/approve",
@@ -29,7 +30,7 @@ vi.mock("vue-router", () => ({
 }));
 
 vi.mock("@/services/auth", () => ({
-  useUser: vi.fn().mockReturnValue(ref({ expired: false, email: "approver@example.com" })),
+  useUser: vi.fn(() => mockUser),
 }));
 
 vi.mock("@/services/breakglassSession", () => ({
@@ -61,6 +62,7 @@ describe("SessionApprovalView", () => {
     mockGetSessionByName.mockReset();
     mockApproveReview.mockReset();
     mockRejectReview.mockReset();
+    mockUser.value = { expired: false, email: "approver@example.com" };
     mockRoute.params.sessionName = "session-1";
     mockRoute.fullPath = "/session/session-1/approve";
   });
@@ -251,6 +253,46 @@ describe("SessionApprovalView", () => {
     await vi.waitFor(() => {
       expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-2 requester-2@example.com");
     });
+  });
+
+  it("clears stale session data and preserves the new route when auth expires before navigation", async () => {
+    mockGetSessionByName.mockResolvedValueOnce(approvalResponse("session-1", "requester-1@example.com"));
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: {
+            props: ["session"],
+            template: '<div data-testid="approval-session">{{ session.metadata.name }} {{ session.spec.user }}</div>',
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-1 requester-1@example.com");
+
+    mockUser.value = { expired: true, email: "approver@example.com" };
+    mockRoute.params.sessionName = "session-2";
+    mockRoute.fullPath = "/session/session-2/approve";
+    await flushPromises();
+    await flushPromises();
+
+    expect(mockGetSessionByName).toHaveBeenCalledTimes(1);
+    expect(mockLogin).toHaveBeenCalledWith({ path: "/session/session-2/approve" });
+    expect(wrapper.find('[data-testid="approval-session"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("Loading session");
   });
 });
 

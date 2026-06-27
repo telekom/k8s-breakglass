@@ -98,17 +98,31 @@ const clearRedirectTimer = () => {
   }
 };
 
-const loadSession = async () => {
-  const requestId = ++loadRequestId;
-  const requestedSessionName = sessionName.value;
+const clearSessionState = () => {
   clearRedirectTimer();
-  loading.value = true;
   session.value = null;
   approvalMeta.value = null;
   error.value = null;
   errorDetails.value = null;
   approverNote.value = "";
   isApproving.value = false;
+};
+
+const requestLoginForCurrentRoute = async () => {
+  ++loadRequestId;
+  clearSessionState();
+  loading.value = true;
+  debug("SessionApprovalView", "User not authenticated, initiating login with redirect back");
+  const currentPath = route.fullPath;
+  debug("SessionApprovalView", "Storing path for post-login redirect:", currentPath);
+  await auth.login({ path: currentPath });
+};
+
+const loadSession = async () => {
+  const requestId = ++loadRequestId;
+  const requestedSessionName = sessionName.value;
+  loading.value = true;
+  clearSessionState();
 
   debug("SessionApprovalView", "Loading session:", requestedSessionName);
 
@@ -308,12 +322,7 @@ onMounted(async () => {
 
   // Check authentication before attempting to load session
   if (!authenticated.value) {
-    debug("SessionApprovalView", "User not authenticated, initiating login with redirect back");
-    // Initiate login with the current approval path stored in state
-    // After OIDC callback, user will be redirected back to this approval page
-    const currentPath = route.fullPath;
-    debug("SessionApprovalView", "Storing path for post-login redirect:", currentPath);
-    await auth.login({ path: currentPath });
+    await requestLoginForCurrentRoute();
     return;
   }
 
@@ -328,7 +337,11 @@ onMounted(async () => {
 });
 
 watch(sessionName, async (newSessionName, previousSessionName) => {
-  if (newSessionName === previousSessionName || !authenticated.value) {
+  if (newSessionName === previousSessionName) {
+    return;
+  }
+  if (!authenticated.value) {
+    await requestLoginForCurrentRoute();
     return;
   }
   await loadSession();
