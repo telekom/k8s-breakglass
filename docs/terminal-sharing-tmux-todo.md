@@ -24,7 +24,7 @@ exec: "tmux": executable file not found in $PATH
 
 - **Tmux debug image**: [e2e/images/tmux-debug/Dockerfile](../e2e/images/tmux-debug/Dockerfile)
 - **Build hook**: E2E setup scripts build and preload the tmux image into kind clusters
-- **Tests updated**: Terminal sharing E2E cases now use the current DebugSession API fields, set `imagePullPolicy: IfNotPresent` for the preloaded local tmux image, and assert terminal sharing is enabled
+- **Tests updated**: Terminal sharing E2E cases now use the current DebugSession API fields, set `imagePullPolicy: IfNotPresent` for the preloaded local tmux image and pod-copy debug containers, and assert terminal sharing is enabled
 
 ## Related Files
 
