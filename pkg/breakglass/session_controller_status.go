@@ -171,21 +171,6 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		}
 	}
 
-	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved &&
-		!bs.Status.TimeoutAt.IsZero() &&
-		!time.Now().Before(bs.Status.TimeoutAt.Time) {
-		c.JSON(http.StatusConflict, struct {
-			Error   string                               `json:"error"`
-			Code    string                               `json:"code"`
-			Session breakglassv1alpha1.BreakglassSession `json:"session"`
-		}{
-			Error:   "session approval timeout has elapsed",
-			Code:    "CONFLICT",
-			Session: bs,
-		})
-		return
-	}
-
 	approverReasonAction := "approval"
 	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
 		approverReasonAction = "rejection"

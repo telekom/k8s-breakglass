@@ -1745,7 +1745,7 @@ func TestApproveExpiredPendingSessionReturnsConflict(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusConflict, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), "approval timeout has elapsed")
 
 	var fetched breakglassv1alpha1.BreakglassSession
@@ -6522,6 +6522,19 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 			},
 			expected: false,
 			reason:   "session state is already marked as timeout",
+		},
+		{
+			name: "non_pending_stale_timeout_without_terminal_timestamp",
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "non-pending state must not be reclassified by stale timeout",
 		},
 	}
 

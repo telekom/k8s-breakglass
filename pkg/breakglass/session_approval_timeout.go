@@ -8,8 +8,9 @@ import (
 )
 
 func IsSessionApprovalTimedOut(session breakglassv1alpha1.BreakglassSession) bool {
-	// If session is already in timeout state, it's not "approval timed out" anymore - it's already timed out
-	if session.Status.State == breakglassv1alpha1.SessionStateTimeout {
+	// Only Pending sessions can newly time out; all other states are state-machine
+	// outcomes that must not be reclassified by a stale TimeoutAt timestamp.
+	if session.Status.State != breakglassv1alpha1.SessionStatePending {
 		return false
 	}
 	// Session must be pending (not approved or rejected)
