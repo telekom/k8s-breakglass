@@ -1522,6 +1522,11 @@ debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
+Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
+unknown fields, malformed JSON, and trailing JSON values return `400 Bad
+Request`. The join endpoint may omit its body and defaults to the `viewer` role;
+non-empty join bodies must still be strict JSON.
+
 ### Kubectl Debug API Endpoints
 
 These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode:

@@ -107,6 +107,68 @@ func TestHandleInjectEphemeralContainer_BadRequest(t *testing.T) {
 	assertErrorResponse(t, rr, "BAD_REQUEST")
 }
 
+func TestDebugKubectlOperationsStrictJSON(t *testing.T) {
+	router, _ := setupTestRouter(t)
+
+	tests := []struct {
+		name     string
+		path     string
+		body     string
+		wantText string
+	}{
+		{
+			name:     "inject rejects unknown fields",
+			path:     "/api/debugSessions/test-session/injectEphemeralContainer",
+			body:     `{"namespace":"default","podName":"pod-1","containerName":"debug","image":"busybox","ignored":true}`,
+			wantText: "unknown field",
+		},
+		{
+			name:     "inject rejects trailing JSON",
+			path:     "/api/debugSessions/test-session/injectEphemeralContainer",
+			body:     `{"namespace":"default","podName":"pod-1","containerName":"debug","image":"busybox"} {"namespace":"other"}`,
+			wantText: "invalid request body",
+		},
+		{
+			name:     "pod copy rejects unknown fields",
+			path:     "/api/debugSessions/test-session/createPodCopy",
+			body:     `{"namespace":"default","podName":"pod-1","ignored":true}`,
+			wantText: "unknown field",
+		},
+		{
+			name:     "pod copy rejects trailing JSON",
+			path:     "/api/debugSessions/test-session/createPodCopy",
+			body:     `{"namespace":"default","podName":"pod-1"} {"podName":"other"}`,
+			wantText: "invalid request body",
+		},
+		{
+			name:     "node debug rejects unknown fields",
+			path:     "/api/debugSessions/test-session/createNodeDebugPod",
+			body:     `{"nodeName":"node-1","ignored":true}`,
+			wantText: "unknown field",
+		},
+		{
+			name:     "node debug rejects trailing JSON",
+			path:     "/api/debugSessions/test-session/createNodeDebugPod",
+			body:     `{"nodeName":"node-1"} {"nodeName":"node-2"}`,
+			wantText: "invalid request body",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, tt.path, bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assertErrorResponse(t, rr, "BAD_REQUEST")
+			assert.Contains(t, rr.Body.String(), tt.wantText)
+		})
+	}
+}
+
 func TestHandleInjectEphemeralContainer_Unauthorized(t *testing.T) {
 	router, _ := setupTestRouter(t)
 

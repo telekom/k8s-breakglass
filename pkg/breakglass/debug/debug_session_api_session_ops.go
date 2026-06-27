@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -27,10 +26,10 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	namespaceHint := ctx.Query("namespace")
 
 	var req JoinDebugSessionRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		// Allow empty body (EOF) — default to viewer role.
+	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
+		// Allow an empty body — default to viewer role.
 		// Reject malformed JSON with 400 to surface client bugs.
-		if !errors.Is(err, io.EOF) {
+		if !errors.Is(err, jsonutil.ErrEmptyBody) {
 			apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
 			return
 		}
@@ -170,7 +169,11 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	username := currentUser.(string)
 
 	var req RenewDebugSessionRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
+		apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
+		return
+	}
+	if err := validateRenewDebugSessionRequest(req); err != nil {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}

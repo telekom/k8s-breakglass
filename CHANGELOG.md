@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **BreakglassSession approval body validation**: Classic session approve and reject endpoints now reject malformed optional approver bodies, unknown JSON fields, and trailing JSON values instead of approving or rejecting with silently discarded payloads.
-- **DebugSession API request body validation**: Debug session create, approve, and reject endpoints now reject unknown JSON fields, trailing JSON values, and malformed optional approval bodies instead of silently ignoring client typos or invalid payloads.
+- **DebugSession API request body validation**: Debug session create, join, renew, approve, reject, and kubectl-debug operation endpoints now reject unknown JSON fields, trailing JSON values, and malformed optional bodies instead of silently ignoring client typos or invalid payloads.
 - **DebugSession cluster authorization precedence**: Debug session creation now checks template or binding access before returning ClusterConfig readiness, missing-cluster, or tenant-alias errors, preventing unauthorized callers from probing cluster state through error messages.
 - **Debug session read authorization**: `GET /api/v1/debugSessions` now returns only sessions visible to the authenticated caller, and `GET /api/v1/debugSessions/{name}` rejects unrelated authenticated users with `403 Forbidden` instead of exposing debug session spec/status details.
 - **DebugSession binding label hardening**: `DebugSessionClusterBinding.spec.labels` can no longer overwrite controller-owned DebugSession identity labels, preserving name-based lookup, template/cluster attribution, and audit correlation while still propagating ordinary custom labels.

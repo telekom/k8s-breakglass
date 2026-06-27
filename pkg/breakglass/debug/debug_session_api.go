@@ -225,6 +225,13 @@ type RenewDebugSessionRequest struct {
 	ExtendBy string `json:"extendBy" binding:"required"` // Duration like "1h", "30m"
 }
 
+func validateRenewDebugSessionRequest(req RenewDebugSessionRequest) error {
+	if req.ExtendBy == "" {
+		return fmt.Errorf("extendBy is required")
+	}
+	return nil
+}
+
 // ApprovalRequest represents the request body for approve/reject actions
 type ApprovalRequest struct {
 	Reason string `json:"reason,omitempty"`
@@ -254,6 +261,21 @@ type InjectEphemeralContainerRequest struct {
 	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
+func validateInjectEphemeralContainerRequest(req InjectEphemeralContainerRequest) error {
+	switch {
+	case req.Namespace == "":
+		return fmt.Errorf("namespace is required")
+	case req.PodName == "":
+		return fmt.Errorf("podName is required")
+	case req.ContainerName == "":
+		return fmt.Errorf("containerName is required")
+	case req.Image == "":
+		return fmt.Errorf("image is required")
+	default:
+		return nil
+	}
+}
+
 // CreatePodCopyRequest represents the request to create a debug copy of a pod
 type CreatePodCopyRequest struct {
 	Namespace  string `json:"namespace" binding:"required"`
@@ -261,9 +283,27 @@ type CreatePodCopyRequest struct {
 	DebugImage string `json:"debugImage,omitempty"` // Optional debug container image
 }
 
+func validateCreatePodCopyRequest(req CreatePodCopyRequest) error {
+	switch {
+	case req.Namespace == "":
+		return fmt.Errorf("namespace is required")
+	case req.PodName == "":
+		return fmt.Errorf("podName is required")
+	default:
+		return nil
+	}
+}
+
 // CreateNodeDebugPodRequest represents the request to create a node debug pod
 type CreateNodeDebugPodRequest struct {
 	NodeName string `json:"nodeName" binding:"required"`
+}
+
+func validateCreateNodeDebugPodRequest(req CreateNodeDebugPodRequest) error {
+	if req.NodeName == "" {
+		return fmt.Errorf("nodeName is required")
+	}
+	return nil
 }
 
 // DebugSessionListResponse represents the response for listing debug sessions
