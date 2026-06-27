@@ -399,9 +399,9 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 func (r *DebugSessionClusterBindingReconciler) getClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
 	clusterList := &breakglassv1alpha1.ClusterConfigList{}
 	if err := r.client.List(ctx, clusterList, client.MatchingFields{"metadata.name": name}); err == nil {
-		if clusterConfig, err := singleClusterConfigByName(clusterList.Items, name); clusterConfig != nil || err != nil {
-			return clusterConfig, err
-		}
+		return singleClusterConfigByNameOrNotFound(clusterList.Items, name)
+	} else if !isClusterConfigNameIndexError(err) {
+		return nil, fmt.Errorf("list clusterconfigs by name: %w", err)
 	}
 
 	clusterList = &breakglassv1alpha1.ClusterConfigList{}
@@ -410,6 +410,14 @@ func (r *DebugSessionClusterBindingReconciler) getClusterConfigByName(ctx contex
 	}
 
 	clusterConfig, err := singleClusterConfigByName(clusterList.Items, name)
+	if clusterConfig != nil || err != nil {
+		return clusterConfig, err
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}, name)
+}
+
+func singleClusterConfigByNameOrNotFound(items []breakglassv1alpha1.ClusterConfig, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	clusterConfig, err := singleClusterConfigByName(items, name)
 	if clusterConfig != nil || err != nil {
 		return clusterConfig, err
 	}
@@ -437,6 +445,18 @@ func singleClusterConfigByName(items []breakglassv1alpha1.ClusterConfig, name st
 		sort.Strings(namespaces)
 		return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
 	}
+}
+
+func isClusterConfigNameIndexError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "field index") ||
+		strings.Contains(msg, "no indexer") ||
+		strings.Contains(msg, "no index with name") ||
+		strings.Contains(msg, "field label not supported") ||
+		strings.Contains(msg, "Index with name")
 }
 
 // SetupWithManager registers this reconciler with the controller-runtime manager.
