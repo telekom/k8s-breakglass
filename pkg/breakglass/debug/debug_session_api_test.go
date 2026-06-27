@@ -5451,6 +5451,92 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		assert.Equal(t, int32(1), updatedSession.Status.RenewalCount)
 	})
 
+	t.Run("renew requires active participant role", func(t *testing.T) {
+		leftAt := metav1.NewTime(now.Add(-time.Minute))
+		tests := []struct {
+			name       string
+			role       breakglassv1alpha1.ParticipantRole
+			leftAt     *metav1.Time
+			wantStatus int
+			wantCount  int32
+		}{
+			{
+				name:       "active participant can renew",
+				role:       breakglassv1alpha1.ParticipantRoleParticipant,
+				wantStatus: http.StatusOK,
+				wantCount:  1,
+			},
+			{
+				name:       "viewer cannot renew",
+				role:       breakglassv1alpha1.ParticipantRoleViewer,
+				wantStatus: http.StatusForbidden,
+			},
+			{
+				name:       "left participant cannot renew",
+				role:       breakglassv1alpha1.ParticipantRoleParticipant,
+				leftAt:     &leftAt,
+				wantStatus: http.StatusForbidden,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				session := breakglassv1alpha1.DebugSession{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-session",
+						Namespace: "default",
+						Labels: map[string]string{
+							DebugSessionLabelKey: "test-session",
+						},
+					},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:     "production",
+						TemplateRef: "standard-debug",
+						RequestedBy: "owner@example.com",
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State:     breakglassv1alpha1.DebugSessionStateActive,
+						StartsAt:  &now,
+						ExpiresAt: &expiresAt,
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{
+							{User: "bob@example.com", Role: tt.role, LeftAt: tt.leftAt},
+						},
+					},
+				}
+
+				fakeClient := fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithObjects(&session).
+					WithStatusSubresource(&session).
+					Build()
+
+				ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+				router := gin.New()
+				router.Use(func(c *gin.Context) {
+					c.Set("username", "bob@example.com")
+					c.Next()
+				})
+				rg := router.Group("/api/v1/" + ctrl.BasePath())
+				err := ctrl.Register(rg)
+				require.NoError(t, err)
+
+				body := `{"extendBy":"1h"}`
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+
+				assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+
+				var updatedSession breakglassv1alpha1.DebugSession
+				err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantCount, updatedSession.Status.RenewalCount)
+			})
+		}
+	})
+
 	t.Run("renew rejects extension beyond max duration", func(t *testing.T) {
 		startedAt := metav1.NewTime(now.Add(-90 * time.Minute))
 		expiresNearLimit := metav1.NewTime(now.Add(30 * time.Minute))

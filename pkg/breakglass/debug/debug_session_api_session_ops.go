@@ -205,18 +205,8 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	// Check if user is owner or participant
-	isOwnerOrParticipant := session.Spec.RequestedBy == username
-	if !isOwnerOrParticipant {
-		for _, p := range session.Status.Participants {
-			if p.User == username {
-				isOwnerOrParticipant = true
-				break
-			}
-		}
-	}
-	if !isOwnerOrParticipant {
-		apiresponses.RespondForbidden(ctx, "only session owner or participants can renew")
+	if !canRenewDebugSession(session, username) {
+		apiresponses.RespondForbidden(ctx, "only session owner or active participants can renew")
 		return
 	}
 
@@ -298,6 +288,22 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		"newExpiresAt": newExpiry.Time,
 		"renewalCount": session.Status.RenewalCount,
 	})
+}
+
+func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, username string) bool {
+	if session.Spec.RequestedBy == username {
+		return true
+	}
+	for _, participant := range session.Status.Participants {
+		if participant.User != username || participant.LeftAt != nil {
+			continue
+		}
+		if participant.Role == breakglassv1alpha1.ParticipantRoleOwner ||
+			participant.Role == breakglassv1alpha1.ParticipantRoleParticipant {
+			return true
+		}
+	}
+	return false
 }
 
 func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Time) bool {
