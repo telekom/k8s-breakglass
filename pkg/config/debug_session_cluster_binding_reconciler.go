@@ -279,7 +279,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 		}
 
 		// Check if template is ready
-		ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready")
+		ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, string(breakglassv1alpha1.DebugSessionTemplateConditionReady))
 
 		resolved = append(resolved, breakglassv1alpha1.ResolvedTemplateRef{
 			Name:        template.Name,
@@ -310,7 +310,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 				displayName = binding.Spec.DisplayNamePrefix + displayName
 			}
 
-			ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready")
+			ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, string(breakglassv1alpha1.DebugSessionTemplateConditionReady))
 
 			resolved = append(resolved, breakglassv1alpha1.ResolvedTemplateRef{
 				Name:        template.Name,
