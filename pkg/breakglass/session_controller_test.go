@@ -9740,3 +9740,84 @@ func TestTokenValidation_ExistingSessionRequiresReadAuthorization(t *testing.T) 
 	require.Equal(t, http.StatusForbidden, w.Code, "token metadata must not bypass session read authorization")
 	assert.Contains(t, w.Body.String(), "not allowed to read this breakglass session")
 }
+
+func TestTokenValidation_ExistingSessionAllowsAuthorizedReaders(t *testing.T) {
+	tests := []struct {
+		name           string
+		email          string
+		wantCanApprove bool
+	}{
+		{
+			name:           "requester can read token metadata but cannot approve",
+			email:          "requester@example.com",
+			wantCanApprove: false,
+		},
+		{
+			name:           "configured approver can read token metadata and approve",
+			email:          "approver@example.com",
+			wantCanApprove: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+			}
+
+			session := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "pending-session", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "test-cluster",
+					User:         "requester@example.com",
+					GrantedGroup: "breakglass-admin",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: breakglassv1alpha1.SessionStatePending,
+				},
+			}
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "session-approvers", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+					EscalatedGroup: "breakglass-admin",
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+				},
+			}
+
+			cli := builder.WithObjects(session, escalation).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+			sesmanager := SessionManager{Client: cli}
+			escmanager := testEscalationLookup{Client: cli}
+			logger, _ := zap.NewDevelopment()
+			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+				func(c *gin.Context) {
+					c.Set("email", tt.email)
+					c.Set("username", tt.email)
+					c.Set("user_id", tt.email)
+					c.Next()
+				}, "/config/config.yaml", nil, cli)
+			ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+				return []string{"system:authenticated"}, nil
+			}
+
+			engine := gin.New()
+			_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+			req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?token=pending-session", nil)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var body struct {
+				Valid         bool `json:"valid"`
+				AlreadyActive bool `json:"alreadyActive"`
+				CanApprove    bool `json:"canApprove"`
+			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+			assert.True(t, body.Valid)
+			assert.False(t, body.AlreadyActive)
+			assert.Equal(t, tt.wantCanApprove, body.CanApprove)
+		})
+	}
+}
