@@ -994,6 +994,39 @@ func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_DeniesDirect
 	require.Contains(t, result.Message, "identity provider is not allowed")
 }
 
+func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_DeniesDirectUserWithMissingIDP(t *testing.T) {
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "direct-idp-missing-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "idp-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "idp-admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "direct-idp-missing-escalation"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"idp-cluster"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup:                       "idp-admin",
+			Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+	}
+	ctrl := newApprovalAuthorizationTestController(t, session, escalation)
+	c := newApprovalAuthorizationTestContext("approver@example.com", "")
+
+	result := ctrl.checkApprovalAuthorization(c, *session)
+
+	require.False(t, result.Allowed)
+	require.Equal(t, ApprovalDenialIdentityProviderNotAllowed, result.Reason)
+	require.Contains(t, result.Message, "identity provider is not allowed")
+}
+
 func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_AllowsDirectUserFromAllowedIDP(t *testing.T) {
 	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "direct-idp-allowed-session"},
@@ -1061,6 +1094,99 @@ func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_DeniesGroupM
 
 	require.False(t, result.Allowed)
 	require.Equal(t, ApprovalDenialIdentityProviderNotAllowed, result.Reason)
+}
+
+func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_AllowsGroupMemberFromAllowedIDP(t *testing.T) {
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "group-idp-allowed-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "idp-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "idp-admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "group-idp-allowed-escalation"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"idp-cluster"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup:                       "idp-admin",
+			Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"idp-approvers"}},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"idp-approvers": {"approver@example.com"},
+			},
+		},
+	}
+	ctrl := newApprovalAuthorizationTestController(t, session, escalation)
+	c := newApprovalAuthorizationTestContext("approver@example.com", "approver-idp")
+
+	result := ctrl.checkApprovalAuthorization(c, *session)
+
+	require.True(t, result.Allowed)
+	require.Equal(t, ApprovalDenialNone, result.Reason)
+}
+
+func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_PrefersNotApproverWhenAnyMatchingEscalationAllowsIDP(t *testing.T) {
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "mixed-idp-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "idp-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "idp-admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	allowsIDPButNotCaller := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "allowed-idp-non-member"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"idp-cluster"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup:                       "idp-admin",
+			Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"idp-approvers"}},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"idp-approvers": {"other@example.com"},
+			},
+		},
+	}
+	rejectsIDP := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "rejected-idp"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"idp-cluster"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup:                       "idp-admin",
+			Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"idp-approvers"}},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"other-idp"},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"idp-approvers": {"approver@example.com"},
+			},
+		},
+	}
+	ctrl := newApprovalAuthorizationTestController(t, session, allowsIDPButNotCaller, rejectsIDP)
+	c := newApprovalAuthorizationTestContext("approver@example.com", "approver-idp")
+
+	result := ctrl.checkApprovalAuthorization(c, *session)
+
+	require.False(t, result.Allowed)
+	require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+	require.Contains(t, result.Message, "not in an approver group")
 }
 
 func newApprovalAuthorizationTestController(t *testing.T, objects ...client.Object) *BreakglassSessionController {

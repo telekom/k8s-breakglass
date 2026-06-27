@@ -117,6 +117,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	// Priority: SelfApprovalBlocked > DomainNotAllowed > NotAnApprover > NoMatchingEscalation
 	var mostSpecificDenial ApprovalCheckResult
 	foundMatchingEscalation := false
+	foundMatchingEscalationWithAllowedApproverIDP := false
 
 	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGroup", system.RedactGroupName(session.Spec.GrantedGroup), "candidateEscalationCount", len(escalations), "approverEmail", email)
 	for _, esc := range escalations {
@@ -181,7 +182,9 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				"approver", email,
 				"identityProvider", approverIdentityProvider,
 				"allowedIdentityProviderCount", len(esc.Spec.AllowedIdentityProvidersForApprovers))
-			if mostSpecificDenial.Reason != ApprovalDenialSelfApprovalBlocked && mostSpecificDenial.Reason != ApprovalDenialDomainNotAllowed {
+			if !foundMatchingEscalationWithAllowedApproverIDP &&
+				mostSpecificDenial.Reason != ApprovalDenialSelfApprovalBlocked &&
+				mostSpecificDenial.Reason != ApprovalDenialDomainNotAllowed {
 				mostSpecificDenial = ApprovalCheckResult{
 					Allowed: false,
 					Reason:  ApprovalDenialIdentityProviderNotAllowed,
@@ -190,6 +193,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			}
 			continue
 		}
+		foundMatchingEscalationWithAllowedApproverIDP = true
 
 		// Direct user approver check
 		if slices.Contains(esc.Spec.Approvers.Users, email) {
@@ -247,7 +251,8 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				"session", session.Name, "escalation", esc.Name, "user", email, "userGroupCount", len(approverGroups), "approverUserCount", len(esc.Spec.Approvers.Users), "approverGroupCount", len(esc.Spec.Approvers.Groups))
 		}
 		// Track not-an-approver as lowest priority denial
-		if mostSpecificDenial.Reason == ApprovalDenialNone {
+		if mostSpecificDenial.Reason == ApprovalDenialNone ||
+			mostSpecificDenial.Reason == ApprovalDenialIdentityProviderNotAllowed {
 			mostSpecificDenial = ApprovalCheckResult{
 				Allowed: false,
 				Reason:  ApprovalDenialNotAnApprover,
