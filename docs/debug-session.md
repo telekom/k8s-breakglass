@@ -1975,6 +1975,8 @@ The debug session create wizard moves keyboard focus to the cluster and
 configuration step after the template step advances, so keyboard and screen
 reader users are placed in the newly rendered workflow context.
 
+The Debug Session browser and detail routes are covered by mobile Playwright screenshots. Their responsive layouts must not introduce document-level horizontal scrolling; long pod names, participant identifiers, and kubectl command snippets wrap or scroll inside their local controls instead.
+
 **Routes:**
 
 - `/debug-sessions` - Browse all debug sessions

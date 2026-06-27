@@ -28,6 +28,23 @@ async function hideDynamicContent(page: Page) {
   });
 }
 
+// Helper to catch mobile layouts that accidentally widen the document.
+async function expectNoHorizontalOverflow(page: Page, context: string) {
+  const dimensions = await page.evaluate(() => ({
+    documentClientWidth: document.documentElement.clientWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    bodyClientWidth: document.body.clientWidth,
+    bodyScrollWidth: document.body.scrollWidth,
+  }));
+
+  expect(dimensions.documentScrollWidth, `${context}: document should not overflow horizontally`).toBeLessThanOrEqual(
+    dimensions.documentClientWidth + 1,
+  );
+  expect(dimensions.bodyScrollWidth, `${context}: body should not overflow horizontally`).toBeLessThanOrEqual(
+    dimensions.bodyClientWidth + 1,
+  );
+}
+
 // Helper to perform mock login
 async function performMockLogin(page: Page) {
   await page.goto("/");
@@ -140,6 +157,22 @@ const responsiveTests = [
   { name: "home-mobile", path: "/", width: 375, height: 667 },
   { name: "home-tablet", path: "/", width: 768, height: 1024 },
   { name: "sessions-mobile", path: "/sessions", width: 375, height: 667 },
+  {
+    name: "debug-sessions-mobile",
+    path: "/debug-sessions",
+    width: 375,
+    height: 667,
+    readySelector: '[data-testid="debug-session-browser"]',
+    assertNoHorizontalOverflow: true,
+  },
+  {
+    name: "debug-session-details-mobile",
+    path: "/debug-sessions/debug-network-001",
+    width: 375,
+    height: 667,
+    readySelector: '[data-testid="debug-session-details"]',
+    assertNoHorizontalOverflow: true,
+  },
 ];
 
 for (const responsive of responsiveTests) {
@@ -158,7 +191,13 @@ for (const responsive of responsiveTests) {
 
       await setTheme(page, theme);
       await waitForPageLoad(page);
+      if (responsive.readySelector) {
+        await page.waitForSelector(responsive.readySelector, { timeout: 5000 });
+      }
       await hideDynamicContent(page);
+      if (responsive.assertNoHorizontalOverflow) {
+        await expectNoHorizontalOverflow(page, `${responsive.name} ${theme}`);
+      }
 
       await expect(page).toHaveScreenshot(`${responsive.name}-${theme}.png`, {
         fullPage: true,
