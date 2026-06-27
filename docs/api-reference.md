@@ -304,10 +304,14 @@ Authorization: Bearer <token>
 
 **Status Code:** `200 OK`
 
-**Authorization:** Only users who can approve the escalation (approvers or approver groups)
+**Authorization:** Only users who can approve the owning escalation (approvers or approver groups)
 
 **Request validation:** `reason` is required when the session's stored
 `approvalReasonConfig.mandatory` is `true`.
+
+If the pending session's approval timeout has already elapsed, the endpoint returns
+`409 Conflict` and leaves the session pending until cleanup records the
+`ApprovalTimeout` terminal state.
 
 **Response:** Complete updated `BreakglassSession` resource with approved status.
 
