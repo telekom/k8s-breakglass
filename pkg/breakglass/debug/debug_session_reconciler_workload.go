@@ -261,7 +261,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	labels = mergeStringMaps(labels, template.Spec.Labels, bindingLabels(binding), podTemplateLabels(podTemplate))
 	for k, v := range ds.Labels {
-		if k == DebugSessionLabelKey || k == DebugTemplateLabelKey || k == DebugClusterLabelKey {
+		if isControllerOwnedDebugSessionLabel(k) {
 			continue
 		}
 		labels[k] = v
