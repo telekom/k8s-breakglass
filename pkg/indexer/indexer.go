@@ -215,7 +215,13 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 			if !ok || binding == nil || len(binding.Spec.Clusters) == 0 {
 				return nil
 			}
-			return binding.Spec.Clusters
+			clusters := make([]string, 0, len(binding.Spec.Clusters))
+			for _, cluster := range binding.Spec.Clusters {
+				if cluster != "" {
+					clusters = append(clusters, cluster)
+				}
+			}
+			return clusters
 		})
 	}); err != nil {
 		return err

@@ -142,6 +142,10 @@ func TestRegisterCommonFieldIndexes_FailureOnField(t *testing.T) {
 			failOnField: "spec.templateRef.name",
 		},
 		{
+			name:        "fail on spec.clusters",
+			failOnField: "spec.clusters",
+		},
+		{
 			name:        "fail on spec.clusterID",
 			failOnField: "spec.clusterID",
 		},
@@ -320,7 +324,7 @@ func TestIndexerFunctions_DebugSessionClusterBinding(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-a"},
-			Clusters:    []string{"cluster-a", "cluster-b"},
+			Clusters:    []string{"cluster-a", "", "cluster-b"},
 		},
 	}
 

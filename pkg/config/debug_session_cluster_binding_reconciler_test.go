@@ -66,7 +66,13 @@ func indexClusterBindingClusters(obj client.Object) []string {
 	if !ok || binding == nil || len(binding.Spec.Clusters) == 0 {
 		return nil
 	}
-	return binding.Spec.Clusters
+	clusters := make([]string, 0, len(binding.Spec.Clusters))
+	for _, cluster := range binding.Spec.Clusters {
+		if cluster != "" {
+			clusters = append(clusters, cluster)
+		}
+	}
+	return clusters
 }
 
 func TestDebugSessionClusterBindingReconciler_Reconcile_NotFound(t *testing.T) {
@@ -750,4 +756,24 @@ func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testin
 		{Namespace: "team-a", Name: "exact-binding"},
 		{Namespace: "team-b", Name: "selector-binding"},
 	}, clusterBindingRequestNames(requests))
+}
+
+func TestDebugSessionClusterBindingReconciler_ReadyConditionChanged(t *testing.T) {
+	readyTrue := metav1.Condition{
+		Type:               string(breakglassv1alpha1.ClusterConfigConditionReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            "cluster is ready",
+		ObservedGeneration: 1,
+	}
+	readyTrueLater := readyTrue
+	readyTrueLater.LastTransitionTime = metav1.Now()
+	readyFalse := readyTrue
+	readyFalse.Status = metav1.ConditionFalse
+	readyFalse.Reason = "NotReady"
+
+	assert.False(t, readyConditionChanged(nil, nil))
+	assert.True(t, readyConditionChanged(nil, []metav1.Condition{readyTrue}))
+	assert.False(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyTrueLater}))
+	assert.True(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyFalse}))
 }

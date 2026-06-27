@@ -19,6 +19,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"go.uber.org/zap"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -513,6 +514,7 @@ func (r *DebugSessionClusterBindingReconciler) bindingsForClusterConfig(ctx cont
 	if err := r.client.List(ctx, exactBindings, client.MatchingFields{debugBindingClustersIndex: cluster.Name}); err != nil {
 		r.logger.Warnw("Failed to list DebugSessionClusterBindings by cluster reference",
 			"cluster", cluster.Name,
+			"clusterNamespace", cluster.Namespace,
 			"error", err)
 	} else {
 		for i := range exactBindings.Items {
@@ -524,6 +526,7 @@ func (r *DebugSessionClusterBindingReconciler) bindingsForClusterConfig(ctx cont
 	if err := r.client.List(ctx, selectorBindings); err != nil {
 		r.logger.Warnw("Failed to list DebugSessionClusterBindings for cluster selector mapping",
 			"cluster", cluster.Name,
+			"clusterNamespace", cluster.Namespace,
 			"error", err)
 		return requestsFromClusterBindingMap(requests)
 	}
@@ -564,12 +567,52 @@ func (r *DebugSessionClusterBindingReconciler) SetupWithManager(mgr ctrl.Manager
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
 	}
 
+	templateDependencyPredicate := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldTemplate, okOld := e.ObjectOld.(*breakglassv1alpha1.DebugSessionTemplate)
+			newTemplate, okNew := e.ObjectNew.(*breakglassv1alpha1.DebugSessionTemplate)
+			if !okOld || !okNew || oldTemplate == nil || newTemplate == nil {
+				return true
+			}
+			return oldTemplate.Generation != newTemplate.Generation || !maps.Equal(oldTemplate.Labels, newTemplate.Labels)
+		},
+		CreateFunc: func(e event.CreateEvent) bool { return true },
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+	}
+
+	clusterConfigDependencyPredicate := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldCluster, okOld := e.ObjectOld.(*breakglassv1alpha1.ClusterConfig)
+			newCluster, okNew := e.ObjectNew.(*breakglassv1alpha1.ClusterConfig)
+			if !okOld || !okNew || oldCluster == nil || newCluster == nil {
+				return true
+			}
+			return oldCluster.Generation != newCluster.Generation ||
+				!maps.Equal(oldCluster.Labels, newCluster.Labels) ||
+				readyConditionChanged(oldCluster.Status.Conditions, newCluster.Status.Conditions)
+		},
+		CreateFunc: func(e event.CreateEvent) bool { return true },
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&breakglassv1alpha1.DebugSessionClusterBinding{}, builder.WithPredicates(specChangePredicate)).
-		Watches(&breakglassv1alpha1.DebugSessionTemplate{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForTemplate)).
-		Watches(&breakglassv1alpha1.ClusterConfig{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForClusterConfig)).
+		Watches(&breakglassv1alpha1.DebugSessionTemplate{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForTemplate), builder.WithPredicates(templateDependencyPredicate)).
+		Watches(&breakglassv1alpha1.ClusterConfig{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForClusterConfig), builder.WithPredicates(clusterConfigDependencyPredicate)).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 1,
 		}).
 		Complete(r)
+}
+
+func readyConditionChanged(oldConditions, newConditions []metav1.Condition) bool {
+	oldReady := apimeta.FindStatusCondition(oldConditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
+	newReady := apimeta.FindStatusCondition(newConditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
+	if oldReady == nil || newReady == nil {
+		return oldReady != newReady
+	}
+	return oldReady.Status != newReady.Status ||
+		oldReady.Reason != newReady.Reason ||
+		oldReady.Message != newReady.Message ||
+		oldReady.ObservedGeneration != newReady.ObservedGeneration
 }
