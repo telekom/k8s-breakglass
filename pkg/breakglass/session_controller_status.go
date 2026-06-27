@@ -717,11 +717,12 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	}
 
 	var userEmail string
+	var emailErr error
 	if includeMine || includeApprovedByMe {
-		userEmail, err = wc.identityProvider.GetEmail(c)
-		if err != nil {
-			reqLog.Error("Error getting user identity email", zap.Error(err))
-			apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
+		userEmail, emailErr = wc.identityProvider.GetEmail(c)
+		if includeApprovedByMe && emailErr != nil {
+			reqLog.Warnw("Email claim required for approvedByMe session filter", "error", emailErr)
+			apiresponses.RespondUnauthorizedWithMessage(c, "email claim is required for approvedByMe filter")
 			return
 		}
 	}
@@ -730,7 +731,11 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	if includeMine {
 		authIdentifiers = collectAuthIdentifiers(userEmail, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
 		if len(authIdentifiers) == 0 {
-			reqLog.Error("No authenticated identity claims found for session ownership filtering")
+			if emailErr != nil {
+				reqLog.Warnw("No authenticated identity claims found for session ownership filtering", "error", emailErr)
+			} else {
+				reqLog.Warn("No authenticated identity claims found for session ownership filtering")
+			}
 			apiresponses.RespondUnauthorizedWithMessage(c, "user identity not found")
 			return
 		}
