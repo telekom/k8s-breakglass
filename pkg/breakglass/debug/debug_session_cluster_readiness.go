@@ -30,6 +30,15 @@ func readyDebugClusterConfigMap(items []breakglassv1alpha1.ClusterConfig) (map[s
 	return clusterMap, clusterNames
 }
 
+func debugClusterConfigMap(items []breakglassv1alpha1.ClusterConfig) map[string]*breakglassv1alpha1.ClusterConfig {
+	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(items))
+	for i := range items {
+		cc := &items[i]
+		clusterMap[cc.Name] = cc
+	}
+	return clusterMap
+}
+
 func findDebugClusterConfigByNameOrTenant(items []breakglassv1alpha1.ClusterConfig, cluster string) (*breakglassv1alpha1.ClusterConfig, bool) {
 	for i := range items {
 		cc := &items[i]

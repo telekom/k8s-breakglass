@@ -436,6 +436,15 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		return
 	}
 
+	if req.Reason != "" {
+		req.Reason = breakglass.SanitizeReasonText(req.Reason)
+	}
+	if err := validateDebugApprovalReason(req.Reason, session.Spec.ApprovalReasonConfig, false); err != nil {
+		reqLog.Warnw("Debug session approval reason is invalid", "session", name, "error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+
 	// Mark as approved
 	now := metav1.Now()
 	if session.Status.Approval == nil {
@@ -443,12 +452,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 	session.Status.Approval.ApprovedBy = currentUser.(string)
 	session.Status.Approval.ApprovedAt = &now
-	// Sanitize approval reason to prevent injection attacks
-	if req.Reason != "" {
-		session.Status.Approval.Reason = breakglass.SanitizeReasonText(req.Reason)
-	} else {
-		session.Status.Approval.Reason = req.Reason
-	}
+	session.Status.Approval.Reason = req.Reason
 
 	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to approve session", "session", name, "error", err)
@@ -518,6 +522,17 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	sanitizedReason := req.Reason
+	if req.Reason != "" {
+		sanitizedReason = breakglass.SanitizeReasonText(req.Reason)
+	}
+	req.Reason = sanitizedReason
+	if err := validateDebugApprovalReason(sanitizedReason, session.Spec.ApprovalReasonConfig, true); err != nil {
+		reqLog.Warnw("Debug session rejection reason is invalid", "session", name, "error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+
 	// Mark as rejected
 	now := metav1.Now()
 	if session.Status.Approval == nil {
@@ -525,11 +540,6 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	}
 	session.Status.Approval.RejectedBy = currentUser.(string)
 	session.Status.Approval.RejectedAt = &now
-	// Sanitize rejection reason to prevent injection attacks
-	sanitizedReason := req.Reason
-	if req.Reason != "" {
-		sanitizedReason = breakglass.SanitizeReasonText(req.Reason)
-	}
 	session.Status.Approval.Reason = sanitizedReason
 
 	// Move to terminated state

@@ -404,6 +404,7 @@ export interface ClusterStatusInfo {
 // Reason configuration for request/approval
 export interface ReasonConfigInfo {
   mandatory: boolean;
+  mandatoryForRejection?: boolean;
   description?: string;
   minLength?: number;
   maxLength?: number;

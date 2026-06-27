@@ -306,6 +306,9 @@ Authorization: Bearer <token>
 
 **Authorization:** Only users who can approve the escalation (approvers or approver groups)
 
+**Request validation:** `reason` is required when the session's stored
+`approvalReasonConfig.mandatory` is `true`.
+
 **Response:** Complete updated `BreakglassSession` resource with approved status.
 
 When the approval notification email is successfully enqueued, the response includes an `X-Notification-Sent: true` header.
@@ -363,6 +366,9 @@ Authorization: Bearer <token>
 **Status Code:** `200 OK`
 
 **Authorization:** Approvers can reject any pending request. Session requesters can also reject their own pending requests.
+
+**Request validation:** `reason` is required when the session's stored
+`approvalReasonConfig.mandatory` is `true`.
 
 **Response:** Complete updated `BreakglassSession` resource with rejected status:
 
@@ -907,7 +913,7 @@ POST /api/debugSessions
 | `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster). The referenced binding must be active, match the selected template, grant the selected cluster, and allow the authenticated requester. |
 | `requestedDuration` | string | No | Desired session duration (e.g., "2h") |
 | `nodeSelector` | object | No | Additional node selector labels |
-| `reason` | string | No | Explanation for the debug session request |
+| `reason` | string | No | Explanation for the debug session request. Required when the effective template or binding `requestReason.mandatory` is `true`; enforced after sanitization with configured `minLength` and `maxLength`. |
 | `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |
 | `namespace` | string | No | Deprecated alias for `targetNamespace`; if both fields are sent they must match. This field does not control the namespace of the DebugSession object. |
 | `selectedSchedulingOption` | string | No | Name of a scheduling option from template's `schedulingOptions`; restricted options must allow the requester's username, email, or group |
@@ -915,10 +921,12 @@ POST /api/debugSessions
 
 JSON bodies for debug-session create requests must contain only known field names and exactly one JSON object. Unknown fields, malformed JSON, and trailing JSON values are rejected with `400 Bad Request`.
 
+ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned only after the request is authorized by the selected template or binding.
+
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**
-- `400 Bad Request`: Unknown JSON fields, malformed request body, invalid template, malformed or missing binding, invalid cluster, invalid duration, or invalid scheduling option
+- `400 Bad Request`: Unknown JSON fields, malformed request body, invalid template, malformed or missing binding, invalid cluster, invalid duration, invalid scheduling option, or invalid request reason
 - `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints
 
 ### Join Debug Session
@@ -991,6 +999,9 @@ When present, the optional approval body must contain only the known `reason` fi
 
 Approves a session in `PendingApproval` state.
 
+`reason` is required when the session's stored `approvalReasonConfig.mandatory`
+is `true`, and must satisfy the configured `minLength` after sanitization.
+
 **Response:** Updated `DebugSession` object with `state: Approved`.
 
 ### Reject Debug Session
@@ -1010,6 +1021,10 @@ POST /api/debugSessions/:name/reject
 Rejects a session in `PendingApproval` state.
 
 When present, the rejection body must contain only the known `reason` field and exactly one JSON object.
+
+`reason` is required when the session's stored `approvalReasonConfig.mandatory`
+or `approvalReasonConfig.mandatoryForRejection` is `true`, and must satisfy the
+configured `minLength` after sanitization.
 
 **Response:** Updated `DebugSession` object with `state: Rejected`.
 
