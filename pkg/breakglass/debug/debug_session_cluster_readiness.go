@@ -17,11 +17,15 @@ func isDebugClusterConfigReady(cc *breakglassv1alpha1.ClusterConfig) bool {
 }
 
 func readyDebugClusterConfigMap(items []breakglassv1alpha1.ClusterConfig) (map[string]*breakglassv1alpha1.ClusterConfig, []string) {
+	nameCounts := debugClusterConfigNameCounts(items)
 	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(items))
 	clusterNames := make([]string, 0, len(items))
 	for i := range items {
 		cc := &items[i]
 		if !isDebugClusterConfigReady(cc) {
+			continue
+		}
+		if nameCounts[cc.Name] != 1 {
 			continue
 		}
 		clusterMap[cc.Name] = cc
@@ -31,20 +35,40 @@ func readyDebugClusterConfigMap(items []breakglassv1alpha1.ClusterConfig) (map[s
 }
 
 func debugClusterConfigMap(items []breakglassv1alpha1.ClusterConfig) map[string]*breakglassv1alpha1.ClusterConfig {
+	nameCounts := debugClusterConfigNameCounts(items)
 	clusterMap := make(map[string]*breakglassv1alpha1.ClusterConfig, len(items))
 	for i := range items {
 		cc := &items[i]
+		if nameCounts[cc.Name] != 1 {
+			continue
+		}
 		clusterMap[cc.Name] = cc
 	}
 	return clusterMap
 }
 
+func debugClusterConfigNameCounts(items []breakglassv1alpha1.ClusterConfig) map[string]int {
+	nameCounts := make(map[string]int, len(items))
+	for i := range items {
+		cc := &items[i]
+		nameCounts[cc.Name]++
+	}
+	return nameCounts
+}
+
 func findDebugClusterConfigByNameOrTenant(items []breakglassv1alpha1.ClusterConfig, cluster string) (*breakglassv1alpha1.ClusterConfig, bool) {
+	var nameMatch *breakglassv1alpha1.ClusterConfig
 	for i := range items {
 		cc := &items[i]
 		if cc.Name == cluster {
-			return cc, false
+			if nameMatch != nil {
+				return nil, true
+			}
+			nameMatch = cc
 		}
+	}
+	if nameMatch != nil {
+		return nameMatch, false
 	}
 
 	var tenantMatch *breakglassv1alpha1.ClusterConfig

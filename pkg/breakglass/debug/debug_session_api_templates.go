@@ -786,13 +786,22 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 // resolveClustersFromBinding resolves cluster names from a binding's spec
 func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig) []string {
 	var result []string
+	seen := make(map[string]struct{}, len(binding.Spec.Clusters))
+	addCluster := func(clusterName string) {
+		if _, exists := clusterMap[clusterName]; !exists {
+			return
+		}
+		if _, exists := seen[clusterName]; exists {
+			return
+		}
+		seen[clusterName] = struct{}{}
+		result = append(result, clusterName)
+	}
 	bindingID := fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 
 	// Add explicit clusters
 	for _, clusterName := range binding.Spec.Clusters {
-		if _, exists := clusterMap[clusterName]; exists {
-			result = append(result, clusterName)
-		}
+		addCluster(clusterName)
 	}
 
 	c.log.Debugw("resolveClustersFromBinding: explicit clusters",
@@ -820,7 +829,7 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 				labelSet := labelSetFromMap(cc.Labels)
 				matches := selector.Matches(labelSet)
 				if matches {
-					result = append(result, name)
+					addCluster(name)
 					c.log.Debugw("resolveClustersFromBinding: cluster matched selector",
 						"binding", bindingID,
 						"cluster", name,
