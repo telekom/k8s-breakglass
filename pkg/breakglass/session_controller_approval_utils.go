@@ -163,23 +163,25 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		approverGroupsToCheck := esc.Spec.Approvers.Groups
 		var dedupMembers []string
 
-		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 && esc.Status.ApproverGroupMembers != nil {
+		if esc.Status.ApproverGroupMembers != nil {
 			for _, g := range approverGroupsToCheck {
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
-					reqLog.Debugw("Using deduplicated members from multi-IDP status",
+					reqLog.Debugw("Using resolved approver group members from escalation status",
 						"escalation", esc.Name, "group", system.RedactGroupName(g), "memberCount", len(members))
 				}
 			}
 
 			for _, member := range dedupMembers {
 				if strings.EqualFold(member, email) {
-					reqLog.Debugw("User is session approver (multi-IDP deduplicated group member)",
+					reqLog.Debugw("User is session approver (resolved group member)",
 						"session", session.Name, "escalation", esc.Name, "member", email)
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}
-		} else {
+		}
+
+		if len(esc.Spec.AllowedIdentityProvidersForApprovers) == 0 {
 			for _, g := range approverGroupsToCheck {
 				if slices.Contains(approverGroups, g) {
 					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(g))

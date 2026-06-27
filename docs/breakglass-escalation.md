@@ -87,10 +87,11 @@ approvers:
 
 **Note**: At least one of `users` or `groups` must be specified.
 
-Approver group membership is resolved for the specific target cluster of the
-session under review when the target-cluster group lookup succeeds. If the same
-approver account has different groups in different clusters, authorization uses
-the target cluster's group set instead of generic request-context groups.
+Approver group membership is checked against the resolved group members recorded
+in escalation status when available. Otherwise, authorization resolves the
+approver's groups for the specific target cluster of the session under review.
+If the same approver account has different groups in different clusters, the
+target cluster's group set is used instead of generic request-context groups.
 
 ## Optional Fields
 
