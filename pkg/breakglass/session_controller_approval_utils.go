@@ -374,7 +374,7 @@ func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
 	case breakglassv1alpha1.SessionStateApproved:
 		return IsSessionActive(session)
 	case breakglassv1alpha1.SessionStateWaitingForScheduledTime:
-		return session.Status.ExpiresAt.IsZero() || time.Now().Before(session.Status.ExpiresAt.Time)
+		return session.Status.ExpiresAt.IsZero() || !time.Now().After(session.Status.ExpiresAt.Time)
 	default:
 		return false
 	}

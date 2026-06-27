@@ -488,7 +488,7 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 		return fmt.Errorf("failed to list sessions for user: %w", err)
 	}
 
-	// Count active sessions and approved scheduled sessions for this user (across ALL escalations).
+	// Count sessions that still reserve a request slot for this user (across ALL escalations).
 	var userActive int32
 	for i := range sessionList {
 		session := &sessionList[i]
@@ -505,13 +505,13 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 		"source", source)
 
 	if userActive >= limit {
-		return fmt.Errorf("session limit reached: maximum %d active sessions per user allowed (%s)", limit, source)
+		return fmt.Errorf("session limit reached: maximum %d slot-occupying sessions per user allowed (%s)", limit, source)
 	}
 
 	return nil
 }
 
-// checkTotalSessionCount counts total active sessions for an escalation and checks against a limit.
+// checkTotalSessionCount counts sessions occupying request slots for an escalation and checks against a limit.
 // Sessions are counted by matching owner reference to ensure sessions created by different
 // escalations that grant the same group are not incorrectly counted together.
 // Optimized: only lists sessions in states that can occupy a slot instead of all sessions.
@@ -538,7 +538,7 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 		return fmt.Errorf("failed to list scheduled waiting sessions: %w", err)
 	}
 
-	// Count active sessions for this specific escalation (by matching owner reference UID)
+	// Count slot-occupying sessions for this specific escalation (by matching owner reference UID)
 	// This ensures sessions from different escalations that grant the same group are counted separately.
 	var totalActive int32
 	slotSessions := append(pendingSessions, approvedSessions...)
@@ -562,7 +562,7 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 		"source", source)
 
 	if totalActive >= limit {
-		return fmt.Errorf("session limit reached: maximum %d total active sessions allowed (%s)", limit, source)
+		return fmt.Errorf("session limit reached: maximum %d total slot-occupying sessions allowed (%s)", limit, source)
 	}
 
 	return nil

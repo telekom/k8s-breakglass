@@ -5958,7 +5958,7 @@ func TestSessionLimits(t *testing.T) {
 		require.Equal(t, http.StatusUnprocessableEntity, w.Result().StatusCode, "should reject when total session limit reached")
 		body, _ := io.ReadAll(w.Result().Body)
 		require.Contains(t, string(body), "session limit reached")
-		require.Contains(t, string(body), "total active sessions")
+		require.Contains(t, string(body), "total slot-occupying sessions")
 	})
 
 	t.Run("IDP group override with unlimited allows sessions", func(t *testing.T) {
