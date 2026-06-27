@@ -350,6 +350,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	// Clean up kubectl-debug resources (if any)
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	var cleanupErrors []error
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
 		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
 		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
@@ -361,7 +362,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
-		// Continue to clean up deployed resources even if this fails
+		cleanupErrors = append(cleanupErrors, err)
 	}
 
 	// Get spoke cluster client for cleanup
@@ -384,10 +385,12 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	}
 
 	// Cleanup auxiliary resources first using the manager
+	auxiliaryCleanupFailed := false
 	if c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0 {
 		if err := c.auxiliaryMgr.CleanupAuxiliaryResources(ctx, ds, targetClient); err != nil {
 			log.Warnw("Failed to cleanup auxiliary resources", "error", err)
-			// Continue to clean up main workloads
+			auxiliaryCleanupFailed = true
+			cleanupErrors = append(cleanupErrors, err)
 		}
 	}
 
@@ -395,23 +398,51 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if len(ds.Status.PodTemplateResourceStatuses) > 0 {
 		if err := c.cleanupPodTemplateResources(ctx, ds, targetClient); err != nil {
 			log.Warnw("Failed to cleanup pod template resources", "error", err)
-			// Continue to clean up main workloads
+			cleanupErrors = append(cleanupErrors, err)
 		}
 	}
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
+		}
+		return errors.Join(cleanupErrors...)
 	}
 
-	// Cleanup main workloads (DaemonSet/Deployment)
+	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func (c *DebugSessionController) cleanupDeployedResources(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	targetClient ctrlclient.Client,
+	keepAuxiliaryRefs bool,
+	keepPodTemplateRefs bool,
+) error {
+	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+	var cleanupErrors []error
+	remainingDeployedResources := make([]breakglassv1alpha1.DeployedResourceRef, 0, len(ds.Status.DeployedResources))
+
 	for _, ref := range ds.Status.DeployedResources {
 		// Skip auxiliary resources - already cleaned up by manager
 		if strings.HasPrefix(ref.Source, "auxiliary:") {
+			if keepAuxiliaryRefs {
+				remainingDeployedResources = append(remainingDeployedResources, ref)
+			}
 			continue
 		}
 		// Skip pod-template resources - already cleaned up above
 		if ref.Source == "pod-template" {
+			if keepPodTemplateRefs {
+				remainingDeployedResources = append(remainingDeployedResources, ref)
+			}
 			continue
 		}
 
@@ -446,28 +477,42 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 					Namespace: ref.Namespace,
 				},
 			}
+		case "Pod":
+			obj = &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+			}
 		default:
 			log.Warnw("Unknown resource type, skipping cleanup", "kind", ref.Kind, "name", ref.Name)
+			remainingDeployedResources = append(remainingDeployedResources, ref)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("unsupported deployed resource kind %q for %s/%s", ref.Kind, ref.Namespace, ref.Name))
 			continue
 		}
 
 		if err := targetClient.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
 			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "error", err)
+			remainingDeployedResources = append(remainingDeployedResources, ref)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err))
 		} else {
 			log.Infow("Deleted debug resource", "kind", ref.Kind, "name", ref.Name)
 		}
 	}
 
-	// Clear deployed resources from status
-	ds.Status.DeployedResources = nil
-	ds.Status.AllowedPods = nil
-	ds.Status.PodTemplateResourceStatuses = nil
-	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	ds.Status.DeployedResources = remainingDeployedResources
+	if len(remainingDeployedResources) == 0 && len(ds.Status.PodTemplateResourceStatuses) == 0 {
+		ds.Status.AllowedPods = nil
+	}
+	return errors.Join(cleanupErrors...)
 }
 
 // cleanupPodTemplateResources removes resources deployed from multi-document pod templates.
 func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession, targetClient ctrlclient.Client) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+
+	var cleanupErrors []error
+	remainingStatuses := make([]breakglassv1alpha1.PodTemplateResourceStatus, 0, len(ds.Status.PodTemplateResourceStatuses))
 
 	for i := range ds.Status.PodTemplateResourceStatuses {
 		status := &ds.Status.PodTemplateResourceStatuses[i]
@@ -490,6 +535,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				"kind", status.Kind,
 				"error", err)
 			status.Error = fmt.Sprintf("failed to parse GVK: %v", err)
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("parse GVK for pod template resource %s/%s: %w", status.Namespace, status.ResourceName, err))
 			continue
 		}
 
@@ -509,6 +556,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 					"name", status.ResourceName,
 					"error", err)
 				status.Error = fmt.Sprintf("delete failed: %v", err)
+				remainingStatuses = append(remainingStatuses, *status)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("delete pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
 				continue
 			}
 		} else {
@@ -523,7 +572,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		status.DeletedAt = &now
 	}
 
-	return nil
+	ds.Status.PodTemplateResourceStatuses = remainingStatuses
+	return errors.Join(cleanupErrors...)
 }
 
 // parseDuration parses the requested duration with template constraints.
