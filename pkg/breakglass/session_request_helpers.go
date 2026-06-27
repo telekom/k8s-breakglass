@@ -652,21 +652,26 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	bs.Labels["breakglass.t-caas.telekom.com/group"] = naming.ToRFC1123Label(params.request.GroupName)
 	// Ensure session is created in the same namespace as the matched escalation
 	if params.matchedEsc != nil {
-		reqLog.Debugw("Matched escalation found during session creation; attaching ownerRef",
+		reqLog.Debugw("Matched escalation found during session creation",
 			"escalationName", params.matchedEsc.Name, "escalationUID", params.matchedEsc.UID, "escalationNamespace", params.matchedEsc.Namespace)
 		bs.Namespace = params.matchedEsc.Namespace
-		// Attach owner reference so the session can be linked back to its escalation
-		// This allows other components (webhook/controller) to resolve the escalation
-		// via the session's OwnerReferences.
-		bs.OwnerReferences = []metav1.OwnerReference{{
-			APIVersion: breakglassv1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassEscalation",
-			Name:       params.matchedEsc.Name,
-			UID:        params.matchedEsc.UID,
-			// Controller and BlockOwnerDeletion are optional; set Controller=true for clarity.
-			Controller: func() *bool { b := true; return &b }(),
-		}}
-		reqLog.Debugw("OwnerReference prepared for session create", "ownerRefs", bs.OwnerReferences)
+		if params.matchedEsc.UID == "" {
+			reqLog.Debugw("Matched escalation has no UID; session ownerRef will not be attached",
+				"escalationName", params.matchedEsc.Name, "escalationNamespace", params.matchedEsc.Namespace)
+		} else {
+			// Attach owner reference so the session can be linked back to its escalation.
+			// This allows other components (webhook/controller) to resolve the escalation
+			// via the session's OwnerReferences.
+			bs.OwnerReferences = []metav1.OwnerReference{{
+				APIVersion: breakglassv1alpha1.GroupVersion.String(),
+				Kind:       "BreakglassEscalation",
+				Name:       params.matchedEsc.Name,
+				UID:        params.matchedEsc.UID,
+				// Controller and BlockOwnerDeletion are optional; set Controller=true for clarity.
+				Controller: func() *bool { b := true; return &b }(),
+			}}
+			reqLog.Debugw("OwnerReference prepared for session create", "ownerRefs", bs.OwnerReferences)
+		}
 	} else {
 		reqLog.Debugw("No matching escalation found during session creation; no ownerRef will be attached", "requestedGroup", system.RedactGroupName(params.request.GroupName), "cluster", params.request.Clustername)
 	}

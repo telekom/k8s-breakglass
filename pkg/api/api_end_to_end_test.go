@@ -962,6 +962,7 @@ func TestEndToEndSARPodSecurityWithEscalationOverride(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "override-escalation",
 			Namespace: e2eNamespace,
+			UID:       "override-escalation-uid",
 		},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{

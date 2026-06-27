@@ -542,6 +542,68 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 	}
 }
 
+func TestCreateSessionSkipsOwnerReferenceWhenEscalationUIDMissing(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "esc-without-uid",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "esc-group",
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+	builder.WithObjects(esc)
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "requester@example.com")
+			c.Set("username", "requester")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	reqData := BreakglassSessionRequest{
+		Clustername: "test",
+		Username:    "requester@example.com",
+		GroupName:   "esc-group",
+	}
+	b, err := json.Marshal(reqData)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	allSessions, err := sesmanager.GetAllBreakglassSessions(context.Background())
+	require.NoError(t, err)
+	require.Len(t, allSessions, 1)
+	require.Equal(t, "default", allSessions[0].Namespace)
+	require.Empty(t, allSessions[0].OwnerReferences)
+}
+
 func TestCreateSessionRejectsUnreadyClusterConfig(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
