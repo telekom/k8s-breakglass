@@ -73,4 +73,32 @@ describe("ApprovalModalContent", () => {
     expect(isDisabled('[data-testid="reject-button"]', wrapper)).toBe(false);
     expect(wrapper.find(".approval-note-required").exists()).toBe(false);
   });
+
+  it("hides approval controls when a scheduled session is already approved", () => {
+    const wrapper = mount(ApprovalModalContent, {
+      props: {
+        session: {
+          ...requiredNoteSession,
+          spec: {
+            ...requiredNoteSession.spec,
+            scheduledStartTime: "2026-02-20T12:00:00Z",
+          },
+          status: { state: "WaitingForScheduledTime" },
+        },
+        approverNote: "",
+        isApproving: false,
+      },
+      global: {
+        stubs: {
+          "scale-button": ScaleButtonStub,
+          "scale-textarea": true,
+        },
+      },
+    });
+
+    expect(wrapper.find('[data-testid="scheduled-activation-note"]').text()).toContain("already been approved");
+    expect(wrapper.find('[data-testid="rejection-reason-input"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="approve-button"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="reject-button"]').exists()).toBe(false);
+  });
 });

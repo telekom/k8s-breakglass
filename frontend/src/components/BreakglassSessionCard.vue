@@ -67,12 +67,21 @@ const isActionable = computed(() => {
 
 // Session is pending approval (can be approved/rejected)
 const isPending = computed(() => {
-  return sessionState.value === "pending" || sessionState.value === "waitingforscheduledtime";
+  return sessionState.value === "pending";
+});
+
+// Session was approved and is waiting for its scheduled activation time.
+const isAwaitingScheduledStart = computed(() => {
+  return sessionState.value === "waitingforscheduledtime";
 });
 
 // Session is active/approved (can be dropped/cancelled)
 const isActive = computed(() => {
   return sessionState.value === "approved" || sessionState.value === "active";
+});
+
+const hasActions = computed(() => {
+  return isPending.value || isActive.value;
 });
 
 const retained = computed(
@@ -192,6 +201,16 @@ const requestReasonText = computed(() => {
     props.breakglass?.status?.approvalReason;
   return typeof reason === "string" ? reason.trim() : "";
 });
+
+const timelineStatusText = computed(() => {
+  if (isAwaitingScheduledStart.value) {
+    return "Awaiting scheduled start";
+  }
+  if (!isActionable.value) {
+    return "No longer actionable";
+  }
+  return retained.value ? expiryHumanized.value : "Awaiting action";
+});
 </script>
 
 <template>
@@ -246,14 +265,12 @@ const requestReasonText = computed(() => {
         </div>
         <div class="timeline-item" :class="{ 'timeline-item--muted': !isActionable }" data-testid="timeline-status">
           <span class="label">Status</span>
-          <span class="value">{{
-            isActionable ? (retained ? expiryHumanized : "Awaiting action") : "No longer actionable"
-          }}</span>
+          <span class="value">{{ timelineStatusText }}</span>
         </div>
       </div>
     </template>
 
-    <template v-if="isActionable" #footer>
+    <template v-if="hasActions" #footer>
       <div class="session-card__actions" data-testid="session-actions">
         <scale-button v-if="isPending" data-testid="review-button" @click="openReview">Review</scale-button>
         <scale-button
