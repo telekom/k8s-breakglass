@@ -461,6 +461,116 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		assert.Equal(t, "Session is running", updated.Status.Message)
 	})
 
+	t.Run("preserves debug authorization and resource status fields", func(t *testing.T) {
+		execAllowed := false
+		attachAllowed := false
+		logsAllowed := true
+		portForwardAllowed := false
+		createdAt := "2026-06-27T18:00:00Z"
+		readyAt := "2026-06-27T18:01:00Z"
+		deletedAt := "2026-06-27T18:02:00Z"
+		ds := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-debug-fields",
+				Namespace: "default",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "test-cluster",
+				TemplateRef: "test-template",
+				RequestedBy: "test@example.com",
+			},
+		}
+
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(ds).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		ds.Status.AllowedPodOperations = &breakglassv1alpha1.AllowedPodOperations{
+			Exec:        &execAllowed,
+			Attach:      &attachAllowed,
+			Logs:        &logsAllowed,
+			PortForward: &portForwardAllowed,
+		}
+		ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{
+				Name:            "debug-rbac",
+				Category:        "rbac",
+				Kind:            "ServiceAccount",
+				APIVersion:      "v1",
+				ResourceName:    "debug-sa",
+				Namespace:       "debug-ns",
+				Created:         true,
+				CreatedAt:       &createdAt,
+				Ready:           true,
+				ReadyAt:         &readyAt,
+				ReadinessStatus: "Current",
+				Deleted:         false,
+				AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+					{
+						Kind:            "Role",
+						APIVersion:      "rbac.authorization.k8s.io/v1",
+						ResourceName:    "debug-role",
+						Namespace:       "debug-ns",
+						Ready:           true,
+						ReadinessStatus: "Current",
+						Deleted:         false,
+					},
+				},
+			},
+		}
+		ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{
+				Kind:            "ConfigMap",
+				APIVersion:      "v1",
+				ResourceName:    "debug-config",
+				Namespace:       "debug-ns",
+				Source:          "podTemplateString",
+				Created:         true,
+				CreatedAt:       &createdAt,
+				Ready:           false,
+				ReadinessStatus: "InProgress",
+				Deleted:         true,
+				DeletedAt:       &deletedAt,
+				Error:           "cleanup pending",
+			},
+		}
+
+		err := ApplyDebugSessionStatus(context.Background(), c, ds)
+		require.NoError(t, err)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = c.Get(context.Background(), client.ObjectKeyFromObject(ds), &updated)
+		require.NoError(t, err)
+
+		require.NotNil(t, updated.Status.AllowedPodOperations)
+		assert.False(t, *updated.Status.AllowedPodOperations.Exec)
+		assert.False(t, *updated.Status.AllowedPodOperations.Attach)
+		assert.True(t, *updated.Status.AllowedPodOperations.Logs)
+		assert.False(t, *updated.Status.AllowedPodOperations.PortForward)
+
+		require.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
+		auxiliaryStatus := updated.Status.AuxiliaryResourceStatuses[0]
+		assert.Equal(t, "debug-rbac", auxiliaryStatus.Name)
+		assert.Equal(t, "debug-sa", auxiliaryStatus.ResourceName)
+		assert.True(t, auxiliaryStatus.Created)
+		assert.True(t, auxiliaryStatus.Ready)
+		assert.False(t, auxiliaryStatus.Deleted)
+		require.Len(t, auxiliaryStatus.AdditionalResources, 1)
+		assert.Equal(t, "debug-role", auxiliaryStatus.AdditionalResources[0].ResourceName)
+		assert.False(t, auxiliaryStatus.AdditionalResources[0].Deleted)
+
+		require.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
+		podTemplateStatus := updated.Status.PodTemplateResourceStatuses[0]
+		assert.Equal(t, "ConfigMap", podTemplateStatus.Kind)
+		assert.Equal(t, "debug-config", podTemplateStatus.ResourceName)
+		assert.True(t, podTemplateStatus.Created)
+		assert.False(t, podTemplateStatus.Ready)
+		assert.True(t, podTemplateStatus.Deleted)
+		assert.Equal(t, "cleanup pending", podTemplateStatus.Error)
+	})
+
 	t.Run("returns error when debug session does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -513,6 +623,90 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyAuxiliaryStatuses(t *testin
 		},
 	}
 	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
+}
+
+func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testing.T) {
+	execAllowed := false
+	attachAllowed := false
+	logsAllowed := true
+	portForwardAllowed := false
+	createdAt := "2026-06-27T18:00:00Z"
+	deletedAt := "2026-06-27T18:02:00Z"
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
+			Exec:        &execAllowed,
+			Attach:      &attachAllowed,
+			Logs:        &logsAllowed,
+			PortForward: &portForwardAllowed,
+		},
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{
+				Name:            "debug-rbac",
+				Category:        "rbac",
+				Kind:            "ServiceAccount",
+				APIVersion:      "v1",
+				ResourceName:    "debug-sa",
+				Namespace:       "debug-ns",
+				Created:         true,
+				CreatedAt:       &createdAt,
+				Ready:           true,
+				ReadinessStatus: "Current",
+				AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+					{
+						Kind:            "Role",
+						APIVersion:      "rbac.authorization.k8s.io/v1",
+						ResourceName:    "debug-role",
+						Namespace:       "debug-ns",
+						Ready:           true,
+						ReadinessStatus: "Current",
+					},
+				},
+			},
+		},
+		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{
+			{
+				Kind:            "ConfigMap",
+				APIVersion:      "v1",
+				ResourceName:    "debug-config",
+				Namespace:       "debug-ns",
+				Source:          "podTemplateString",
+				Created:         true,
+				Ready:           false,
+				ReadinessStatus: "InProgress",
+				Deleted:         true,
+				DeletedAt:       &deletedAt,
+				Error:           "cleanup pending",
+			},
+		},
+	}
+
+	result := DebugSessionStatusFrom(status)
+	require.NotNil(t, result)
+
+	require.NotNil(t, result.AllowedPodOperations)
+	assert.False(t, *result.AllowedPodOperations.Exec)
+	assert.False(t, *result.AllowedPodOperations.Attach)
+	assert.True(t, *result.AllowedPodOperations.Logs)
+	assert.False(t, *result.AllowedPodOperations.PortForward)
+
+	require.Len(t, result.AuxiliaryResourceStatuses, 1)
+	auxiliaryStatus := result.AuxiliaryResourceStatuses[0]
+	assert.Equal(t, "debug-rbac", *auxiliaryStatus.Name)
+	assert.Equal(t, "debug-sa", *auxiliaryStatus.ResourceName)
+	assert.True(t, *auxiliaryStatus.Created)
+	assert.True(t, *auxiliaryStatus.Ready)
+	assert.False(t, *auxiliaryStatus.Deleted)
+	require.Len(t, auxiliaryStatus.AdditionalResources, 1)
+	assert.Equal(t, "debug-role", *auxiliaryStatus.AdditionalResources[0].ResourceName)
+
+	require.Len(t, result.PodTemplateResourceStatuses, 1)
+	podTemplateStatus := result.PodTemplateResourceStatuses[0]
+	assert.Equal(t, "ConfigMap", *podTemplateStatus.Kind)
+	assert.Equal(t, "debug-config", *podTemplateStatus.ResourceName)
+	assert.True(t, *podTemplateStatus.Created)
+	assert.False(t, *podTemplateStatus.Ready)
+	assert.True(t, *podTemplateStatus.Deleted)
+	assert.Equal(t, "cleanup pending", *podTemplateStatus.Error)
 }
 
 // TestApplyAuditConfigStatus tests SSA status updates for AuditConfig.

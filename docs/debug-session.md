@@ -690,6 +690,10 @@ The `get` command shows the full session details including `status.allowedPodOpe
 bgctl debug session get debug-abc123 -o yaml
 ```
 
+The controller persists the resolved operation set in `status.allowedPodOperations`.
+Webhook checks read this status field, so controller status updates preserve it
+across requeues while the session remains active.
+
 **Web UI**: The session details page displays an "Allowed Pod Operations" card showing which operations are enabled (✓) or disabled (✗) for the session.
 
 ### DebugSession
@@ -1099,6 +1103,12 @@ All resources from multi-document YAML are:
 - Tracked in the session status for observability
 - Cleaned up automatically when the session ends unless `deleteAfter: false`
 - Monitored for readiness using kstatus
+
+Auxiliary resource lifecycle is reflected in
+`status.auxiliaryResourceStatuses`. Additional objects produced by
+multi-document pod templates are reflected in
+`status.podTemplateResourceStatuses`, allowing cleanup and audit workflows to
+continue from persisted status after controller requeues or restarts.
 
 > **Note:** `template` (structured) and `templateString` (Go template) are mutually exclusive. Use `templateString` when you need multi-document YAML or dynamic templating.
 
