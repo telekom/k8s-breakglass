@@ -1718,6 +1718,9 @@ subjects:
 - kind: Group
   name: breakglass-pods-admin
   apiGroup: rbac.authorization.k8s.io
+- kind: Group
+  name: breakglass-policy-pods-admin
+  apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -1730,6 +1733,9 @@ roleRef:
 subjects:
 - kind: Group
   name: breakglass-emergency-admin
+  apiGroup: rbac.authorization.k8s.io
+- kind: Group
+  name: breakglass-policy-emergency-admin
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1867,6 +1873,9 @@ roleRef:
 subjects:
 - kind: Group
   name: breakglass-multi-cluster-ops
+  apiGroup: rbac.authorization.k8s.io
+- kind: Group
+  name: breakglass-policy-multi-cluster-ops
   apiGroup: rbac.authorization.k8s.io
 EOF
 
