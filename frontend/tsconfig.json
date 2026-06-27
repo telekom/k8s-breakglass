@@ -8,6 +8,9 @@
     "tests/unit/**/*.ts",
     "tests/unit/**/*.spec.ts"
   ],
+  "files": [
+    "tests/e2e/helpers/api-cleanup.ts"
+  ],
   "exclude": [
     "tests/e2e/**",
     "tests/screenshots/**"
