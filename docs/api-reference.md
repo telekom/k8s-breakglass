@@ -548,8 +548,8 @@ Authorization: Bearer <token>
 
 **Authorization:**
 
-- **Requester**: Can drop pending requests
-- **Owner**: Can drop active or approved scheduled sessions
+- **Session owner/requester**: Can drop pending, approved scheduled, or active
+  non-terminal sessions
 
 Terminal sessions (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, `ApprovalTimeout`)
 return `400 Bad Request` and are not modified.
