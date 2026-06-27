@@ -104,10 +104,14 @@ describe("DebugSessionDetails", () => {
 
   it("does not offer a copyable exec command when exec is disallowed", async () => {
     const wrapper = mountDetails();
-    await flushPromises();
+    try {
+      await flushPromises();
 
-    expect(wrapper.find('[data-testid="copy-exec-btn"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="exec-unavailable-message"]').text()).toContain("Exec is not allowed");
-    expect(wrapper.text()).not.toContain("kubectl exec -it debug-logs-only-001-pod");
+      expect(wrapper.find('[data-testid="copy-exec-btn"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="exec-unavailable-message"]').text()).toContain("Exec is not allowed");
+      expect(wrapper.text()).not.toContain("kubectl exec -it debug-logs-only-001-pod");
+    } finally {
+      wrapper.unmount();
+    }
   });
 });
