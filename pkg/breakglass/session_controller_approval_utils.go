@@ -45,6 +45,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
 	requestContextGroups := approverGroupsFromRequestContext(c)
+	approverIdentityProvider := c.GetString("identity_provider_name")
 
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
@@ -172,6 +173,22 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				}
 				continue
 			}
+		}
+
+		if !isApproverIdentityProviderAllowed(approverIdentityProvider, esc.Spec.AllowedIdentityProvidersForApprovers) {
+			reqLog.Warnw("Approver authenticated with disallowed identity provider",
+				"escalation", esc.Name,
+				"approver", email,
+				"identityProvider", approverIdentityProvider,
+				"allowedIdentityProviderCount", len(esc.Spec.AllowedIdentityProvidersForApprovers))
+			if mostSpecificDenial.Reason != ApprovalDenialSelfApprovalBlocked && mostSpecificDenial.Reason != ApprovalDenialDomainNotAllowed {
+				mostSpecificDenial = ApprovalCheckResult{
+					Allowed: false,
+					Reason:  ApprovalDenialIdentityProviderNotAllowed,
+					Message: "Your identity provider is not allowed to approve this escalation",
+				}
+			}
+			continue
 		}
 
 		// Direct user approver check
@@ -308,6 +325,16 @@ func shouldUseRequestContextApproverGroups(targetClusterGroups, requestContextGr
 		}
 	}
 	return true
+}
+
+func isApproverIdentityProviderAllowed(identityProvider string, allowedIdentityProviders []string) bool {
+	if len(allowedIdentityProviders) == 0 {
+		return true
+	}
+	if identityProvider == "" {
+		return false
+	}
+	return slices.Contains(allowedIdentityProviders, identityProvider)
 }
 
 // isSessionApprover returns true if the current user is authorized to approve/reject the session.

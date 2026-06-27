@@ -477,6 +477,8 @@ allowedIdentityProvidersForApprovers:
   Kubernetes `system:*` groups, the authenticated request-token groups are used. Once
   `status.approverGroupMembers` contains an approver group entry, that resolved
   member list is authoritative for that group.
+- Approval endpoints deny requests when an approver allowlist is configured but
+  the authenticated caller's IDP is missing or not listed
 
 #### Example: Restrict to Corporate OIDC only
 
