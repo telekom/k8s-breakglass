@@ -6,6 +6,7 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -47,8 +51,10 @@ func newFakeActivationClient(objects ...client.Object) client.Client {
 
 type staleScheduledActivationClient struct {
 	client.Client
-	mutateOnce sync.Once
-	mutate     func(context.Context, client.Client)
+	mutateOnce              sync.Once
+	mutate                  func(context.Context, client.Client)
+	statusMutateOnce        sync.Once
+	mutateBeforeStatusWrite func(context.Context, client.Client)
 }
 
 func (c *staleScheduledActivationClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
@@ -61,6 +67,39 @@ func (c *staleScheduledActivationClient) List(ctx context.Context, list client.O
 		}
 	}
 	return err
+}
+
+func (c *staleScheduledActivationClient) Status() client.SubResourceWriter {
+	base := c.Client.Status()
+	if c.mutateBeforeStatusWrite == nil {
+		return base
+	}
+	return &conflictingStatusWriter{
+		SubResourceWriter: base,
+		mutate: func(ctx context.Context) {
+			c.statusMutateOnce.Do(func() {
+				c.mutateBeforeStatusWrite(ctx, c.Client)
+			})
+		},
+	}
+}
+
+type conflictingStatusWriter struct {
+	client.SubResourceWriter
+	mutate func(context.Context)
+}
+
+func (w *conflictingStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	w.mutate(ctx)
+	return apierrors.NewConflict(
+		schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
+		obj.GetName(),
+		fmt.Errorf("status changed before scheduled activation update"),
+	)
+}
+
+func (w *conflictingStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return w.SubResourceWriter.Apply(ctx, obj, opts...)
 }
 
 func TestActivateScheduledSessions(t *testing.T) {
@@ -340,6 +379,59 @@ func TestActivateScheduledSessions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, updated.Status.State)
 		assert.True(t, updated.Status.ActualStartTime.IsZero(), "stale scheduled activation must not reactivate withdrawn sessions")
+
+		for _, condition := range updated.Status.Conditions {
+			assert.NotEqual(t, "ScheduledStartTimeReached", condition.Type)
+		}
+	})
+
+	t.Run("skips session whose live state changes before status update", func(t *testing.T) {
+		scheduledTime := time.Now().Add(-5 * time.Minute)
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "scheduled-withdrawn-before-update",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:               "test@example.com",
+				Cluster:            "test-cluster",
+				GrantedGroup:       "admin",
+				ScheduledStartTime: &metav1.Time{Time: scheduledTime},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(scheduledTime.Add(-30 * time.Minute)),
+				ExpiresAt:  metav1.NewTime(time.Now().Add(1 * time.Hour)),
+			},
+		}
+
+		baseClient := newFakeActivationClient(session)
+		staleClient := &staleScheduledActivationClient{
+			Client: baseClient,
+			mutateBeforeStatusWrite: func(ctx context.Context, c client.Client) {
+				current := &breakglassv1alpha1.BreakglassSession{}
+				err := c.Get(ctx, client.ObjectKey{Namespace: "breakglass", Name: "scheduled-withdrawn-before-update"}, current)
+				require.NoError(t, err)
+				current.Status.State = breakglassv1alpha1.SessionStateWithdrawn
+				current.Status.WithdrawnAt = metav1.NewTime(time.Now())
+				err = c.Status().Update(ctx, current)
+				require.NoError(t, err)
+			},
+		}
+		mgr := NewSessionManagerWithClient(staleClient)
+
+		activator := NewScheduledSessionActivator(logger, mgr).
+			WithMailService(nil, "TestBranding", true)
+
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		err := baseClient.Get(context.Background(),
+			client.ObjectKey{Namespace: "breakglass", Name: "scheduled-withdrawn-before-update"},
+			&updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, updated.Status.State)
+		assert.True(t, updated.Status.ActualStartTime.IsZero(), "conflicted scheduled activation must not reactivate withdrawn sessions")
 
 		for _, condition := range updated.Status.Conditions {
 			assert.NotEqual(t, "ScheduledStartTimeReached", condition.Type)
