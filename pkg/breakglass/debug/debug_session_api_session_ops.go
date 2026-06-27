@@ -206,7 +206,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 
 	if !canRenewDebugSession(session, username) {
-		apiresponses.RespondForbidden(ctx, "only session owner or active participants can renew")
+		apiresponses.RespondForbidden(ctx, "only requester or active owner/participant roles can renew")
 		return
 	}
 

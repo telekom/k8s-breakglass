@@ -5459,6 +5459,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 			leftAt     *metav1.Time
 			wantStatus int
 			wantCount  int32
+			wantBody   string
 		}{
 			{
 				name:       "active participant can renew",
@@ -5467,15 +5468,23 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				wantCount:  1,
 			},
 			{
+				name:       "active owner can renew",
+				role:       breakglassv1alpha1.ParticipantRoleOwner,
+				wantStatus: http.StatusOK,
+				wantCount:  1,
+			},
+			{
 				name:       "viewer cannot renew",
 				role:       breakglassv1alpha1.ParticipantRoleViewer,
 				wantStatus: http.StatusForbidden,
+				wantBody:   "only requester or active owner/participant roles can renew",
 			},
 			{
 				name:       "left participant cannot renew",
 				role:       breakglassv1alpha1.ParticipantRoleParticipant,
 				leftAt:     &leftAt,
 				wantStatus: http.StatusForbidden,
+				wantBody:   "only requester or active owner/participant roles can renew",
 			},
 		}
 
@@ -5528,6 +5537,9 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				router.ServeHTTP(w, req)
 
 				assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+				if tt.wantBody != "" {
+					assert.Contains(t, w.Body.String(), tt.wantBody)
+				}
 
 				var updatedSession breakglassv1alpha1.DebugSession
 				err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
