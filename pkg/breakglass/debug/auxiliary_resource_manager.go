@@ -73,8 +73,8 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, nil)
 }
 
-// DeployAuxiliaryResourcesForCreateBefore deploys enabled auxiliary resources for one createBefore phase.
-func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForCreateBefore(
+// DeployAuxiliaryResourcesForPhase deploys enabled auxiliary resources for one createBefore phase.
+func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForPhase(
 	ctx context.Context,
 	session *breakglassv1alpha1.DebugSession,
 	template *breakglassv1alpha1.DebugSessionTemplateSpec,

@@ -368,7 +368,7 @@ func TestDeployAuxiliaryResources_AllResourcesDisabledClearsStaleStatuses(t *tes
 	assert.Empty(t, session.Status.AuxiliaryResourceStatuses)
 }
 
-func TestDeployAuxiliaryResourcesForCreateBeforeHonorsPhase(t *testing.T) {
+func TestDeployAuxiliaryResourcesForPhaseHonorsCreateBefore(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
@@ -400,12 +400,12 @@ func TestDeployAuxiliaryResourcesForCreateBeforeHonorsPhase(t *testing.T) {
 		},
 	}
 
-	beforeStatuses, err := mgr.DeployAuxiliaryResourcesForCreateBefore(context.Background(), session, template, nil, fakeClient, "debug-ns", true)
+	beforeStatuses, err := mgr.DeployAuxiliaryResourcesForPhase(context.Background(), session, template, nil, fakeClient, "debug-ns", true)
 	require.NoError(t, err)
 	require.Len(t, beforeStatuses, 1)
 	assert.Equal(t, "before-config", beforeStatuses[0].Name)
 
-	afterStatuses, err := mgr.DeployAuxiliaryResourcesForCreateBefore(context.Background(), session, template, nil, fakeClient, "debug-ns", false)
+	afterStatuses, err := mgr.DeployAuxiliaryResourcesForPhase(context.Background(), session, template, nil, fakeClient, "debug-ns", false)
 	require.NoError(t, err)
 	require.Len(t, afterStatuses, 1)
 	assert.Equal(t, "after-config", afterStatuses[0].Name)

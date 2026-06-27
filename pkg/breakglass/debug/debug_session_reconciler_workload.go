@@ -202,7 +202,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 
 	var auxStatuses []breakglassv1alpha1.AuxiliaryResourceStatus
 	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
-		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForCreateBefore(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
 		auxStatuses = append(auxStatuses, beforeStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
@@ -233,7 +233,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		"kind", gvk.Kind)
 
 	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
-		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForCreateBefore(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
 		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
