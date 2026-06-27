@@ -117,6 +117,17 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 		assert.True(t, authorized, "Configured approver email should authorize even when username is a subject")
 	})
 
+	t.Run("explicitly allowed email can approve when username only differs by case", func(t *testing.T) {
+		authorized := controller.isUserIdentityAuthorizedToApprove(
+			ctx,
+			session,
+			"Admin@Example.com",
+			"admin@example.com",
+			nil, // No groups
+		)
+		assert.True(t, authorized, "Configured approver email should be checked when username casing differs")
+	})
+
 	t.Run("unauthorized user cannot approve", func(t *testing.T) {
 		authorized := controller.isUserAuthorizedToApprove(
 			ctx,

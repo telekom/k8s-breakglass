@@ -611,7 +611,7 @@ func (c *DebugSessionAPIController) checkApproverIdentityAuthorization(approvers
 	if c.checkApproverAuthorization(approvers, username, userGroupsInterface) {
 		return true
 	}
-	if email == "" || strings.EqualFold(strings.TrimSpace(username), strings.TrimSpace(email)) {
+	if email == "" || strings.TrimSpace(username) == strings.TrimSpace(email) {
 		return false
 	}
 	return c.checkApproverAuthorization(approvers, email, userGroupsInterface)
