@@ -1327,7 +1327,7 @@ options are omitted.
 | `clusters[].approval` | object | Approval requirements |
 | `clusters[].approval.required` | boolean | Whether the session requires approval |
 | `clusters[].approval.approverGroups` | string[] | Groups that can approve sessions |
-| `clusters[].approval.approverUsers` | string[] | Individual users that can approve sessions |
+| `clusters[].approval.approverUsers` | string[] | Individual users that can approve sessions; matched against username and email claims |
 | `clusters[].approval.canAutoApprove` | boolean | Whether the requesting user qualifies for auto-approval |
 | `clusters[].status` | object | Cluster health status |
 

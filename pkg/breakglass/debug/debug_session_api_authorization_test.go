@@ -832,6 +832,96 @@ func TestIsUserAuthorizedToApprove_GroupsAsInterfaceSlice(t *testing.T) {
 	assert.True(t, result, "should handle []interface{} groups")
 }
 
+func TestIsIdentityAuthorizedToApprove_EmailListedApprover(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "email-approver-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:       "test",
+			RequestedBy:       "requester-subject",
+			RequestedByEmail:  "requester@example.com",
+			TargetNamespace:   "default",
+			RequestedDuration: "30m",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+		username: "opaque-approver-subject",
+		email:    "approver@example.com",
+	})
+	assert.True(t, result, "email-listed approver should be authorized when username differs")
+}
+
+func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmail(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "self-email-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:       "test",
+			RequestedBy:       "requester-subject",
+			RequestedByEmail:  "requester@example.com",
+			TargetNamespace:   "default",
+			RequestedDuration: "30m",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"requester@example.com"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+		username: "opaque-requester-subject",
+		email:    "requester@example.com",
+	})
+	assert.False(t, result, "requester should not self-approve through email-listed approver match")
+}
+
+func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmailCaseInsensitive(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "self-email-case-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:       "test",
+			RequestedBy:       "requester-subject",
+			RequestedByEmail:  " requester@example.com ",
+			TargetNamespace:   "default",
+			RequestedDuration: "30m",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"REQUESTER@EXAMPLE.COM"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+		username: "opaque-requester-subject",
+		email:    "Requester@Example.com",
+	})
+	assert.False(t, result, "requester email self-approval should be blocked despite casing or surrounding whitespace")
+}
+
 func TestIsUserAuthorizedToApprove_EmptyApproversAllowsAll(t *testing.T) {
 	// When approvers has empty users and groups, allow any authenticated user
 
