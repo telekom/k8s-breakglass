@@ -63,6 +63,17 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
+	if err := register("BreakglassSession", "spec.clusterConfigRef", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*breakglassv1alpha1.BreakglassSession); ok && bs.Spec.ClusterConfigRef != "" {
+				return []string{bs.Spec.ClusterConfigRef}
+			}
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
 	if err := register("BreakglassSession", "spec.user", func() error {
 		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
 			if bs, ok := rawObj.(*breakglassv1alpha1.BreakglassSession); ok && bs.Spec.User != "" {

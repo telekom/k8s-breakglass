@@ -30,6 +30,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,7 +42,7 @@ const (
 	// to ensure proper cleanup of associated sessions when the cluster is deleted.
 	ClusterConfigFinalizer = "breakglass.t-caas.telekom.com/cluster-cleanup"
 
-	clusterConfigDefaultRetainFor = 30 * 24 * time.Hour
+	clusterConfigDefaultRetainFor = 720 * time.Hour
 )
 
 // ClusterConfigReconciler reconciles ClusterConfig objects.
@@ -170,23 +171,16 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // terminateBreakglassSessionsForCluster finds all BreakglassSessions targeting the given cluster
 // and terminates them by setting their state to Expired.
 func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx context.Context, clusterName string, log *zap.SugaredLogger) error {
-	// List all BreakglassSessions. ClusterConfig deletion is rare and full listing also
-	// catches direct CRD-created sessions that use spec.clusterConfigRef instead of
-	// the display-oriented spec.cluster value.
-	sessionList := &breakglassv1alpha1.BreakglassSessionList{}
-	if err := r.List(ctx, sessionList); err != nil {
+	sessionList, err := r.listBreakglassSessionsForCluster(ctx, clusterName)
+	if err != nil {
 		return fmt.Errorf("failed to list BreakglassSessions for cluster %s: %w", clusterName, err)
 	}
 
 	now := metav1.Now()
 	terminatedCount := 0
 	var terminateErrs []error
-	for i := range sessionList.Items {
-		session := &sessionList.Items[i]
-		if session.Spec.Cluster != clusterName && session.Spec.ClusterConfigRef != clusterName {
-			continue
-		}
-
+	for i := range sessionList {
+		session := &sessionList[i]
 		// Skip already terminal sessions
 		if session.Status.State == breakglassv1alpha1.SessionStateExpired ||
 			session.Status.State == breakglassv1alpha1.SessionStateIdleExpired ||
@@ -221,6 +215,25 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 	}
 
 	return errors.Join(terminateErrs...)
+}
+
+func (r *ClusterConfigReconciler) listBreakglassSessionsForCluster(ctx context.Context, clusterName string) ([]breakglassv1alpha1.BreakglassSession, error) {
+	sessionsByName := make(map[types.NamespacedName]breakglassv1alpha1.BreakglassSession)
+	for _, field := range []string{"spec.cluster", "spec.clusterConfigRef"} {
+		sessionList := &breakglassv1alpha1.BreakglassSessionList{}
+		if err := r.List(ctx, sessionList, client.MatchingFields{field: clusterName}); err != nil {
+			return nil, fmt.Errorf("list BreakglassSessions by %s: %w", field, err)
+		}
+		for _, session := range sessionList.Items {
+			sessionsByName[types.NamespacedName{Namespace: session.Namespace, Name: session.Name}] = session
+		}
+	}
+
+	sessions := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessionsByName))
+	for _, session := range sessionsByName {
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
 }
 
 // terminateDebugSessionsForCluster finds all DebugSessions targeting the given cluster

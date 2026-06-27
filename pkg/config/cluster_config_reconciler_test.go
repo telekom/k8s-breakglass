@@ -54,6 +54,12 @@ func newTestClusterConfigFakeClient(scheme *runtime.Scheme, objs ...client.Objec
 			}
 			return nil
 		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
 		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
 			if s, ok := obj.(*breakglassv1alpha1.DebugSession); ok && s.Spec.Cluster != "" {
 				return []string{s.Spec.Cluster}
@@ -345,6 +351,90 @@ func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T
 	var updated breakglassv1alpha1.ClusterConfig
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
 	assert.True(t, apierrors.IsNotFound(err), "ClusterConfig should be deleted after finalizer removal")
+}
+
+func TestClusterConfigReconciler_BreakglassCleanupUsesIndexedLists(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+	var breakglassSessionSelectors []string
+
+	byCluster := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "by-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	byRef := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "by-ref", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:          "display-cluster",
+			ClusterConfigRef: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+	byBoth := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "by-both", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:          "test-cluster",
+			ClusterConfigRef: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(byCluster, byRef, byBoth).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, innerClient client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); ok {
+					listOptions := &client.ListOptions{}
+					for _, opt := range opts {
+						opt.ApplyToList(listOptions)
+					}
+					if listOptions.FieldSelector == nil {
+						return errors.New("BreakglassSession cleanup used an unfiltered list")
+					}
+					breakglassSessionSelectors = append(breakglassSessionSelectors, listOptions.FieldSelector.String())
+				}
+				return innerClient.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &ClusterConfigReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Log:    zap.NewNop().Sugar(),
+	}
+
+	require.NoError(t, r.terminateBreakglassSessionsForCluster(ctx, "test-cluster", zap.NewNop().Sugar()))
+	assert.ElementsMatch(t, []string{"spec.cluster=test-cluster", "spec.clusterConfigRef=test-cluster"}, breakglassSessionSelectors)
+
+	for _, name := range []string{"by-cluster", "by-ref", "by-both"} {
+		var session breakglassv1alpha1.BreakglassSession
+		require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, &session))
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, session.Status.State, name)
+	}
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
@@ -824,6 +914,18 @@ func TestClusterConfigReconciler_BreakglassStatusPatchFailureBlocksDeletion(t *t
 		WithScheme(scheme).
 		WithObjects(clusterConfig, failingSession, okSession).
 		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
 		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
 			if s, ok := obj.(*breakglassv1alpha1.DebugSession); ok && s.Spec.Cluster != "" {
 				return []string{s.Spec.Cluster}
@@ -888,6 +990,18 @@ func TestClusterConfigReconciler_DebugStatusPatchFailureBlocksDeletion(t *testin
 		WithScheme(scheme).
 		WithObjects(clusterConfig, failingSession, okSession).
 		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
 		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
 			if s, ok := obj.(*breakglassv1alpha1.DebugSession); ok && s.Spec.Cluster != "" {
 				return []string{s.Spec.Cluster}
@@ -950,6 +1064,12 @@ func TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion(t *tes
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
 			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
 				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
 			}
 			return nil
 		}).
