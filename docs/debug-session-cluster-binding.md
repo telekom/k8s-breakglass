@@ -377,6 +377,11 @@ status:
       message: "Binding ready"
 ```
 
+The controller refreshes this status when the binding changes and when matching
+`DebugSessionTemplate` or `ClusterConfig` resources change. Template readiness,
+cluster readiness, and selector label changes are reflected in
+`resolvedTemplates`, `resolvedClusters`, and the binding readiness conditions.
+
 ## Use Cases
 
 ### Multi-Tenant Cluster Access

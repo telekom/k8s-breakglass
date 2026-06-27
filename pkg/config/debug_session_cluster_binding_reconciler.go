@@ -24,10 +24,13 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -36,6 +39,11 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/clusterconfiglookup"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+)
+
+const (
+	debugBindingTemplateRefIndex = "spec.templateRef.name"
+	debugBindingClustersIndex    = "spec.clusters"
 )
 
 // DebugSessionClusterBindingReconciler watches DebugSessionClusterBinding CRs and validates
@@ -422,6 +430,126 @@ func (r *DebugSessionClusterBindingReconciler) getClusterConfigByName(ctx contex
 	return nil, clusterconfiglookup.NotFound(name)
 }
 
+func addClusterBindingRequest(requests map[types.NamespacedName]reconcile.Request, binding *breakglassv1alpha1.DebugSessionClusterBinding) {
+	if binding == nil {
+		return
+	}
+	key := types.NamespacedName{
+		Namespace: binding.Namespace,
+		Name:      binding.Name,
+	}
+	requests[key] = reconcile.Request{NamespacedName: key}
+}
+
+func requestsFromClusterBindingMap(requests map[types.NamespacedName]reconcile.Request) []reconcile.Request {
+	if len(requests) == 0 {
+		return nil
+	}
+	result := make([]reconcile.Request, 0, len(requests))
+	for _, req := range requests {
+		result = append(result, req)
+	}
+	return result
+}
+
+func (r *DebugSessionClusterBindingReconciler) bindingsForTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+	template, ok := obj.(*breakglassv1alpha1.DebugSessionTemplate)
+	if !ok || template == nil || template.Name == "" {
+		return nil
+	}
+
+	requests := make(map[types.NamespacedName]reconcile.Request)
+
+	exactBindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
+	if err := r.client.List(ctx, exactBindings, client.MatchingFields{debugBindingTemplateRefIndex: template.Name}); err != nil {
+		r.logger.Warnw("Failed to list DebugSessionClusterBindings by template reference",
+			"template", template.Name,
+			"error", err)
+	} else {
+		for i := range exactBindings.Items {
+			addClusterBindingRequest(requests, &exactBindings.Items[i])
+		}
+	}
+
+	selectorBindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
+	if err := r.client.List(ctx, selectorBindings); err != nil {
+		r.logger.Warnw("Failed to list DebugSessionClusterBindings for template selector mapping",
+			"template", template.Name,
+			"error", err)
+		return requestsFromClusterBindingMap(requests)
+	}
+
+	templateLabels := labels.Set(template.Labels)
+	for i := range selectorBindings.Items {
+		binding := &selectorBindings.Items[i]
+		if binding.Spec.TemplateSelector == nil {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
+		if err != nil {
+			r.logger.Warnw("Skipping binding with invalid template selector during watch mapping",
+				"binding", binding.Name,
+				"namespace", binding.Namespace,
+				"error", err)
+			continue
+		}
+		if selector.Matches(templateLabels) {
+			addClusterBindingRequest(requests, binding)
+		}
+	}
+
+	return requestsFromClusterBindingMap(requests)
+}
+
+func (r *DebugSessionClusterBindingReconciler) bindingsForClusterConfig(ctx context.Context, obj client.Object) []reconcile.Request {
+	cluster, ok := obj.(*breakglassv1alpha1.ClusterConfig)
+	if !ok || cluster == nil || cluster.Name == "" {
+		return nil
+	}
+
+	requests := make(map[types.NamespacedName]reconcile.Request)
+
+	exactBindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
+	if err := r.client.List(ctx, exactBindings, client.MatchingFields{debugBindingClustersIndex: cluster.Name}); err != nil {
+		r.logger.Warnw("Failed to list DebugSessionClusterBindings by cluster reference",
+			"cluster", cluster.Name,
+			"error", err)
+	} else {
+		for i := range exactBindings.Items {
+			addClusterBindingRequest(requests, &exactBindings.Items[i])
+		}
+	}
+
+	selectorBindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
+	if err := r.client.List(ctx, selectorBindings); err != nil {
+		r.logger.Warnw("Failed to list DebugSessionClusterBindings for cluster selector mapping",
+			"cluster", cluster.Name,
+			"error", err)
+		return requestsFromClusterBindingMap(requests)
+	}
+
+	clusterLabels := labels.Set(cluster.Labels)
+	for i := range selectorBindings.Items {
+		binding := &selectorBindings.Items[i]
+		if binding.Spec.ClusterSelector == nil {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+		if err != nil {
+			r.logger.Warnw("Skipping binding with invalid cluster selector during watch mapping",
+				"binding", binding.Name,
+				"namespace", binding.Namespace,
+				"error", err)
+			continue
+		}
+		if selector.Matches(clusterLabels) {
+			addClusterBindingRequest(requests, binding)
+		}
+	}
+
+	return requestsFromClusterBindingMap(requests)
+}
+
 // SetupWithManager registers this reconciler with the controller-runtime manager.
 func (r *DebugSessionClusterBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Predicate to filter events - reconcile on spec changes
@@ -437,8 +565,9 @@ func (r *DebugSessionClusterBindingReconciler) SetupWithManager(mgr ctrl.Manager
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&breakglassv1alpha1.DebugSessionClusterBinding{}).
-		WithEventFilter(specChangePredicate).
+		For(&breakglassv1alpha1.DebugSessionClusterBinding{}, builder.WithPredicates(specChangePredicate)).
+		Watches(&breakglassv1alpha1.DebugSessionTemplate{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForTemplate)).
+		Watches(&breakglassv1alpha1.ClusterConfig{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForClusterConfig)).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 1,
 		}).

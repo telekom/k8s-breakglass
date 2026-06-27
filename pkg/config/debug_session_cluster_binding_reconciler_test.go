@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -42,6 +43,30 @@ func newTestClusterBindingReconciler() (*DebugSessionClusterBindingReconciler, *
 	return &DebugSessionClusterBindingReconciler{
 		logger: logger,
 	}, scheme
+}
+
+func clusterBindingRequestNames(requests []reconcile.Request) []types.NamespacedName {
+	names := make([]types.NamespacedName, 0, len(requests))
+	for _, req := range requests {
+		names = append(names, req.NamespacedName)
+	}
+	return names
+}
+
+func indexClusterBindingTemplateRef(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || binding.Spec.TemplateRef == nil || binding.Spec.TemplateRef.Name == "" {
+		return nil
+	}
+	return []string{binding.Spec.TemplateRef.Name}
+}
+
+func indexClusterBindingClusters(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || len(binding.Spec.Clusters) == 0 {
+		return nil
+	}
+	return binding.Spec.Clusters
 }
 
 func TestDebugSessionClusterBindingReconciler_Reconcile_NotFound(t *testing.T) {
@@ -631,4 +656,98 @@ func TestDebugSessionClusterBindingReconciler_ResolveClusters_DeduplicatesExplic
 	require.Len(t, resolved, 1)
 	assert.Equal(t, "shared-cluster", resolved[0].Name)
 	assert.Equal(t, "explicit", resolved[0].MatchedBy) // Explicit takes precedence
+}
+
+func TestDebugSessionClusterBindingReconciler_BindingsForTemplate(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "template-a",
+			Labels: map[string]string{
+				"tier": "standard",
+			},
+		},
+	}
+	exactBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "exact-binding", Namespace: "team-a"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-a"},
+		},
+	}
+	selectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "selector-binding", Namespace: "team-b"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"tier": "standard"},
+			},
+		},
+	}
+	otherBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-binding", Namespace: "team-c"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"tier": "platform"},
+			},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(template, exactBinding, selectorBinding, otherBinding).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingTemplateRefIndex, indexClusterBindingTemplateRef).
+		Build()
+
+	requests := r.bindingsForTemplate(context.Background(), template)
+
+	assert.ElementsMatch(t, []types.NamespacedName{
+		{Namespace: "team-a", Name: "exact-binding"},
+		{Namespace: "team-b", Name: "selector-binding"},
+	}, clusterBindingRequestNames(requests))
+}
+
+func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+	cluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster-a",
+			Labels: map[string]string{
+				"env": "prod",
+			},
+		},
+	}
+	exactBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "exact-binding", Namespace: "team-a"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Clusters: []string{"cluster-a"},
+		},
+	}
+	selectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "selector-binding", Namespace: "team-b"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "prod"},
+			},
+		},
+	}
+	otherBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-binding", Namespace: "team-c"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "stage"},
+			},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, exactBinding, selectorBinding, otherBinding).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingClustersIndex, indexClusterBindingClusters).
+		Build()
+
+	requests := r.bindingsForClusterConfig(context.Background(), cluster)
+
+	assert.ElementsMatch(t, []types.NamespacedName{
+		{Namespace: "team-a", Name: "exact-binding"},
+		{Namespace: "team-b", Name: "selector-binding"},
+	}, clusterBindingRequestNames(requests))
 }

@@ -15,7 +15,7 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 15
+const ExpectedIndexCount = 17
 
 // registeredIndexes tracks which indexes have been successfully registered.
 // Uses sync.Map because RegisterCommonFieldIndexes may be called concurrently
@@ -192,6 +192,30 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 				return []string{be.Name}
 			}
 			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("DebugSessionClusterBinding", "spec.templateRef.name", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.templateRef.name", func(rawObj client.Object) []string {
+			binding, ok := rawObj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+			if !ok || binding == nil || binding.Spec.TemplateRef == nil || binding.Spec.TemplateRef.Name == "" {
+				return nil
+			}
+			return []string{binding.Spec.TemplateRef.Name}
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("DebugSessionClusterBinding", "spec.clusters", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.clusters", func(rawObj client.Object) []string {
+			binding, ok := rawObj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+			if !ok || binding == nil || len(binding.Spec.Clusters) == 0 {
+				return nil
+			}
+			return binding.Spec.Clusters
 		})
 	}); err != nil {
 		return err
