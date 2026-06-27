@@ -545,10 +545,10 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NotNil(t, updated.Status.AllowedPodOperations)
-		assert.False(t, *updated.Status.AllowedPodOperations.Exec)
-		assert.False(t, *updated.Status.AllowedPodOperations.Attach)
-		assert.True(t, *updated.Status.AllowedPodOperations.Logs)
-		assert.False(t, *updated.Status.AllowedPodOperations.PortForward)
+		assert.Equal(t, &execAllowed, updated.Status.AllowedPodOperations.Exec)
+		assert.Equal(t, &attachAllowed, updated.Status.AllowedPodOperations.Attach)
+		assert.Equal(t, &logsAllowed, updated.Status.AllowedPodOperations.Logs)
+		assert.Equal(t, &portForwardAllowed, updated.Status.AllowedPodOperations.PortForward)
 
 		require.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
 		auxiliaryStatus := updated.Status.AuxiliaryResourceStatuses[0]
@@ -684,10 +684,10 @@ func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testin
 	require.NotNil(t, result)
 
 	require.NotNil(t, result.AllowedPodOperations)
-	assert.False(t, *result.AllowedPodOperations.Exec)
-	assert.False(t, *result.AllowedPodOperations.Attach)
-	assert.True(t, *result.AllowedPodOperations.Logs)
-	assert.False(t, *result.AllowedPodOperations.PortForward)
+	assert.Equal(t, &execAllowed, result.AllowedPodOperations.Exec)
+	assert.Equal(t, &attachAllowed, result.AllowedPodOperations.Attach)
+	assert.Equal(t, &logsAllowed, result.AllowedPodOperations.Logs)
+	assert.Equal(t, &portForwardAllowed, result.AllowedPodOperations.PortForward)
 
 	require.Len(t, result.AuxiliaryResourceStatuses, 1)
 	auxiliaryStatus := result.AuxiliaryResourceStatuses[0]
