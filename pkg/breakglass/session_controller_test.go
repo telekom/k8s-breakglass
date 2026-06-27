@@ -4900,6 +4900,144 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 	}
 }
 
+func TestClusterConfig_BlockSelfApproval_CrossNamespacePreventsSelfApproval(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	pending := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-self-approve"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "platform-cluster",
+			User:         "self@example.com",
+			GrantedGroup: "g-cross-ns",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+	}
+
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-escalation", Namespace: "tenant-a"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"platform-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "g-cross-ns",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"self@example.com"}},
+		},
+	}
+
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "platform-cluster", Namespace: "platform"},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{BlockSelfApproval: true},
+	}
+
+	cli := builder.WithObjects(pending, esc, cc).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", "self@example.com")
+		c.Set("username", "self")
+		c.Next()
+	}
+
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	var sessions []breakglassv1alpha1.BreakglassSession
+	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
+		t.Fatalf("failed decode response: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected no sessions visible because cross-namespace ClusterConfig blocks self-approval, got: %#v", sessions)
+	}
+}
+
+func TestClusterConfig_AllowedApproverDomains_CrossNamespaceRestrictsDomain(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	pending := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-domain-approve"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "domain-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "g-cross-domain",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+	}
+
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-domain-escalation", Namespace: "tenant-a"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"domain-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "g-cross-domain",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@external.example"}},
+		},
+	}
+
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "domain-cluster", Namespace: "platform"},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"internal.example"}},
+	}
+
+	cli := builder.WithObjects(pending, esc, cc).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", "approver@external.example")
+		c.Set("username", "approver")
+		c.Next()
+	}
+
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	var sessions []breakglassv1alpha1.BreakglassSession
+	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
+		t.Fatalf("failed decode response: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected no sessions visible because cross-namespace ClusterConfig restricts approver domains, got: %#v", sessions)
+	}
+}
+
 // Exhaustive permutations combining cluster/user/group with mine and state filters.
 func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)

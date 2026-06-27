@@ -47,6 +47,14 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
 	var baseAllowedApproverDomains []string
+	if wc.clusterConfigManager != nil {
+		if cc, cerr := wc.clusterConfigManager.GetClusterConfigByName(ctx, session.Spec.Cluster); cerr == nil && cc != nil {
+			baseBlockSelfApproval = cc.Spec.BlockSelfApproval
+			baseAllowedApproverDomains = cc.Spec.AllowedApproverDomains
+		} else if cerr != nil {
+			reqLog.Debugw("No unique ClusterConfig found for approval policy, continuing with defaults", "cluster", session.Spec.Cluster, "error", cerr)
+		}
+	}
 
 	// Gather approver groups with caching
 	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, email)
@@ -108,14 +116,6 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		// Determine effective settings for this escalation
 		effectiveBlockSelf := baseBlockSelfApproval
 		effectiveAllowedDomains := baseAllowedApproverDomains
-		if wc.clusterConfigManager != nil {
-			if cc, cerr := wc.clusterConfigManager.GetClusterConfigInNamespace(c.Request.Context(), esc.Namespace, session.Spec.Cluster); cerr == nil && cc != nil {
-				effectiveBlockSelf = cc.Spec.BlockSelfApproval
-				effectiveAllowedDomains = cc.Spec.AllowedApproverDomains
-			} else if cerr != nil {
-				reqLog.Debugw("No ClusterConfig found in escalation namespace, continuing with defaults", "cluster", session.Spec.Cluster, "namespace", esc.Namespace, "error", cerr)
-			}
-		}
 		if esc.Spec.BlockSelfApproval != nil {
 			effectiveBlockSelf = *esc.Spec.BlockSelfApproval
 		}
