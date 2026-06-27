@@ -39,6 +39,10 @@ Approval and rejection REST requests may omit the optional JSON body. When a bod
 | `IdleExpired` | Session idle timeout exceeded | ❌ No | No activity within configured `idleTimeout` | `lastActivity` (Terminal) |
 | `ApprovalTimeout` | Pending session timed out awaiting approval | ❌ No | Pending session exceeded timeout threshold | `timeoutAt` (Terminal) |
 
+`WaitingForScheduledTime` sessions are not valid for access until their scheduled
+start is reached, but they still reserve a request slot. Duplicate request checks
+and session limits count them until they activate or expire.
+
 ### Terminal States
 
 Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**, **IdleExpired**, **ApprovalTimeout**), it can NEVER return to an active state:

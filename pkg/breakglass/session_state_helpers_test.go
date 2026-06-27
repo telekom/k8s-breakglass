@@ -423,6 +423,80 @@ func TestIsSessionActive(t *testing.T) {
 	}
 }
 
+func TestIsSessionOccupyingSlot(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name      string
+		state     breakglassv1alpha1.BreakglassSessionState
+		expiresAt *time.Time
+		timeoutAt *time.Time
+		expected  bool
+	}{
+		{
+			name:     "pending session occupies slot",
+			state:    breakglassv1alpha1.SessionStatePending,
+			expected: true,
+		},
+		{
+			name:      "approved session with valid expiry occupies slot",
+			state:     breakglassv1alpha1.SessionStateApproved,
+			expiresAt: func() *time.Time { t := now.Add(time.Hour); return &t }(),
+			expected:  true,
+		},
+		{
+			name:      "waiting scheduled session with future expiry occupies slot",
+			state:     breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			expiresAt: func() *time.Time { t := now.Add(time.Hour); return &t }(),
+			expected:  true,
+		},
+		{
+			name:      "waiting scheduled session with past expiry no longer occupies slot",
+			state:     breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			expiresAt: func() *time.Time { t := now.Add(-time.Hour); return &t }(),
+			expected:  false,
+		},
+		{
+			name:      "pending session past timeout no longer occupies slot",
+			state:     breakglassv1alpha1.SessionStatePending,
+			timeoutAt: func() *time.Time { t := now.Add(-time.Hour); return &t }(),
+			expected:  false,
+		},
+		{
+			name:     "rejected session does not occupy slot",
+			state:    breakglassv1alpha1.SessionStateRejected,
+			expected: false,
+		},
+		{
+			name:     "withdrawn session does not occupy slot",
+			state:    breakglassv1alpha1.SessionStateWithdrawn,
+			expected: false,
+		},
+		{
+			name:     "expired session does not occupy slot",
+			state:    breakglassv1alpha1.SessionStateExpired,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: tt.state,
+				},
+			}
+			if tt.expiresAt != nil {
+				session.Status.ExpiresAt = metav1.NewTime(*tt.expiresAt)
+			}
+			if tt.timeoutAt != nil {
+				session.Status.TimeoutAt = metav1.NewTime(*tt.timeoutAt)
+			}
+			assert.Equal(t, tt.expected, IsSessionOccupyingSlot(session))
+		})
+	}
+}
+
 // TestDropK8sInternalFieldsSession tests the dropK8sInternalFieldsSession function
 func TestDropK8sInternalFieldsSession(t *testing.T) {
 	t.Run("nil session does not panic", func(t *testing.T) {
