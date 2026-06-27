@@ -339,7 +339,8 @@ func (r *EscalationReconciler) GetCachedEscalationIDPMapping() map[string][]stri
 
 // SetupWithManager registers this reconciler with the controller-runtime manager.
 func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Predicate to filter events - only reconcile on spec changes, not status updates
+	// Predicate filters status-only updates while still reconciling spec generation
+	// changes from apply tools and deletion timestamp transitions.
 	specChangePredicate := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			oldEsc, ok := e.ObjectOld.(*breakglassv1alpha1.BreakglassEscalation)
