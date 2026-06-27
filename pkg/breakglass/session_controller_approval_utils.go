@@ -218,7 +218,10 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 
 func sessionHasEscalationOwner(session breakglassv1alpha1.BreakglassSession) bool {
 	for _, ownerRef := range session.OwnerReferences {
-		if ownerRef.APIVersion == breakglassv1alpha1.GroupVersion.String() && ownerRef.Kind == "BreakglassEscalation" {
+		if ownerRef.APIVersion == breakglassv1alpha1.GroupVersion.String() &&
+			ownerRef.Kind == "BreakglassEscalation" &&
+			ownerRef.Controller != nil &&
+			*ownerRef.Controller {
 			return true
 		}
 	}
@@ -229,7 +232,9 @@ func sessionOwnedByEscalation(session breakglassv1alpha1.BreakglassSession, esc 
 	for _, ownerRef := range session.OwnerReferences {
 		if ownerRef.APIVersion == breakglassv1alpha1.GroupVersion.String() &&
 			ownerRef.Kind == "BreakglassEscalation" &&
-			ownerRef.Name == esc.Name {
+			ownerRef.Name == esc.Name &&
+			ownerRef.Controller != nil &&
+			*ownerRef.Controller {
 			return ownerRef.UID != "" && esc.UID != "" && ownerRef.UID == esc.UID
 		}
 	}

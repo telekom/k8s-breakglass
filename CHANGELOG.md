@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **BreakglassSession approval safety**: Classic session approval now rejects pending sessions whose approval timeout has already elapsed and scopes approval authorization to the `BreakglassEscalation` that owns the session when an owner reference is present.
+- **BreakglassSession approval safety**: Classic session approval now rejects pending sessions whose approval timeout has already elapsed, scopes approval authorization to the `BreakglassEscalation` that owns the session when an owner reference is present, and checks approval/rejection authorization before body validation or state-specific errors so unrelated callers cannot infer session details.
 - **BreakglassSession approval body validation**: Classic session approve and reject endpoints now reject malformed optional approver bodies, unknown JSON fields, and trailing JSON values instead of approving or rejecting with silently discarded payloads.
 - **DebugSession API request body validation**: Debug session create, approve, and reject endpoints now reject unknown JSON fields, trailing JSON values, and malformed optional approval bodies instead of silently ignoring client typos or invalid payloads.
 - **DebugSession cluster authorization precedence**: Debug session creation now checks template or binding access before returning ClusterConfig readiness, missing-cluster, or tenant-alias errors, preventing unauthorized callers from probing cluster state through error messages.

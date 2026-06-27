@@ -309,6 +309,10 @@ referenced by the session's `metadata.ownerReferences` controller reference,
 when present. For legacy sessions without that owner reference, approval falls
 back to the existing cluster/group escalation lookup. Sibling escalations for the
 same cluster and group are not considered when an owner reference is present.
+Authorization is checked before request-body validation and state-specific
+responses, so unrelated callers receive only authorization errors instead of
+learning whether the session is terminal, timed out, or has malformed request
+details.
 
 **Request validation:** `reason` is required when the session's stored
 `approvalReasonConfig.mandatory` is `true`.
@@ -374,6 +378,8 @@ Authorization: Bearer <token>
 **Status Code:** `200 OK`
 
 **Authorization:** Approvers can reject any pending request. Session requesters can also reject their own pending requests.
+Approver authorization is checked before request-body validation and
+state-specific responses; unrelated callers receive only authorization errors.
 
 **Request validation:** `reason` is required when the session's stored
 `approvalReasonConfig.mandatory` is `true`.

@@ -40,6 +40,43 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		return
 	}
 
+	// Authorization must happen before body validation and state-specific
+	// responses so unauthorized callers cannot learn session details from
+	// terminal-state or malformed-body errors.
+	allowOwnerReject := false
+	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+		if requesterEmail, err := wc.identityProvider.GetEmail(c); err == nil {
+			if requesterEmail == bs.Spec.User && IsSessionPendingApproval(bs) {
+				allowOwnerReject = true
+			}
+		}
+	}
+
+	if !allowOwnerReject {
+		authResult := wc.checkApprovalAuthorization(c, bs)
+		if !authResult.Allowed {
+			// Use appropriate HTTP status code based on denial reason:
+			// - 401 for authentication failures (can't identify user)
+			// - 403 for authorization failures (user identified but not allowed)
+			switch authResult.Reason {
+			case ApprovalDenialUnauthenticated:
+				apiresponses.RespondUnauthorizedWithMessage(c, authResult.Message)
+			case ApprovalDenialSelfApprovalBlocked:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialDomainNotAllowed:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialNotAnApprover:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialNoMatchingEscalation:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			default:
+				// Fallback for unknown reasons
+				apiresponses.RespondForbidden(c, "Access denied")
+			}
+			return
+		}
+	}
+
 	// Attempt to decode optional approver reason from the request body (for approve/reject)
 	var approverPayload struct {
 		Reason string `json:"reason,omitempty"`
@@ -108,43 +145,6 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 				Code:    "BAD_REQUEST",
 				Session: bs,
 			})
-			return
-		}
-	}
-
-	// Authorization: determine whether the caller is allowed to perform the action.
-	// Allow the session requester to reject their own pending session. For reject actions only,
-	// if the caller is the original requester and the session is still pending, bypass the approver check.
-	allowOwnerReject := false
-	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
-		if requesterEmail, err := wc.identityProvider.GetEmail(c); err == nil {
-			if requesterEmail == bs.Spec.User && IsSessionPendingApproval(bs) {
-				allowOwnerReject = true
-			}
-		}
-	}
-
-	if !allowOwnerReject {
-		authResult := wc.checkApprovalAuthorization(c, bs)
-		if !authResult.Allowed {
-			// Use appropriate HTTP status code based on denial reason:
-			// - 401 for authentication failures (can't identify user)
-			// - 403 for authorization failures (user identified but not allowed)
-			switch authResult.Reason {
-			case ApprovalDenialUnauthenticated:
-				apiresponses.RespondUnauthorizedWithMessage(c, authResult.Message)
-			case ApprovalDenialSelfApprovalBlocked:
-				apiresponses.RespondForbidden(c, authResult.Message)
-			case ApprovalDenialDomainNotAllowed:
-				apiresponses.RespondForbidden(c, authResult.Message)
-			case ApprovalDenialNotAnApprover:
-				apiresponses.RespondForbidden(c, authResult.Message)
-			case ApprovalDenialNoMatchingEscalation:
-				apiresponses.RespondForbidden(c, authResult.Message)
-			default:
-				// Fallback for unknown reasons
-				apiresponses.RespondForbidden(c, "Access denied")
-			}
 			return
 		}
 	}

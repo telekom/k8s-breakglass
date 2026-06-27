@@ -24,7 +24,7 @@ The breakglass controller implements a **state-first validation architecture** w
 
 Admission webhooks enforce valid state transitions and reject invalid updates (for example, preventing terminal states from reverting to active states).
 
-Approval and rejection REST requests may omit the optional JSON body. When a body is supplied, it must be a single valid JSON object using supported fields such as `reason`; malformed JSON, trailing JSON values, and unknown fields are rejected before any session state transition is applied.
+Approval and rejection REST requests may omit the optional JSON body. When a body is supplied, it must be a single valid JSON object using supported fields such as `reason`; malformed JSON, trailing JSON values, and unknown fields are rejected before any session state transition is applied. Approver authorization is checked before body validation and state-specific errors, so unrelated callers cannot infer session details from approval or rejection error responses.
 
 ### Session States
 
