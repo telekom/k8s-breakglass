@@ -430,6 +430,25 @@ already elapsed. Approvers can still read the stale pending object for context,
 but `canApprove` and `canReject` are false and the response includes a timeout
 state message until cleanup transitions the session to `ApprovalTimeout`.
 
+### Validate Approval Links
+
+```bash
+GET /api/breakglassSessions?token=<session-name>
+Authorization: Bearer <token>
+```
+
+When the token matches a session, the `200 OK` response contains `valid`, `canApprove`, and `alreadyActive`. `valid` is `false` for any terminal session state (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, or `ApprovalTimeout`) and for approved sessions whose `expiresAt` timestamp has passed.
+
+When the token does not match any session, the handler returns `404 Not Found` with:
+
+```json
+{
+  "valid": false
+}
+```
+
+The `canApprove` and `alreadyActive` fields are only present on the `200 OK` response.
+
 ### Approve/Reject Sessions
 
 ```bash

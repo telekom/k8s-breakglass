@@ -10130,3 +10130,76 @@ func TestTokenValidation_ExistingSessionAllowsHistoricalApprover(t *testing.T) {
 	assert.True(t, body.AlreadyActive)
 	assert.False(t, body.CanApprove)
 }
+
+func TestTokenValidation_NonTerminalValidityStates(t *testing.T) {
+	now := time.Now()
+	future := metav1.NewTime(now.Add(time.Hour))
+	past := metav1.NewTime(now.Add(-time.Hour))
+	newSession := func(name string, state breakglassv1alpha1.BreakglassSessionState, expiresAt metav1.Time) client.Object {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "cluster",
+				User:         "requester@example.com",
+				GrantedGroup: "admin",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     state,
+				ExpiresAt: expiresAt,
+			},
+		}
+	}
+	sessions := []client.Object{
+		newSession("no-state-session", "", metav1.Time{}),
+		newSession("pending-session", breakglassv1alpha1.SessionStatePending, metav1.Time{}),
+		newSession("active-session", breakglassv1alpha1.SessionStateApproved, future),
+		newSession("expired-by-time-session", breakglassv1alpha1.SessionStateApproved, past),
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(sessions...).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		c.Set("email", "requester@example.com")
+		c.Set("username", "requester")
+		c.Set("user_id", "requester@example.com")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	tests := []struct {
+		name      string
+		wantValid bool
+	}{
+		{name: "no-state-session", wantValid: false},
+		{name: "pending-session", wantValid: true},
+		{name: "active-session", wantValid: true},
+		{name: "expired-by-time-session", wantValid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?token="+tt.name, nil)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var body struct {
+				Valid bool `json:"valid"`
+			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+			assert.Equal(t, tt.wantValid, body.Valid)
+		})
+	}
+}

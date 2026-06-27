@@ -662,10 +662,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 		canApprove := pendingApproval && approvalMeta.CanApprove
 		alreadyActive := IsSessionAccessActive(ses)
-		valid := true
-		if approvalTimedOut || IsSessionExpired(ses) || IsSessionTerminalState(ses.Status.State) {
-			valid = false
-		}
+		valid := IsSessionValid(ses) && !approvalTimedOut
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
 		return
 	}
