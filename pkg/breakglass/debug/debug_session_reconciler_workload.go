@@ -225,12 +225,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Deploy auxiliary resources if configured
 	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
 		auxStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResources(ctx, ds, &template.Spec, binding, targetClient, targetNs)
+		if len(auxStatuses) > 0 {
+			ds.Status.AuxiliaryResourceStatuses = auxStatuses
+		}
 		if auxErr != nil {
-			log.Warnw("Failed to deploy some auxiliary resources", "error", auxErr)
 			return fmt.Errorf("failed to deploy auxiliary resources: %w", auxErr)
 		}
-		// Add deployed auxiliary resources to status
-		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 	}
 
 	return nil

@@ -96,13 +96,11 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 		statuses = append(statuses, status)
 
 		if err != nil {
-			log.Warnw("Failed to deploy auxiliary resource",
-				"resource", auxRes.Name,
-				"category", auxRes.Category,
-				"error", err)
+			failurePolicy := effectiveAuxiliaryResourceFailurePolicy(auxRes)
+			logAuxiliaryResourceDeployFailure(log, auxRes, failurePolicy, err)
 			deployErrors = append(deployErrors, err)
 
-			if effectiveAuxiliaryResourceFailurePolicy(auxRes) == breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
+			if failurePolicy == breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
 				metrics.AuxiliaryResourceDeployments.WithLabelValues(session.Spec.Cluster, auxRes.Category, "failure").Inc()
 				return statuses, fmt.Errorf("failed to deploy required auxiliary resource %s: %w", auxRes.Name, err)
 			}
@@ -283,6 +281,30 @@ func effectiveAuxiliaryResourceFailurePolicy(auxRes breakglassv1alpha1.Auxiliary
 		return breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail
 	}
 	return auxRes.FailurePolicy
+}
+
+func logAuxiliaryResourceDeployFailure(
+	log *zap.SugaredLogger,
+	auxRes breakglassv1alpha1.AuxiliaryResource,
+	failurePolicy breakglassv1alpha1.AuxiliaryResourceFailurePolicy,
+	err error,
+) {
+	fields := []interface{}{
+		"resource", auxRes.Name,
+		"category", auxRes.Category,
+		"failurePolicy", failurePolicy,
+		"error", err,
+	}
+
+	switch failurePolicy {
+	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn:
+		log.Warnw("Auxiliary resource deployment failed", fields...)
+	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore:
+		log.Debugw("Ignoring auxiliary resource deployment failure", fields...)
+	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail:
+	default:
+		log.Warnw("Auxiliary resource deployment failed with unknown failure policy", fields...)
+	}
 }
 
 // buildRenderContext creates the context used for template rendering.

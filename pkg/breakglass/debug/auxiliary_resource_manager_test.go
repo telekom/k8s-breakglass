@@ -427,6 +427,63 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 	}
 }
 
+func TestDeployAuxiliaryResources_ReturnsPartialStatusesOnRequiredFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+	mgr := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), fakeClient)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster: "prod",
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+			{
+				Name:         "created-config",
+				Category:     "config",
+				CreateBefore: true,
+				TemplateString: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: created-config
+`,
+			},
+			{
+				Name:         "required-fail",
+				Category:     "config",
+				CreateBefore: true,
+			},
+		},
+		AuxiliaryResourceDefaults: map[string]bool{
+			"created-config": true,
+			"required-fail":  true,
+		},
+	}
+
+	statuses, err := mgr.DeployAuxiliaryResources(context.Background(), session, template, nil, fakeClient, "debug-ns")
+
+	require.Error(t, err)
+	require.Len(t, statuses, 2)
+	assert.Equal(t, "created-config", statuses[0].Name)
+	assert.True(t, statuses[0].Created)
+	assert.Equal(t, "ConfigMap", statuses[0].Kind)
+	assert.Equal(t, "created-config", statuses[0].ResourceName)
+	assert.Equal(t, "debug-ns", statuses[0].Namespace)
+	assert.Equal(t, "required-fail", statuses[1].Name)
+	assert.False(t, statuses[1].Created)
+	assert.Contains(t, statuses[1].Error, "no template defined")
+}
+
 func TestCleanupAuxiliaryResources_NoResources(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
