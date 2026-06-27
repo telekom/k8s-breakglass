@@ -16,34 +16,58 @@ import (
 
 var clusterConfigResource = schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}
 
-// SingleByName returns the ClusterConfig with the given metadata.name when that
-// name is globally unique across namespaces. Duplicate names are ambiguous for
-// debug-session cluster binding because the external API uses names as cluster IDs.
-func SingleByName(items []breakglassv1alpha1.ClusterConfig, name string) (*breakglassv1alpha1.ClusterConfig, error) {
-	matching := make([]*breakglassv1alpha1.ClusterConfig, 0, len(items))
-	for i := range items {
-		if items[i].Name == name {
-			matching = append(matching, &items[i])
-		}
-	}
+// NameIndex resolves ClusterConfig metadata.name lookups in O(1) while
+// preserving duplicate-name conflict behavior.
+type NameIndex struct {
+	unique     map[string]*breakglassv1alpha1.ClusterConfig
+	duplicates map[string][]string
+}
 
-	switch len(matching) {
-	case 0:
-		return nil, nil
-	case 1:
-		return matching[0], nil
-	default:
-		namespaces := make([]string, 0, len(matching))
-		for _, clusterConfig := range matching {
-			namespaces = append(namespaces, clusterConfig.Namespace)
+// NewNameIndex builds an index for ClusterConfig metadata.name lookups.
+func NewNameIndex(items []breakglassv1alpha1.ClusterConfig) NameIndex {
+	index := NameIndex{
+		unique:     make(map[string]*breakglassv1alpha1.ClusterConfig, len(items)),
+		duplicates: make(map[string][]string),
+	}
+	for i := range items {
+		item := &items[i]
+		if existing, ok := index.unique[item.Name]; ok {
+			index.duplicates[item.Name] = append(index.duplicates[item.Name], existing.Namespace, item.Namespace)
+			delete(index.unique, item.Name)
+			continue
 		}
-		sort.Strings(namespaces)
+		if namespaces, ok := index.duplicates[item.Name]; ok {
+			index.duplicates[item.Name] = append(namespaces, item.Namespace)
+			continue
+		}
+		index.unique[item.Name] = item
+	}
+	for name := range index.duplicates {
+		sort.Strings(index.duplicates[name])
+	}
+	return index
+}
+
+// Single returns the ClusterConfig with the given metadata.name when that name is globally unique.
+func (i NameIndex) Single(name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	if namespaces, ok := i.duplicates[name]; ok {
 		return nil, apierrors.NewConflict(
 			clusterConfigResource,
 			name,
 			fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ",")),
 		)
 	}
+	if clusterConfig, ok := i.unique[name]; ok {
+		return clusterConfig, nil
+	}
+	return nil, nil
+}
+
+// SingleByName returns the ClusterConfig with the given metadata.name when that
+// name is globally unique across namespaces. Duplicate names are ambiguous for
+// debug-session cluster binding because the external API uses names as cluster IDs.
+func SingleByName(items []breakglassv1alpha1.ClusterConfig, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	return NewNameIndex(items).Single(name)
 }
 
 // SingleByNameOrNotFound returns NotFound when no ClusterConfig has the given metadata.name.

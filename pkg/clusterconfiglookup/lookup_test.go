@@ -42,6 +42,35 @@ func TestSingleByName(t *testing.T) {
 	})
 }
 
+func TestNameIndexSingle(t *testing.T) {
+	items := []breakglassv1alpha1.ClusterConfig{
+		{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "tenant-c"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "unique", Namespace: "tenant-b"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "tenant-a"}},
+	}
+	index := NewNameIndex(items)
+
+	t.Run("returns unique match", func(t *testing.T) {
+		got, err := index.Single("unique")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, "tenant-b", got.Namespace)
+	})
+
+	t.Run("returns nil for missing name", func(t *testing.T) {
+		got, err := index.Single("missing")
+		require.NoError(t, err)
+		require.Nil(t, got)
+	})
+
+	t.Run("returns conflict for duplicate names", func(t *testing.T) {
+		got, err := index.Single("shared")
+		require.Nil(t, got)
+		require.True(t, apierrors.IsConflict(err))
+		require.Contains(t, err.Error(), "tenant-a,tenant-c")
+	})
+}
+
 func TestSingleByNameOrNotFound(t *testing.T) {
 	got, err := SingleByNameOrNotFound(nil, "missing")
 	require.Nil(t, got)
