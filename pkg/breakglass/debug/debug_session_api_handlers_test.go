@@ -1559,6 +1559,55 @@ func TestHandleRejectDebugSession_NotAuthorized(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rr.Code)
 }
 
+func TestHandleRejectDebugSession_BlocksRequesterEmailSelfApproval(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pending-session",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:          "test-cluster",
+			RequestedBy:      "oidc-subject-123",
+			RequestedByEmail: "requester@example.com",
+			TemplateRef:      "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers"},
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "different-username", "requester@example.com", []string{"approvers"})
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/reject?namespace=default", nil)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+
+	var fetched breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(req.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &fetched))
+	require.Nil(t, fetched.Status.Approval)
+}
+
 func TestHandleRejectDebugSession_Success(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
