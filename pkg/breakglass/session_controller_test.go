@@ -3144,6 +3144,90 @@ func TestDropTerminalSessionRejected(t *testing.T) {
 	}
 }
 
+func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	approvedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	withdrawByUsername := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "owner-username-withdraw"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-a",
+			User:         "owner-username",
+			GrantedGroup: "g",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	dropByUsername := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "owner-username-drop"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-a",
+			User:         "owner-username",
+			GrantedGroup: "g",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:      breakglassv1alpha1.SessionStateApproved,
+			ApprovedAt: approvedAt,
+		},
+	}
+	rejectBySubject := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "owner-subject-reject"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-a",
+			User:         "owner-subject",
+			GrantedGroup: "g",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithObjects(withdrawByUsername, dropByUsername, rejectBySubject).
+		Build()
+	ss := SessionManager{Client: cli}
+	es := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, func(c *gin.Context) {
+		c.Set("email", "owner@example.com")
+		c.Set("username", "owner-username")
+		c.Set("user_id", "owner-subject")
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/owner-username-withdraw/withdraw", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+	var got breakglassv1alpha1.BreakglassSession
+	require.NoError(t, ss.Get(context.Background(), client.ObjectKey{Name: "owner-username-withdraw"}, &got))
+	require.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, got.Status.State)
+
+	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions/owner-username-drop/drop", nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+	require.NoError(t, ss.Get(context.Background(), client.ObjectKey{Name: "owner-username-drop"}, &got))
+	require.Equal(t, breakglassv1alpha1.SessionStateExpired, got.Status.State)
+
+	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions/owner-subject-reject/reject", nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+	require.NoError(t, ss.Get(context.Background(), client.ObjectKey{Name: "owner-subject-reject"}, &got))
+	require.Equal(t, breakglassv1alpha1.SessionStateRejected, got.Status.State)
+}
+
 // TestApproverCancelRunningSession verifies that an approver can cancel a running session
 // and that a non-approver is forbidden to do so.
 // TestApproverCancelRunningSession

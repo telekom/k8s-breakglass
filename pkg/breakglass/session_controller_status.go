@@ -45,8 +45,8 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// terminal-state or malformed-body errors.
 	allowOwnerReject := false
 	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
-		if requesterEmail, err := wc.identityProvider.GetEmail(c); err == nil {
-			if requesterEmail == bs.Spec.User && IsSessionPendingApproval(bs) {
+		if _, authIdentifiers, err := wc.authenticatedUserIdentifiers(c); err == nil {
+			if matchesAuthIdentifier(bs.Spec.User, authIdentifiers) && IsSessionPendingApproval(bs) {
 				allowOwnerReject = true
 			}
 		}

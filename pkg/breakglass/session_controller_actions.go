@@ -19,6 +19,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func (wc *BreakglassSessionController) authenticatedUserIdentifiers(c *gin.Context) (string, []string, error) {
+	email, err := wc.identityProvider.GetEmail(c)
+	if err != nil {
+		return "", nil, err
+	}
+	username := wc.identityProvider.GetUsername(c)
+	userID := wc.identityProvider.GetIdentity(c)
+	return firstNonEmpty(email, username, userID), collectAuthIdentifiers(email, username, userID), nil
+}
+
 // handleWithdrawMyRequest allows the session requester to withdraw their own pending request
 func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
@@ -37,13 +47,13 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	}
 
 	// Only allow the original requester to withdraw
-	requesterEmail, err := wc.identityProvider.GetEmail(c)
+	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
 		reqLog.Error("error getting user identity email", zap.Error(err))
 		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
 		return
 	}
-	if bs.Spec.User != requesterEmail {
+	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can withdraw")
 		return
@@ -94,7 +104,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	}
 
 	// Emit audit event for session withdrawal by requester
-	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionWithdrawn, &bs, requesterEmail, "Session withdrawn by requester")
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionWithdrawn, &bs, requester, "Session withdrawn by requester")
 
 	c.JSON(http.StatusOK, bs)
 }
@@ -118,13 +128,13 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	}
 
 	// Only allow the original requester to drop
-	requesterEmail, err := wc.identityProvider.GetEmail(c)
+	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
 		reqLog.Error("error getting user identity email", zap.Error(err))
 		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
 		return
 	}
-	if bs.Spec.User != requesterEmail {
+	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can drop")
 		return
@@ -193,7 +203,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	}
 
 	// Emit audit event for session dropped by owner
-	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionDropped, &bs, requesterEmail, "Session dropped by owner")
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionDropped, &bs, requester, "Session dropped by owner")
 
 	c.JSON(http.StatusOK, bs)
 }

@@ -401,6 +401,7 @@ Authorization: Bearer <token>
 **Status Code:** `200 OK`
 
 **Authorization:** Approvers can reject any pending request. Session requesters can also reject their own pending requests.
+Requester ownership is matched against the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
 Approver authorization is checked before request-body validation and
 state-specific responses; unrelated callers receive only authorization errors.
 
@@ -523,7 +524,7 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 
 **Status Code:** `200 OK`
 
-**Authorization:** Only the session requester can withdraw a pending request
+**Authorization:** Only the session requester can withdraw a pending request. Requester ownership is matched against the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
 
 **Response:** Complete updated `BreakglassSession` resource with withdrawn status:
 
@@ -583,6 +584,8 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 
 - **Session owner/requester**: Can drop pending, approved scheduled, or active
   non-terminal sessions
+
+Requester/owner matching uses the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
 
 Terminal sessions (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, `ApprovalTimeout`)
 return `400 Bad Request` and are not modified.
