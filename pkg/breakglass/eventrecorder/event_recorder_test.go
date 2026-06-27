@@ -106,7 +106,6 @@ func TestEventRecorder_FallbackToPodNamespaceWithSchemeReference(t *testing.T) {
 	}
 
 	rec.Eventf(obj, nil, "Warning", "ReasonWithScheme", "ReasonWithScheme", "scheme message")
-	time.Sleep(10 * time.Millisecond)
 
 	evs, err := cs.EventsV1().Events("podns").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
