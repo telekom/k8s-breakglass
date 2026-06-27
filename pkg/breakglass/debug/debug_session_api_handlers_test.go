@@ -304,6 +304,70 @@ func TestDebugKubectlOperationsStrictJSON(t *testing.T) {
 	}
 }
 
+func TestDebugKubectlOperationsRejectNonStringUsername(t *testing.T) {
+	_, ctrl := setupTestRouter(t)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("username", 12345)
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	require.NoError(t, ctrl.Register(rg))
+
+	tests := []struct {
+		name string
+		path string
+		body interface{}
+	}{
+		{
+			name: "inject ephemeral container",
+			path: "/api/debugSessions/test-session/injectEphemeralContainer",
+			body: InjectEphemeralContainerRequest{
+				Namespace:     "default",
+				PodName:       "test-pod",
+				ContainerName: "debug",
+				Image:         "busybox",
+			},
+		},
+		{
+			name: "create pod copy",
+			path: "/api/debugSessions/test-session/createPodCopy",
+			body: CreatePodCopyRequest{
+				Namespace: "default",
+				PodName:   "test-pod",
+			},
+		},
+		{
+			name: "create node debug pod",
+			path: "/api/debugSessions/test-session/createNodeDebugPod",
+			body: CreateNodeDebugPodRequest{
+				NodeName: "node-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(tt.body)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest(http.MethodPost, tt.path, bytes.NewBuffer(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusInternalServerError, rr.Code)
+			assertErrorResponse(t, rr, "INTERNAL_ERROR")
+			assert.Contains(t, rr.Body.String(), "invalid user context type")
+		})
+	}
+}
+
 func TestHandleInjectEphemeralContainer_Unauthorized(t *testing.T) {
 	router, _ := setupTestRouter(t)
 
@@ -494,7 +558,7 @@ func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusForbidden, rr.Code)
-	assert.Contains(t, rr.Body.String(), "not a participant")
+	assert.Contains(t, rr.Body.String(), "not allowed to modify debug resources")
 }
 
 func TestHandleInjectEphemeralContainer_TemplateNotKubectlDebug(t *testing.T) {
@@ -624,9 +688,11 @@ func TestHandleInjectEphemeralContainer_ValidationErrorClassification(t *testing
 				ContainerName: "debug",
 				Image:         "busybox",
 			}
-			body, _ := json.Marshal(reqBody)
+			body, err := json.Marshal(reqBody)
+			require.NoError(t, err)
 
-			req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewBuffer(body))
+			req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewBuffer(body))
+			require.NoError(t, err)
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
 
@@ -635,6 +701,95 @@ func TestHandleInjectEphemeralContainer_ValidationErrorClassification(t *testing
 			assert.Equal(t, tt.wantHTTP, rr.Code)
 			assertErrorResponse(t, rr, tt.wantCode)
 			assert.Contains(t, rr.Body.String(), tt.wantMessage)
+		})
+	}
+}
+
+func TestKubectlDebugMutationHandlers_ViewerParticipantForbidden(t *testing.T) {
+	now := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "active-session",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "active-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "owner-user",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{
+					User:     "viewer-user",
+					Role:     breakglassv1alpha1.ParticipantRoleViewer,
+					JoinedAt: now,
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "viewer-user", "", nil)
+
+	tests := []struct {
+		name string
+		path string
+		body interface{}
+	}{
+		{
+			name: "inject ephemeral container",
+			path: "/api/debugSessions/active-session/injectEphemeralContainer",
+			body: InjectEphemeralContainerRequest{
+				Namespace:     "default",
+				PodName:       "test-pod",
+				ContainerName: "debug",
+				Image:         "busybox",
+			},
+		},
+		{
+			name: "create pod copy",
+			path: "/api/debugSessions/active-session/createPodCopy",
+			body: CreatePodCopyRequest{
+				Namespace: "default",
+				PodName:   "test-pod",
+			},
+		},
+		{
+			name: "create node debug pod",
+			path: "/api/debugSessions/active-session/createNodeDebugPod",
+			body: CreateNodeDebugPodRequest{
+				NodeName: "node-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(tt.body)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest(http.MethodPost, tt.path, bytes.NewBuffer(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+			assert.Contains(t, rr.Body.String(), "not allowed to modify debug resources")
 		})
 	}
 }
