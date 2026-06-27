@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"sync"
 
 	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -205,8 +204,15 @@ func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester 
 		}
 	}
 	if groups, ok := ctx.Get("groups"); ok {
-		if value, ok := groups.([]string); ok {
+		switch value := groups.(type) {
+		case []string:
 			requester.groups = value
+		case []interface{}:
+			for _, group := range value {
+				if groupName, ok := group.(string); ok {
+					requester.groups = append(requester.groups, groupName)
+				}
+			}
 		}
 	}
 
@@ -413,9 +419,10 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		if !c.canReadTemplateWithBindings(&t, applicableBindings, requester) {
 			continue
 		}
+		visibleBindings := visibleDebugSessionBindings(applicableBindings)
 
 		// Calculate available cluster count for this template
-		availableClusterCount := c.countAvailableClustersForTemplate(&t, applicableBindings, clusterMap, allClusterNames, requester)
+		availableClusterCount := c.countAvailableClustersForTemplate(&t, visibleBindings, clusterMap, allClusterNames, requester)
 		hasAvailableClusters := availableClusterCount > 0
 
 		// Skip templates without available clusters unless explicitly requested
@@ -483,7 +490,15 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, nil, 0))
+	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.reader().List(apiCtx, clusterConfigList); err != nil {
+		reqLog.Warnw("Failed to list cluster configs for template response", "name", name, "error", err)
+	}
+	clusterMap, allClusterNames := readyDebugClusterConfigMap(clusterConfigList.Items)
+	visibleBindings := visibleDebugSessionBindings(applicableBindings)
+	availableClusterCount := c.countAvailableClustersForTemplate(template, visibleBindings, clusterMap, allClusterNames, requester)
+
+	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, allClusterNames, availableClusterCount))
 }
 
 // handleGetTemplateClusters returns cluster-specific details for a template
@@ -513,41 +528,12 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 
 	requester := debugTemplateRequesterFromContext(ctx)
 
-	// Fetch ClusterConfigs and ClusterBindings in parallel for performance
-	var clusterConfigList breakglassv1alpha1.ClusterConfigList
 	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
-	var ccErr, bindErr error
-
-	// Use goroutines with sync.WaitGroup for parallel fetching
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		ccErr = c.client.List(apiCtx, &clusterConfigList)
-	}()
-
-	go func() {
-		defer wg.Done()
-		bindErr = c.client.List(apiCtx, &bindingList)
-	}()
-
-	wg.Wait()
-
-	if ccErr != nil {
-		reqLog.Errorw("Failed to list cluster configs", "error", ccErr)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to list clusters")
-		return
-	}
-
-	if bindErr != nil {
-		reqLog.Errorw("Failed to list cluster bindings", "error", bindErr)
+	if err := c.client.List(apiCtx, &bindingList); err != nil {
+		reqLog.Errorw("Failed to list cluster bindings", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list bindings")
 		return
 	}
-
-	// Build cluster name -> ready ClusterConfig map. Unready clusters are not offered as debug targets.
-	clusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
 	// Find UI-visible bindings that apply to this template. Hidden bindings can
 	// still be used through explicit API bindingRef requests, but are not offered
@@ -557,6 +543,16 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 		apiresponses.RespondForbidden(ctx, "access denied to this template")
 		return
 	}
+
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
+	if err := c.client.List(apiCtx, &clusterConfigList); err != nil {
+		reqLog.Errorw("Failed to list cluster configs", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list clusters")
+		return
+	}
+
+	// Build cluster name -> ready ClusterConfig map. Unready clusters are not offered as debug targets.
+	clusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
 	// Build the response - resolve clusters from bindings and template's allowed.clusters
 	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap, requester)
@@ -678,14 +674,14 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglass
 
 func (c *DebugSessionAPIController) findVisibleBindingsForTemplate(template *breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding) []breakglassv1alpha1.DebugSessionClusterBinding {
 	applicableBindings := c.findBindingsForTemplate(template, bindings)
-	visibleBindings := make([]breakglassv1alpha1.DebugSessionClusterBinding, 0, len(applicableBindings))
-	for i := range applicableBindings {
-		binding := &applicableBindings[i]
+	return visibleDebugSessionBindings(applicableBindings)
+}
+
+func visibleDebugSessionBindings(bindings []breakglassv1alpha1.DebugSessionClusterBinding) []breakglassv1alpha1.DebugSessionClusterBinding {
+	visibleBindings := make([]breakglassv1alpha1.DebugSessionClusterBinding, 0, len(bindings))
+	for i := range bindings {
+		binding := &bindings[i]
 		if binding.Spec.Hidden {
-			c.log.Debugw("findVisibleBindingsForTemplate: skipping hidden binding",
-				"template", template.Name,
-				"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
-			)
 			continue
 		}
 		visibleBindings = append(visibleBindings, *binding)

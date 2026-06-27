@@ -2593,6 +2593,20 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 
 		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
 		w = httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", nil).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		require.Len(t, response.Templates[0].ExtraDeployVariables, 2)
+		assert.Equal(t, "logLevel", response.Templates[0].ExtraDeployVariables[0].Name)
+		assert.Equal(t, "targetPool", response.Templates[0].ExtraDeployVariables[1].Name)
+		require.Len(t, response.Templates[0].ExtraDeployVariables[1].Options, 1)
+		assert.Equal(t, "tenant", response.Templates[0].ExtraDeployVariables[1].Options[0].Value)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
 		buildRouter("bob@example.com", "bob@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -3068,6 +3082,49 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "standard-debug", response.Name)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionModeWorkload, response.Mode)
+	})
+
+	t.Run("get existing template resolves direct cluster availability", func(t *testing.T) {
+		clusterTemplate := template.DeepCopy()
+		clusterTemplate.Name = "cluster-pattern-template"
+		clusterTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Clusters: []string{"prod-*"},
+		}
+		prodEast := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+		}
+		prodWest := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-west"},
+		}
+		devEast := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "dev-east"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(clusterTemplate, prodEast, prodWest, devEast).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/cluster-pattern-template", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response DebugSessionTemplateResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "cluster-pattern-template", response.Name)
+		assert.ElementsMatch(t, []string{"prod-east", "prod-west"}, response.AllowedClusters)
+		assert.True(t, response.HasAvailableClusters)
+		assert.Equal(t, 2, response.AvailableClusterCount)
 	})
 
 	t.Run("get non-existent template", func(t *testing.T) {
