@@ -1584,6 +1584,70 @@ func TestApproveExpiredPendingSessionReturnsConflict(t *testing.T) {
 	require.Empty(t, fetched.Status.Approver)
 }
 
+func TestApproveExpiredPendingSessionChecksAuthorizationBeforeTimeout(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-secret-session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "test-group",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStatePending,
+			TimeoutAt:     metav1.NewTime(time.Now().Add(-time.Minute)),
+			RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+		},
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "test-group",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	cli := builder.
+		WithObjects(session, escalation).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "intruder@example.com")
+			c.Set("username", "intruder@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	req, err := http.NewRequest(http.MethodPost, "/breakglassSessions/expired-secret-session/approve", nil)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.NotContains(t, w.Body.String(), "expired-secret-session")
+	require.NotContains(t, w.Body.String(), "approval timeout has elapsed")
+
+	var fetched breakglassv1alpha1.BreakglassSession
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "expired-secret-session"}, &fetched))
+	require.Equal(t, breakglassv1alpha1.SessionStatePending, fetched.Status.State)
+	require.Empty(t, fetched.Status.Approver)
+}
+
 func TestApprovalAuthorizationUsesOwningEscalation(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
@@ -1662,6 +1726,77 @@ func TestApprovalAuthorizationUsesOwningEscalation(t *testing.T) {
 
 	var fetched breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "owned-session"}, &fetched))
+	require.Equal(t, breakglassv1alpha1.SessionStatePending, fetched.Status.State)
+	require.Empty(t, fetched.Status.Approver)
+}
+
+func TestApprovalAuthorizationRequiresOwnerReferenceUIDMatch(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	owningEscalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "owning-escalation", Namespace: "default", UID: types.UID("owner-escalation-uid")},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "test-group",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"owner-approver@example.com"}},
+		},
+	}
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "malformed-owner-session",
+			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: breakglassv1alpha1.GroupVersion.String(),
+				Kind:       "BreakglassEscalation",
+				Name:       owningEscalation.Name,
+			}},
+		},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "test-group",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStatePending,
+			TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
+			RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+		},
+	}
+
+	cli := builder.
+		WithObjects(owningEscalation, session).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "owner-approver@example.com")
+			c.Set("username", "owner-approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	req, err := http.NewRequest(http.MethodPost, "/breakglassSessions/malformed-owner-session/approve", nil)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "No matching escalation found")
+
+	var fetched breakglassv1alpha1.BreakglassSession
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "malformed-owner-session"}, &fetched))
 	require.Equal(t, breakglassv1alpha1.SessionStatePending, fetched.Status.State)
 	require.Empty(t, fetched.Status.Approver)
 }

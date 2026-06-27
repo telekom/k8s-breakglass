@@ -230,7 +230,7 @@ func sessionOwnedByEscalation(session breakglassv1alpha1.BreakglassSession, esc 
 		if ownerRef.APIVersion == breakglassv1alpha1.GroupVersion.String() &&
 			ownerRef.Kind == "BreakglassEscalation" &&
 			ownerRef.Name == esc.Name {
-			return ownerRef.UID == "" || esc.UID == "" || ownerRef.UID == esc.UID
+			return ownerRef.UID != "" && esc.UID != "" && ownerRef.UID == esc.UID
 		}
 	}
 	return false
