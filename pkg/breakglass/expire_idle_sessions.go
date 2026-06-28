@@ -25,6 +25,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // maxStatusUpdateRetries is the maximum number of status update attempts
@@ -93,46 +94,19 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 			continue
 		}
 
+		fresh, refreshedIdle, ok, err := wc.prepareIdleExpiredSession(ctx, ses, idleTimeout)
+		if err != nil || !ok {
+			continue
+		}
+		ses = fresh
+		idleSince = refreshedIdle
+		baseline = ses.Status.LastActivity.Time
+
 		wc.log.Infow("Expiring session due to idle timeout",
 			"session", ses.Name,
 			"idleTimeout", ses.Spec.IdleTimeout,
 			"idleSince", idleSince.Round(time.Second),
 			"lastActivity", baseline)
-
-		// Prepare status transition
-		ses.Status.State = breakglassv1alpha1.SessionStateIdleExpired
-		ses.SetCondition(newIdleCondition(idleSince, ses.Spec.IdleTimeout))
-		ses.Status.ReasonEnded = "idleTimeout"
-		retainFor := ParseRetainFor(ses.Spec, wc.log)
-		ses.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
-
-		// Ensure we have correct metadata for the API update.
-		// Re-validate idle condition after refetch to avoid TOCTOU race where
-		// activity was recorded between our initial check and this point.
-		if stored, gerr := wc.sessionManager.GetBreakglassSessionByName(ctx, ses.Name); gerr == nil {
-			ses.Namespace = stored.Namespace
-			ses.ResourceVersion = stored.ResourceVersion
-			// If the session was already transitioned to a terminal state by another
-			// controller replica, skip idle expiry to avoid overwriting the reason.
-			if stored.Status.State != breakglassv1alpha1.SessionStateApproved {
-				wc.log.Infow("Session already transitioned after refetch; skipping idle expiry",
-					"session", ses.Name, "currentState", stored.Status.State)
-				continue
-			}
-			// Re-validate: if the stored session's lastActivity is more recent, it may no longer be idle
-			if stored.Status.LastActivity != nil && !stored.Status.LastActivity.IsZero() {
-				refreshedIdle := time.Since(stored.Status.LastActivity.Time)
-				if refreshedIdle < idleTimeout {
-					wc.log.Infow("Session no longer idle after refetch; skipping expiry",
-						"session", ses.Name,
-						"refreshedIdleSince", refreshedIdle.Round(time.Second))
-					continue
-				}
-			}
-		} else {
-			wc.log.Debugw("could not refetch session before idle status update; will attempt update anyway",
-				"session", ses.Name, "error", gerr)
-		}
 
 		// Persist the status change with retry on conflict (following ExpireApprovedSessions pattern)
 		var lastErr error
@@ -149,23 +123,12 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 				wc.log.Warnw("failed to update idle-expired session status (will retry)",
 					"session", ses.Name, "attempt", attempt+1, "error", err)
 
-				if updated, gerr := wc.sessionManager.GetBreakglassSessionByName(ctx, ses.Name); gerr == nil {
-					// If the session was already transitioned to a terminal state by another process,
-					// do not overwrite it — just stop retrying.
-					if updated.Status.State != breakglassv1alpha1.SessionStateApproved {
-						wc.log.Infow("Session already transitioned by another process; skipping idle expiry",
-							"session", ses.Name, "currentState", updated.Status.State)
-						lastErr = nil
-						break
-					}
-					updated.Status.State = ses.Status.State
-					updated.Status.Conditions = ses.Status.Conditions
-					updated.Status.ReasonEnded = ses.Status.ReasonEnded
-					updated.Status.RetainedUntil = ses.Status.RetainedUntil
+				if updated, _, ok, err := wc.prepareIdleExpiredSession(ctx, ses, idleTimeout); err != nil {
+					break
+				} else if ok {
 					ses = updated
 				} else {
-					wc.log.Errorw("failed to refetch session after failed idle status update",
-						"session", ses.Name, "error", gerr)
+					lastErr = nil
 					break
 				}
 				// Brief context-aware delay before retry to allow the API server
@@ -185,6 +148,67 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 			wc.sendSessionIdleExpiredEmail(ses)
 		}
 	}
+}
+
+func (wc *BreakglassSessionController) prepareIdleExpiredSession(
+	ctx context.Context,
+	session breakglassv1alpha1.BreakglassSession,
+	idleTimeout time.Duration,
+) (breakglassv1alpha1.BreakglassSession, time.Duration, bool, error) {
+	refreshed, err := wc.getFreshIdleSession(ctx, session)
+	if err != nil {
+		wc.log.Warnw("could not refetch session before idle status update; skipping idle expiry",
+			"session", session.Name,
+			"namespace", session.Namespace,
+			"error", err)
+		return breakglassv1alpha1.BreakglassSession{}, 0, false, err
+	}
+
+	if refreshed.Status.State != breakglassv1alpha1.SessionStateApproved {
+		wc.log.Infow("Session already transitioned after refetch; skipping idle expiry",
+			"session", session.Name,
+			"currentState", refreshed.Status.State)
+		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
+	}
+
+	if refreshed.Status.LastActivity == nil || refreshed.Status.LastActivity.IsZero() {
+		wc.log.Infow("Session no longer has activity after refetch; skipping idle expiry",
+			"session", session.Name)
+		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
+	}
+
+	refreshedIdle := time.Since(refreshed.Status.LastActivity.Time)
+	if refreshedIdle < idleTimeout {
+		wc.log.Infow("Session no longer idle after refetch; skipping expiry",
+			"session", session.Name,
+			"refreshedIdleSince", refreshedIdle.Round(time.Second))
+		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
+	}
+
+	refreshed.Status.State = breakglassv1alpha1.SessionStateIdleExpired
+	refreshed.SetCondition(newIdleCondition(refreshedIdle, refreshed.Spec.IdleTimeout))
+	refreshed.Status.ReasonEnded = "idleTimeout"
+	retainFor := ParseRetainFor(refreshed.Spec, wc.log)
+	refreshed.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+	return refreshed, refreshedIdle, true, nil
+}
+
+func (wc *BreakglassSessionController) getFreshIdleSession(
+	ctx context.Context,
+	session breakglassv1alpha1.BreakglassSession,
+) (breakglassv1alpha1.BreakglassSession, error) {
+	if session.Namespace == "" {
+		return wc.sessionManager.GetBreakglassSessionByName(ctx, session.Name)
+	}
+
+	refreshed := breakglassv1alpha1.BreakglassSession{}
+	if err := wc.sessionManager.Reader().Get(ctx, types.NamespacedName{
+		Namespace: session.Namespace,
+		Name:      session.Name,
+	}, &refreshed); err != nil {
+		return breakglassv1alpha1.BreakglassSession{}, fmt.Errorf("get live breakglass session %s/%s: %w", session.Namespace, session.Name, err)
+	}
+	return refreshed, nil
 }
 
 // sendSessionIdleExpiredEmail sends a notification when a session is expired due to idle timeout.

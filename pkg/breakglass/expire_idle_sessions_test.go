@@ -341,6 +341,76 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 }
 
+func TestExpireIdleSessions_UsesReaderBeforeStatusUpdate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	staleActivity := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+	recentActivity := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+
+	tests := []struct {
+		name       string
+		liveStatus breakglassv1alpha1.BreakglassSessionStatus
+	}{
+		{
+			name: "skips when live session is already terminal",
+			liveStatus: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateExpired,
+				LastActivity: &staleActivity,
+				ReasonEnded:  "dropped",
+			},
+		},
+		{
+			name: "skips when live session has recent activity",
+			liveStatus: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &recentActivity,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			staleCached := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "stale-idle-session", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "production",
+					User:         "user@example.com",
+					GrantedGroup: "admin",
+					IdleTimeout:  "10m",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:        breakglassv1alpha1.SessionStateApproved,
+					LastActivity: &staleActivity,
+				},
+			}
+			live := staleCached.DeepCopy()
+			live.Status = tt.liveStatus
+
+			cacheClient := newIdleTestClient(scheme, staleCached)
+			readerClient := newIdleTestClient(scheme, live)
+			manager := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+			ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+			ctrl.ExpireIdleSessions(context.Background())
+
+			var cachedAfter breakglassv1alpha1.BreakglassSession
+			require.NoError(t, cacheClient.Get(context.Background(), client.ObjectKeyFromObject(staleCached), &cachedAfter))
+			assert.Equal(t, breakglassv1alpha1.SessionStateApproved, cachedAfter.Status.State,
+				"stale cache snapshot must not be patched to IdleExpired")
+
+			var liveAfter breakglassv1alpha1.BreakglassSession
+			require.NoError(t, readerClient.Get(context.Background(), client.ObjectKeyFromObject(live), &liveAfter))
+			assert.Equal(t, tt.liveStatus.State, liveAfter.Status.State)
+			if tt.liveStatus.ReasonEnded != "" {
+				assert.Equal(t, tt.liveStatus.ReasonEnded, liveAfter.Status.ReasonEnded)
+			}
+		})
+	}
+}
+
 func TestExpireIdleSessions_SendsEmail(t *testing.T) {
 	// TestExpireIdleSessions_SendsEmail
 	//
