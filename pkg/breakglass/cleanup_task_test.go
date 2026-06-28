@@ -793,6 +793,57 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		assert.Contains(t, updated.Status.Message, "timed out")
 	})
 
+	t.Run("stale pending approval timeout list does not overwrite approved session", func(t *testing.T) {
+		oldCreationTime := time.Now().Add(-25 * time.Hour)
+		staleListItem := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "pending-approved-from-stale-list",
+				Namespace:         "default",
+				CreationTimestamp: metav1.NewTime(oldCreationTime),
+				ResourceVersion:   "1",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+				Approval: &breakglassv1alpha1.DebugSessionApproval{
+					Required: true,
+				},
+			},
+		}
+		liveSession := staleListItem.DeepCopy()
+		liveSession.ResourceVersion = "2"
+		liveSession.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		liveSession.Status.Message = ""
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if debugSessions, ok := list.(*breakglassv1alpha1.DebugSessionList); ok {
+						debugSessions.Items = []breakglassv1alpha1.DebugSession{*staleListItem}
+						return nil
+					}
+					return cl.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+
+		manager := &SessionManager{Client: fakeClient}
+		routine := CleanupRoutine{Log: logger, Manager: manager}
+
+		routine.cleanupExpiredDebugSessions(context.Background())
+
+		var updated breakglassv1alpha1.DebugSession
+		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, &updated)
+		assert.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+		assert.Empty(t, updated.Status.Message)
+	})
+
 	t.Run("active session expired sends email notification", func(t *testing.T) {
 		// Verify that when a debug session expires, an email notification is sent
 		// to the session owner

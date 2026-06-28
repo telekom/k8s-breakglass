@@ -13,6 +13,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -349,6 +350,11 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 					status.State = breakglassv1alpha1.DebugSessionStateExpired
 					status.Message = "Session expired (cleanup routine)"
 				}); err != nil {
+					if apierrors.IsConflict(err) {
+						routine.Log.Debugw("skipping expired debug session status update after concurrent change",
+							append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+						continue
+					}
 					routine.Log.Errorw("error updating expired debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue
@@ -386,6 +392,11 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 					status.State = breakglassv1alpha1.DebugSessionStateFailed
 					status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
 				}); err != nil {
+					if apierrors.IsConflict(err) {
+						routine.Log.Debugw("skipping approval-timeout debug session status update after concurrent change",
+							append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+						continue
+					}
 					routine.Log.Errorw("error updating timed-out debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue

@@ -45,7 +45,7 @@ func PatchDebugSessionStatusWithOptimisticLock(
 	}
 
 	if err := c.Status().Patch(ctx, session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-		return fmt.Errorf("patch DebugSession status with optimistic lock: %w", err)
+		return fmt.Errorf("patch DebugSession %s/%s status with optimistic lock: %w", session.Namespace, session.Name, err)
 	}
 	return nil
 }
