@@ -167,7 +167,7 @@ describe("DebugSessionBrowser", () => {
       await wrapper.find('[data-testid="join-debug-session-1"]').trigger("click");
       await flushPromises();
 
-      expect(mockJoinSession).toHaveBeenCalledWith("debug-session-1", { role: "viewer" });
+      expect(mockJoinSession).toHaveBeenCalledWith("debug-session-1");
     });
   });
 

@@ -21,6 +21,7 @@ func TestRequireEmptyBody(t *testing.T) {
 	}{
 		{name: "empty body"},
 		{name: "whitespace only", body: " \n\r\t "},
+		{name: "oversized whitespace only", body: strings.Repeat(" ", maxEmptyBodyWhitespaceBytes+1), wantErr: true},
 		{name: "json object", body: "{}", wantErr: true},
 		{name: "json array", body: "[]", wantErr: true},
 		{name: "invalid payload", body: "not-json", wantErr: true},

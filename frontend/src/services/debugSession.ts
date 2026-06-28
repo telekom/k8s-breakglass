@@ -13,7 +13,6 @@ import type {
   DebugSessionTemplateResponse,
   DebugPodTemplateResponse,
   CreateDebugSessionRequest,
-  JoinDebugSessionRequest,
   RenewDebugSessionRequest,
   ApproveDebugSessionRequest,
   RejectDebugSessionRequest,
@@ -120,7 +119,7 @@ export default class DebugSessionService {
     }
   }
 
-  public async joinSession(name: string, _request?: JoinDebugSessionRequest): Promise<DebugSession> {
+  public async joinSession(name: string): Promise<DebugSession> {
     return this.postSessionAction(name, "join", "Failed to join debug session");
   }
 

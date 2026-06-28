@@ -18,6 +18,8 @@ var ErrEmptyBody = errors.New("empty JSON body")
 // ErrUnexpectedBody indicates that a no-body endpoint received payload content.
 var ErrUnexpectedBody = errors.New("request body must be empty")
 
+const maxEmptyBodyWhitespaceBytes = 4096
+
 // DecodeStrict decodes exactly one JSON value and rejects unknown fields and
 // trailing non-whitespace content.
 func DecodeStrict(r io.Reader, dest interface{}) error {
@@ -53,6 +55,7 @@ func RequireEmptyBody(r io.Reader) error {
 	}
 
 	reader := bufio.NewReader(r)
+	whitespaceBytes := 0
 	for {
 		b, err := reader.ReadByte()
 		if err != nil {
@@ -64,6 +67,10 @@ func RequireEmptyBody(r io.Reader) error {
 		if !isJSONWhitespace(b) {
 			return ErrUnexpectedBody
 		}
+		if whitespaceBytes >= maxEmptyBodyWhitespaceBytes {
+			return ErrUnexpectedBody
+		}
+		whitespaceBytes++
 	}
 }
 

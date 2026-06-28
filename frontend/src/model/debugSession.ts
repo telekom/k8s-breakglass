@@ -217,10 +217,6 @@ export interface DebugSessionDetailResponse extends DebugSession {
   warnings?: string[];
 }
 
-export interface JoinDebugSessionRequest {
-  role?: ParticipantRole;
-}
-
 export interface RenewDebugSessionRequest {
   extendBy: string;
 }

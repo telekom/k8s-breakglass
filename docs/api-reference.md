@@ -950,7 +950,7 @@ JSON bodies for debug-session create requests must contain only known field name
 
 ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned only after the request is authorized by the selected template or binding.
 
-The same strict JSON parsing applies to DebugSession join, renew, approve, reject, and kubectl-debug operation bodies. Optional bodies may be omitted only where the endpoint documents that behavior; non-empty bodies must contain only known fields and one JSON object.
+The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
 
 **Response:** Created `DebugSession` object (201 Created).
 
