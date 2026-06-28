@@ -1530,6 +1530,12 @@ audit:
         memory: 64Mi
 ```
 
+The DebugSession reconciler emits lifecycle audit events through configured
+`AuditConfig` sinks for approval timeouts, session failures, pod failures,
+container restarts, and auxiliary resource deploy/cleanup operations. Failure
+notifications to the requester use the configured `MailProvider` and honor
+`--disable-email`.
+
 ## API Endpoints
 
 Debug sessions can be managed via the REST API:
