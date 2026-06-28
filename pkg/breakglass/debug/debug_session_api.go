@@ -808,10 +808,23 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondForbidden(ctx, errDetails)
 		return
 	}
-	if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, allowedResult.MatchingBinding), currentUserStr, userEmail, userGroups) {
+
+	resolvedBinding, bindingSelectionErr := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
+	if bindingSelectionErr != nil {
+		reqLog.Warnw("Requested binding is not valid for debug session",
+			"bindingRef", req.BindingRef,
+			"cluster", req.Cluster,
+			"templateRef", req.TemplateRef,
+			"error", bindingSelectionErr)
+		apiresponses.RespondBadRequest(ctx, bindingSelectionErr.Error())
+		return
+	}
+
+	if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, resolvedBinding), currentUserStr, userEmail, userGroups) {
 		reqLog.Warnw("User is not allowed to request debug session",
 			"templateRef", req.TemplateRef,
 			"bindingRef", req.BindingRef,
+			"selectedBindingRef", debugSessionBindingRefLogValue(resolvedBinding),
 			"user", currentUserStr,
 			"groupCount", len(userGroups),
 		)
@@ -857,17 +870,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		"requestedCluster", req.Cluster,
 		"allowedBySource", allowedResult.AllowedBySource,
 	)
-
-	resolvedBinding, err := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
-	if err != nil {
-		reqLog.Warnw("Requested binding is not valid for debug session",
-			"bindingRef", req.BindingRef,
-			"cluster", req.Cluster,
-			"templateRef", req.TemplateRef,
-			"error", err)
-		apiresponses.RespondBadRequest(ctx, err.Error())
-		return
-	}
 
 	effectiveConstraints := effectiveDebugSessionConstraints(template, resolvedBinding)
 	if err := validateRequestedDebugSessionDuration(req.RequestedDuration, effectiveConstraints); err != nil {
@@ -1224,6 +1226,13 @@ func parseDebugSessionBindingRef(bindingRef string) (string, string, bool) {
 		return "", "", false
 	}
 	return parts[0], parts[1], true
+}
+
+func debugSessionBindingRefLogValue(binding *breakglassv1alpha1.DebugSessionClusterBinding) string {
+	if binding == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 }
 
 func effectiveDebugSessionAllowed(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionAllowed {
