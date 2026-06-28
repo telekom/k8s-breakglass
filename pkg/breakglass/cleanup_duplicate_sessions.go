@@ -214,7 +214,7 @@ func getLiveDuplicateSession(
 	session breakglassv1alpha1.BreakglassSession,
 ) (breakglassv1alpha1.BreakglassSession, error) {
 	if session.Namespace == "" {
-		return mgr.GetBreakglassSessionByName(ctx, session.Name)
+		return breakglassv1alpha1.BreakglassSession{}, fmt.Errorf("get live duplicate session %q: namespace is required for live reader lookup", session.Name)
 	}
 
 	live := breakglassv1alpha1.BreakglassSession{}
@@ -252,6 +252,9 @@ func terminateDuplicateSession(
 		prepareDuplicateSessionTermination(&live, log)
 		live.Status.ObservedGeneration = live.Generation
 		if err := mgr.Client.Status().Patch(ctx, &live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
 			return err
 		}
 		updated = true
