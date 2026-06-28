@@ -204,13 +204,13 @@ func TestAuditLogging(t *testing.T) {
 		}
 	}
 
-	// Create via API
-	session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
+	// Create via API and wait until the status subresource is ready for approval.
+	session, err := requesterClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   "audit-test-group", // Must match test-audit-escalation's escalatedGroup in e2e/fixtures/escalations/audit-test.yaml
 		Reason:  "Audit logging test",
-	})
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 
 	// Add to cleanup
