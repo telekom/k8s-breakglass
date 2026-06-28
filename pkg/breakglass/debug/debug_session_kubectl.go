@@ -61,7 +61,7 @@ func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetry(
 	var patchedStatus breakglassv1alpha1.DebugSessionStatus
 	var patchedResourceVersion string
 
-	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &breakglassv1alpha1.DebugSession{}
 		if err := h.client.Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
 			return err

@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -641,6 +642,106 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
+	})
+}
+
+func TestKubectlDebugHandler_InjectEphemeralContainerPreservesLiveStatusFromStaleSession(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	ctx := context.Background()
+	oldExpiry := metav1.NewTime(time.Now().Add(15 * time.Minute))
+	renewedExpiry := metav1.NewTime(time.Now().Add(45 * time.Minute))
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "app-pod",
+				Namespace: "production",
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "app", Image: "myapp:v1"}},
+			},
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, subResourceName string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+				if subResourceName == "ephemeralcontainers" {
+					return nil
+				}
+				return cl.SubResource(subResourceName).Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	liveSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "test-session-12345678",
+			Namespace:       "default",
+			ResourceVersion: "2",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster: "test-cluster",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:        breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:    &renewedExpiry,
+			RenewalCount: 1,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{
+				User:     "active@example.com",
+				Role:     breakglassv1alpha1.ParticipantRoleParticipant,
+				JoinedAt: metav1.Now(),
+			}},
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled: true,
+					},
+				},
+			},
+		},
+	}
+	staleSession := liveSession.DeepCopy()
+	staleSession.ResourceVersion = "1"
+	staleSession.Status.ExpiresAt = &oldExpiry
+	staleSession.Status.RenewalCount = 0
+	staleSession.Status.Participants = nil
+
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveSession).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+	})
+
+	err := handler.InjectEphemeralContainer(
+		ctx,
+		staleSession,
+		"production",
+		"app-pod",
+		"debugger",
+		"busybox:latest",
+		[]string{"sh"},
+		nil,
+		"test-user@example.com",
+	)
+	require.NoError(t, err)
+
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hubClient.Get(ctx, ctrlclient.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, stored))
+	require.NotNil(t, stored.Status.ExpiresAt)
+	assert.WithinDuration(t, renewedExpiry.Time, stored.Status.ExpiresAt.Time, time.Second)
+	assert.Equal(t, int32(1), stored.Status.RenewalCount)
+	require.Len(t, stored.Status.Participants, 1)
+	assert.Equal(t, "active@example.com", stored.Status.Participants[0].User)
+	require.NotNil(t, stored.Status.KubectlDebugStatus)
+	require.Len(t, stored.Status.KubectlDebugStatus.EphemeralContainersInjected, 1)
+	assert.Equal(t, "debugger", stored.Status.KubectlDebugStatus.EphemeralContainersInjected[0].ContainerName)
+	assert.Contains(t, stored.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
+		Namespace: "production",
+		Name:      "app-pod",
+		Ready:     true,
 	})
 }
 
