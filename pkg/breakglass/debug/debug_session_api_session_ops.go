@@ -369,6 +369,10 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot terminate expired session")
+		return
+	}
 
 	// Mark as terminated
 	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
@@ -600,6 +604,15 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
+		return
+	}
+
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
+		return
+	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot leave expired session")
 		return
 	}
 

@@ -4690,6 +4690,57 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 		assert.Equal(t, 403, w.Code)
 	})
 
+	t.Run("terminate active expired session is rejected", func(t *testing.T) {
+		expiresAt := metav1.NewTime(time.Now().Add(-time.Hour))
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				ExpiresAt: &expiresAt,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/terminate", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "expired session")
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updatedSession.Status.State)
+	})
+
 	t.Run("terminate already terminated session", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
@@ -5307,6 +5358,62 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
+	})
+
+	t.Run("leave active expired session is rejected", func(t *testing.T) {
+		expiresAt := metav1.NewTime(time.Now().Add(-time.Hour))
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				ExpiresAt: &expiresAt,
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+					{User: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "expired session")
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		require.Len(t, updatedSession.Status.Participants, 2)
+		assert.Nil(t, updatedSession.Status.Participants[1].LeftAt)
 	})
 
 	t.Run("leave session without authentication", func(t *testing.T) {
