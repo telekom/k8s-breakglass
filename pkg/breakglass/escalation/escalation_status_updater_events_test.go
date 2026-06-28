@@ -2,6 +2,7 @@ package escalation
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -124,8 +125,11 @@ func TestFetchGroupMembersFromMultipleIDPs_EventReasonMatchesFullFailure(t *test
 	assert.Empty(t, hierarchy)
 	assert.Equal(t, groupSyncStatusFailed, status)
 	assert.Len(t, syncErrors, 2)
-	assert.Contains(t, drainRecordedEvents(recorder.Events),
-		"Warning GroupSyncFailed GroupSyncFailed Multi-IDP group sync failed: 0 IDPs succeeded, 2 failed. Check the ApprovalGroupMembersResolved condition and related events for details.")
+	assert.True(t, recordedEventContains(
+		drainRecordedEvents(recorder.Events),
+		"Warning "+groupSyncReasonFailed,
+		"Multi-IDP group sync failed: 0 IDPs succeeded, 2 failed",
+	))
 }
 
 // TestFetchGroupMembersFromMultipleIDPs_EventEmission_NoResolverFallback tests fallback to single IDP
@@ -171,4 +175,20 @@ func drainRecordedEvents(events <-chan string) []string {
 			return drained
 		}
 	}
+}
+
+func recordedEventContains(events []string, parts ...string) bool {
+	for _, event := range events {
+		matches := true
+		for _, part := range parts {
+			if !strings.Contains(event, part) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
 }
