@@ -409,8 +409,12 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 
 	// Inject the ephemeral container
 	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, currentUser.(string)); err != nil {
-		reqLog.Errorw("Failed to inject ephemeral container", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to inject ephemeral container")
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to inject ephemeral container", "error", err)
+		} else {
+			reqLog.Warnw("Rejected ephemeral container injection", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to inject ephemeral container")
 		return
 	}
 

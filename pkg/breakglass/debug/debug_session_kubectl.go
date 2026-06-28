@@ -710,12 +710,16 @@ func (h *KubectlDebugHandler) isNamespaceAllowedForEphemeral(
 	if !namespaceFilterRequiresLabels(allowed) && !namespaceFilterRequiresLabels(denied) {
 		return matcher.IsAllowed(namespace), nil
 	}
-	if h.ccProvider == nil {
-		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: target cluster client provider is not configured", namespace)
+	targetClient := h.client
+	if h.ccProvider != nil {
+		var err error
+		targetClient, err = h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return false, kubectlDebugInternalErrorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+		}
 	}
-	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
-	if err != nil {
-		return false, kubectlDebugInternalErrorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+	if targetClient == nil {
+		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: kubernetes client is not configured", namespace)
 	}
 	nsLabels, err := h.fetchNamespaceLabels(ctx, targetClient, namespace)
 	if err != nil {

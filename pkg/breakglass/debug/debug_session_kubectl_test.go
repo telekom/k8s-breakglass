@@ -456,6 +456,34 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 			}
 		})
 	}
+
+	t.Run("selector lookup uses handler client when provider is nil", func(t *testing.T) {
+		testSession := session.DeepCopy()
+		testSession.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.AllowedNamespaces = &breakglassv1alpha1.NamespaceFilter{
+			SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+				{MatchLabels: map[string]string{"env": "prod"}},
+			},
+		}
+
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(prodNamespace).
+			Build()
+		handler := NewKubectlDebugHandler(hubClient, nil)
+
+		err := handler.ValidateEphemeralContainerRequest(
+			context.Background(),
+			testSession,
+			"production",
+			"test-pod",
+			"busybox:latest",
+			nil,
+			false,
+			false,
+		)
+
+		require.NoError(t, err)
+	})
 }
 
 func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {

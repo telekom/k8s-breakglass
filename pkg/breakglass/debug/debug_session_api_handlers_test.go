@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,7 +31,9 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -113,6 +116,12 @@ func TestRespondKubectlDebugOperationError(t *testing.T) {
 		{
 			name:     "unsupported request is bad request",
 			err:      kubectlDebugRequestErrorf("pod copy not configured in template"),
+			wantHTTP: http.StatusBadRequest,
+			wantCode: "BAD_REQUEST",
+		},
+		{
+			name:     "wrapped kubernetes not found is bad request",
+			err:      fmt.Errorf("failed to get pod default/missing: %w", apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "missing")),
 			wantHTTP: http.StatusBadRequest,
 			wantCode: "BAD_REQUEST",
 		},
