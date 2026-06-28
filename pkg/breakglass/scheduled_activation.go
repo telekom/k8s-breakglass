@@ -28,6 +28,8 @@ import (
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -74,17 +76,28 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 	// Use indexed query to fetch only sessions waiting for scheduled time
 	sessions, err := ssa.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateWaitingForScheduledTime)
 	if err != nil {
-		ssa.log.Error("error listing sessions for scheduled activation", zap.String("error", err.Error()))
+		ssa.log.Errorw("error listing sessions for scheduled activation", "error", err)
 		return
 	}
 
 	now := time.Now()
 	for _, ses := range sessions {
-		var ok bool
-		ses, ok = ssa.currentWaitingScheduledSession(ctx, ses)
+		listedMissingScheduledTime := ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero()
+		if !listedMissingScheduledTime && now.Before(ses.Spec.ScheduledStartTime.Time) {
+			// Not yet time for this session; avoid a live read until the cached
+			// scheduledStartTime says this session may need a state transition.
+			continue
+		}
+
+		operation := "activation"
+		if listedMissingScheduledTime {
+			operation = "expiry"
+		}
+		current, ok := ssa.currentWaitingScheduledSession(ctx, ses, operation)
 		if !ok {
 			continue
 		}
+		ses = current
 
 		// Sanity check: session should have a scheduledStartTime
 		if ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero() {
@@ -97,7 +110,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 
 		scheduledTime := ses.Spec.ScheduledStartTime.Time
 		if now.Before(scheduledTime) {
-			// Not yet time for this session
+			// Live state moved the scheduled start into the future after the list read.
 			continue
 		}
 		if !ses.Status.ExpiresAt.IsZero() && !now.Before(ses.Status.ExpiresAt.Time) {
@@ -167,8 +180,25 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 	ctx context.Context,
 	session breakglassv1alpha1.BreakglassSession,
 ) error {
-	session.Status.ObservedGeneration = session.Generation
-	return ssa.sessionManager.Client.Status().Update(ctx, &session)
+	key := client.ObjectKeyFromObject(&session)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := breakglassv1alpha1.BreakglassSession{}
+		if err := ssa.sessionManager.Reader().Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
+			return apierrors.NewConflict(schema.GroupResource{
+				Group:    breakglassv1alpha1.GroupVersion.Group,
+				Resource: "breakglasssessions",
+			}, current.Name, fmt.Errorf("session state changed to %s", current.Status.State))
+		}
+
+		base := current.DeepCopy()
+		current.Status = session.Status
+		current.Status.ObservedGeneration = current.Generation
+		patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+		return ssa.sessionManager.Client.Status().Patch(ctx, &current, patch)
+	})
 }
 
 func (ssa *ScheduledSessionActivator) expireScheduledSession(ctx context.Context, session breakglassv1alpha1.BreakglassSession, now time.Time, reasonEnded, conditionReason, message string) {
@@ -202,15 +232,16 @@ func (ssa *ScheduledSessionActivator) expireScheduledSession(ctx context.Context
 func (ssa *ScheduledSessionActivator) currentWaitingScheduledSession(
 	ctx context.Context,
 	listed breakglassv1alpha1.BreakglassSession,
+	operation string,
 ) (breakglassv1alpha1.BreakglassSession, bool) {
 	current := breakglassv1alpha1.BreakglassSession{}
 	if err := ssa.sessionManager.Reader().Get(ctx, client.ObjectKey{Name: listed.Name, Namespace: listed.Namespace}, &current); err != nil {
 		if apierrors.IsNotFound(err) {
-			ssa.log.Infow("skipping scheduled session activation because live session was deleted",
+			ssa.log.Infow("skipping scheduled session "+operation+" because live session was deleted",
 				"session", listed.Name,
 				"namespace", listed.Namespace)
 		} else {
-			ssa.log.Errorw("skipping scheduled session activation because live session could not be read",
+			ssa.log.Errorw("skipping scheduled session "+operation+" because live session could not be read",
 				"session", listed.Name,
 				"namespace", listed.Namespace,
 				"error", err)
@@ -218,7 +249,7 @@ func (ssa *ScheduledSessionActivator) currentWaitingScheduledSession(
 		return listed, false
 	}
 	if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
-		ssa.log.Infow("skipping scheduled session activation because state changed",
+		ssa.log.Infow("skipping scheduled session "+operation+" because state changed",
 			"session", current.Name,
 			"namespace", current.Namespace,
 			"state", current.Status.State)
