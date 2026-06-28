@@ -105,17 +105,18 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 
 	// Add participant
 	now := metav1.Now()
-	session.Status.Participants = append(session.Status.Participants, breakglassv1alpha1.DebugSessionParticipant{
+	participant := breakglassv1alpha1.DebugSessionParticipant{
 		User:        username,
 		Email:       userEmail,
 		DisplayName: displayName,
 		Role:        role,
 		JoinedAt:    now,
-	})
+	}
 
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to add participant", "session", name, "user", username, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to join session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Participants = append(status.Participants, participant)
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "add participant", "failed to join session", name, err)
 		return
 	}
 
@@ -237,12 +238,13 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	session.Status.ExpiresAt = &newExpiry
-	session.Status.RenewalCount++
+	newRenewalCount := session.Status.RenewalCount + 1
 
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to renew session", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.ExpiresAt = &newExpiry
+		status.RenewalCount = newRenewalCount
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "renew session", "failed to renew session", name, err)
 		return
 	}
 
@@ -362,13 +364,11 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		return
 	}
 
-	// Mark as terminated
-	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-	session.Status.Message = fmt.Sprintf("Terminated by %s", username)
-
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to terminate session", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to terminate session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		status.Message = fmt.Sprintf("Terminated by %s", username)
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "terminate session", "failed to terminate session", name, err)
 		return
 	}
 
@@ -444,16 +444,19 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	// Mark as approved
 	now := metav1.Now()
-	if session.Status.Approval == nil {
-		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
+	approval := &breakglassv1alpha1.DebugSessionApproval{}
+	if session.Status.Approval != nil {
+		existingApproval := *session.Status.Approval
+		approval = &existingApproval
 	}
-	session.Status.Approval.ApprovedBy = username
-	session.Status.Approval.ApprovedAt = &now
-	session.Status.Approval.Reason = req.Reason
+	approval.ApprovedBy = username
+	approval.ApprovedAt = &now
+	approval.Reason = req.Reason
 
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to approve session", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to approve session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Approval = approval
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "approve session", "failed to approve session", name, err)
 		return
 	}
 
@@ -534,20 +537,21 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	// Mark as rejected
 	now := metav1.Now()
-	if session.Status.Approval == nil {
-		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
+	approval := &breakglassv1alpha1.DebugSessionApproval{}
+	if session.Status.Approval != nil {
+		existingApproval := *session.Status.Approval
+		approval = &existingApproval
 	}
-	session.Status.Approval.RejectedBy = username
-	session.Status.Approval.RejectedAt = &now
-	session.Status.Approval.Reason = sanitizedReason
+	approval.RejectedBy = username
+	approval.RejectedAt = &now
+	approval.Reason = sanitizedReason
 
-	// Move to terminated state
-	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", username, sanitizedReason)
-
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to reject session", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to reject session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Approval = approval
+		status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		status.Message = fmt.Sprintf("Rejected by %s: %s", username, sanitizedReason)
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "reject session", "failed to reject session", name, err)
 		return
 	}
 
@@ -595,8 +599,9 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 
 	// Find the participant
 	participantIndex := -1
-	for i := range session.Status.Participants {
-		if session.Status.Participants[i].User == username {
+	participants := append([]breakglassv1alpha1.DebugSessionParticipant(nil), session.Status.Participants...)
+	for i := range participants {
+		if participants[i].User == username {
 			participantIndex = i
 			break
 		}
@@ -606,7 +611,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		apiresponses.RespondNotFoundSimple(ctx, "user is not a participant in this session")
 		return
 	}
-	if session.Status.Participants[participantIndex].Role == breakglassv1alpha1.ParticipantRoleOwner {
+	if participants[participantIndex].Role == breakglassv1alpha1.ParticipantRoleOwner {
 		apiresponses.RespondForbidden(ctx, "session owner cannot leave; use terminate instead")
 		return
 	}
@@ -621,18 +626,19 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	}
 
 	now := metav1.Now()
-	session.Status.Participants[participantIndex].LeftAt = &now
+	participants[participantIndex].LeftAt = &now
 
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to leave session", "session", name, "user", username, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to leave session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Participants = participants
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "leave session", "failed to leave session", name, err)
 		return
 	}
 
 	reqLog.Infow("User left debug session", "session", name, "user", username)
 	// Update active participant count (exclude those who left)
 	activeCount := 0
-	for _, p := range session.Status.Participants {
+	for _, p := range participants {
 		if p.LeftAt == nil {
 			activeCount++
 		}

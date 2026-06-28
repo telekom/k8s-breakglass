@@ -34,9 +34,11 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -6225,6 +6227,68 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	})
 }
 
+func TestDebugSessionAPIController_StatusPatchOptimisticLockRejectsStaleParticipantUpdateAfterRenewal(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	oldExpiry := metav1.NewTime(time.Now().Add(30 * time.Minute).Truncate(time.Second))
+	renewedExpiry := metav1.NewTime(time.Now().Add(2 * time.Hour).Truncate(time.Second))
+	joinedAt := metav1.Now()
+
+	liveSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "status-lock-session",
+			Namespace:       "default",
+			ResourceVersion: "2",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "production",
+			TemplateRef: "standard-debug",
+			RequestedBy: "owner@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:        breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:    &renewedExpiry,
+			RenewalCount: 1,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "owner@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: joinedAt},
+			},
+		},
+	}
+	staleSession := liveSession.DeepCopy()
+	staleSession.ResourceVersion = "1"
+	staleSession.Status.ExpiresAt = &oldExpiry
+	staleSession.Status.RenewalCount = 0
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveSession).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	err := ctrl.patchDebugSessionStatusWithOptimisticLock(context.Background(), staleSession, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Participants = append(status.Participants, breakglassv1alpha1.DebugSessionParticipant{
+			User:     "peer@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleViewer,
+			JoinedAt: joinedAt,
+		})
+	})
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict, got %v", err)
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), client.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, &updated)
+	require.NoError(t, err)
+
+	require.NotNil(t, updated.Status.ExpiresAt)
+	assert.True(t, updated.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, int32(1), updated.Status.RenewalCount)
+	require.Len(t, updated.Status.Participants, 1)
+	assert.Equal(t, "owner@example.com", updated.Status.Participants[0].User)
+}
+
 // TestDebugSessionAPIController_HandleRenewDebugSession tests the handleRenewDebugSession handler
 func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 	scheme := testScheme()
@@ -6495,6 +6559,71 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				assert.Equal(t, tt.wantCount, updatedSession.Status.RenewalCount)
 			})
 		}
+	})
+
+	t.Run("renew status conflict returns conflict", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					if _, ok := obj.(*breakglassv1alpha1.DebugSession); ok && subResourceName == "status" {
+						return apierrors.NewConflict(schema.GroupResource{
+							Group:    breakglassv1alpha1.GroupVersion.Group,
+							Resource: "debugsessions",
+						}, obj.GetName(), fmt.Errorf("stale status"))
+					}
+					return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+				},
+			}).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"1h"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), updatedSession.Status.RenewalCount)
+		require.NotNil(t, updatedSession.Status.ExpiresAt)
+		assert.WithinDuration(t, expiresAt.Time, updatedSession.Status.ExpiresAt.Time, time.Second)
 	})
 
 	t.Run("renew rejects extension beyond max duration", func(t *testing.T) {
