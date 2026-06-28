@@ -370,6 +370,10 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
@@ -462,6 +466,10 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
@@ -547,6 +555,10 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	// Verify session is active
 	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
+		return
+	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
 		return
 	}
 

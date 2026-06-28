@@ -90,6 +90,37 @@ func assertErrorResponse(t *testing.T, rr *httptest.ResponseRecorder, wantCode s
 	}
 }
 
+func setupAuthenticatedDebugSessionRouterWithObjects(t *testing.T, username string, objects ...client.Object) *gin.Engine {
+	t.Helper()
+	_, ctrl := setupTestRouter(t, objects...)
+	return setupAuthenticatedDebugSessionRouter(t, ctrl, username, "", nil)
+}
+
+func newActiveKubectlDebugSession(name, requester string, expiresAt time.Time) *breakglassv1alpha1.DebugSession {
+	expiresAtTime := metav1.NewTime(expiresAt)
+	return &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: name,
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: requester,
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAtTime,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			},
+		},
+	}
+}
+
 // ============================================================================
 // Tests for handleInjectEphemeralContainer
 // ============================================================================
@@ -321,6 +352,29 @@ func TestHandleInjectEphemeralContainer_SessionNotActive(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assertErrorResponse(t, rr, "BAD_REQUEST")
 	assert.Contains(t, rr.Body.String(), "not active")
+}
+
+func TestHandleInjectEphemeralContainer_ActiveSessionExpired(t *testing.T) {
+	session := newActiveKubectlDebugSession("expired-active-session", "test-user", time.Now().Add(-time.Hour))
+	router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+	reqBody := InjectEphemeralContainerRequest{
+		Namespace:     "default",
+		PodName:       "test-pod",
+		ContainerName: "debug",
+		Image:         "busybox",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/expired-active-session/injectEphemeralContainer", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
+	assert.Contains(t, rr.Body.String(), "expired session")
 }
 
 func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
@@ -566,6 +620,27 @@ func TestHandleCreatePodCopy_SessionNotActive(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "not active")
 }
 
+func TestHandleCreatePodCopy_ActiveSessionExpired(t *testing.T) {
+	session := newActiveKubectlDebugSession("expired-active-session", "test-user", time.Now().Add(-time.Hour))
+	router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+	reqBody := CreatePodCopyRequest{
+		Namespace: "default",
+		PodName:   "test-pod",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/expired-active-session/createPodCopy", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
+	assert.Contains(t, rr.Body.String(), "expired session")
+}
+
 func TestHandleCreatePodCopy_UserNotParticipant(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
@@ -741,6 +816,26 @@ func TestHandleCreateNodeDebugPod_SessionNotFound(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestHandleCreateNodeDebugPod_ActiveSessionExpired(t *testing.T) {
+	session := newActiveKubectlDebugSession("expired-active-session", "test-user", time.Now().Add(-time.Hour))
+	router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+	reqBody := CreateNodeDebugPodRequest{
+		NodeName: "node-1",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/expired-active-session/createNodeDebugPod", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
+	assert.Contains(t, rr.Body.String(), "expired session")
 }
 
 // ============================================================================
