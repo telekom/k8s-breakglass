@@ -32,6 +32,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+func TestEffectiveMaxValidForDurationUsesDefaultString(t *testing.T) {
+	expectedDefault, err := ParseDuration(defaultBreakglassMaxValidFor)
+	assert.NoError(t, err)
+
+	duration, label := effectiveMaxValidForDuration("", 0)
+	assert.Equal(t, expectedDefault, duration)
+	assert.Equal(t, "default "+defaultBreakglassMaxValidFor, label)
+
+	explicitDuration := 30 * time.Minute
+	duration, label = effectiveMaxValidForDuration("30m", explicitDuration)
+	assert.Equal(t, explicitDuration, duration)
+	assert.Equal(t, "30m", label)
+}
+
 // TestValidateSessionIdentityProviderAuthorization_EmptyIDPName tests backward compatibility
 // when session has no IDP name (single-IDP or manual creation mode)
 func TestValidateSessionIdentityProviderAuthorization_EmptyIDPName(t *testing.T) {
@@ -755,6 +769,47 @@ func TestValidateSessionIdentityProviderAuthorization_MatchesAllowedClusterGlob(
 	assert.NotNil(t, errs, "glob-matched escalation should enforce allowed IDPs")
 }
 
+func TestValidateSessionIdentityProviderAuthorization_InvalidAllowedClusterGlob(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-invalid-cluster-glob", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			Allowed: BreakglassEscalationAllowed{
+				Clusters: []string{"prod-["},
+			},
+			Approvers:                BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProviders: []string{"corporate-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"corporate-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.NotNil(t, errs, "invalid glob on a matching escalation should fail closed")
+	errText := errs.ToAggregate().Error()
+	assert.Contains(t, errText, `matching escalation "esc-invalid-cluster-glob"`)
+	assert.Contains(t, errText, "invalid allowed.clusters pattern")
+	assert.Contains(t, errText, "prod-[")
+}
+
 func TestValidateSessionIdentityProviderAuthorization_MatchesClusterConfigRef(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)
@@ -799,6 +854,48 @@ func TestValidateSessionIdentityProviderAuthorization_MatchesClusterConfigRef(t 
 		field.NewPath("spec").Child("identityProviderName"),
 	)
 	assert.NotNil(t, errs, "clusterConfigRefs glob should match and reject disallowed IDP")
+}
+
+func TestValidateSessionIdentityProviderAuthorization_InvalidClusterConfigRefGlob(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-invalid-clusterconfig-glob", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			ClusterConfigRefs: []string{
+				"prod-[",
+			},
+			Allowed:                  BreakglassEscalationAllowed{},
+			Approvers:                BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProviders: []string{"corporate-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"corporate-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.NotNil(t, errs, "invalid clusterConfigRefs glob should fail closed")
+	errText := errs.ToAggregate().Error()
+	assert.Contains(t, errText, `matching escalation "esc-invalid-clusterconfig-glob"`)
+	assert.Contains(t, errText, "invalid clusterConfigRefs pattern")
+	assert.Contains(t, errText, "prod-[")
 }
 
 func TestValidateSessionIdentityProviderAuthorization_DifferentGroup(t *testing.T) {

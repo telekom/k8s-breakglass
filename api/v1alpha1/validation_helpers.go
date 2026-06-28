@@ -503,32 +503,59 @@ func effectiveMaxValidForDuration(raw string, parsed time.Duration) (time.Durati
 	if raw != "" {
 		return parsed, raw
 	}
-	return time.Hour, "default " + defaultBreakglassMaxValidFor
+	defaultDuration, err := ParseDuration(defaultBreakglassMaxValidFor)
+	if err != nil {
+		// This is a compile-time constant; keep the fallback defensive.
+		return time.Hour, "default " + defaultBreakglassMaxValidFor
+	}
+	return defaultDuration, "default " + defaultBreakglassMaxValidFor
 }
 
-func clusterMatchesValidationPattern(cluster string, pattern string) bool {
+func clusterMatchesValidationPattern(cluster string, pattern string) (bool, error) {
 	if pattern == cluster {
-		return true
+		return true, nil
 	}
 	matched, err := filepath.Match(pattern, cluster)
-	return err == nil && matched
+	if err != nil {
+		return false, fmt.Errorf("invalid cluster glob pattern %q: %w", pattern, err)
+	}
+	return matched, nil
 }
 
-func escalationMatchesSessionClusterForValidation(escalation *BreakglassEscalation, cluster string) bool {
+func invalidEscalationClusterPatternError(path *field.Path, escalationName string, fieldName string, pattern string, err error) *field.Error {
+	return field.Forbidden(
+		path,
+		fmt.Sprintf("matching escalation %q has invalid %s pattern %q: %v", escalationName, fieldName, pattern, err),
+	)
+}
+
+func escalationMatchesSessionClusterForValidation(escalation *BreakglassEscalation, cluster string, path *field.Path) (bool, field.ErrorList) {
 	if escalation == nil {
-		return false
+		return false, nil
 	}
 	for _, allowedCluster := range escalation.Spec.Allowed.Clusters {
-		if clusterMatchesValidationPattern(cluster, allowedCluster) {
-			return true
+		matched, err := clusterMatchesValidationPattern(cluster, allowedCluster)
+		if err != nil {
+			return false, field.ErrorList{
+				invalidEscalationClusterPatternError(path, escalation.Name, "allowed.clusters", allowedCluster, err),
+			}
+		}
+		if matched {
+			return true, nil
 		}
 	}
 	for _, clusterConfigRef := range escalation.Spec.ClusterConfigRefs {
-		if clusterMatchesValidationPattern(cluster, clusterConfigRef) {
-			return true
+		matched, err := clusterMatchesValidationPattern(cluster, clusterConfigRef)
+		if err != nil {
+			return false, field.ErrorList{
+				invalidEscalationClusterPatternError(path, escalation.Name, "clusterConfigRefs", clusterConfigRef, err),
+			}
+		}
+		if matched {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // the session is allowed by the associated escalation rule.
@@ -588,7 +615,11 @@ func validateSessionIdentityProviderAuthorization(
 			continue
 		}
 
-		if escalationMatchesSessionClusterForValidation(esc, sessionCluster) {
+		clusterMatches, clusterMatchErrs := escalationMatchesSessionClusterForValidation(esc, sessionCluster, path)
+		if len(clusterMatchErrs) > 0 {
+			return clusterMatchErrs
+		}
+		if clusterMatches {
 			relevantEscalations = append(relevantEscalations, esc)
 		}
 	}
