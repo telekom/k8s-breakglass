@@ -241,12 +241,12 @@ describe("App — high-contrast and theme toggles", () => {
     expect(wrapper.findAll(".mobile-nav-fallback__link")).toHaveLength(0);
   });
 
-  it("exposes the app content as the skip-link main landmark", () => {
+  it("keeps the app content as the skip-link focus target without duplicating the app-shell main landmark", () => {
     wrapper = mountApp();
 
     const main = wrapper.find("#main");
     expect(main.exists()).toBe(true);
-    expect(main.attributes("role")).toBe("main");
+    expect(main.attributes("role")).toBeUndefined();
     expect(main.attributes("tabindex")).toBe("-1");
   });
 });

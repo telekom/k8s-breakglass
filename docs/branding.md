@@ -115,6 +115,7 @@ The frontend includes a user-facing High Contrast toggle for enhanced readabilit
 - Automated axe-core accessibility tests run in CI across all four theme modes
 - Config: `frontend/playwright.a11y.config.ts`
 - Tests: `frontend/tests/e2e/a11y.spec.ts`
+- `scale-telekom-app-shell` owns the page's single `main` landmark; `#main` remains the skip-link focus target without an extra `role="main"`.
 
 ## Error States
 
