@@ -437,6 +437,50 @@ func TestClusterConfigReconciler_BreakglassCleanupUsesIndexedLists(t *testing.T)
 	}
 }
 
+func TestParseClusterConfigRetainFor(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+
+	tests := []struct {
+		name     string
+		retain   string
+		log      *zap.SugaredLogger
+		expected time.Duration
+	}{
+		{
+			name:     "empty uses default",
+			retain:   "",
+			log:      logger,
+			expected: clusterConfigDefaultRetainFor,
+		},
+		{
+			name:     "valid duration",
+			retain:   "2h",
+			log:      logger,
+			expected: 2 * time.Hour,
+		},
+		{
+			name:     "invalid duration with logger uses default",
+			retain:   "not-a-duration",
+			log:      logger,
+			expected: clusterConfigDefaultRetainFor,
+		},
+		{
+			name:     "non-positive duration without logger uses default",
+			retain:   "0s",
+			log:      nil,
+			expected: clusterConfigDefaultRetainFor,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := breakglassv1alpha1.BreakglassSessionSpec{RetainFor: tt.retain}
+
+			assert.Equal(t, tt.expected, parseClusterConfigRetainFor(spec, tt.log))
+		})
+	}
+}
+
 func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 	scheme := newTestClusterConfigReconcilerScheme()
 	ctx := context.Background()
