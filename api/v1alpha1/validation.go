@@ -952,7 +952,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 // It builds a sample AuxiliaryResourceContext with placeholder values, executes the template,
 // and checks that the rendered output is valid YAML. Returns warnings (never errors) because
 // the sample data may not satisfy all template conditions.
-// vars provides extra deploy variable defaults to populate .Vars in the context.
+// vars provides extra deploy variable defaults to populate .vars in the context.
 func tryRenderTemplateString(templateStr string, vars map[string]string) []string {
 	if templateStr == "" || !strings.Contains(templateStr, "{{") {
 		return nil // Not a templated string, nothing to dry-run

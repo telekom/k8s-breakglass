@@ -17,9 +17,9 @@ import (
 // with apply.
 //
 // ExtraDeployVariable defines a user-provided variable for template rendering.
-// Variables are available as {{ .Vars.<name> }} in all templates.
+// Variables are available as {{ .vars.<name> }} in all templates.
 type ExtraDeployVariableApplyConfiguration struct {
-	// name is the variable name, used as {{ .Vars.<name> }} in templates.
+	// name is the variable name, used as {{ .vars.<name> }} in templates.
 	// Must be a valid Go identifier (letters, digits, underscores, starting with letter).
 	Name *string `json:"name,omitempty"`
 	// displayName is the human-readable label shown in the UI.

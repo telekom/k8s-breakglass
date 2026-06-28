@@ -2440,7 +2440,7 @@ func TestValidateAuxiliaryResources(t *testing.T) {
 		res := []AuxiliaryResource{
 			{
 				Name:           "test",
-				TemplateString: "kind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}",
+				TemplateString: "kind: ConfigMap\nmetadata:\n  name: {{ .session.name }}",
 			},
 		}
 		errs := validateAuxiliaryResources(res, fieldPath)
@@ -2804,7 +2804,7 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "complex valid template",
-			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Session.Name }}\n  labels:\n    {{- range $k, $v := .Labels }}\n    {{ $k }}: {{ $v | yamlQuote }}\n    {{- end }}",
+			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .session.name }}\n  labels:\n    {{- range $k, $v := .labels }}\n    {{ $k }}: {{ $v | yamlQuote }}\n    {{- end }}",
 			wantErr:  false,
 		},
 	}
@@ -2847,7 +2847,7 @@ func TestValidateAuxiliaryResources_InvalidTemplateSyntax(t *testing.T) {
 		res := []AuxiliaryResource{
 			{
 				Name:           "test",
-				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}",
+				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .session.name }}",
 			},
 		}
 		errs := validateAuxiliaryResources(res, fieldPath)
