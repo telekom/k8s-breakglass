@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -508,6 +509,30 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLogAuxiliaryResourceDeployFailure_FailPolicyLogsError(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	logger := zap.New(core).Sugar()
+	resource := breakglassv1alpha1.AuxiliaryResource{
+		Name:     "required-config",
+		Category: "debug-config",
+	}
+
+	logAuxiliaryResourceDeployFailure(
+		logger,
+		resource,
+		breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+		assert.AnError,
+	)
+
+	entries := logs.FilterMessage("Required auxiliary resource deployment failed").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	assert.Equal(t, "required-config", fields["resource"])
+	assert.Equal(t, "debug-config", fields["category"])
+	assert.Equal(t, breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail, fields["failurePolicy"])
+	assert.Equal(t, assert.AnError.Error(), fields["error"])
 }
 
 func TestDeployAuxiliaryResources_ReturnsPartialStatusesOnRequiredFailure(t *testing.T) {

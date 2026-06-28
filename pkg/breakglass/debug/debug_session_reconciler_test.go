@@ -847,7 +847,10 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns"},
 	}
-	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", Namespace: "debug-ns"},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, secret).Build()
 	session := newTestDebugSession("aux-readiness", "test-template", "test-cluster", "user@example.com")
 	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
 		{
@@ -857,8 +860,21 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 			ResourceName: "ready-config",
 			Namespace:    "debug-ns",
 			Created:      true,
+			AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+				{
+					Kind:         "Secret",
+					APIVersion:   "v1",
+					ResourceName: "ready-secret",
+					Namespace:    "debug-ns",
+				},
+			},
 		},
 	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
 	controller := &DebugSessionController{
 		log:          zap.NewNop().Sugar(),
 		auxiliaryMgr: NewAuxiliaryResourceManager(zap.NewNop().Sugar(), nil),
@@ -867,6 +883,22 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 	require.NoError(t, controller.updateAuxiliaryResourceReadiness(context.Background(), session, targetClient))
 	require.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
 	require.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+	require.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	require.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+
+	require.NoError(t, breakglass.ApplyDebugSessionStatus(context.Background(), fakeClient, session))
+
+	var persisted breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      "aux-readiness",
+		Namespace: "breakglass",
+	}, &persisted))
+	require.Len(t, persisted.Status.AuxiliaryResourceStatuses, 1)
+	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.Equal(t, "Current", persisted.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+	require.Len(t, persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources, 1)
+	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "Current", persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
 }
 
 func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {

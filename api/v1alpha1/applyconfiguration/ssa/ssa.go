@@ -223,6 +223,11 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithDeployedResources(DeployedResourceRefFrom(&status.DeployedResources[i]))
 	}
 
+	// Set auxiliary resource statuses
+	for i := range status.AuxiliaryResourceStatuses {
+		result.WithAuxiliaryResourceStatuses(AuxiliaryResourceStatusFrom(&status.AuxiliaryResourceStatuses[i]))
+	}
+
 	// Set allowed pods
 	for i := range status.AllowedPods {
 		result.WithAllowedPods(AllowedPodRefFrom(&status.AllowedPods[i]))
@@ -536,6 +541,79 @@ func AllowedPodRefFrom(p *breakglassv1alpha1.AllowedPodRef) *ac.AllowedPodRefApp
 	}
 	if p.ContainerStatus != nil {
 		result.WithContainerStatus(PodContainerStatusFrom(p.ContainerStatus))
+	}
+
+	return result
+}
+
+// AuxiliaryResourceStatusFrom converts an AuxiliaryResourceStatus to its ApplyConfiguration.
+func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) *ac.AuxiliaryResourceStatusApplyConfiguration {
+	if s == nil {
+		return nil
+	}
+	result := ac.AuxiliaryResourceStatus().
+		WithName(s.Name).
+		WithCreated(s.Created).
+		WithReady(s.Ready).
+		WithDeleted(s.Deleted)
+
+	if s.Category != "" {
+		result.WithCategory(s.Category)
+	}
+	if s.Kind != "" {
+		result.WithKind(s.Kind)
+	}
+	if s.APIVersion != "" {
+		result.WithAPIVersion(s.APIVersion)
+	}
+	if s.ResourceName != "" {
+		result.WithResourceName(s.ResourceName)
+	}
+	if s.Namespace != "" {
+		result.WithNamespace(s.Namespace)
+	}
+	if s.CreatedAt != nil {
+		result.WithCreatedAt(*s.CreatedAt)
+	}
+	if s.ReadyAt != nil {
+		result.WithReadyAt(*s.ReadyAt)
+	}
+	if s.ReadinessStatus != "" {
+		result.WithReadinessStatus(s.ReadinessStatus)
+	}
+	if s.DeletedAt != nil {
+		result.WithDeletedAt(*s.DeletedAt)
+	}
+	if s.Error != "" {
+		result.WithError(s.Error)
+	}
+	for i := range s.AdditionalResources {
+		result.WithAdditionalResources(AdditionalResourceRefFrom(&s.AdditionalResources[i]))
+	}
+
+	return result
+}
+
+// AdditionalResourceRefFrom converts an AdditionalResourceRef to its ApplyConfiguration.
+func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.AdditionalResourceRefApplyConfiguration {
+	if r == nil {
+		return nil
+	}
+	result := ac.AdditionalResourceRef().
+		WithKind(r.Kind).
+		WithAPIVersion(r.APIVersion).
+		WithResourceName(r.ResourceName).
+		WithReady(r.Ready).
+		WithDeleted(r.Deleted)
+
+	if r.Namespace != "" {
+		result.WithNamespace(r.Namespace)
+	}
+	if r.ReadinessStatus != "" {
+		result.WithReadinessStatus(r.ReadinessStatus)
+	}
+	if r.Error != "" {
+		result.WithError(r.Error)
 	}
 
 	return result

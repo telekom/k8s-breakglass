@@ -348,6 +348,7 @@ func logAuxiliaryResourceDeployFailure(
 	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore:
 		log.Debugw("Ignoring auxiliary resource deployment failure", fields...)
 	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail:
+		log.Errorw("Required auxiliary resource deployment failed", fields...)
 	default:
 		log.Warnw("Auxiliary resource deployment failed with unknown failure policy", fields...)
 	}
