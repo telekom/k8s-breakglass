@@ -71,6 +71,7 @@ const approverNote = ref("");
 const isApproving = ref(false);
 let redirectTimer: ReturnType<typeof setTimeout> | null = null;
 let loadRequestId = 0;
+let actionRequestId = 0;
 
 // Computed: categorize the denial reason for specialized UI treatment
 const denialCategory = computed<DenialCategory>(() => {
@@ -100,6 +101,7 @@ const clearRedirectTimer = () => {
 
 const clearSessionState = () => {
   clearRedirectTimer();
+  ++actionRequestId;
   session.value = null;
   approvalMeta.value = null;
   error.value = null;
@@ -240,18 +242,26 @@ const handleApprove = async () => {
     return;
   }
 
+  const requestId = ++actionRequestId;
+  const requestedSessionName = session.value.metadata.name;
   isApproving.value = true;
   try {
     await service.approveReview({
-      name: session.value.metadata.name,
+      name: requestedSessionName,
       user: "",
       cluster: "",
       group: "",
       reason: approverNote.value,
     });
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     pushSuccess("Session approved successfully");
     router.push("/sessions");
   } catch (e: unknown) {
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     const axiosLike = e as AxiosLikeError;
     logError("SessionApprovalView", "Failed to approve session:", e);
     if (axiosLike.response?.status === 404) {
@@ -280,18 +290,26 @@ const handleReject = async () => {
     return;
   }
 
+  const requestId = ++actionRequestId;
+  const requestedSessionName = session.value.metadata.name;
   isApproving.value = true;
   try {
     await service.rejectReview({
-      name: session.value.metadata.name,
+      name: requestedSessionName,
       user: "",
       cluster: "",
       group: "",
       reason: approverNote.value,
     });
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     pushSuccess("Session rejected successfully");
     router.push("/sessions");
   } catch (e: unknown) {
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     const axiosLike = e as AxiosLikeError;
     logError("SessionApprovalView", "Failed to reject session:", e);
     if (axiosLike.response?.status === 404) {

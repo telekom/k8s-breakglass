@@ -22,12 +22,17 @@ async function performMockLogin(page: Page) {
 
 async function navigateWithRouter(page: Page, path: string) {
   await page.evaluate((targetPath) => {
-    const router = (window as unknown as Record<string, unknown>).__VUE_ROUTER__ as Record<string, unknown>;
+    const router = (
+      window as unknown as {
+        __VUE_ROUTER__?: { push: (target: string) => Promise<unknown> | unknown };
+      }
+    ).__VUE_ROUTER__;
     if (router && typeof router.push === "function") {
-      router.push(targetPath);
+      return router.push(targetPath);
     } else {
       window.history.pushState({}, "", targetPath);
       window.dispatchEvent(new PopStateEvent("popstate"));
+      return undefined;
     }
   }, path);
 

@@ -9,7 +9,7 @@ import { mount, flushPromises, enableAutoUnmount } from "@vue/test-utils";
 import { reactive, ref } from "vue";
 import SessionApprovalView from "@/views/SessionApprovalView.vue";
 import { AuthKey } from "@/keys";
-import { pushError } from "@/services/toast";
+import { pushError, pushSuccess } from "@/services/toast";
 
 const mockPush = vi.fn();
 const mockLogin = vi.fn();
@@ -293,6 +293,67 @@ describe("SessionApprovalView", () => {
     expect(mockLogin).toHaveBeenCalledWith({ path: "/session/session-2/approve" });
     expect(wrapper.find('[data-testid="approval-session"]').exists()).toBe(false);
     expect(wrapper.text()).toContain("Loading session");
+  });
+
+  it("ignores stale approval success after navigating to another approval link", async () => {
+    let resolveApprove!: () => void;
+    mockGetSessionByName
+      .mockResolvedValueOnce(approvalResponse("session-1", "requester-1@example.com"))
+      .mockResolvedValueOnce(approvalResponse("session-2", "requester-2@example.com"));
+    mockApproveReview.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveApprove = resolve;
+      }),
+    );
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: {
+            props: ["session"],
+            template: `
+              <div>
+                <div data-testid="approval-session">{{ session.metadata.name }} {{ session.spec.user }}</div>
+                <button data-testid="emit-approve" @click="$emit('approve')">Approve</button>
+              </div>
+            `,
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    await wrapper.find('[data-testid="emit-approve"]').trigger("click");
+    expect(mockApproveReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "session-1",
+      }),
+    );
+
+    mockRoute.params.sessionName = "session-2";
+    mockRoute.fullPath = "/session/session-2/approve";
+    await flushPromises();
+    await flushPromises();
+
+    resolveApprove();
+    await flushPromises();
+
+    expect(pushSuccess).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalledWith("/sessions");
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-2 requester-2@example.com");
+    });
   });
 });
 
