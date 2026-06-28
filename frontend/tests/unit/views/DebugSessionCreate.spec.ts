@@ -273,6 +273,16 @@ describe("DebugSessionCreate", () => {
       expect(vm.form.cluster).toBe("");
     });
 
+    it("uses a friendly fallback for generic template load failures", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: new Error("Request failed with status code 500"),
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.text()).toContain("Debug session templates could not be loaded");
+      expect(errorState.text()).not.toContain("Request failed with status code 500");
+    });
+
     it("retries template loading from the error state", async () => {
       const templates = defaultTemplates();
       const wrapper = await createWrapper(templates, {

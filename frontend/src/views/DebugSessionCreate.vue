@@ -2,7 +2,7 @@
 import { computed, inject, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
-import { debug, handleAxiosError } from "@/services/logger";
+import { debug } from "@/services/logger";
 import DebugSessionService from "@/services/debugSession";
 import { EmptyState, PageHeader, LoadingState } from "@/components/common";
 import ClusterSelectGrid from "@/components/debug-session/ClusterSelectGrid.vue";
@@ -115,6 +115,35 @@ const selectedTemplate = computed(() => {
   if (!templates.value || templates.value.length === 0) return undefined;
   return templates.value.find((t) => t.name === form.templateRef);
 });
+
+const templateLoadErrorFallback =
+  "Debug session templates could not be loaded. Please retry or contact an administrator.";
+
+function templateLoadErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return templateLoadErrorFallback;
+  }
+
+  const responseData = (error as { response?: { data?: unknown } }).response?.data;
+  if (typeof responseData === "string" && responseData.trim()) {
+    return responseData;
+  }
+
+  if (responseData && typeof responseData === "object") {
+    const data = responseData as Record<string, unknown>;
+    const responseMessage = data.error || data.message;
+    if (typeof responseMessage === "string" && responseMessage.trim()) {
+      return responseMessage;
+    }
+  }
+
+  const message = (error as { message?: unknown }).message;
+  if (typeof message === "string" && message.trim() && !message.startsWith("Request failed with status code")) {
+    return message;
+  }
+
+  return templateLoadErrorFallback;
+}
 
 // User groups for variable visibility filtering
 const userGroups = ref<string[]>([]);
@@ -469,13 +498,7 @@ async function fetchTemplates() {
       form.templateRef = firstTemplate.name;
     }
   } catch (error: unknown) {
-    const { message } = handleAxiosError(
-      "DebugSessionCreate.fetchTemplates",
-      error,
-      "Debug session templates could not be loaded. Please retry or contact an administrator.",
-      false,
-    );
-    templateLoadError.value = message;
+    templateLoadError.value = templateLoadErrorMessage(error);
     templates.value = [];
     form.templateRef = "";
     clusterDetails.value = [];
