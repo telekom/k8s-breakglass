@@ -40,6 +40,7 @@ This document defines the release requirements for k8s-breakglass. It is intende
    - `charts/escalation-config` is packaged during release preparation.
    - The packaged chart is pushed to GHCR as a Helm OCI artifact at `oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config`.
    - The chart `.tgz` is attached to the GitHub Release assets.
+   - Every release tag that changes the packaged chart `appVersion` must use a unique chart `version` in `charts/escalation-config/Chart.yaml`. Release reruns may skip an already-published chart only when the remote chart `appVersion` matches the release tag.
 
 ## Multi-Architecture Builds
 
@@ -63,6 +64,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Verify CI success on the release commit.
 - Ensure the changelog is up to date.
 - Use `vX.Y.Z` tags for stable releases and `vX.Y.Z-rc.1` style tags for prereleases. Do not use SemVer build metadata in release tags.
+- Bump `charts/escalation-config/Chart.yaml` `version` before cutting a release whose chart `appVersion` has not already been published under that chart version.
 - Generate artifacts via the release workflow.
 - Verify chart publication in GHCR (`oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config`).
 - Publish checksums and update release notes.
@@ -84,6 +86,7 @@ Consumers should be able to:
    helm show chart oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config \
       --version <chart-version>
    ```
+  Confirm the returned `version` is the expected chart version and `appVersion` is the release tag.
 - Verify SBOM attestation:
   ```bash
   cosign verify-attestation ghcr.io/telekom/k8s-breakglass@<digest> \

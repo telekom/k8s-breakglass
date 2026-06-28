@@ -551,18 +551,45 @@ jobs:
 
           CHART_PACKAGE="$(ls chart-dist/escalation-config-*.tgz | head -n1)"
           CHART_VERSION="$(helm show chart "${CHART_PACKAGE}" | awk '/^version:/ {print $2}')"
+          CHART_APP_VERSION="$(helm show chart "${CHART_PACKAGE}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
 
           if [ -z "${CHART_VERSION}" ]; then
             echo "Failed to determine chart version from ${CHART_PACKAGE}" >&2
             exit 1
           fi
+          if [ -z "${CHART_APP_VERSION}" ]; then
+            echo "Failed to determine chart appVersion from ${CHART_PACKAGE}" >&2
+            exit 1
+          fi
 
-          echo "Preparing to publish escalation-config:${CHART_VERSION} to ${CHART_REPO}"
+          echo "Preparing to publish escalation-config:${CHART_VERSION} appVersion ${CHART_APP_VERSION} to ${CHART_REPO}"
 
-          # Idempotent behavior for reruns: skip if this chart version already exists.
-          if helm show chart "${CHART_REPO}/escalation-config" --version "${CHART_VERSION}" >/dev/null 2>&1; then
-            echo "Chart escalation-config:${CHART_VERSION} already present in GHCR; skipping push."
-            exit 0
+          # Idempotent behavior for reruns: skip only if this exact chart version
+          # already exists for the same release tag. A different appVersion under
+          # the same chart version would leave GHCR serving a stale release.
+          set +e
+          REMOTE_CHART_LOOKUP_OUTPUT="$(helm show chart "${CHART_REPO}/escalation-config" --version "${CHART_VERSION}" 2>&1)"
+          REMOTE_CHART_LOOKUP_STATUS=$?
+          set -e
+
+          if [ "${REMOTE_CHART_LOOKUP_STATUS}" -eq 0 ]; then
+            REMOTE_CHART_METADATA="${REMOTE_CHART_LOOKUP_OUTPUT}"
+            REMOTE_APP_VERSION="$(printf '%s\n' "${REMOTE_CHART_METADATA}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
+            if [ "${REMOTE_APP_VERSION}" = "${CHART_APP_VERSION}" ]; then
+              echo "Chart escalation-config:${CHART_VERSION} already present in GHCR with appVersion ${REMOTE_APP_VERSION}; skipping push."
+              exit 0
+            fi
+
+            echo "::error::Chart escalation-config:${CHART_VERSION} already exists in GHCR with appVersion ${REMOTE_APP_VERSION:-<unknown>}, but this release packages appVersion ${CHART_APP_VERSION}. Bump charts/escalation-config/Chart.yaml version before releasing."
+            exit 1
+          fi
+
+          if printf '%s\n' "${REMOTE_CHART_LOOKUP_OUTPUT}" | grep -Eiq '(not found|not exist|no such|manifest unknown|404)'; then
+            echo "Chart escalation-config:${CHART_VERSION} is not present in GHCR; publishing new package."
+          else
+            echo "::error::Failed to inspect existing escalation-config:${CHART_VERSION} chart in GHCR before publishing." >&2
+            printf '%s\n' "${REMOTE_CHART_LOOKUP_OUTPUT}" >&2
+            exit "${REMOTE_CHART_LOOKUP_STATUS}"
           fi
 
           helm push "${CHART_PACKAGE}" "${CHART_REPO}"
