@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **BreakglassEscalation generation reconciliation**: Escalation updates now reconcile on metadata generation changes and deletion-timestamp transitions, keeping `status.observedGeneration` current for Helm/Flux-driven spec updates while still ignoring status-only updates.
 - **CI: pin ORT scan image**: The ORT workflow now uses a digest-pinned `ghcr.io/oss-review-toolkit/ort:89.2.0` image instead of the moving `latest` tag, avoiding transient ORT CLI startup failures from mutable container image updates.
 - **Debug session namespace semantics**: `POST /api/debugSessions` now treats legacy body `namespace` as a deprecated alias for `targetNamespace` and rejects conflicting values. DebugSession objects are always created in the matching `ClusterConfig` namespace, and named debug-session routes honor an explicit `?namespace=` hint strictly instead of falling back to another namespace.
 - **Session drop preserves terminal audit history**: Owner `POST /api/breakglassSessions/{name}/drop` now rejects sessions that are already in a terminal state instead of rewriting Rejected, Expired, IdleExpired, Withdrawn, or ApprovalTimeout sessions to `Withdrawn`.
