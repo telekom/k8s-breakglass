@@ -41,8 +41,6 @@ const (
 	// ClusterConfigFinalizer is the finalizer added to ClusterConfig resources
 	// to ensure proper cleanup of associated sessions when the cluster is deleted.
 	ClusterConfigFinalizer = "breakglass.t-caas.telekom.com/cluster-cleanup"
-
-	clusterConfigDefaultRetainFor = 720 * time.Hour
 )
 
 // ClusterConfigReconciler reconciles ClusterConfig objects.
@@ -197,7 +195,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 		// Update the session status to Expired
 		session.Status.State = breakglassv1alpha1.SessionStateExpired
 		session.Status.ExpiresAt = now
-		retainFor := parseClusterConfigRetainFor(session.Spec, log)
+		retainFor := utils.ParseRetainFor(session.Spec, log)
 		session.Status.RetainedUntil = metav1.NewTime(now.Time.Add(retainFor))
 
 		if err := ssa.ApplyBreakglassSessionStatus(ctx, r.Client, session); err != nil {
@@ -282,23 +280,6 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	}
 
 	return errors.Join(terminateErrs...)
-}
-
-func parseClusterConfigRetainFor(spec breakglassv1alpha1.BreakglassSessionSpec, log *zap.SugaredLogger) time.Duration {
-	if spec.RetainFor == "" {
-		return clusterConfigDefaultRetainFor
-	}
-	retainFor, err := breakglassv1alpha1.ParseDuration(spec.RetainFor)
-	if err != nil || retainFor <= 0 {
-		if log != nil {
-			log.Warnw("Invalid BreakglassSession retainFor during ClusterConfig cleanup; falling back to default",
-				"retainFor", spec.RetainFor,
-				"default", clusterConfigDefaultRetainFor.String(),
-				"error", err)
-		}
-		return clusterConfigDefaultRetainFor
-	}
-	return retainFor
 }
 
 // SetupWithManager sets up the controller with the Manager.

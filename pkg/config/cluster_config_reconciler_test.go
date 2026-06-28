@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -437,7 +438,7 @@ func TestClusterConfigReconciler_BreakglassCleanupUsesIndexedLists(t *testing.T)
 	}
 }
 
-func TestParseClusterConfigRetainFor(t *testing.T) {
+func TestClusterConfigCleanupRetainForUsesBreakglassParser(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	tests := []struct {
@@ -450,7 +451,7 @@ func TestParseClusterConfigRetainFor(t *testing.T) {
 			name:     "empty uses default",
 			retain:   "",
 			log:      logger,
-			expected: clusterConfigDefaultRetainFor,
+			expected: utils.DefaultRetainForDuration,
 		},
 		{
 			name:     "valid duration",
@@ -462,13 +463,13 @@ func TestParseClusterConfigRetainFor(t *testing.T) {
 			name:     "invalid duration with logger uses default",
 			retain:   "not-a-duration",
 			log:      logger,
-			expected: clusterConfigDefaultRetainFor,
+			expected: utils.DefaultRetainForDuration,
 		},
 		{
 			name:     "non-positive duration without logger uses default",
 			retain:   "0s",
 			log:      nil,
-			expected: clusterConfigDefaultRetainFor,
+			expected: utils.DefaultRetainForDuration,
 		},
 	}
 
@@ -476,7 +477,7 @@ func TestParseClusterConfigRetainFor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := breakglassv1alpha1.BreakglassSessionSpec{RetainFor: tt.retain}
 
-			assert.Equal(t, tt.expected, parseClusterConfigRetainFor(spec, tt.log))
+			assert.Equal(t, tt.expected, utils.ParseRetainFor(spec, tt.log))
 		})
 	}
 }

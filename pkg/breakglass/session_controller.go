@@ -21,15 +21,16 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	durationutils "github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
 )
 
 const (
-	MonthDuration            = time.Hour * 24 * 30
-	WeekDuration             = time.Hour * 24 * 7
-	DefaultValidForDuration  = time.Hour
-	DefaultRetainForDuration = MonthDuration
+	MonthDuration            = durationutils.MonthDuration
+	WeekDuration             = durationutils.WeekDuration
+	DefaultValidForDuration  = durationutils.DefaultValidForDuration
+	DefaultRetainForDuration = durationutils.DefaultRetainForDuration
 	APIContextTimeout        = 30 * time.Second // Timeout for API operations like session listing
 
 	// MaxApproverGroupMembers limits the number of members resolved from a single approver group.
