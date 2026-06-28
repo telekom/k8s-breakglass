@@ -610,7 +610,9 @@ func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context
 	}
 
 	c.sendDebugSessionFailedEmail(ctx, session, reason)
-	c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, session, actor, reason)
+	if c.shouldEmitAudit(session) {
+		c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, session, actor, reason)
+	}
 	metrics.DebugSessionsFailed.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Inc()
 	return nil
 }

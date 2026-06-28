@@ -240,23 +240,11 @@ func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Cont
 		return
 	}
 
-	recipientEmail := session.Spec.RequestedByEmail
-	if recipientEmail == "" {
-		recipientEmail = session.Spec.RequestedBy
-	}
-	if !strings.Contains(recipientEmail, "@") {
-		c.log.Warnw("Skipping failure email - no valid email address", "session", session.Name, "recipient", recipientEmail)
-		return
-	}
-
-	requesterName := session.Spec.RequestedByDisplayName
-	if requesterName == "" {
-		requesterName = session.Spec.RequestedBy
-	}
+	recipients := []string{session.Spec.RequestedBy}
 
 	params := mail.DebugSessionFailedMailParams{
-		RequesterName:  requesterName,
-		RequesterEmail: recipientEmail,
+		RequesterName:  session.Spec.RequestedBy,
+		RequesterEmail: session.Spec.RequestedBy,
 		SessionID:      session.Name,
 		Cluster:        session.Spec.Cluster,
 		TemplateName:   session.Spec.TemplateRef,
@@ -274,7 +262,7 @@ func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Cont
 	}
 
 	subject := fmt.Sprintf("[%s] Debug Session Failed: %s", c.brandingName, session.Name)
-	if err := c.mailService.Enqueue(session.Name, []string{recipientEmail}, subject, body); err != nil {
+	if err := c.mailService.Enqueue(session.Name, recipients, subject, body); err != nil {
 		c.log.Errorw("Failed to enqueue debug session failed email", "session", session.Name, "error", err)
 	} else {
 		c.log.Infow("Debug session failed email queued", "session", session.Name, "requester", session.Spec.RequestedBy)
@@ -372,6 +360,16 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 	}
 
 	c.auditService.Emit(ctx, event)
+}
+
+func (c *DebugSessionAPIController) shouldEmitAudit(session *breakglassv1alpha1.DebugSession) bool {
+	if session.Status.ResolvedTemplate == nil {
+		return true
+	}
+	if session.Status.ResolvedTemplate.Audit == nil {
+		return true
+	}
+	return session.Status.ResolvedTemplate.Audit.Enabled
 }
 
 // handleInjectEphemeralContainer injects a debug container into an existing pod

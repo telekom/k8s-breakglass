@@ -360,9 +360,10 @@ func (c *DebugSessionAPIController) resolveNotification(template *breakglassv1al
 type notificationEvent string
 
 const (
-	notificationEventRequest  notificationEvent = "request"
-	notificationEventApproval notificationEvent = "approval"
-	notificationEventExpiry   notificationEvent = "expiry"
+	notificationEventRequest     notificationEvent = "request"
+	notificationEventApproval    notificationEvent = "approval"
+	notificationEventExpiry      notificationEvent = "expiry"
+	notificationEventTermination notificationEvent = "termination"
 )
 
 func resolveNotificationConfig(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionNotificationConfig {
@@ -386,6 +387,8 @@ func shouldSendNotification(cfg *breakglassv1alpha1.DebugSessionNotificationConf
 		return cfg.NotifyOnApproval
 	case notificationEventExpiry:
 		return cfg.NotifyOnExpiry
+	case notificationEventTermination:
+		return cfg.NotifyOnTermination
 	default:
 		return true
 	}

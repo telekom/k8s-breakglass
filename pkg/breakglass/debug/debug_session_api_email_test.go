@@ -397,9 +397,111 @@ func TestSendDebugSessionFailedEmail_HappyPath(t *testing.T) {
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1)
 	assert.Equal(t, "failed-debug-session", messages[0].SessionID)
-	assert.Equal(t, []string{"developer@example.com"}, messages[0].Recipients)
+	assert.Equal(t, []string{"developer"}, messages[0].Recipients)
 	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
 	assert.Contains(t, messages[0].Body, "Approval timed out after 24h")
+}
+
+func TestSendDebugSessionFailedEmail_IgnoresNotificationRecipients(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "standard-debug"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:              true,
+				NotifyOnTermination:  true,
+				AdditionalRecipients: []string{"ops@example.com"},
+				ExcludedRecipients: &breakglassv1alpha1.NotificationExclusions{
+					Users: []string{"developer@example.com"},
+				},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "failed-debug-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:            "standard-debug",
+			RequestedBy:            "developer",
+			RequestedByEmail:       "developer@example.com",
+			RequestedByDisplayName: "Developer User",
+		},
+	}
+
+	ctrl.sendDebugSessionFailedEmail(context.Background(), session, "Approval timed out after 24h")
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"developer"}, messages[0].Recipients)
+}
+
+func TestSendDebugSessionFailedEmail_SendsWhenNotificationApprovalDisabled(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "standard-debug"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:             true,
+				NotifyOnApproval:    false,
+				NotifyOnTermination: true,
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "failed-debug-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:      "standard-debug",
+			RequestedBy:      "developer@example.com",
+			RequestedByEmail: "developer@example.com",
+		},
+	}
+
+	ctrl.sendDebugSessionFailedEmail(context.Background(), session, "Approval timed out after 24h")
+
+	require.Len(t, mockMail.GetMessages(), 1)
+}
+
+func TestSendDebugSessionFailedEmail_SendsWhenNotificationTerminationDisabled(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "standard-debug"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:             true,
+				NotifyOnApproval:    true,
+				NotifyOnTermination: false,
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "failed-debug-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:      "standard-debug",
+			RequestedBy:      "developer@example.com",
+			RequestedByEmail: "developer@example.com",
+		},
+	}
+
+	ctrl.sendDebugSessionFailedEmail(context.Background(), session, "Approval timed out after 24h")
+
+	require.Len(t, mockMail.GetMessages(), 1)
 }
 
 func TestSendDebugSessionFailedEmail_SkipsWhenDisabled(t *testing.T) {
@@ -421,7 +523,7 @@ func TestSendDebugSessionFailedEmail_SkipsWhenDisabled(t *testing.T) {
 	assert.Empty(t, mockMail.GetMessages())
 }
 
-func TestSendDebugSessionFailedEmail_SkipsInvalidRecipient(t *testing.T) {
+func TestSendDebugSessionFailedEmail_SendsRequesterEvenWhenNotEmail(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(true)
 
@@ -436,7 +538,9 @@ func TestSendDebugSessionFailedEmail_SkipsInvalidRecipient(t *testing.T) {
 
 	ctrl.sendDebugSessionFailedEmail(context.Background(), session, "failed")
 
-	assert.Empty(t, mockMail.GetMessages())
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"developer"}, messages[0].Recipients)
 }
 
 func TestSendDebugSessionFailedEmail_EnqueueError(t *testing.T) {

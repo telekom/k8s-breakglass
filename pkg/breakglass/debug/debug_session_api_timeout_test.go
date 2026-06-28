@@ -71,3 +71,41 @@ func TestFailTimedOutDebugSessionApproval_StatusApplyError(t *testing.T) {
 	assert.Empty(t, mockMail.GetMessages())
 	assert.Empty(t, mockAudit.GetEvents())
 }
+
+func TestFailTimedOutDebugSessionApproval_RespectsTemplateAuditDisabled(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "timed-out-debug-session",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "production",
+			TemplateRef: "standard-debug",
+			RequestedBy: "developer@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{
+					Enabled: false,
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	mockMail := NewMockMailEnqueuer(true)
+	mockAudit := NewMockAuditEmitter(true)
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil).
+		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
+		WithAuditService(mockAudit)
+
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h")
+
+	require.NoError(t, err)
+	require.Len(t, mockMail.GetMessages(), 1)
+	assert.Empty(t, mockAudit.GetEvents())
+}
