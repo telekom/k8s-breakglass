@@ -4947,6 +4947,56 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 		assert.Equal(t, "node-debug-pod", session.Status.DeployedResources[0].Name)
 		assert.Len(t, session.Status.AllowedPods, 1)
 	})
+
+	t.Run("preserves skipped refs while dependent cleanup failed", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-skipped-refs", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", Namespace: "default", Source: "auxiliary:config"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", Namespace: "default", Source: "pod-template"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "ConfigMap", ResourceName: "pod-template-config", Namespace: "default", Created: true},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node-debug-pod",
+					Namespace: "default",
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, true, true)
+		require.NoError(t, err)
+		require.Len(t, session.Status.DeployedResources, 2)
+		assert.Equal(t, "auxiliary:config", session.Status.DeployedResources[0].Source)
+		assert.Equal(t, "pod-template", session.Status.DeployedResources[1].Source)
+		assert.Len(t, session.Status.AllowedPods, 1, "allowed pods are preserved while cleanup refs remain")
+	})
+
+	t.Run("preserves unsupported resource kind for retry", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-unsupported-kind", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "batch/v1", Kind: "Job", Name: "unsupported-job", Namespace: "default", Source: "workload"},
+		}
+
+		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `unsupported deployed resource kind "Job"`)
+		require.Len(t, session.Status.DeployedResources, 1)
+		assert.Equal(t, "unsupported-job", session.Status.DeployedResources[0].Name)
+	})
 }
 
 func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *testing.T) {
@@ -4984,6 +5034,30 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 	assert.Contains(t, err.Error(), "delete pod template resource ConfigMap default/debug-script")
 	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
 	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "forbidden")
+	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesPreservesParseFailures(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-pod-template-parse-failure", "test-template", "test-cluster", "user@example.com")
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{
+			Kind:         "ConfigMap",
+			APIVersion:   "invalid/group/version",
+			ResourceName: "debug-script",
+			Namespace:    "default",
+			Created:      true,
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse GVK for pod template resource default/debug-script")
+	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
+	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "failed to parse GVK")
 	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
 }
 
