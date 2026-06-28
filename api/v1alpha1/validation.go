@@ -132,6 +132,7 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 	for i, cluster := range escalation.Spec.Allowed.Clusters {
 		result.Errors = append(result.Errors, validateIdentifierFormat(cluster, allowedClustersPath.Index(i))...)
 	}
+	result.Errors = append(result.Errors, validateClusterGlobPatterns(escalation.Spec.Allowed.Clusters, allowedClustersPath)...)
 
 	// Validate approvers
 	approverGroupsPath := specPath.Child("approvers").Child("groups")

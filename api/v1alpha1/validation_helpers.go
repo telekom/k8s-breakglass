@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path/filepath"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -430,9 +430,10 @@ func validateIdentityProviderFields(
 	return errs
 }
 
-// validateTimeoutRelationships ensures that timeout values have proper relationships:
-// - approvalTimeout must be less than or equal to maxValidFor (if both are set)
-// - All timeout values must be positive durations
+// validateTimeoutRelationships ensures timeout values use valid durations and relationships:
+// - approvalTimeout and idleTimeout must not exceed the effective maxValidFor
+// - idleTimeout must be at least one minute
+// - maxValidFor, approvalTimeout, retainFor, and idleTimeout must be positive when set
 func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
 	var errs field.ErrorList
 
@@ -511,51 +512,55 @@ func effectiveMaxValidForDuration(raw string, parsed time.Duration) (time.Durati
 	return defaultDuration, "default " + defaultBreakglassMaxValidFor
 }
 
-func clusterMatchesValidationPattern(cluster string, pattern string) (bool, error) {
+func validateClusterGlobPatterns(patterns []string, fieldPath *field.Path) field.ErrorList {
+	if len(patterns) == 0 || fieldPath == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+	for i, pattern := range patterns {
+		if pattern == "" {
+			continue
+		}
+		if _, err := path.Match(pattern, ""); err != nil {
+			errs = append(errs, field.Invalid(
+				fieldPath.Index(i),
+				pattern,
+				fmt.Sprintf("invalid cluster glob pattern: %v", err),
+			))
+		}
+	}
+	return errs
+}
+
+func clusterMatchesValidationPattern(cluster string, pattern string) bool {
 	if pattern == cluster {
-		return true, nil
+		return true
 	}
-	matched, err := filepath.Match(pattern, cluster)
+	matched, err := path.Match(pattern, cluster)
 	if err != nil {
-		return false, fmt.Errorf("invalid cluster glob pattern %q: %w", pattern, err)
+		// Existing malformed escalations should not make new BreakglassSession
+		// admission fail. BreakglassEscalation admission rejects invalid globs.
+		return false
 	}
-	return matched, nil
+	return matched
 }
 
-func invalidEscalationClusterPatternError(path *field.Path, escalationName string, fieldName string, pattern string, err error) *field.Error {
-	return field.Forbidden(
-		path,
-		fmt.Sprintf("matching escalation %q has invalid %s pattern %q: %v", escalationName, fieldName, pattern, err),
-	)
-}
-
-func escalationMatchesSessionClusterForValidation(escalation *BreakglassEscalation, cluster string, path *field.Path) (bool, field.ErrorList) {
+func escalationMatchesSessionClusterForValidation(escalation *BreakglassEscalation, cluster string) bool {
 	if escalation == nil {
-		return false, nil
+		return false
 	}
 	for _, allowedCluster := range escalation.Spec.Allowed.Clusters {
-		matched, err := clusterMatchesValidationPattern(cluster, allowedCluster)
-		if err != nil {
-			return false, field.ErrorList{
-				invalidEscalationClusterPatternError(path, escalation.Name, "allowed.clusters", allowedCluster, err),
-			}
-		}
-		if matched {
-			return true, nil
+		if clusterMatchesValidationPattern(cluster, allowedCluster) {
+			return true
 		}
 	}
 	for _, clusterConfigRef := range escalation.Spec.ClusterConfigRefs {
-		matched, err := clusterMatchesValidationPattern(cluster, clusterConfigRef)
-		if err != nil {
-			return false, field.ErrorList{
-				invalidEscalationClusterPatternError(path, escalation.Name, "clusterConfigRefs", clusterConfigRef, err),
-			}
-		}
-		if matched {
-			return true, nil
+		if clusterMatchesValidationPattern(cluster, clusterConfigRef) {
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // the session is allowed by the associated escalation rule.
@@ -615,11 +620,7 @@ func validateSessionIdentityProviderAuthorization(
 			continue
 		}
 
-		clusterMatches, clusterMatchErrs := escalationMatchesSessionClusterForValidation(esc, sessionCluster, path)
-		if len(clusterMatchErrs) > 0 {
-			return clusterMatchErrs
-		}
-		if clusterMatches {
+		if escalationMatchesSessionClusterForValidation(esc, sessionCluster) {
 			relevantEscalations = append(relevantEscalations, esc)
 		}
 	}

@@ -68,7 +68,7 @@ type BreakglassEscalationSpec struct {
 
 	// maxValidFor is the maximum amount of time a session for this escalation will be active for after it is approved.
 	// +default="1h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
 
 	// idleTimeout is the duration of inactivity (no authorization requests) after which sessions
@@ -76,19 +76,19 @@ type BreakglassEscalationSpec struct {
 	// If not set, idle timeout is not enforced for sessions created from this escalation.
 	// Must be at least 1m and must not exceed maxValidFor when both are set.
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	IdleTimeout string `json:"idleTimeout,omitempty"`
 
 	// retainFor is the amount of time to wait before removing a session for this escalation after it expired
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	RetainFor string `json:"retainFor,omitempty"`
 
 	// approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
 	// If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
 	// +default="1h"
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	ApprovalTimeout string `json:"approvalTimeout,omitempty"`
 
 	// clusterConfigRefs lists ClusterConfig object names this escalation applies to (alternative to allowed.clusters).
@@ -451,6 +451,7 @@ func validateBreakglassEscalationAdditionalLists(spec *BreakglassEscalationSpec,
 	clusterConfigRefsPath := specPath.Child("clusterConfigRefs")
 	allErrs = append(allErrs, validateStringListEntriesNotEmpty(spec.ClusterConfigRefs, clusterConfigRefsPath)...)
 	allErrs = append(allErrs, validateStringListNoDuplicates(spec.ClusterConfigRefs, clusterConfigRefsPath)...)
+	allErrs = append(allErrs, validateClusterGlobPatterns(spec.ClusterConfigRefs, clusterConfigRefsPath)...)
 
 	denyPolicyRefsPath := specPath.Child("denyPolicyRefs")
 	allErrs = append(allErrs, validateStringListEntriesNotEmpty(spec.DenyPolicyRefs, denyPolicyRefsPath)...)

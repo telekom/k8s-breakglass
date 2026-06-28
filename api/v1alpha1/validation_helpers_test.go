@@ -803,11 +803,7 @@ func TestValidateSessionIdentityProviderAuthorization_InvalidAllowedClusterGlob(
 		"corporate-idp",
 		field.NewPath("spec").Child("identityProviderName"),
 	)
-	assert.NotNil(t, errs, "invalid glob on a matching escalation should fail closed")
-	errText := errs.ToAggregate().Error()
-	assert.Contains(t, errText, `matching escalation "esc-invalid-cluster-glob"`)
-	assert.Contains(t, errText, "invalid allowed.clusters pattern")
-	assert.Contains(t, errText, "prod-[")
+	assert.Nil(t, errs, "invalid stored glob should be ignored during session authorization matching")
 }
 
 func TestValidateSessionIdentityProviderAuthorization_MatchesClusterConfigRef(t *testing.T) {
@@ -891,11 +887,7 @@ func TestValidateSessionIdentityProviderAuthorization_InvalidClusterConfigRefGlo
 		"corporate-idp",
 		field.NewPath("spec").Child("identityProviderName"),
 	)
-	assert.NotNil(t, errs, "invalid clusterConfigRefs glob should fail closed")
-	errText := errs.ToAggregate().Error()
-	assert.Contains(t, errText, `matching escalation "esc-invalid-clusterconfig-glob"`)
-	assert.Contains(t, errText, "invalid clusterConfigRefs pattern")
-	assert.Contains(t, errText, "prod-[")
+	assert.Nil(t, errs, "invalid stored clusterConfigRefs glob should be ignored during session authorization matching")
 }
 
 func TestValidateSessionIdentityProviderAuthorization_DifferentGroup(t *testing.T) {
@@ -2486,6 +2478,8 @@ func TestParseDuration_StandardDurations(t *testing.T) {
 		{"30m", 30 * time.Minute},
 		{"1h30m", 90 * time.Minute},
 		{"2h30m", 150 * time.Minute},
+		{"1.5h", 90 * time.Minute},
+		{"0.5m", 30 * time.Second},
 		{"10s", 10 * time.Second},
 		{"500ms", 500 * time.Millisecond},
 		{"1h15m30s", time.Hour + 15*time.Minute + 30*time.Second},
@@ -2531,6 +2525,7 @@ func TestParseDuration_MixedDayHours(t *testing.T) {
 		{"1d12h", 36 * time.Hour},
 		{"2d6h", 54 * time.Hour},
 		{"1d1h", 25 * time.Hour},
+		{"1d1.5h", 25*time.Hour + 30*time.Minute},
 		{"7d12h30m", 7*24*time.Hour + 12*time.Hour + 30*time.Minute},
 	}
 

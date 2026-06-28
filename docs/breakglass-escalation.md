@@ -100,12 +100,13 @@ SelfSubjectReview.
 
 ### maxValidFor
 
-Maximum time a session will remain active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365, and the duration must be positive. If omitted, admission and runtime behavior use the default `1h`.
+Maximum time a session will remain active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Decimal sub-day units such as `1.5h` are accepted; day values must be whole numbers, must not exceed 365, and the duration must be positive. If omitted, admission and runtime behavior use the default `1h`.
 
 ```yaml
 maxValidFor: "1h"    # 1 hour (default)
 maxValidFor: "2h"    # 2 hours
 maxValidFor: "30m"   # 30 minutes
+maxValidFor: "1.5h"  # 1 hour and 30 minutes
 maxValidFor: "4h"    # 4 hours
 maxValidFor: "1d12h" # 1 day and 12 hours
 ```
@@ -1009,6 +1010,10 @@ Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for fl
 | `*-staging` | Clusters ending with `-staging` |
 | `cluster-?` | Clusters like `cluster-1`, `cluster-2` (single character) |
 | `[abc]-cluster` | `a-cluster`, `b-cluster`, or `c-cluster` |
+
+Malformed glob patterns, for example an unclosed character class like `prod-[`,
+are rejected by `BreakglassEscalation` admission. Existing malformed patterns are
+ignored during session matching rather than failing unrelated session admission.
 
 **Example: Regional cluster access**
 

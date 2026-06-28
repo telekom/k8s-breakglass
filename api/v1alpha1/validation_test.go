@@ -399,6 +399,15 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.True(t, result.IsValid())
 	})
 
+	t.Run("decimal durations", func(t *testing.T) {
+		s := validSession()
+		s.Spec.MaxValidFor = "1.5h"
+		s.Spec.IdleTimeout = "0.5h"
+		s.Spec.RetainFor = "1.5h"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid(), result.ErrorMessage())
+	})
+
 	t.Run("idleTimeout with day unit", func(t *testing.T) {
 		s := validSession()
 		s.Spec.IdleTimeout = "1d"
