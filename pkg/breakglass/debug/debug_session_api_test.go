@@ -869,6 +869,16 @@ func TestDebugSessionAPIController_PermissionChecks(t *testing.T) {
 	})
 }
 
+func TestDebugSessionBindingRefLogValue(t *testing.T) {
+	assert.Equal(t, "<none>", debugSessionBindingRefLogValue(nil))
+	assert.Equal(t, "breakglass/sre-binding", debugSessionBindingRefLogValue(&breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "breakglass",
+			Name:      "sre-binding",
+		},
+	}))
+}
+
 // ============================================================================
 // BAD CASE / ERROR PATH TESTS FOR API CONTROLLER
 // ============================================================================
@@ -4334,6 +4344,57 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
+	t.Run("create session hides inactive explicit binding details from binding-denied requester", func(t *testing.T) {
+		templateViaBinding := template.DeepCopy()
+		templateViaBinding.Name = "inactive-explicit-denied-binding-debug"
+		templateViaBinding.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "ops-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "inactive-explicit-denied-binding-debug"},
+				Clusters:    []string{"production"},
+				Disabled:    true,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"ops"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaBinding, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"inactive-explicit-denied-binding-debug","cluster":"production","bindingRef":"breakglass/ops-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "binding is not active")
+	})
+
 	t.Run("create session rejects malformed bindingRef", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -4395,6 +4456,56 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 403, w.Code)
+	})
+
+	t.Run("create session hides explicit binding selection details from unauthorized requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "selection-detail-restricted-debug"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"ops@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "staging-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "selection-detail-restricted-debug"},
+				Clusters:    []string{"staging"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"ops"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"selection-detail-restricted-debug","cluster":"production","bindingRef":"breakglass/staging-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "binding")
 	})
 
 	t.Run("create session without authentication", func(t *testing.T) {

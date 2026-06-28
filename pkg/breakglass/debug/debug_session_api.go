@@ -709,10 +709,36 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var resolvedBinding *breakglassv1alpha1.DebugSessionClusterBinding
 	var allowedResult ClusterAllowedResult
 	if req.BindingRef != "" {
+		canSeeBindingDetails := func(bindings ...breakglassv1alpha1.DebugSessionClusterBinding) bool {
+			if len(bindings) == 0 {
+				return isDebugSessionRequesterAllowed(template.Spec.Allowed, currentUserStr, userEmail, userGroups)
+			}
+			for i := range bindings {
+				if isDebugSessionRequesterAllowed(bindings[i].Spec.Allowed, currentUserStr, userEmail, userGroups) {
+					return true
+				}
+			}
+			return false
+		}
+		respondBindingBadRequest := func(message string, bindings ...breakglassv1alpha1.DebugSessionClusterBinding) {
+			if !canSeeBindingDetails(bindings...) {
+				apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+				return
+			}
+			apiresponses.RespondBadRequest(ctx, message)
+		}
+		respondBindingForbidden := func(message string, bindings ...breakglassv1alpha1.DebugSessionClusterBinding) {
+			if !canSeeBindingDetails(bindings...) {
+				apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+				return
+			}
+			apiresponses.RespondForbidden(ctx, message)
+		}
+
 		bindingNamespace, bindingName, validBindingRef := parseDebugSessionBindingRef(req.BindingRef)
 		if !validBindingRef {
 			reqLog.Warnw("Invalid bindingRef format", "bindingRef", req.BindingRef)
-			apiresponses.RespondBadRequest(ctx, "bindingRef must use namespace/name format")
+			respondBindingBadRequest("bindingRef must use namespace/name format")
 			return
 		}
 
@@ -720,7 +746,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: bindingName, Namespace: bindingNamespace}, resolvedBinding); err != nil {
 			if apierrors.IsNotFound(err) {
 				reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
-				apiresponses.RespondBadRequest(ctx, fmt.Sprintf("binding '%s' not found", req.BindingRef))
+				respondBindingBadRequest(fmt.Sprintf("binding '%s' not found", req.BindingRef))
 				return
 			}
 			reqLog.Errorw("Failed to get binding", "binding", req.BindingRef, "error", err)
@@ -735,7 +761,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"effectiveFrom", resolvedBinding.Spec.EffectiveFrom,
 				"expiresAt", resolvedBinding.Spec.ExpiresAt,
 			)
-			apiresponses.RespondForbidden(ctx, "binding is not active (disabled, expired, or not yet effective)")
+			respondBindingForbidden("binding is not active (disabled, expired, or not yet effective)", *resolvedBinding)
 			return
 		}
 
@@ -744,7 +770,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"bindingRef", req.BindingRef,
 				"templateRef", req.TemplateRef,
 			)
-			apiresponses.RespondForbidden(ctx, "binding does not grant access to the requested template")
+			respondBindingForbidden("binding does not grant access to the requested template", *resolvedBinding)
 			return
 		}
 
@@ -767,7 +793,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"requestedCluster", req.Cluster,
 				"bindingClusters", bindingClusters,
 			)
-			apiresponses.RespondForbidden(ctx, "binding does not grant access to the requested cluster")
+			respondBindingForbidden("binding does not grant access to the requested cluster", *resolvedBinding)
 			return
 		}
 
@@ -816,6 +842,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			"cluster", req.Cluster,
 			"templateRef", req.TemplateRef,
 			"error", bindingSelectionErr)
+		if !isDebugSessionRequesterAllowedByAnySource(template, allowedResult.AllBindings, currentUserStr, userEmail, userGroups) {
+			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+			return
+		}
 		apiresponses.RespondBadRequest(ctx, bindingSelectionErr.Error())
 		return
 	}
@@ -1230,7 +1260,7 @@ func parseDebugSessionBindingRef(bindingRef string) (string, string, bool) {
 
 func debugSessionBindingRefLogValue(binding *breakglassv1alpha1.DebugSessionClusterBinding) string {
 	if binding == nil {
-		return ""
+		return "<none>"
 	}
 	return fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 }
@@ -1260,6 +1290,24 @@ func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllo
 			if matchPattern(allowedGroup, userGroup) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func isDebugSessionRequesterAllowedByAnySource(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	username,
+	email string,
+	userGroups []string,
+) bool {
+	if template != nil && isDebugSessionRequesterAllowed(template.Spec.Allowed, username, email, userGroups) {
+		return true
+	}
+	for i := range bindings {
+		if isDebugSessionRequesterAllowed(bindings[i].Spec.Allowed, username, email, userGroups) {
+			return true
 		}
 	}
 	return false

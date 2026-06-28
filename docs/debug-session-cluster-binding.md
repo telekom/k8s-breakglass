@@ -779,7 +779,7 @@ spec:
       - "dev-*"
 ```
 
-**Note:** This is on the **template**, not the binding. Bindings can further restrict access but cannot expand beyond the template's allowed clusters. When a request uses a binding implicitly or via `bindingRef`, the binding's `spec.allowed.users` and `spec.allowed.groups` replace the template requester allowlist for the matched cluster.
+**Note:** This is on the **template**, not the binding. Bindings can also grant template access for their matched clusters when the binding references or selects the template. When a request uses a binding implicitly or via `bindingRef`, the binding's `spec.allowed.users` and `spec.allowed.groups` replace the template requester allowlist for the matched cluster.
 
 ### Matching Combinations
 
