@@ -157,9 +157,9 @@ func (ssa *ScheduledSessionActivator) expireScheduledSession(session breakglassv
 	retainFor := ParseRetainFor(session.Spec, ssa.log)
 	session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 	session.SetCondition(metav1.Condition{
-		Type:               string(breakglassv1alpha1.SessionConditionTypeSessionExpired),
+		Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 		Status:             metav1.ConditionTrue,
-		LastTransitionTime: metav1.NewTime(now),
+		LastTransitionTime: metav1.Now(),
 		Reason:             conditionReason,
 		Message:            message,
 	})

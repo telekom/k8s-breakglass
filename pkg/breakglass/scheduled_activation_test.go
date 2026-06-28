@@ -147,11 +147,11 @@ func TestActivateScheduledSessions(t *testing.T) {
 			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexerActivation).
 			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerActivation).
 			WithInterceptorFuncs(interceptor.Funcs{
-				SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+				SubResourcePatch: func(ctx context.Context, c client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 					if subResource == "status" {
 						return assert.AnError
 					}
-					return nil
+					return c.SubResource(subResource).Patch(ctx, obj, patch, opts...)
 				},
 			}).
 			Build()
@@ -213,12 +213,12 @@ func TestActivateScheduledSessions(t *testing.T) {
 
 		var hasCondition bool
 		for _, cond := range updated.Status.Conditions {
-			if cond.Type == string(breakglassv1alpha1.SessionConditionTypeSessionExpired) {
+			if cond.Type == string(breakglassv1alpha1.SessionConditionTypeExpired) {
 				hasCondition = true
 				assert.Equal(t, "ScheduledSessionExpiredBeforeActivation", cond.Reason)
 			}
 		}
-		assert.True(t, hasCondition, "expected SessionExpired condition")
+		assert.True(t, hasCondition, "expected Expired condition")
 	})
 
 	t.Run("leaves expired scheduled session waiting when expiry status update fails", func(t *testing.T) {
@@ -249,11 +249,11 @@ func TestActivateScheduledSessions(t *testing.T) {
 			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexerActivation).
 			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerActivation).
 			WithInterceptorFuncs(interceptor.Funcs{
-				SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+				SubResourcePatch: func(ctx context.Context, c client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 					if subResource == "status" {
 						return assert.AnError
 					}
-					return nil
+					return c.SubResource(subResource).Patch(ctx, obj, patch, opts...)
 				},
 			}).
 			Build()
@@ -347,15 +347,15 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
 		assert.False(t, updated.Status.ExpiresAt.IsZero(), "ExpiresAt should be set when expiring stuck session")
 
-		// Verify the SessionExpired condition was added
+		// Verify the Expired condition was added
 		var hasCondition bool
 		for _, cond := range updated.Status.Conditions {
-			if cond.Type == string(breakglassv1alpha1.SessionConditionTypeSessionExpired) {
+			if cond.Type == string(breakglassv1alpha1.SessionConditionTypeExpired) {
 				hasCondition = true
 				assert.Equal(t, "MissingScheduledStartTime", cond.Reason)
 			}
 		}
-		assert.True(t, hasCondition, "expected SessionExpired condition")
+		assert.True(t, hasCondition, "expected Expired condition")
 	})
 
 	t.Run("expires session with zero scheduledStartTime", func(t *testing.T) {
