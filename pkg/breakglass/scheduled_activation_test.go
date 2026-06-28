@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // stateIndexerActivation indexes BreakglassSessions by status.state for field selector support.
@@ -45,6 +46,31 @@ func newFakeActivationClient(objects ...client.Object) client.Client {
 
 func TestActivateScheduledSessions(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
+
+	t.Run("returns when listing waiting sessions fails", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexerActivation).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerActivation).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); ok {
+						return assert.AnError
+					}
+					return c.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		activator := NewScheduledSessionActivator(logger, mgr).
+			WithMailService(nil, "TestBranding", true)
+
+		assert.NotPanics(t, func() {
+			activator.ActivateScheduledSessions()
+		})
+	})
 
 	t.Run("activates session when scheduledStartTime has passed", func(t *testing.T) {
 		scheduledTime := time.Now().Add(-5 * time.Minute)
@@ -92,6 +118,57 @@ func TestActivateScheduledSessions(t *testing.T) {
 			}
 		}
 		assert.True(t, hasCondition, "expected ScheduledStartTimeReached condition")
+	})
+
+	t.Run("leaves scheduled session waiting when activation status update fails", func(t *testing.T) {
+		scheduledTime := time.Now().Add(-5 * time.Minute)
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "scheduled-update-fails",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:               "test@example.com",
+				Cluster:            "test-cluster",
+				GrantedGroup:       "admin",
+				ScheduledStartTime: &metav1.Time{Time: scheduledTime},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(scheduledTime.Add(-30 * time.Minute)),
+				ExpiresAt:  metav1.NewTime(time.Now().Add(1 * time.Hour)),
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexerActivation).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerActivation).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+					if subResource == "status" {
+						return assert.AnError
+					}
+					return nil
+				},
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		activator := NewScheduledSessionActivator(logger, mgr).
+			WithMailService(nil, "TestBranding", true)
+
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		err := fakeClient.Get(context.Background(),
+			client.ObjectKey{Namespace: "breakglass", Name: "scheduled-update-fails"},
+			&updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStateWaitingForScheduledTime, updated.Status.State)
+		assert.True(t, updated.Status.ActualStartTime.IsZero(), "failed activation update must not persist ActualStartTime")
 	})
 
 	t.Run("expires session whose validity ended before activation", func(t *testing.T) {
@@ -142,6 +219,59 @@ func TestActivateScheduledSessions(t *testing.T) {
 			}
 		}
 		assert.True(t, hasCondition, "expected SessionExpired condition")
+	})
+
+	t.Run("leaves expired scheduled session waiting when expiry status update fails", func(t *testing.T) {
+		now := time.Now()
+		expiredAt := metav1.NewTime(now.Add(-1 * time.Minute))
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "scheduled-expire-update-fails",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:               "test@example.com",
+				Cluster:            "test-cluster",
+				GrantedGroup:       "admin",
+				ScheduledStartTime: &metav1.Time{Time: now.Add(-10 * time.Minute)},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(now.Add(-30 * time.Minute)),
+				ExpiresAt:  expiredAt,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexerActivation).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerActivation).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+					if subResource == "status" {
+						return assert.AnError
+					}
+					return nil
+				},
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		activator := NewScheduledSessionActivator(logger, mgr).
+			WithMailService(nil, "TestBranding", true)
+
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		err := fakeClient.Get(context.Background(),
+			client.ObjectKey{Namespace: "breakglass", Name: "scheduled-expire-update-fails"},
+			&updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStateWaitingForScheduledTime, updated.Status.State)
+		assert.Empty(t, updated.Status.ReasonEnded)
+		assert.True(t, updated.Status.RetainedUntil.IsZero(), "failed expiry update must not persist retention")
 	})
 
 	t.Run("does not activate session before scheduledStartTime", func(t *testing.T) {
