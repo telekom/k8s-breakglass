@@ -2,9 +2,9 @@
 import { computed, inject, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
-import { debug } from "@/services/logger";
+import { debug, handleAxiosError } from "@/services/logger";
 import DebugSessionService from "@/services/debugSession";
-import { PageHeader, LoadingState } from "@/components/common";
+import { EmptyState, PageHeader, LoadingState } from "@/components/common";
 import ClusterSelectGrid from "@/components/debug-session/ClusterSelectGrid.vue";
 import BindingOptionsGrid from "@/components/debug-session/BindingOptionsGrid.vue";
 import SessionConfigForm from "@/components/debug-session/SessionConfigForm.vue";
@@ -36,6 +36,7 @@ const loading = ref(true);
 const loadingClusters = ref(false);
 const submitting = ref(false);
 const extraDeployValid = ref(true);
+const templateLoadError = ref("");
 
 const form = reactive<{
   templateRef: string;
@@ -455,6 +456,7 @@ const isValid = computed(() => {
 });
 
 async function fetchTemplates() {
+  templateLoadError.value = "";
   loading.value = true;
   try {
     const result = await debugSessionService.listTemplates();
@@ -466,7 +468,19 @@ async function fetchTemplates() {
     if (firstTemplate && !form.templateRef) {
       form.templateRef = firstTemplate.name;
     }
-  } catch {
+  } catch (error: unknown) {
+    const { message } = handleAxiosError(
+      "DebugSessionCreate.fetchTemplates",
+      error,
+      "Debug session templates could not be loaded. Please retry or contact an administrator.",
+      false,
+    );
+    templateLoadError.value = message;
+    templates.value = [];
+    form.templateRef = "";
+    clusterDetails.value = [];
+    form.cluster = "";
+    currentStep.value = 1;
     // Error already handled by debugSessionService (pushError with CID)
   } finally {
     loading.value = false;
@@ -622,6 +636,21 @@ function handleTemplateChange(ev: Event) {
     </ol>
 
     <LoadingState v-if="loading" message="Loading templates..." />
+
+    <EmptyState
+      v-else-if="templateLoadError"
+      variant="error"
+      title="Unable to load debug session templates"
+      :description="templateLoadError"
+      data-testid="debug-session-template-error-state"
+    >
+      <template #actions>
+        <scale-button variant="primary" data-testid="retry-template-load-button" @click="fetchTemplates">
+          Retry
+        </scale-button>
+        <scale-button variant="secondary" @click="handleCancel">Go Back</scale-button>
+      </template>
+    </EmptyState>
 
     <div v-else-if="!hasTemplates" class="no-templates-message" data-testid="no-templates-message">
       <scale-icon-alert-error size="48" color="var(--scl-color-text-disabled)"></scale-icon-alert-error>

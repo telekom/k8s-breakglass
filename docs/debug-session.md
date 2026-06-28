@@ -1904,6 +1904,13 @@ spec:
 - Contact an approver to approve/reject
 - Sessions automatically fail after `DEBUG_SESSION_APPROVAL_TIMEOUT` (default: 24h) — the reconciler checks this on every requeue cycle
 
+### Debug session templates fail to load in the UI
+
+- Use the retry action on the create page to reload the template list after transient API or cluster-discovery errors
+- Verify the API server can list `DebugSessionTemplate` and `DebugSessionClusterBinding` resources
+- Check controller/API logs for the request correlation ID shown in the toast notification
+- Treat this differently from `No Debug Session Templates Available`, which means the API request succeeded but no templates were returned
+
 ### Debug pods not starting
 
 - Check target namespace exists on target cluster

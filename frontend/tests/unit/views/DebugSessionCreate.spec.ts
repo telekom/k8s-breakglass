@@ -29,6 +29,7 @@ vi.mock("@/services/debugSession", () => ({
 vi.mock("@/services/toast", () => ({
   pushError: vi.fn(),
   pushSuccess: vi.fn(),
+  pushWarning: vi.fn(),
 }));
 
 // Mock auth service
@@ -145,19 +146,41 @@ describe("DebugSessionCreate", () => {
     ];
   }
 
-  const createWrapper = async (templates = defaultTemplates(), attachTo?: HTMLElement) => {
-    mockListTemplates.mockResolvedValue({ templates });
+  type CreateWrapperOptions = {
+    templateLoadError?: unknown;
+    configureTemplateList?: () => void;
+    attachTo?: HTMLElement;
+  };
+
+  const createWrapper = async (
+    templates = defaultTemplates(),
+    optionsOrAttachTo: CreateWrapperOptions | HTMLElement = {},
+  ) => {
+    const options = optionsOrAttachTo instanceof HTMLElement ? { attachTo: optionsOrAttachTo } : optionsOrAttachTo;
+
+    if (options.configureTemplateList) {
+      options.configureTemplateList();
+    } else if (options.templateLoadError) {
+      mockListTemplates.mockRejectedValue(options.templateLoadError);
+    } else {
+      mockListTemplates.mockResolvedValue({ templates });
+    }
 
     await router.push("/debug-sessions/create");
     await router.isReady();
 
     const wrapper = mount(DebugSessionCreate, {
-      attachTo,
+      attachTo: options.attachTo,
       global: {
         plugins: [router],
         stubs: {
           PageHeader: true,
           LoadingState: true,
+          EmptyState: {
+            template:
+              '<section v-bind="$attrs"><p>{{ title }}</p><p>{{ description }}</p><slot name="actions" /></section>',
+            props: ["title", "description", "variant"],
+          },
           "scale-dropdown-select": {
             template: '<select :value="value" :disabled="disabled" @change="handleChange"><slot /></select>',
             props: ["value", "label", "disabled", "required"],
@@ -222,6 +245,55 @@ describe("DebugSessionCreate", () => {
       await createWrapper();
 
       expect(mockListTemplates).toHaveBeenCalled();
+    });
+
+    it("shows a blocking error state when templates fail to load", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: {
+          response: {
+            data: { error: "template API unavailable" },
+            status: 503,
+          },
+          message: "Request failed with status code 503",
+        },
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.exists()).toBe(true);
+      expect(errorState.text()).toContain("Unable to load debug session templates");
+      expect(errorState.text()).toContain("template API unavailable");
+      expect(wrapper.find('[data-testid="no-templates-message"]').exists()).toBe(false);
+
+      const vm = wrapper.vm as unknown as {
+        currentStep: number;
+        form: { templateRef: string; cluster: string };
+      };
+      expect(vm.currentStep).toBe(1);
+      expect(vm.form.templateRef).toBe("");
+      expect(vm.form.cluster).toBe("");
+    });
+
+    it("retries template loading from the error state", async () => {
+      const templates = defaultTemplates();
+      const wrapper = await createWrapper(templates, {
+        configureTemplateList: () => {
+          mockListTemplates
+            .mockRejectedValueOnce(new Error("template API unavailable"))
+            .mockResolvedValueOnce({ templates });
+        },
+      });
+
+      expect(wrapper.find('[data-testid="debug-session-template-error-state"]').exists()).toBe(true);
+
+      await wrapper.find('[data-testid="retry-template-load-button"]').trigger("click");
+      await flushPromises();
+
+      const vm = wrapper.vm as unknown as {
+        form: { templateRef: string };
+      };
+      expect(mockListTemplates).toHaveBeenCalledTimes(2);
+      expect(wrapper.find('[data-testid="debug-session-template-error-state"]').exists()).toBe(false);
+      expect(vm.form.templateRef).toBe("standard-debug");
     });
 
     it("starts on step 1 (template selection)", async () => {
