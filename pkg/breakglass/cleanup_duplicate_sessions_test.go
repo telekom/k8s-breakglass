@@ -230,6 +230,101 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, got3.Status.State, "waiting withdrawn")
 	})
 
+	t.Run("stale duplicate already terminal in live reader is preserved", func(t *testing.T) {
+		now := time.Now()
+		keepCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "live-terminal-keep",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-10 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		dupCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "live-terminal-dup",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-1 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		keepLive := keepCached.DeepCopy()
+		dupLive := dupCached.DeepCopy()
+		dupLive.Status.State = breakglassv1alpha1.SessionStateRejected
+		dupLive.Status.ReasonEnded = "rejected"
+
+		cacheClient := newFakeClientWithSessions(keepCached, dupCached)
+		readerClient := newFakeClientWithSessions(keepLive, dupLive)
+		mgr := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+
+		CleanupDuplicateSessions(ctx, logger, mgr)
+
+		var cachedDup breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(ctx, client.ObjectKeyFromObject(dupCached), &cachedDup))
+		assert.Equal(t, breakglassv1alpha1.SessionStatePending, cachedDup.Status.State,
+			"stale cached duplicate must not be withdrawn after live state is terminal")
+
+		var liveDup breakglassv1alpha1.BreakglassSession
+		require.NoError(t, readerClient.Get(ctx, client.ObjectKeyFromObject(dupLive), &liveDup))
+		assert.Equal(t, breakglassv1alpha1.SessionStateRejected, liveDup.Status.State)
+		assert.Equal(t, "rejected", liveDup.Status.ReasonEnded)
+	})
+
+	t.Run("cached survivor terminal in live reader is not kept", func(t *testing.T) {
+		now := time.Now()
+		staleSurvivor := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "stale-survivor",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-30 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		remainingOld := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "remaining-old",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-20 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		remainingNew := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "remaining-new",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		staleSurvivorLive := staleSurvivor.DeepCopy()
+		staleSurvivorLive.Status.State = breakglassv1alpha1.SessionStateExpired
+		staleSurvivorLive.Status.ReasonEnded = "expired"
+
+		cacheClient := newFakeClientWithSessions(staleSurvivor, remainingOld, remainingNew)
+		readerClient := newFakeClientWithSessions(staleSurvivorLive, remainingOld.DeepCopy(), remainingNew.DeepCopy())
+		mgr := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+
+		CleanupDuplicateSessions(ctx, logger, mgr)
+
+		var gotOld, gotNew breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(ctx, client.ObjectKeyFromObject(remainingOld), &gotOld))
+		require.NoError(t, cacheClient.Get(ctx, client.ObjectKeyFromObject(remainingNew), &gotNew))
+		assert.Equal(t, breakglassv1alpha1.SessionStatePending, gotOld.Status.State,
+			"oldest still-active live candidate must become the recomputed survivor")
+		assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, gotNew.Status.State,
+			"newer still-active live candidate should be withdrawn")
+
+		var liveStaleSurvivor breakglassv1alpha1.BreakglassSession
+		require.NoError(t, readerClient.Get(ctx, client.ObjectKeyFromObject(staleSurvivorLive), &liveStaleSurvivor))
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, liveStaleSurvivor.Status.State)
+		assert.Equal(t, "expired", liveStaleSurvivor.Status.ReasonEnded)
+	})
+
 	t.Run("mixed active and terminal sessions — terminal ignored", func(t *testing.T) {
 		now := time.Now()
 		active := &breakglassv1alpha1.BreakglassSession{
