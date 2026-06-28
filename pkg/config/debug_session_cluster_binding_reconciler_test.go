@@ -743,10 +743,16 @@ func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testin
 			},
 		},
 	}
+	emptySelectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-selector-binding", Namespace: "team-d"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{},
+		},
+	}
 
 	r.client = fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(cluster, exactBinding, selectorBinding, otherBinding).
+		WithObjects(cluster, exactBinding, selectorBinding, otherBinding, emptySelectorBinding).
 		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingClustersIndex, indexClusterBindingClusters).
 		Build()
 
@@ -756,6 +762,84 @@ func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testin
 		{Namespace: "team-a", Name: "exact-binding"},
 		{Namespace: "team-b", Name: "selector-binding"},
 	}, clusterBindingRequestNames(requests))
+}
+
+func TestDebugSessionClusterBindingReconciler_TemplateDependencyChanged(t *testing.T) {
+	readyTrue := metav1.Condition{
+		Type:               DebugSessionTemplateConditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            "template is ready",
+		ObservedGeneration: 1,
+	}
+
+	baseTemplate := func() *breakglassv1alpha1.DebugSessionTemplate {
+		return &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "template-a",
+				Generation: 1,
+				Labels: map[string]string{
+					"tier": "standard",
+				},
+			},
+			Status: breakglassv1alpha1.DebugSessionTemplateStatus{
+				Conditions: []metav1.Condition{readyTrue},
+			},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*breakglassv1alpha1.DebugSessionTemplate)
+		want   bool
+	}{
+		{
+			name: "unchanged template does not requeue bindings",
+			want: false,
+		},
+		{
+			name: "generation change requeues bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Generation = 2
+			},
+			want: true,
+		},
+		{
+			name: "label change requeues selector bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Labels = map[string]string{"tier": "privileged"}
+			},
+			want: true,
+		},
+		{
+			name: "ready status change requeues bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Status.Conditions[0].Status = metav1.ConditionFalse
+			},
+			want: true,
+		},
+		{
+			name: "ready message change does not requeue bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Status.Conditions[0].Message = "template is still ready"
+				template.Status.Conditions[0].Reason = "StillReady"
+				template.Status.Conditions[0].ObservedGeneration = 2
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldTemplate := baseTemplate()
+			newTemplate := oldTemplate.DeepCopy()
+			if tt.mutate != nil {
+				tt.mutate(newTemplate)
+			}
+
+			assert.Equal(t, tt.want, templateDependencyChanged(oldTemplate, newTemplate))
+		})
+	}
 }
 
 func TestDebugSessionClusterBindingReconciler_ReadyConditionChanged(t *testing.T) {
@@ -768,6 +852,10 @@ func TestDebugSessionClusterBindingReconciler_ReadyConditionChanged(t *testing.T
 	}
 	readyTrueLater := readyTrue
 	readyTrueLater.LastTransitionTime = metav1.Now()
+	readyTrueDifferentReason := readyTrue
+	readyTrueDifferentReason.Reason = "StillReady"
+	readyTrueDifferentReason.Message = "cluster is still ready"
+	readyTrueDifferentReason.ObservedGeneration = 2
 	readyFalse := readyTrue
 	readyFalse.Status = metav1.ConditionFalse
 	readyFalse.Reason = "NotReady"
@@ -775,5 +863,6 @@ func TestDebugSessionClusterBindingReconciler_ReadyConditionChanged(t *testing.T
 	assert.False(t, readyConditionChanged(nil, nil))
 	assert.True(t, readyConditionChanged(nil, []metav1.Condition{readyTrue}))
 	assert.False(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyTrueLater}))
+	assert.False(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyTrueDifferentReason}))
 	assert.True(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyFalse}))
 }

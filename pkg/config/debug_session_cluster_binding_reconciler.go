@@ -545,6 +545,9 @@ func (r *DebugSessionClusterBindingReconciler) bindingsForClusterConfig(ctx cont
 				"error", err)
 			continue
 		}
+		if selector.Empty() {
+			continue
+		}
 		if selector.Matches(clusterLabels) {
 			addClusterBindingRequest(requests, binding)
 		}
@@ -574,7 +577,7 @@ func (r *DebugSessionClusterBindingReconciler) SetupWithManager(mgr ctrl.Manager
 			if !okOld || !okNew || oldTemplate == nil || newTemplate == nil {
 				return true
 			}
-			return oldTemplate.Generation != newTemplate.Generation || !maps.Equal(oldTemplate.Labels, newTemplate.Labels)
+			return templateDependencyChanged(oldTemplate, newTemplate)
 		},
 		CreateFunc: func(e event.CreateEvent) bool { return true },
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
@@ -587,9 +590,7 @@ func (r *DebugSessionClusterBindingReconciler) SetupWithManager(mgr ctrl.Manager
 			if !okOld || !okNew || oldCluster == nil || newCluster == nil {
 				return true
 			}
-			return oldCluster.Generation != newCluster.Generation ||
-				!maps.Equal(oldCluster.Labels, newCluster.Labels) ||
-				readyConditionChanged(oldCluster.Status.Conditions, newCluster.Status.Conditions)
+			return clusterConfigDependencyChanged(oldCluster, newCluster)
 		},
 		CreateFunc: func(e event.CreateEvent) bool { return true },
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
@@ -605,14 +606,31 @@ func (r *DebugSessionClusterBindingReconciler) SetupWithManager(mgr ctrl.Manager
 		Complete(r)
 }
 
+func templateDependencyChanged(oldTemplate, newTemplate *breakglassv1alpha1.DebugSessionTemplate) bool {
+	return oldTemplate.Generation != newTemplate.Generation ||
+		!maps.Equal(oldTemplate.Labels, newTemplate.Labels) ||
+		templateReadyConditionChanged(oldTemplate.Status.Conditions, newTemplate.Status.Conditions)
+}
+
+func clusterConfigDependencyChanged(oldCluster, newCluster *breakglassv1alpha1.ClusterConfig) bool {
+	return oldCluster.Generation != newCluster.Generation ||
+		!maps.Equal(oldCluster.Labels, newCluster.Labels) ||
+		readyConditionChanged(oldCluster.Status.Conditions, newCluster.Status.Conditions)
+}
+
+func templateReadyConditionChanged(oldConditions, newConditions []metav1.Condition) bool {
+	return conditionStatusChanged(oldConditions, newConditions, string(breakglassv1alpha1.DebugSessionTemplateConditionReady))
+}
+
 func readyConditionChanged(oldConditions, newConditions []metav1.Condition) bool {
-	oldReady := apimeta.FindStatusCondition(oldConditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
-	newReady := apimeta.FindStatusCondition(newConditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
+	return conditionStatusChanged(oldConditions, newConditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
+}
+
+func conditionStatusChanged(oldConditions, newConditions []metav1.Condition, conditionType string) bool {
+	oldReady := apimeta.FindStatusCondition(oldConditions, conditionType)
+	newReady := apimeta.FindStatusCondition(newConditions, conditionType)
 	if oldReady == nil || newReady == nil {
 		return oldReady != newReady
 	}
-	return oldReady.Status != newReady.Status ||
-		oldReady.Reason != newReady.Reason ||
-		oldReady.Message != newReady.Message ||
-		oldReady.ObservedGeneration != newReady.ObservedGeneration
+	return oldReady.Status != newReady.Status
 }
