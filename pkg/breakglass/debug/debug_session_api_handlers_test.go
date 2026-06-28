@@ -19,6 +19,7 @@ package debug
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,6 +88,52 @@ func assertErrorResponse(t *testing.T, rr *httptest.ResponseRecorder, wantCode s
 	assert.Contains(t, body, "code", "response should contain 'code' field")
 	if wantCode != "" {
 		assert.Equal(t, wantCode, body["code"], "unexpected error code")
+	}
+}
+
+func TestRespondKubectlDebugOperationError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantHTTP int
+		wantCode string
+	}{
+		{
+			name:     "namespace policy denial is forbidden",
+			err:      errors.New("namespace prod is not allowed for pod copy"),
+			wantHTTP: http.StatusForbidden,
+			wantCode: "FORBIDDEN",
+		},
+		{
+			name:     "node selector mismatch is forbidden",
+			err:      errors.New("node worker-1 does not match required selector pool=debug"),
+			wantHTTP: http.StatusForbidden,
+			wantCode: "FORBIDDEN",
+		},
+		{
+			name:     "unsupported request is bad request",
+			err:      errors.New("pod copy not configured in template"),
+			wantHTTP: http.StatusBadRequest,
+			wantCode: "BAD_REQUEST",
+		},
+		{
+			name:     "backend failure remains internal",
+			err:      errors.New("failed to get client for cluster production"),
+			wantHTTP: http.StatusInternalServerError,
+			wantCode: "INTERNAL_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+
+			respondKubectlDebugOperationError(ctx, tt.err, "operation failed")
+
+			assert.Equal(t, tt.wantHTTP, w.Code)
+			assertErrorResponse(t, w, tt.wantCode)
+		})
 	}
 }
 

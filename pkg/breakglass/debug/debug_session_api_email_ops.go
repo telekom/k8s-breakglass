@@ -492,7 +492,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
 	if err != nil {
 		reqLog.Errorw("Failed to create pod copy", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to create pod copy")
+		respondKubectlDebugOperationError(ctx, err, "failed to create pod copy")
 		return
 	}
 
@@ -583,7 +583,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
 	if err != nil {
 		reqLog.Errorw("Failed to create node debug pod", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to create node debug pod")
+		respondKubectlDebugOperationError(ctx, err, "failed to create node debug pod")
 		return
 	}
 
@@ -600,6 +600,29 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		"namespace": pod.Namespace,
 		"node":      req.NodeName,
 	})
+}
+
+func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback string) {
+	message := err.Error()
+	switch {
+	case isKubectlDebugPolicyError(message):
+		apiresponses.RespondForbidden(ctx, message)
+	case isKubectlDebugRequestError(message) || apierrors.IsNotFound(err):
+		apiresponses.RespondBadRequest(ctx, message)
+	default:
+		apiresponses.RespondInternalErrorSimple(ctx, fallback)
+	}
+}
+
+func isKubectlDebugPolicyError(message string) bool {
+	return strings.Contains(message, "not allowed") ||
+		strings.Contains(message, "does not match required selector")
+}
+
+func isKubectlDebugRequestError(message string) bool {
+	return strings.Contains(message, "not configured in template") ||
+		strings.Contains(message, "is not enabled for this template") ||
+		strings.Contains(message, "does not exist")
 }
 
 // clusterClientAdapter adapts cluster.ClientProvider to ClientProviderInterface

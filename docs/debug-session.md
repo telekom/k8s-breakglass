@@ -1542,7 +1542,9 @@ non-empty join bodies must still be strict JSON.
 These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode.
 The session must still be active and unexpired at request time; operations are
 rejected after `status.expiresAt` even if cleanup has not yet marked the session
-`Expired`.
+`Expired`. Policy denials such as disallowed namespaces or node selector
+mismatches return `403 Forbidden`; unsupported or malformed operation requests
+return `400 Bad Request`.
 
 Kubectl-debug operations merge their operation-specific status fields into the
 latest `DebugSession` status before returning. Concurrent renewals, participant
