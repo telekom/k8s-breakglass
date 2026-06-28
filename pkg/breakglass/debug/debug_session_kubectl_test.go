@@ -71,6 +71,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		image        string
 		capabilities []string
 		runAsNonRoot bool
+		privileged   bool
 		expectError  bool
 		errorContain string
 		wantHTTP     int
@@ -270,6 +271,48 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			errorContain: "must run as non-root",
 			wantHTTP:     http.StatusForbidden,
 		},
+		{
+			name: "privileged denied unless explicitly allowed",
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+								Enabled:         true,
+								AllowPrivileged: false,
+							},
+						},
+					},
+				},
+			},
+			namespace:    "default",
+			podName:      "test-pod",
+			image:        "busybox:latest",
+			privileged:   true,
+			expectError:  true,
+			errorContain: "privileged ephemeral containers are not allowed",
+			wantHTTP:     http.StatusForbidden,
+		},
+		{
+			name: "privileged allowed when configured",
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+								Enabled:         true,
+								AllowPrivileged: true,
+							},
+						},
+					},
+				},
+			},
+			namespace:   "default",
+			podName:     "test-pod",
+			image:       "busybox:latest",
+			privileged:  true,
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -285,6 +328,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 				tt.image,
 				tt.capabilities,
 				tt.runAsNonRoot,
+				tt.privileged,
 			)
 
 			if tt.expectError {
@@ -400,6 +444,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 				"busybox:latest",
 				nil,
 				false,
+				false,
 			)
 
 			if tt.expectError {
@@ -502,6 +547,12 @@ func TestKubectlDebugHandler_isImageAllowed(t *testing.T) {
 			image:    "busybox:latest",
 			allowed:  []string{"busybox:latest"},
 			expected: true,
+		},
+		{
+			name:     "exact entry does not allow longer prefix",
+			image:    "registry.example.com/debug:1.0.0-backdoored",
+			allowed:  []string{"registry.example.com/debug:1.0.0"},
+			expected: false,
 		},
 		{
 			name:     "wildcard match",
@@ -1323,6 +1374,42 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		// Check host root mount
 		require.Len(t, pod.Spec.Volumes, 1)
 		assert.Equal(t, "host-root", pod.Spec.Volumes[0].Name)
+	})
+
+	t.Run("uses resolved session target namespace before template namespace", func(t *testing.T) {
+		tenantNs := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "tenant-debug",
+			},
+		}
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testNode, tenantNs).
+			Build()
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+			clients: map[string]ctrlclient.Client{
+				"test-cluster": targetClient,
+			},
+		})
+
+		session := testSession.DeepCopy()
+		session.Spec.TargetNamespace = "tenant-debug"
+		session.Status.ResolvedTemplate.TargetNamespace = "breakglass-debug"
+
+		pod, err := handler.CreateNodeDebugPod(
+			context.Background(),
+			session,
+			"worker-1",
+			"test-user@example.com",
+		)
+
+		require.NoError(t, err)
+		assert.Equal(t, "tenant-debug", pod.Namespace)
 	})
 
 	t.Run("node debug disabled", func(t *testing.T) {

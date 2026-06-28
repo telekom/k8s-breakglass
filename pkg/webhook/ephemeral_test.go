@@ -192,6 +192,49 @@ func TestIsRunAsNonRoot(t *testing.T) {
 	}
 }
 
+func TestIsPrivileged(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		sc       *corev1.SecurityContext
+		expected bool
+	}{
+		{
+			name:     "nil security context",
+			sc:       nil,
+			expected: false,
+		},
+		{
+			name:     "nil privileged",
+			sc:       &corev1.SecurityContext{},
+			expected: false,
+		},
+		{
+			name: "privileged true",
+			sc: &corev1.SecurityContext{
+				Privileged: &trueVal,
+			},
+			expected: true,
+		},
+		{
+			name: "privileged false",
+			sc: &corev1.SecurityContext{
+				Privileged: &falseVal,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isPrivileged(tt.sc)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // mockDebugHandler implements DebugSessionHandler for testing
 type mockDebugHandler struct {
 	session     *breakglassv1alpha1.DebugSession
@@ -209,6 +252,7 @@ func (m *mockDebugHandler) ValidateEphemeralContainerRequest(
 	namespace, podName, image string,
 	capabilities []string,
 	runAsNonRoot bool,
+	privileged bool,
 ) error {
 	return m.validateErr
 }

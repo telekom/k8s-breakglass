@@ -1308,6 +1308,12 @@ kubectlDebug:
     requireNonRoot: true
 ```
 
+`allowedImages` entries are exact image references or explicit glob patterns. Use `*`
+where tag or repository wildcards are intended; exact entries such as
+`registry.example.com/debug:1.0.0` do not allow longer tags such as
+`registry.example.com/debug:1.0.0-extra`. When `allowPrivileged` is `false`,
+requests with `securityContext.privileged: true` are rejected.
+
 #### Namespace Filtering with Labels
 
 The `allowedNamespaces` and `deniedNamespaces` fields support label selectors for dynamic namespace matching:
@@ -1359,6 +1365,10 @@ kubectlDebug:
     nodeSelector:
       node-role.kubernetes.io/worker: ""
 ```
+
+Node-debug pods are created in the debug session's resolved
+`spec.targetNamespace` first, then the template `targetNamespace`, and finally
+the default `breakglass-debug` namespace.
 
 ### Pod Copy Debugging
 
@@ -1883,7 +1893,8 @@ This means:
 This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:
 
 - **Namespace restrictions** — `allowedNamespaces` / `deniedNamespaces` control where debug pods can be created
-- **Image allow-lists** — `allowedImages` restricts which debug container images can be used
+- **Image allow-lists** — `allowedImages` restricts which debug container images can be used by exact reference or explicit glob pattern
+- **Privileged ephemeral containers** — `allowPrivileged: false` blocks ephemeral container requests with `securityContext.privileged: true`
 - **Approval requirements** — `approvalConfig` can require explicit approver sign-off
 - **Time limits** — `maxDuration` caps session lifetime
 - **Operation restrictions** — `status.allowedPodOperations` (resolved from template/binding) limits which subresources are accessible

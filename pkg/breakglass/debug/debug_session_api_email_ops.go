@@ -396,7 +396,8 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
 	runAsNonRoot := extractRunAsNonRoot(req.SecurityContext)
-	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot); err != nil {
+	privileged := extractPrivileged(req.SecurityContext)
+	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot, privileged); err != nil {
 		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
 			reqLog.Errorw("Failed to validate ephemeral container request", "error", err)
 		} else {
@@ -696,6 +697,14 @@ func extractRunAsNonRoot(sc *corev1.SecurityContext) bool {
 		return false
 	}
 	return *sc.RunAsNonRoot
+}
+
+// extractPrivileged extracts the privileged value from a security context.
+func extractPrivileged(sc *corev1.SecurityContext) bool {
+	if sc == nil || sc.Privileged == nil {
+		return false
+	}
+	return *sc.Privileged
 }
 
 // checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.

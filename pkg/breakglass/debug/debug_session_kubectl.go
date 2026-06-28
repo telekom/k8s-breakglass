@@ -206,6 +206,7 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 	namespace, podName, image string,
 	capabilities []string,
 	runAsNonRoot bool,
+	privileged bool,
 ) error {
 	template := ds.Status.ResolvedTemplate
 	if template == nil {
@@ -245,6 +246,11 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 		if !h.isCapabilityAllowed(cap, ec.MaxCapabilities) {
 			return kubectlDebugPolicyErrorf("capability %s is not allowed", cap)
 		}
+	}
+
+	// Validate privileged mode
+	if privileged && !ec.AllowPrivileged {
+		return kubectlDebugPolicyErrorf("privileged ephemeral containers are not allowed")
 	}
 
 	// Validate non-root
@@ -562,10 +568,13 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		podName = podName[:63]
 	}
 
-	// Determine namespace from template or default
-	namespace := "breakglass-debug"
-	if template.TargetNamespace != "" {
+	// Determine namespace from the resolved session namespace, then template, then default.
+	namespace := ds.Spec.TargetNamespace
+	if namespace == "" && template.TargetNamespace != "" {
 		namespace = template.TargetNamespace
+	}
+	if namespace == "" {
+		namespace = "breakglass-debug"
 	}
 
 	debugPod := &corev1.Pod{
@@ -743,11 +752,6 @@ func (h *KubectlDebugHandler) isImageAllowed(image string, allowed []string) boo
 
 		// Standard glob matching
 		if matched, _ := filepath.Match(pattern, image); matched {
-			return true
-		}
-
-		// Check if image starts with pattern (for versioned images)
-		if strings.HasPrefix(image, strings.TrimSuffix(pattern, "*")) {
 			return true
 		}
 	}
