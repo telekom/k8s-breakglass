@@ -134,6 +134,22 @@ describe("SessionConfigForm", () => {
     expect(wrapper.find('[data-testid="schedule-time-input"]').exists()).toBe(true);
   });
 
+  it("marks scheduled time input required when scheduling is enabled without a time", () => {
+    const wrapper = factory({ useScheduledStart: true, scheduledStartTime: "" });
+    const input = wrapper.find('[data-testid="schedule-time-input"]');
+
+    expect(input.attributes("required")).toBeDefined();
+    expect(input.attributes("invalid")).toBe("true");
+    expect(input.attributes("helper-text-invalid")).toBe("Scheduled start time is required.");
+  });
+
+  it("marks whitespace-only scheduled time invalid", () => {
+    const wrapper = factory({ useScheduledStart: true, scheduledStartTime: "   " });
+    const input = wrapper.find('[data-testid="schedule-time-input"]');
+
+    expect(input.attributes("invalid")).toBe("true");
+  });
+
   it("hides scheduled time input when useScheduledStart is false", () => {
     const wrapper = factory({ useScheduledStart: false });
     expect(wrapper.find('[data-testid="schedule-time-input"]').exists()).toBe(false);

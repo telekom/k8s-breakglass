@@ -264,6 +264,9 @@ function handleDurationChange(ev: Event) {
         :value="scheduledStartTime"
         type="datetime-local"
         label="Scheduled Start Time"
+        required
+        :invalid="useScheduledStart && !scheduledStartTime.trim()"
+        helper-text-invalid="Scheduled start time is required."
         data-testid="schedule-time-input"
         @scale-change="emit('update:scheduledStartTime', ($event.target as HTMLInputElement).value)"
       ></scale-text-field>

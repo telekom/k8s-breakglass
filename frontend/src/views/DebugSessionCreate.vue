@@ -451,6 +451,10 @@ const isValid = computed(() => {
     return false;
   }
 
+  if (form.useScheduledStart && !form.scheduledStartTime.trim()) {
+    return false;
+  }
+
   return namespaceValid.value && extraDeployValid.value;
 });
 
@@ -547,8 +551,9 @@ async function handleSubmit() {
       request.bindingRef = `${binding.namespace}/${binding.name}`;
     }
 
-    if (form.useScheduledStart && form.scheduledStartTime) {
-      request.scheduledStartTime = new Date(form.scheduledStartTime).toISOString();
+    const scheduledStartTime = form.scheduledStartTime.trim();
+    if (form.useScheduledStart && scheduledStartTime) {
+      request.scheduledStartTime = new Date(scheduledStartTime).toISOString();
     }
 
     // Include target namespace if user can select it or if it differs from template default
