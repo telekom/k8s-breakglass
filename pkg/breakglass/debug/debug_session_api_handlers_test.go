@@ -2238,6 +2238,26 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
+	t.Run("does not treat selector-only denied filter as matching every namespace", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+							{MatchLabels: map[string]string{"environment": "production"}},
+						},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+
+		require.NoError(t, err)
+		assert.Equal(t, "debug-ns", ns)
+	})
+
 	t.Run("binding cannot enable template user namespaces", func(t *testing.T) {
 		// Template disallows user-specified namespaces
 		template := &breakglassv1alpha1.DebugSessionTemplate{
@@ -2360,6 +2380,70 @@ func TestResolveTargetNamespace(t *testing.T) {
 		ns, err = ctrl.resolveTargetNamespace(template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "binding-default", ns)
+	})
+
+	t.Run("binding denial rejects template default namespace", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-default-denied-by-binding"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "template-default",
+				},
+			},
+		}
+
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "deny-template-default-binding",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"template-default"},
+					},
+				},
+			},
+		}
+
+		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "template-default", ns)
+
+		_, err = ctrl.resolveTargetNamespace(template, "", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+	})
+
+	t.Run("binding denial rejects implicit fallback namespace", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "fallback-denied-by-binding"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{},
+			},
+		}
+
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "deny-fallback-binding",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"breakglass-debug"},
+					},
+				},
+			},
+		}
+
+		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-debug", ns)
+
+		_, err = ctrl.resolveTargetNamespace(template, "", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
 	t.Run("binding denied namespaces add to template denied", func(t *testing.T) {

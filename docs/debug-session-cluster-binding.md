@@ -930,6 +930,8 @@ namespaceConstraints:
 - Bindings can selectively narrow access per-cluster or per-team
 - Bindings cannot make templates more permissive than defined
 
+`allowUserNamespace` is a v1alpha1 boolean field, so a binding cannot distinguish an omitted value from an explicit `false`. Bindings therefore cannot disable user-selected namespaces when the template already enables them. To narrow that path, restrict the effective namespace set with `allowedNamespaces` / `deniedNamespaces`, or use a template with `allowUserNamespace: false`.
+
 **Example: Production vs. Development Access**
 
 ```yaml

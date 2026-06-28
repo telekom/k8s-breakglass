@@ -84,9 +84,10 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 				)
 				return "", err
 			}
-			c.log.Debugw("No namespace requested, using template default",
+			c.log.Debugw("No namespace requested, using effective default namespace",
 				"template", template.Name,
 				"resolvedNamespace", nc.DefaultNamespace,
+				"bindingUsed", binding != nil,
 			)
 			return nc.DefaultNamespace, nil
 		}
@@ -234,7 +235,7 @@ func validateNamespaceConstraintFilters(namespace string, constraints *breakglas
 		return fmt.Errorf("namespace '%s' is not in the allowed namespaces", namespace)
 	}
 	if constraints.DeniedNamespaces != nil && !constraints.DeniedNamespaces.IsEmpty() &&
-		matchNamespaceFilter(namespace, constraints.DeniedNamespaces) {
+		matchDeniedNamespaceFilter(namespace, constraints.DeniedNamespaces) {
 		return fmt.Errorf("namespace '%s' is explicitly denied", namespace)
 	}
 	return nil
@@ -288,6 +289,18 @@ func matchNamespaceFilter(namespace string, filter *breakglassv1alpha1.Namespace
 		return true // Defer to runtime validation
 	}
 
+	return false
+}
+
+func matchDeniedNamespaceFilter(namespace string, filter *breakglassv1alpha1.NamespaceFilter) bool {
+	if filter == nil || filter.IsEmpty() {
+		return false
+	}
+	for _, pattern := range filter.Patterns {
+		if matchPattern(pattern, namespace) {
+			return true
+		}
+	}
 	return false
 }
 
