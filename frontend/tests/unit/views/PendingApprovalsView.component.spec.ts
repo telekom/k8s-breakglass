@@ -202,6 +202,11 @@ describe("PendingApprovalsView (component)", () => {
     expect(errorState.exists()).toBe(true);
     expect(errorState.props("variant")).toBe("error");
     expect(errorState.props("description")).toBe("network error");
+
+    const status = wrapper.find('[data-testid="toolbar-info"]');
+    expect(status.attributes("role")).toBeUndefined();
+    expect(status.attributes("aria-live")).toBeUndefined();
+    expect(status.attributes("aria-atomic")).toBeUndefined();
   });
 
   it("keeps the approval modal mounted while rejection is in flight", async () => {

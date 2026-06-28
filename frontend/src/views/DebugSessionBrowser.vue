@@ -333,7 +333,7 @@ function onStateToggle(state: string, event: Event) {
     </EmptyState>
 
     <div
-      v-if="!loading"
+      v-if="!loading && !error"
       class="results-info ui-toolbar-info"
       role="status"
       aria-live="polite"

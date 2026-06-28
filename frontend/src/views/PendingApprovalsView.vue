@@ -40,9 +40,9 @@
 
       <div
         class="toolbar-info ui-toolbar-info"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
+        :role="!loading && !error ? 'status' : undefined"
+        :aria-live="!loading && !error ? 'polite' : undefined"
+        :aria-atomic="!loading && !error ? 'true' : undefined"
         data-testid="toolbar-info"
       >
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests

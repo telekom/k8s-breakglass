@@ -254,4 +254,16 @@ describe("BreakglassSessionReview", () => {
 
     expect(wrapper.find('[data-testid="session-card-email"]').text()).toBe("owner@example.com");
   });
+
+  it("does not announce result counts while an authorization message is shown", async () => {
+    mockGetSessionStatus.mockRejectedValueOnce({ response: { status: 401 } });
+
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="review-results-status"]');
+
+    expect(status.exists()).toBe(true);
+    expect(status.attributes("role")).toBeUndefined();
+    expect(status.attributes("aria-live")).toBeUndefined();
+    expect(status.attributes("aria-atomic")).toBeUndefined();
+  });
 });

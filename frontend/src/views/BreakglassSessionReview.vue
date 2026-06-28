@@ -350,7 +350,13 @@ async function onCancel(bg: SessionCR) {
         <scale-button variant="secondary" @click="getActiveBreakglasses">Refresh</scale-button>
       </div>
 
-      <div class="toolbar-info" role="status" aria-live="polite" aria-atomic="true" data-testid="review-results-status">
+      <div
+        class="toolbar-info"
+        :role="!state.loading && !state.getBreakglassesMsg ? 'status' : undefined"
+        :aria-live="!state.loading && !state.getBreakglassesMsg ? 'polite' : undefined"
+        :aria-atomic="!state.loading && !state.getBreakglassesMsg ? 'true' : undefined"
+        data-testid="review-results-status"
+      >
         Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} sessions
       </div>
     </section>

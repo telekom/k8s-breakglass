@@ -167,6 +167,7 @@ describe("DebugSessionBrowser", () => {
       expect(errorState.exists()).toBe(true);
       expect(errorState.props("variant")).toBe("error");
       expect(errorState.props("description")).toBe("debug list down");
+      expect(wrapper.find('[data-testid="debug-session-results-status"]').exists()).toBe(false);
     });
 
     it("joins sessions as a viewer", async () => {
