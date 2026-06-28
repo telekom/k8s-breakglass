@@ -249,7 +249,60 @@ func TestEscalationStatusUpdaterSetsApprovalGroupMembersResolvedPartialFailure(t
 	if assert.NotNil(t, condition) {
 		assert.Equal(t, metav1.ConditionFalse, condition.Status)
 		assert.Equal(t, "GroupSyncPartialFailure", condition.Reason)
-		assert.Equal(t, "Approver group sync partially failed for 2 group(s); 1 error(s) encountered.", condition.Message)
+		assert.Equal(t, "Approver group sync partially failed for 2 group(s) from 1 identity provider(s); 1 error(s) encountered.", condition.Message)
+	}
+}
+
+func TestUpdateApprovalGroupMembersResolvedConditionIncludesIDPContextOnFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		syncStatus string
+		reason     string
+		message    string
+		errorCount int
+	}{
+		{
+			name:       "partial failure",
+			syncStatus: groupSyncStatusPartialFailure,
+			reason:     groupSyncReasonPartialFailure,
+			message:    "Approver group sync partially failed for 3 group(s) from 2 identity provider(s); 1 error(s) encountered.",
+			errorCount: 1,
+		},
+		{
+			name:       "full failure",
+			syncStatus: groupSyncStatusFailed,
+			reason:     groupSyncReasonFailed,
+			message:    "Approver group sync failed for 3 group(s) from 2 identity provider(s); 2 error(s) encountered.",
+			errorCount: 2,
+		},
+		{
+			name:       "unknown status",
+			syncStatus: "Unexpected",
+			reason:     groupSyncReasonFailed,
+			message:    "Approver group sync returned unknown status \"Unexpected\" for 3 group(s) from 2 identity provider(s).",
+			errorCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{
+					Generation: 7,
+				},
+			}
+
+			changed := updateApprovalGroupMembersResolvedCondition(escalation, tt.syncStatus, 3, 2, tt.errorCount)
+
+			assert.True(t, changed)
+			condition := escalation.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+			if assert.NotNil(t, condition) {
+				assert.Equal(t, metav1.ConditionFalse, condition.Status)
+				assert.Equal(t, tt.reason, condition.Reason)
+				assert.Equal(t, tt.message, condition.Message)
+				assert.Equal(t, int64(7), condition.ObservedGeneration)
+			}
+		})
 	}
 }
 
@@ -421,6 +474,14 @@ func TestEmptyApproverGroups(t *testing.T) {
 			},
 		},
 		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"admin": {"alice@example.com"},
+			},
+			IDPGroupMemberships: map[string]map[string][]string{
+				"idp-a": {
+					"admin": {"alice@example.com"},
+				},
+			},
 			Conditions: []metav1.Condition{
 				{
 					Type:    string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved),
@@ -450,7 +511,7 @@ func TestEmptyApproverGroups(t *testing.T) {
 	err = cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
 	assert.NoError(t, err)
 
-	// Should not have been updated (no approver groups)
+	// Stale group-member status should be cleared when no approver groups remain.
 	assert.Nil(t, updated.Status.ApproverGroupMembers)
 	assert.Nil(t, updated.Status.IDPGroupMemberships)
 	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
@@ -461,4 +522,66 @@ func TestEmptyApproverGroups(t *testing.T) {
 	}
 
 	t.Logf("✅ Test passed: Empty approver groups correctly skipped")
+}
+
+func TestExplicitIDPsWithoutLoaderReportLegacyResolverCondition(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	mockResolver := &MockGroupMemberResolverForTest{
+		memberData: map[string][]string{
+			"admin": {"alice@example.com"},
+		},
+		err: nil,
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
+		Build()
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "explicit-idps-no-loader",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin-group",
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"my-cluster"},
+			},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Groups: []string{"admin"},
+			},
+			AllowedIdentityProvidersForApprovers: []string{"idp-a", "idp-b"},
+		},
+	}
+
+	err := cli.Create(context.Background(), escalation)
+	assert.NoError(t, err)
+
+	updater := EscalationStatusUpdater{
+		Log:           logger.Sugar(),
+		K8sClient:     cli,
+		Resolver:      mockResolver,
+		Interval:      0,
+		EventRecorder: nil,
+		IDPLoader:     nil,
+	}
+
+	updater.runOnce(context.Background(), logger.Sugar())
+
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
+	err = cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"alice@example.com"}, updated.Status.ApproverGroupMembers["admin"])
+
+	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+		assert.Equal(t, "GroupMembersResolved", condition.Reason)
+		assert.Equal(t, "Resolved approver group members for 1 group(s).", condition.Message)
+	}
 }

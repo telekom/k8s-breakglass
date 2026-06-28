@@ -493,8 +493,26 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		if len(groups) == 0 {
 			log.Debugw("Escalation has no approver groups; skipping", "escalation", esc.Name)
 			updated := esc.DeepCopy()
-			if updateNoApproverGroupsCondition(updated) {
-				if err := u.applyStatus(ctx, updated); err != nil {
+			changed := updateNoApproverGroupsCondition(updated)
+			clearCachedMembers := false
+			if len(updated.Status.ApproverGroupMembers) > 0 {
+				updated.Status.ApproverGroupMembers = nil
+				changed = true
+				clearCachedMembers = true
+			}
+			if len(updated.Status.IDPGroupMemberships) > 0 {
+				updated.Status.IDPGroupMemberships = nil
+				changed = true
+				clearCachedMembers = true
+			}
+			if changed {
+				var err error
+				if clearCachedMembers {
+					err = u.K8sClient.Status().Update(ctx, updated)
+				} else {
+					err = u.applyStatus(ctx, updated)
+				}
+				if err != nil {
 					log.Errorw("Failed updating escalation group sync condition", "escalation", esc.Name, "error", err)
 				}
 			}
@@ -563,7 +581,14 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 					changed = true
 				}
 			}
-			if updateApprovalGroupMembersResolvedCondition(updated, syncStatus, len(groups), len(idpsToUse), len(syncErrors)) {
+			idpCount := len(idpsToUse)
+			if u.IDPLoader == nil {
+				idpCount = 0
+				if u.Resolver != nil {
+					idpCount = 1
+				}
+			}
+			if updateApprovalGroupMembersResolvedCondition(updated, syncStatus, len(groups), idpCount, len(syncErrors)) {
 				changed = true
 			}
 		} else {
@@ -847,15 +872,15 @@ func updateApprovalGroupMembersResolvedCondition(
 	case groupSyncStatusPartialFailure:
 		status = metav1.ConditionFalse
 		reason = groupSyncReasonPartialFailure
-		message = fmt.Sprintf("Approver group sync partially failed for %d group(s); %d error(s) encountered.", groupCount, errorCount)
+		message = fmt.Sprintf("Approver group sync partially failed for %d group(s) from %d identity provider(s); %d error(s) encountered.", groupCount, idpCount, errorCount)
 	case groupSyncStatusFailed:
 		status = metav1.ConditionFalse
 		reason = groupSyncReasonFailed
-		message = fmt.Sprintf("Approver group sync failed for %d group(s); %d error(s) encountered.", groupCount, errorCount)
+		message = fmt.Sprintf("Approver group sync failed for %d group(s) from %d identity provider(s); %d error(s) encountered.", groupCount, idpCount, errorCount)
 	default:
 		status = metav1.ConditionFalse
 		reason = groupSyncReasonFailed
-		message = fmt.Sprintf("Approver group sync returned unknown status %q for %d group(s).", syncStatus, groupCount)
+		message = fmt.Sprintf("Approver group sync returned unknown status %q for %d group(s) from %d identity provider(s).", syncStatus, groupCount, idpCount)
 	}
 
 	return setApprovalGroupMembersResolvedCondition(escalation, status, reason, message)
