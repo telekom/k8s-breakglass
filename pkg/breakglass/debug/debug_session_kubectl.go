@@ -180,7 +180,11 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 	}
 
 	// Validate namespace
-	if !h.isNamespaceAllowed(namespace, ec.AllowedNamespaces, ec.DeniedNamespaces) {
+	namespaceAllowed, err := h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ec.AllowedNamespaces, ec.DeniedNamespaces)
+	if err != nil {
+		return err
+	}
+	if !namespaceAllowed {
 		return fmt.Errorf("namespace %s is not allowed for ephemeral container injection", namespace)
 	}
 
@@ -643,6 +647,34 @@ func (h *KubectlDebugHandler) isNamespaceAllowed(namespace string, allowed, deni
 	// Use NamespaceAllowDenyMatcher for combined allow/deny logic
 	matcher := utils.NewNamespaceAllowDenyMatcher(allowed, denied)
 	return matcher.IsAllowed(namespace)
+}
+
+func (h *KubectlDebugHandler) isNamespaceAllowedForEphemeral(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	namespace string,
+	allowed, denied *breakglassv1alpha1.NamespaceFilter,
+) (bool, error) {
+	matcher := utils.NewNamespaceAllowDenyMatcher(allowed, denied)
+	if !namespaceFilterRequiresLabels(allowed) && !namespaceFilterRequiresLabels(denied) {
+		return matcher.IsAllowed(namespace), nil
+	}
+	if h.ccProvider == nil {
+		return false, fmt.Errorf("failed to fetch namespace labels for %s: target cluster client provider is not configured", namespace)
+	}
+	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+	if err != nil {
+		return false, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+	}
+	nsLabels, err := h.fetchNamespaceLabels(ctx, targetClient, namespace)
+	if err != nil {
+		return false, fmt.Errorf("failed to fetch namespace labels for %s: %w", namespace, err)
+	}
+	return matcher.IsAllowedWithLabels(namespace, nsLabels), nil
+}
+
+func namespaceFilterRequiresLabels(filter *breakglassv1alpha1.NamespaceFilter) bool {
+	return filter != nil && filter.HasSelectorTerms()
 }
 
 func (h *KubectlDebugHandler) fetchNamespaceLabels(ctx context.Context, cl ctrlclient.Client, namespace string) (map[string]string, error) {

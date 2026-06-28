@@ -287,6 +287,116 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 	}
 }
 
+func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors(t *testing.T) {
+	scheme := newKubectlTestScheme()
+
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster: "test-cluster",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled: true,
+					},
+				},
+			},
+		},
+	}
+	prodNamespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "production",
+			Labels: map[string]string{"env": "prod"},
+		},
+	}
+
+	tests := []struct {
+		name             string
+		allowed          *breakglassv1alpha1.NamespaceFilter
+		denied           *breakglassv1alpha1.NamespaceFilter
+		targetObjects    []ctrlclient.Object
+		expectError      bool
+		expectedErrorMsg string
+	}{
+		{
+			name: "allowed selector matches namespace labels",
+			allowed: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "prod"}},
+				},
+			},
+			targetObjects: []ctrlclient.Object{prodNamespace},
+		},
+		{
+			name: "allowed selector blocks non matching namespace labels",
+			allowed: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "staging"}},
+				},
+			},
+			targetObjects:    []ctrlclient.Object{prodNamespace},
+			expectError:      true,
+			expectedErrorMsg: "namespace production is not allowed",
+		},
+		{
+			name: "denied selector blocks matching namespace labels",
+			denied: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "prod"}},
+				},
+			},
+			targetObjects:    []ctrlclient.Object{prodNamespace},
+			expectError:      true,
+			expectedErrorMsg: "namespace production is not allowed",
+		},
+		{
+			name: "selector lookup fails closed when namespace labels cannot be fetched",
+			allowed: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "prod"}},
+				},
+			},
+			expectError:      true,
+			expectedErrorMsg: "failed to fetch namespace labels for production",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testSession := session.DeepCopy()
+			testSession.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.AllowedNamespaces = tt.allowed
+			testSession.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.DeniedNamespaces = tt.denied
+
+			targetClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.targetObjects...).
+				Build()
+			hubClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+				clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+			})
+
+			err := handler.ValidateEphemeralContainerRequest(
+				context.Background(),
+				testSession,
+				"production",
+				"test-pod",
+				"busybox:latest",
+				nil,
+				false,
+			)
+
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedErrorMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
 	handler := &KubectlDebugHandler{}
 

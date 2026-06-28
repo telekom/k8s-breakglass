@@ -934,6 +934,7 @@ When a user creates a debug session:
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
 The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace selectors and cluster state.
+Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read.
 
 ### Example: Team-Isolated Debug Namespaces
 
