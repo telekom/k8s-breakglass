@@ -180,9 +180,10 @@ func TestFetchGroupMembersFromMultipleIDPs_NilResolver(t *testing.T) {
 	hierarchy, status, syncErrors := updater.fetchGroupMembersFromMultipleIDPs(
 		ctx, escalation, []string{}, []string{"admin-group"}, slog)
 
-	assert.Equal(t, "Success", status)
-	assert.Len(t, syncErrors, 0)
+	assert.Equal(t, groupSyncStatusFailed, status)
+	assert.Len(t, syncErrors, 1)
 	assert.NotNil(t, hierarchy)
+	assert.Empty(t, hierarchy)
 }
 
 // TestNormalizeMembers_Deduplication tests member normalization removes duplicates

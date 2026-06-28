@@ -661,28 +661,42 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 		log.Debugw("IDPLoader not configured; using single resolver fallback", "escalation", escalation.Name)
 		// Fallback: use legacy single resolver for backward compatibility
 		groupMembers := make(map[string][]string)
+		resolvedGroupCount := 0
+		failedGroupCount := 0
 		for _, g := range groups {
-			if u.Resolver != nil {
-				members, err := u.Resolver.Members(ctx, g)
-				if err != nil {
-					log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "group", system.RedactGroupName(g), "error", err)
-					if escalation.Status.IDPGroupMemberships != nil {
-						if cachedIDP, ok := escalation.Status.IDPGroupMemberships[""]; ok {
-							if cachedMembers, ok := cachedIDP[g]; ok {
-								groupMembers[g] = cachedMembers
-							}
-						}
+			if u.Resolver == nil {
+				errorMsg := fmt.Sprintf("No group member resolver configured for group %s", system.RedactGroupName(g))
+				log.Warnw("No group member resolver configured; skipping group resolution", "escalation", escalation.Name, "group", system.RedactGroupName(g))
+				syncErrors = append(syncErrors, errorMsg)
+				failedGroupCount++
+				if cachedIDP, ok := escalation.Status.IDPGroupMemberships[""]; ok {
+					if cachedMembers, ok := cachedIDP[g]; ok {
+						groupMembers[g] = cachedMembers
 					}
-					continue
 				}
-				groupMembers[g] = normalizeMembers(members)
+				continue
 			}
+			members, err := u.Resolver.Members(ctx, g)
+			if err != nil {
+				errorMsg := fmt.Sprintf("Failed to resolve group %s: %v", system.RedactGroupName(g), err)
+				log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "group", system.RedactGroupName(g), "error", err)
+				syncErrors = append(syncErrors, errorMsg)
+				failedGroupCount++
+				if cachedIDP, ok := escalation.Status.IDPGroupMemberships[""]; ok {
+					if cachedMembers, ok := cachedIDP[g]; ok {
+						groupMembers[g] = cachedMembers
+					}
+				}
+				continue
+			}
+			groupMembers[g] = normalizeMembers(members)
+			resolvedGroupCount++
 		}
 		// Store in hierarchy under empty IDP name for backward compat
 		if len(groupMembers) > 0 {
 			hierarchy[""] = groupMembers
 		}
-		return hierarchy, groupSyncStatusSuccess, nil
+		return hierarchy, legacyGroupSyncStatus(resolvedGroupCount, failedGroupCount), syncErrors
 	}
 
 	// Multi-IDP sync: fetch from each IDP for each group
@@ -833,11 +847,11 @@ func updateApprovalGroupMembersResolvedCondition(
 	case groupSyncStatusPartialFailure:
 		status = metav1.ConditionFalse
 		reason = groupSyncReasonPartialFailure
-		message = fmt.Sprintf("Approver group sync partially failed for %d group(s); %d error(s) recorded in related events.", groupCount, errorCount)
+		message = fmt.Sprintf("Approver group sync partially failed for %d group(s); %d error(s) encountered.", groupCount, errorCount)
 	case groupSyncStatusFailed:
 		status = metav1.ConditionFalse
 		reason = groupSyncReasonFailed
-		message = fmt.Sprintf("Approver group sync failed for %d group(s); %d error(s) recorded in related events.", groupCount, errorCount)
+		message = fmt.Sprintf("Approver group sync failed for %d group(s); %d error(s) encountered.", groupCount, errorCount)
 	default:
 		status = metav1.ConditionFalse
 		reason = groupSyncReasonFailed

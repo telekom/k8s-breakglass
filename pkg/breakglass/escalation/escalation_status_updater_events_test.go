@@ -165,6 +165,34 @@ func TestFetchGroupMembersFromMultipleIDPs_EventEmission_NoResolverFallback(t *t
 	t.Logf("✓ Fallback mode event emission handled - Status: %s", status)
 }
 
+func TestFetchGroupMembersFromMultipleIDPs_FallbackReportsMissingResolver(t *testing.T) {
+	log, _ := zap.NewProduction()
+	defer func() { _ = log.Sync() }()
+	slog := log.Sugar()
+
+	updater := &EscalationStatusUpdater{}
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-esc-missing-resolver",
+			Namespace: "default",
+		},
+	}
+
+	hierarchy, status, syncErrors := updater.fetchGroupMembersFromMultipleIDPs(
+		context.Background(),
+		escalation,
+		[]string{"configured-idp"},
+		[]string{"admins", "approvers"},
+		slog,
+	)
+
+	assert.Empty(t, hierarchy)
+	assert.Equal(t, groupSyncStatusFailed, status)
+	assert.Len(t, syncErrors, 2)
+	assert.Contains(t, syncErrors[0], "No group member resolver configured")
+}
+
 func drainRecordedEvents(events <-chan string) []string {
 	var drained []string
 	for {

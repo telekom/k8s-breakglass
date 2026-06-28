@@ -249,7 +249,7 @@ func TestEscalationStatusUpdaterSetsApprovalGroupMembersResolvedPartialFailure(t
 	if assert.NotNil(t, condition) {
 		assert.Equal(t, metav1.ConditionFalse, condition.Status)
 		assert.Equal(t, "GroupSyncPartialFailure", condition.Reason)
-		assert.Equal(t, "Approver group sync partially failed for 2 group(s); 1 error(s) recorded in related events.", condition.Message)
+		assert.Equal(t, "Approver group sync partially failed for 2 group(s); 1 error(s) encountered.", condition.Message)
 	}
 }
 
