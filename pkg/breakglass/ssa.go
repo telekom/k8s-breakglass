@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
@@ -26,6 +27,27 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 		session.Status.ObservedGeneration = session.Generation
 	}
 	return ssa.ApplyDebugSessionStatus(ctx, c, session)
+}
+
+// PatchDebugSessionStatusWithOptimisticLock applies a narrow status merge patch
+// and fails with a conflict if another writer updated the DebugSession since it
+// was read.
+func PatchDebugSessionStatusWithOptimisticLock(
+	ctx context.Context,
+	c client.Client,
+	session *breakglassv1alpha1.DebugSession,
+	mutate func(*breakglassv1alpha1.DebugSessionStatus),
+) error {
+	base := session.DeepCopy()
+	mutate(&session.Status)
+	if session.Generation > 0 {
+		session.Status.ObservedGeneration = session.Generation
+	}
+
+	if err := c.Status().Patch(ctx, session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+		return fmt.Errorf("patch DebugSession status with optimistic lock: %w", err)
+	}
+	return nil
 }
 
 // ApplyBreakglassEscalationStatus applies the escalation status using server-side apply.

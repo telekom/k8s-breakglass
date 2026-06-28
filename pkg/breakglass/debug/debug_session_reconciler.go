@@ -314,8 +314,9 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		if err == nil {
 			until := time.Until(ds.Status.ExpiresAt.Time)
 			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
-				ds.Status.Message = "Session expiring soon"
-				if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.Message = "Session expiring soon"
+				}); err != nil {
 					return ctrl.Result{}, err
 				}
 			}
@@ -326,16 +327,18 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
 		log.Info("Debug session expired")
 		if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
-			ds.Status.Message = "Session expired (notify-only)"
-			ds.Status.ExpiresAt = nil
-			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.Message = "Session expired (notify-only)"
+				status.ExpiresAt = nil
+			}); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
 		}
-		ds.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-		ds.Status.Message = "Session expired"
-		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.State = breakglassv1alpha1.DebugSessionStateExpired
+			status.Message = "Session expired"
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()

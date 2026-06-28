@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
@@ -662,6 +663,61 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, updated.Status.State)
 		assert.Contains(t, updated.Status.Message, "expired")
+	})
+
+	t.Run("stale active expiration list does not overwrite renewed session", func(t *testing.T) {
+		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour).Truncate(time.Second))
+		renewedTime := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+
+		staleListItem := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "active-renewed-from-stale-list",
+				Namespace:       "default",
+				ResourceVersion: "1",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:        breakglassv1alpha1.DebugSessionStateActive,
+				ExpiresAt:    &pastTime,
+				RenewalCount: 0,
+			},
+		}
+		liveSession := staleListItem.DeepCopy()
+		liveSession.ResourceVersion = "2"
+		liveSession.Status.ExpiresAt = &renewedTime
+		liveSession.Status.RenewalCount = 1
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if debugSessions, ok := list.(*breakglassv1alpha1.DebugSessionList); ok {
+						debugSessions.Items = []breakglassv1alpha1.DebugSession{*staleListItem}
+						return nil
+					}
+					return cl.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+
+		manager := &SessionManager{Client: fakeClient}
+		routine := CleanupRoutine{Log: logger, Manager: manager}
+
+		routine.cleanupExpiredDebugSessions(context.Background())
+
+		var updated breakglassv1alpha1.DebugSession
+		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, &updated)
+		assert.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+		require.NotNil(t, updated.Status.ExpiresAt)
+		assert.True(t, updated.Status.ExpiresAt.Equal(&renewedTime),
+			"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedTime.Time)
+		assert.Equal(t, int32(1), updated.Status.RenewalCount)
+		assert.Empty(t, updated.Status.Message)
 	})
 
 	t.Run("terminated session within retention period", func(t *testing.T) {

@@ -345,10 +345,10 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"expiresAt", ds.Status.ExpiresAt,
 					)...)
 
-				ds.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-				ds.Status.Message = "Session expired (cleanup routine)"
-
-				if err := ApplyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
+				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.State = breakglassv1alpha1.DebugSessionStateExpired
+					status.Message = "Session expired (cleanup routine)"
+				}); err != nil {
 					routine.Log.Errorw("error updating expired debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue
@@ -382,10 +382,10 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"approvalTimeout", DebugSessionApprovalTimeout.String(),
 					)...)
 
-				ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-				ds.Status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
-
-				if err := ApplyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
+				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.State = breakglassv1alpha1.DebugSessionStateFailed
+					status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
+				}); err != nil {
 					routine.Log.Errorw("error updating timed-out debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue

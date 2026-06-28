@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -957,6 +958,100 @@ func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 		assert.True(t, fetchedSession.Status.TerminalSharing.Enabled)
 		assert.Contains(t, fetchedSession.Status.TerminalSharing.AttachCommand, "tmux")
 	})
+}
+
+func TestDebugSessionReconciler_HandleActiveDoesNotExpireRenewedStaleSnapshot(t *testing.T) {
+	scheme := testScheme()
+	pastExpiry := metav1.NewTime(time.Now().Add(-time.Minute))
+	renewedExpiry := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+
+	liveSession := newTestDebugSession("renewed-active-session", "test-template", "test-cluster", "user@example.com")
+	liveSession.ResourceVersion = "2"
+	liveSession.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	liveSession.Status.ExpiresAt = &renewedExpiry
+	liveSession.Status.RenewalCount = 1
+
+	staleSession := liveSession.DeepCopy()
+	staleSession.ResourceVersion = "1"
+	staleSession.Status.ExpiresAt = &pastExpiry
+	staleSession.Status.RenewalCount = 0
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveSession).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	_, err := controller.handleActive(context.Background(), staleSession)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict, got %v", err)
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      liveSession.Name,
+		Namespace: liveSession.Namespace,
+	}, &updated)
+	require.NoError(t, err)
+
+	require.NotNil(t, updated.Status.ExpiresAt)
+	assert.True(t, updated.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+	assert.Equal(t, int32(1), updated.Status.RenewalCount)
+	assert.Empty(t, updated.Status.Message)
+}
+
+func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoonFromStaleSnapshot(t *testing.T) {
+	scheme := testScheme()
+	staleExpiry := metav1.NewTime(time.Now().Add(30 * time.Second))
+	renewedExpiry := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+
+	liveSession := newTestDebugSession("renewed-grace-session", "test-template", "test-cluster", "user@example.com")
+	liveSession.ResourceVersion = "2"
+	liveSession.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	liveSession.Status.ExpiresAt = &renewedExpiry
+	liveSession.Status.RenewalCount = 1
+	liveSession.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+		GracePeriodBeforeExpiry: "1m",
+	}
+
+	staleSession := liveSession.DeepCopy()
+	staleSession.ResourceVersion = "1"
+	staleSession.Status.ExpiresAt = &staleExpiry
+	staleSession.Status.RenewalCount = 0
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveSession).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	_, err := controller.handleActive(context.Background(), staleSession)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict, got %v", err)
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      liveSession.Name,
+		Namespace: liveSession.Namespace,
+	}, &updated)
+	require.NoError(t, err)
+
+	require.NotNil(t, updated.Status.ExpiresAt)
+	assert.True(t, updated.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, int32(1), updated.Status.RenewalCount)
+	assert.Empty(t, updated.Status.Message)
 }
 
 func TestDebugSessionReconciler_KubectlDebugStatus(t *testing.T) {
