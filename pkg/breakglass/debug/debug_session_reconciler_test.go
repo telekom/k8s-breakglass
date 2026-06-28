@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -3529,8 +3530,11 @@ func TestApplySchedulingConstraints(t *testing.T) {
 	t.Run("enforces denied exact nodes and labels as required node affinity", func(t *testing.T) {
 		spec := &corev1.PodSpec{}
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
-			DeniedNodes:      []string{"bad-node-1", "bad-node-2"},
-			DeniedNodeLabels: map[string]string{"tainted": "true"},
+			DeniedNodes: []string{"bad-node-2", "bad-node-1"},
+			DeniedNodeLabels: map[string]string{
+				"tainted":                               "true",
+				"node-role.kubernetes.io/control-plane": "*",
+			},
 		}
 		ctrl.applySchedulingConstraints(spec, constraints)
 		require.NotNil(t, spec.Affinity)
@@ -3542,11 +3546,20 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		require.Len(t, term.MatchFields, 1)
 		assert.Equal(t, "metadata.name", term.MatchFields[0].Key)
 		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchFields[0].Operator)
-		assert.ElementsMatch(t, []string{"bad-node-1", "bad-node-2"}, term.MatchFields[0].Values)
-		require.Len(t, term.MatchExpressions, 1)
-		assert.Equal(t, "tainted", term.MatchExpressions[0].Key)
-		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchExpressions[0].Operator)
-		assert.Equal(t, []string{"true"}, term.MatchExpressions[0].Values)
+		assert.Equal(t, []string{"bad-node-1", "bad-node-2"}, term.MatchFields[0].Values)
+		require.Len(t, term.MatchExpressions, 2)
+		assert.Equal(t, "node-role.kubernetes.io/control-plane", term.MatchExpressions[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpDoesNotExist, term.MatchExpressions[0].Operator)
+		assert.Empty(t, term.MatchExpressions[0].Values)
+		assert.Equal(t, "tainted", term.MatchExpressions[1].Key)
+		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchExpressions[1].Operator)
+		assert.Equal(t, []string{"true"}, term.MatchExpressions[1].Values)
+
+		selector, err := labels.Parse("tainted notin (true)")
+		require.NoError(t, err)
+		assert.True(t, selector.Matches(labels.Set{}), "Kubernetes NotIn permits nodes without the label key")
+		assert.True(t, selector.Matches(labels.Set{"tainted": "false"}))
+		assert.False(t, selector.Matches(labels.Set{"tainted": "true"}))
 	})
 
 	t.Run("enforces denied wildcard labels as label absence", func(t *testing.T) {

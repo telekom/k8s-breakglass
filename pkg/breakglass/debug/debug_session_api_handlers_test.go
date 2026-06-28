@@ -3291,6 +3291,33 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		}
 	})
 
+	t.Run("topology spread constraints are additive", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew:           1,
+				TopologyKey:       "kubernetes.io/hostname",
+				WhenUnsatisfiable: corev1.DoNotSchedule,
+			}},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew:           2,
+				TopologyKey:       "topology.kubernetes.io/zone",
+				WhenUnsatisfiable: corev1.ScheduleAnyway,
+			}},
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.TopologySpreadConstraints, 2)
+		assert.Equal(t, "kubernetes.io/hostname", result.TopologySpreadConstraints[0].TopologyKey)
+		assert.Equal(t, "topology.kubernetes.io/zone", result.TopologySpreadConstraints[1].TopologyKey)
+
+		result.TopologySpreadConstraints[0].TopologyKey = "mutated"
+		assert.Equal(t, "kubernetes.io/hostname", base.TopologySpreadConstraints[0].TopologyKey)
+	})
+
 	t.Run("denied node label wildcard cannot be weakened by exact value", func(t *testing.T) {
 		base := &breakglassv1alpha1.SchedulingConstraints{
 			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},

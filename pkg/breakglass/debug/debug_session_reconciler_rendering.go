@@ -2,6 +2,7 @@ package debug
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -558,6 +559,7 @@ func buildDeniedNodeSelector(constraints *breakglassv1alpha1.SchedulingConstrain
 			exactNodes = append(exactNodes, node)
 		}
 		if len(exactNodes) > 0 {
+			sort.Strings(exactNodes)
 			term.MatchFields = append(term.MatchFields, corev1.NodeSelectorRequirement{
 				Key:      "metadata.name",
 				Operator: corev1.NodeSelectorOpNotIn,
@@ -566,7 +568,13 @@ func buildDeniedNodeSelector(constraints *breakglassv1alpha1.SchedulingConstrain
 		}
 	}
 
-	for key, value := range constraints.DeniedNodeLabels {
+	deniedLabelKeys := make([]string, 0, len(constraints.DeniedNodeLabels))
+	for key := range constraints.DeniedNodeLabels {
+		deniedLabelKeys = append(deniedLabelKeys, key)
+	}
+	sort.Strings(deniedLabelKeys)
+	for _, key := range deniedLabelKeys {
+		value := constraints.DeniedNodeLabels[key]
 		requirement := corev1.NodeSelectorRequirement{
 			Key: key,
 		}
