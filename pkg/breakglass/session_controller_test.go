@@ -3604,6 +3604,11 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "a@ex.com", GrantedGroup: "g"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
 	}
+	pendingForApprovedOwner := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "st-pending-approved-owner"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "b@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(now.Add(time.Hour))},
+	}
 	approved := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-approved"},
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "b@ex.com", GrantedGroup: "g"},
@@ -3644,7 +3649,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(pending, approved, waiting, rejected, withdrawn, expired, timeout)
+	builder.WithObjects(pending, pendingForApprovedOwner, approved, waiting, rejected, withdrawn, expired, timeout)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
@@ -3677,6 +3682,14 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		case "waiting", "waitingforscheduledtime":
 			c.Set("email", "g@ex.com")
 			c.Set("username", "g")
+		case "":
+			if ParseBoolQuery(c.Query("activeOnly"), false) {
+				c.Set("email", "b@ex.com")
+				c.Set("username", "b")
+			} else {
+				c.Set("email", "approver@ex.com")
+				c.Set("username", "approver")
+			}
 		default:
 			c.Set("email", "approver@ex.com")
 			c.Set("username", "approver")
@@ -3722,6 +3735,21 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		if len(got) != 1 || got[0].Name != expectedName {
 			t.Fatalf("Expected one session named %s for state %s, got: %#v", expectedName, st, got)
 		}
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?activeOnly=true&mine=true", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	response := w.Result()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status OK (200) got '%d' instead for activeOnly", response.StatusCode)
+	}
+	respSessions := []breakglassv1alpha1.BreakglassSession{}
+	if err := json.NewDecoder(response.Body).Decode(&respSessions); err != nil {
+		t.Fatalf("Failed to decode response body for activeOnly: %v", err)
+	}
+	if len(respSessions) != 1 || respSessions[0].Name != "st-approved" {
+		t.Fatalf("Expected activeOnly to return only st-approved, got: %#v", respSessions)
 	}
 }
 

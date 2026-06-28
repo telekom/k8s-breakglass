@@ -169,8 +169,8 @@ Authorization: Bearer <token>
 | `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions) |
 | `approver` | boolean | Sessions user can approve (default: `true`) |
 | `approvedByMe` | boolean | Sessions the user has already approved |
-| `activeOnly` | boolean | Only return active (currently running) sessions |
-| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`. |
+| `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
+| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. |
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:
 
