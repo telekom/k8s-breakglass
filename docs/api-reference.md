@@ -1152,7 +1152,7 @@ Returns full `DebugSessionTemplate` CRD object.
 GET /api/debugSessions/templates/:name/clusters
 ```
 
-Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions.
+Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions. `DebugSessionClusterBinding` resources with `spec.hidden: true` are omitted from this discovery response and cannot become the default `bindingRef` here, but explicit `POST /api/debugSessions` requests may still use a hidden binding by providing `bindingRef`.
 
 **Response (200 OK):**
 
@@ -1219,7 +1219,7 @@ Returns available clusters for a template with resolved constraints from cluster
 | `clusters[].name` | string | Cluster identifier |
 | `clusters[].displayName` | string | Human-readable cluster name |
 | `clusters[].environment` | string | Cluster environment (production, staging, etc.) |
-| `clusters[].bindingRef` | object | Reference to the `DebugSessionClusterBinding` providing access |
+| `clusters[].bindingRef` | object | Reference to the visible `DebugSessionClusterBinding` providing access |
 | `clusters[].constraints` | object | Resolved session constraints (from binding or template) |
 | `clusters[].schedulingOptions` | object | Available scheduling options for node selection |
 | `clusters[].namespaceConstraints` | object | Namespace restrictions and defaults |
