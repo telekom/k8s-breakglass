@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 type schedulingOptionRequester struct {
@@ -360,7 +361,11 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	// base constraints (which are documented as mandatory additions on top of the template).
 	baseConstraints := template.Spec.SchedulingConstraints
 	if binding != nil && binding.Spec.SchedulingConstraints != nil {
-		baseConstraints = mergeSchedulingConstraints(baseConstraints, binding.Spec.SchedulingConstraints)
+		mergedBase, err := mergeSchedulingConstraints(baseConstraints, binding.Spec.SchedulingConstraints)
+		if err != nil {
+			return nil, "", fmt.Errorf("binding scheduling constraints conflict with template constraints: %w", err)
+		}
+		baseConstraints = mergedBase
 	}
 
 	// Resolve effective scheduling options: binding takes precedence over template
@@ -424,7 +429,10 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	}
 
 	// Merge base constraints with option's constraints
-	merged := mergeSchedulingConstraints(baseConstraints, selectedOpt.SchedulingConstraints)
+	merged, err := mergeSchedulingConstraints(baseConstraints, selectedOpt.SchedulingConstraints)
+	if err != nil {
+		return nil, "", fmt.Errorf("scheduling option %q conflicts with mandatory constraints: %w", selectedOption, err)
+	}
 
 	return merged, selectedOption, nil
 }
@@ -455,26 +463,30 @@ func isSchedulingOptionAllowedForRequester(opt *breakglassv1alpha1.SchedulingOpt
 }
 
 // mergeSchedulingConstraints merges base constraints with option constraints.
-// Option constraints override base constraints for conflicting keys.
-func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConstraints) *breakglassv1alpha1.SchedulingConstraints {
+// Option constraints are additive and must not weaken base constraints.
+func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConstraints) (*breakglassv1alpha1.SchedulingConstraints, error) {
 	if base == nil && option == nil {
-		return nil
+		return nil, nil
 	}
 	if base == nil {
-		return option.DeepCopy()
+		return option.DeepCopy(), nil
 	}
 	if option == nil {
-		return base.DeepCopy()
+		return base.DeepCopy(), nil
 	}
 
 	merged := base.DeepCopy()
 
-	// Merge nodeSelector (option overrides base on conflict)
+	// Merge nodeSelector additively. Conflicting values cannot be represented
+	// without weakening the mandatory selector, so reject the selected option.
 	if len(option.NodeSelector) > 0 {
 		if merged.NodeSelector == nil {
 			merged.NodeSelector = make(map[string]string)
 		}
 		for k, v := range option.NodeSelector {
+			if existing, ok := merged.NodeSelector[k]; ok && existing != v {
+				return nil, fmt.Errorf("nodeSelector %q requires both %q and %q", k, existing, v)
+			}
 			merged.NodeSelector[k] = v
 		}
 	}
@@ -484,12 +496,26 @@ func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConst
 		merged.DeniedNodes = append(merged.DeniedNodes, option.DeniedNodes...)
 	}
 
-	// Merge deniedNodeLabels (option overrides base on conflict)
+	// Merge deniedNodeLabels additively. "*" denies all values for the key and
+	// therefore dominates exact-value denies for the same key.
 	if len(option.DeniedNodeLabels) > 0 {
 		if merged.DeniedNodeLabels == nil {
 			merged.DeniedNodeLabels = make(map[string]string)
 		}
 		for k, v := range option.DeniedNodeLabels {
+			if existing, ok := merged.DeniedNodeLabels[k]; ok {
+				switch {
+				case existing == v:
+					continue
+				case existing == "*":
+					continue
+				case v == "*":
+					merged.DeniedNodeLabels[k] = v
+					continue
+				default:
+					return nil, fmt.Errorf("deniedNodeLabels %q cannot add both %q and %q", k, existing, v)
+				}
+			}
 			merged.DeniedNodeLabels[k] = v
 		}
 	}
@@ -499,17 +525,9 @@ func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConst
 		merged.Tolerations = append(merged.Tolerations, option.Tolerations...)
 	}
 
-	// For node affinity, option's required affinity is ANDed with base
+	// For node affinity, option's required affinity is ANDed with base.
 	if option.RequiredNodeAffinity != nil {
-		if merged.RequiredNodeAffinity == nil {
-			merged.RequiredNodeAffinity = option.RequiredNodeAffinity.DeepCopy()
-		} else {
-			// AND the node selector terms
-			merged.RequiredNodeAffinity.NodeSelectorTerms = append(
-				merged.RequiredNodeAffinity.NodeSelectorTerms,
-				option.RequiredNodeAffinity.NodeSelectorTerms...,
-			)
-		}
+		merged.RequiredNodeAffinity = andNodeSelectors(merged.RequiredNodeAffinity, option.RequiredNodeAffinity)
 	}
 
 	// Preferred affinities are additive
@@ -525,7 +543,44 @@ func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConst
 		merged.PreferredPodAntiAffinity = append(merged.PreferredPodAntiAffinity, option.PreferredPodAntiAffinity...)
 	}
 
-	return merged
+	if len(option.TopologySpreadConstraints) > 0 {
+		merged.TopologySpreadConstraints = append(merged.TopologySpreadConstraints, option.TopologySpreadConstraints...)
+	}
+
+	return merged, nil
+}
+
+func andNodeSelectors(left, right *corev1.NodeSelector) *corev1.NodeSelector {
+	if left == nil {
+		if right == nil {
+			return nil
+		}
+		return right.DeepCopy()
+	}
+	if right == nil {
+		return left.DeepCopy()
+	}
+	if len(left.NodeSelectorTerms) == 0 {
+		return right.DeepCopy()
+	}
+	if len(right.NodeSelectorTerms) == 0 {
+		return left.DeepCopy()
+	}
+
+	out := &corev1.NodeSelector{
+		NodeSelectorTerms: make([]corev1.NodeSelectorTerm, 0, len(left.NodeSelectorTerms)*len(right.NodeSelectorTerms)),
+	}
+	for _, leftTerm := range left.NodeSelectorTerms {
+		for _, rightTerm := range right.NodeSelectorTerms {
+			term := corev1.NodeSelectorTerm{}
+			term.MatchExpressions = append(term.MatchExpressions, leftTerm.MatchExpressions...)
+			term.MatchExpressions = append(term.MatchExpressions, rightTerm.MatchExpressions...)
+			term.MatchFields = append(term.MatchFields, leftTerm.MatchFields...)
+			term.MatchFields = append(term.MatchFields, rightTerm.MatchFields...)
+			out.NodeSelectorTerms = append(out.NodeSelectorTerms, term)
+		}
+	}
+	return out
 }
 
 // resolveClusterPatterns expands cluster patterns (e.g., "*", "prod-*") to actual cluster names.

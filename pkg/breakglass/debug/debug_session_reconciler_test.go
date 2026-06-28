@@ -3410,8 +3410,10 @@ func TestApplySchedulingConstraints(t *testing.T) {
 			},
 		}
 		ctrl.applySchedulingConstraints(spec, constraints)
-		// Both terms should be present (AND logic via multiple terms)
-		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 2)
+		// Kubernetes ORs node selector terms, so AND requires combining both
+		// expressions into the same resulting term.
+		require.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 1)
+		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions, 2)
 	})
 
 	t.Run("applies preferred node affinity", func(t *testing.T) {
@@ -3524,16 +3526,52 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		assert.Len(t, spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
 	})
 
-	t.Run("handles denied nodes logging", func(t *testing.T) {
-		// This test ensures the code path for denied nodes is covered
+	t.Run("enforces denied exact nodes and labels as required node affinity", func(t *testing.T) {
 		spec := &corev1.PodSpec{}
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			DeniedNodes:      []string{"bad-node-1", "bad-node-2"},
 			DeniedNodeLabels: map[string]string{"tainted": "true"},
 		}
-		// Should not panic, just log
 		ctrl.applySchedulingConstraints(spec, constraints)
-		// No assertions needed - just verifying no panic
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity)
+		required := spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		require.NotNil(t, required)
+		require.Len(t, required.NodeSelectorTerms, 1)
+		term := required.NodeSelectorTerms[0]
+		require.Len(t, term.MatchFields, 1)
+		assert.Equal(t, "metadata.name", term.MatchFields[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchFields[0].Operator)
+		assert.ElementsMatch(t, []string{"bad-node-1", "bad-node-2"}, term.MatchFields[0].Values)
+		require.Len(t, term.MatchExpressions, 1)
+		assert.Equal(t, "tainted", term.MatchExpressions[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchExpressions[0].Operator)
+		assert.Equal(t, []string{"true"}, term.MatchExpressions[0].Values)
+	})
+
+	t.Run("enforces denied wildcard labels as label absence", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		required := spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		require.NotNil(t, required)
+		require.Len(t, required.NodeSelectorTerms, 1)
+		term := required.NodeSelectorTerms[0]
+		require.Len(t, term.MatchExpressions, 1)
+		assert.Equal(t, "node-role.kubernetes.io/control-plane", term.MatchExpressions[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpDoesNotExist, term.MatchExpressions[0].Operator)
+		assert.Empty(t, term.MatchExpressions[0].Values)
+	})
+
+	t.Run("ignores denied node glob patterns that cannot be rendered as hard affinity", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodes: []string{"control-plane-*"},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		assert.Nil(t, spec.Affinity)
 	})
 
 	t.Run("applies topology spread constraints", func(t *testing.T) {

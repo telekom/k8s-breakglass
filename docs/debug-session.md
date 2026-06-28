@@ -796,6 +796,8 @@ schedulingConstraints:
     node-role.kubernetes.io/master: "*"
 ```
 
+Exact `deniedNodes` entries and `deniedNodeLabels` are rendered into hard node affinity requirements on created debug workloads. Glob-style `deniedNodes` entries are retained in the resolved session constraints for policy visibility, but Kubernetes node affinity cannot enforce glob patterns directly; prefer stable labels in `deniedNodeLabels` for hard node-pool exclusion.
+
 ### Scheduling Options
 
 Scheduling options allow administrators to offer users a choice of predefined scheduling configurations. This reduces the need for multiple templates for different node pools:
@@ -840,6 +842,8 @@ The controller refreshes `status.allowedPods` dynamically as debug pods start, s
 3. Base `schedulingConstraints` from template (mandatory for all options)
 4. Selected option's `schedulingConstraints` (additive)
 5. User's `nodeSelector` (if allowed by template)
+
+Selected options and cluster bindings may add stricter constraints but cannot replace mandatory ones. If a binding or option sets a different value for an existing mandatory `nodeSelector` key, or tries to narrow a `deniedNodeLabels` key to a different exact value, the request is rejected instead of silently weakening the base constraint. Required node affinity is combined with Kubernetes-correct AND semantics across selector terms.
 
 ## Namespace Constraints
 
