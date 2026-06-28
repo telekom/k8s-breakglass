@@ -247,8 +247,8 @@ Control the number of concurrent sessions:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `maxActiveSessionsPerUser` | int32 | Maximum active sessions per user via this binding |
-| `maxActiveSessionsTotal` | int32 | Maximum total active sessions via this binding |
+| `maxActiveSessionsPerUser` | int32 | Maximum active, non-expired sessions per requester via this binding. The requester username is always used, and email is matched when present. |
+| `maxActiveSessionsTotal` | int32 | Maximum total active, non-expired sessions via this binding |
 
 ```yaml
 spec:

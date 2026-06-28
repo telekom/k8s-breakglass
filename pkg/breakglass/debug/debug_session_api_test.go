@@ -5490,11 +5490,13 @@ func TestConvertSelectorTerms(t *testing.T) {
 func TestCheckBindingSessionLimits(t *testing.T) {
 	ctx := context.Background()
 	scheme := testScheme()
+	pastExpiry := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 
 	tests := []struct {
 		name             string
 		binding          *breakglassv1alpha1.DebugSessionClusterBinding
 		existingSessions []breakglassv1alpha1.DebugSession
+		username         string
 		userEmail        string
 		expectError      bool
 		expectedErrMsg   string
@@ -5561,6 +5563,83 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 			userEmail:      "user@example.com",
 			expectError:    true,
 			expectedErrMsg: "per user",
+		},
+		{
+			name: "per-user limit matches requester username when email is empty - should fail",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:                 []string{"cluster1"},
+					MaxActiveSessionsPerUser: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:     "cluster1",
+						TemplateRef: "template1",
+						RequestedBy: "subject-user",
+						BindingRef:  &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			username:       "subject-user",
+			expectError:    true,
+			expectedErrMsg: "per user",
+		},
+		{
+			name: "per-user limit ignores different requester with empty email - should pass",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:                 []string{"cluster1"},
+					MaxActiveSessionsPerUser: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:     "cluster1",
+						TemplateRef: "template1",
+						RequestedBy: "alice-subject",
+						BindingRef:  &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			username:    "bob-subject",
+			expectError: false,
+		},
+		{
+			name: "expired active per-user session doesn't count - should pass",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:                 []string{"cluster1"},
+					MaxActiveSessionsPerUser: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user@example.com",
+						RequestedByEmail: "user@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State:     breakglassv1alpha1.DebugSessionStateActive,
+						ExpiresAt: &pastExpiry,
+					},
+				},
+			},
+			userEmail:   "user@example.com",
+			expectError: false,
 		},
 		{
 			name: "within total limit - should pass",
@@ -5636,6 +5715,34 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 			expectedErrMsg: "total",
 		},
 		{
+			name: "expired active session doesn't count against total limit - should pass",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:               []string{"cluster1"},
+					MaxActiveSessionsTotal: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State:     breakglassv1alpha1.DebugSessionStateActive,
+						ExpiresAt: &pastExpiry,
+					},
+				},
+			},
+			userEmail:   "user2@example.com",
+			expectError: false,
+		},
+		{
 			name: "completed sessions don't count - should pass",
 			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
@@ -5701,7 +5808,14 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 
 			log := zap.NewNop().Sugar()
 			ctrl := NewDebugSessionAPIController(log, fakeClient, nil, nil)
-			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, tt.userEmail)
+			username := tt.username
+			if username == "" {
+				username = tt.userEmail
+			}
+			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, debugSessionReadIdentity{
+				username: username,
+				email:    tt.userEmail,
+			})
 
 			if tt.expectError {
 				require.Error(t, err)

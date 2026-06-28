@@ -625,7 +625,7 @@ func extractRunAsNonRoot(sc *corev1.SecurityContext) bool {
 
 // checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.
 // Returns nil if the session can be created, or an error describing the limit violation.
-func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *breakglassv1alpha1.DebugSessionClusterBinding, userEmail string) error {
+func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *breakglassv1alpha1.DebugSessionClusterBinding, identity debugSessionReadIdentity) error {
 	if binding == nil {
 		return nil
 	}
@@ -639,6 +639,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 	// Count active sessions for this binding
 	var totalActive int32
 	var userActive int32
+	now := time.Now()
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 		// Check if session uses this binding
@@ -651,12 +652,13 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		// Check if session is active (pending or approved, not expired/terminated/failed)
 		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
+			isDebugSessionExpired(session, now) {
 			continue
 		}
 
 		totalActive++
-		if session.Spec.RequestedByEmail == userEmail || session.Spec.RequestedBy == userEmail {
+		if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 			userActive++
 		}
 	}
