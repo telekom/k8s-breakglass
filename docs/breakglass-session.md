@@ -424,6 +424,11 @@ Supported query parameters:
 - `approvedByMe` - Sessions already approved by the user (works with any state)
 - `state` - Filter by state. Accepts single values, comma-separated lists, or repeated parameters. Tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`.
 
+Approval metadata is fail-closed for pending sessions whose `timeoutAt` has
+already elapsed. Approvers can still read the stale pending object for context,
+but `canApprove` and `canReject` are false and the response includes a timeout
+state message until cleanup transitions the session to `ApprovalTimeout`.
+
 ### Approve/Reject Sessions
 
 ```bash

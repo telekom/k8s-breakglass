@@ -630,10 +630,11 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			}{Valid: false})
 			return
 		}
-		canApprove := wc.isSessionApprover(c, ses)
-		alreadyActive := IsSessionActive(ses)
+		approvalTimedOut := ses.Status.State == breakglassv1alpha1.SessionStatePending && IsSessionApprovalTimedOut(ses)
+		canApprove := !approvalTimedOut && IsSessionPendingApproval(ses) && wc.isSessionApprover(c, ses)
+		alreadyActive := IsSessionActive(ses) && !approvalTimedOut
 		valid := true
-		if IsSessionExpired(ses) || ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn || ses.Status.State == breakglassv1alpha1.SessionStateRejected {
+		if approvalTimedOut || IsSessionExpired(ses) || ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn || ses.Status.State == breakglassv1alpha1.SessionStateRejected {
 			valid = false
 		}
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
@@ -853,6 +854,14 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 	// Check if user is an approver (use detailed authorization check for specific denial reasons)
 	authResult := wc.checkApprovalAuthorization(c, session)
 	meta.IsApprover = authResult.Allowed
+
+	if session.Status.State == breakglassv1alpha1.SessionStatePending && IsSessionApprovalTimedOut(session) {
+		meta.StateMessage = "This session has timed out waiting for approval"
+		if !meta.IsApprover && !meta.IsRequester {
+			meta.DenialReason = authResult.Message
+		}
+		return meta
+	}
 
 	if meta.IsApprover {
 		meta.CanApprove = true

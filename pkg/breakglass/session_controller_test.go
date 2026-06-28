@@ -4205,6 +4205,70 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize username-based requester")
 }
 
+func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
+	now := time.Now()
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "timeout-meta-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-timeout",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(now.Add(-1 * time.Hour)),
+		},
+	}
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-timeout"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cl-timeout"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "approvable",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"bob@example.com"}},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(session, esc).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		email := c.GetHeader("X-Test-Email")
+		c.Set("email", email)
+		c.Set("username", strings.TrimSuffix(email, "@example.com"))
+		c.Set("user_id", email)
+		c.Set("groups", []string{"system:authenticated"})
+		c.Next()
+	}
+
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions/timeout-meta-session", nil)
+	req.Header.Set("X-Test-Email", "bob@example.com")
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+
+	approvalMeta := body["approvalMeta"].(map[string]any)
+	require.Equal(t, "Pending", approvalMeta["sessionState"])
+	require.Equal(t, "This session has timed out waiting for approval", approvalMeta["stateMessage"])
+	require.True(t, approvalMeta["isApprover"].(bool), "approver should keep read access to stale pending sessions")
+	require.False(t, approvalMeta["canApprove"].(bool), "timed-out pending sessions must not be approvable")
+	require.False(t, approvalMeta["canReject"].(bool), "timed-out pending sessions must not be rejectable")
+}
+
 // Fake identity provider that returns an error for GetEmail to exercise error paths
 type ErrIdentityProvider struct{}
 
@@ -8722,4 +8786,66 @@ func TestTokenValidation_NotFoundReturns404WithValidFalse(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 	require.False(t, body.Valid, "valid must be false when session is not found")
+}
+
+func TestTokenValidation_ApprovalTimedOutPendingSessionIsNotApprovable(t *testing.T) {
+	now := time.Now()
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "timeout-token-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-timeout",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(now.Add(-1 * time.Hour)),
+		},
+	}
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-timeout-token"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cl-timeout"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "approvable",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"bob@example.com"}},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(session, esc).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		c.Set("email", "bob@example.com")
+		c.Set("username", "bob")
+		c.Set("user_id", "bob@example.com")
+		c.Set("groups", []string{"system:authenticated"})
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?token=timeout-token-session", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		CanApprove    bool `json:"canApprove"`
+		AlreadyActive bool `json:"alreadyActive"`
+		Valid         bool `json:"valid"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	require.False(t, body.Valid, "stale pending approval links must be invalid")
+	require.False(t, body.CanApprove, "stale pending approval links must not be approvable")
+	require.False(t, body.AlreadyActive, "stale pending approval links must not appear active")
 }

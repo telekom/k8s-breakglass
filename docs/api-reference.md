@@ -481,6 +481,12 @@ Authorization: Bearer <token>
 }
 ```
 
+If a session is still stored as `Pending` but its `status.timeoutAt` has already
+elapsed, approval metadata treats it as timed out immediately: `canApprove` and
+`canReject` are `false`, approvers keep read access, and `stateMessage` explains
+that the session timed out waiting for approval. The token validation endpoint
+also returns `valid: false` and `canApprove: false` for those stale approval links.
+
 ### Withdraw Session Request
 
 Withdraw your own pending session request (before approval).
