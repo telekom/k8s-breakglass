@@ -6,8 +6,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestFetchGroupMembersFromMultipleIDPs_EventEmission_SuccessfulSync tests that events are emitted on success
@@ -88,6 +91,43 @@ func TestFetchGroupMembersFromMultipleIDPs_EventEmission_MultipleGroups(t *testi
 	t.Logf("✓ Multi-group event emission - Total groups: 2, Total members: 3 (admins: 1, approvers: 2)")
 }
 
+func TestFetchGroupMembersFromMultipleIDPs_EventReasonMatchesFullFailure(t *testing.T) {
+	log, _ := zap.NewProduction()
+	defer func() { _ = log.Sync() }()
+	slog := log.Sugar()
+
+	cli := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		Build()
+	recorder := fakeEventRecorder{Events: make(chan string, 4)}
+
+	updater := &EscalationStatusUpdater{
+		IDPLoader:     cfgpkg.NewIdentityProviderLoader(cli),
+		EventRecorder: recorder,
+	}
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-esc-full-failure",
+			Namespace: "default",
+		},
+	}
+
+	hierarchy, status, syncErrors := updater.fetchGroupMembersFromMultipleIDPs(
+		context.Background(),
+		escalation,
+		[]string{"missing-idp-a", "missing-idp-b"},
+		[]string{"approvers"},
+		slog,
+	)
+
+	assert.Empty(t, hierarchy)
+	assert.Equal(t, groupSyncStatusFailed, status)
+	assert.Len(t, syncErrors, 2)
+	assert.Contains(t, drainRecordedEvents(recorder.Events),
+		"Warning GroupSyncFailed GroupSyncFailed Multi-IDP group sync failed: 0 IDPs succeeded, 2 failed. Check the ApprovalGroupMembersResolved condition and related events for details.")
+}
+
 // TestFetchGroupMembersFromMultipleIDPs_EventEmission_NoResolverFallback tests fallback to single IDP
 func TestFetchGroupMembersFromMultipleIDPs_EventEmission_NoResolverFallback(t *testing.T) {
 	log, _ := zap.NewProduction()
@@ -119,4 +159,16 @@ func TestFetchGroupMembersFromMultipleIDPs_EventEmission_NoResolverFallback(t *t
 	// Fallback mode should still handle gracefully
 	assert.NotNil(t, hierarchy, "Should return valid hierarchy")
 	t.Logf("✓ Fallback mode event emission handled - Status: %s", status)
+}
+
+func drainRecordedEvents(events <-chan string) []string {
+	var drained []string
+	for {
+		select {
+		case event := <-events:
+			drained = append(drained, event)
+		default:
+			return drained
+		}
+	}
 }

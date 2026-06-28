@@ -791,8 +791,14 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 	// Emit event on BreakglassEscalation if there were failures
 	if failureCount > 0 && u.EventRecorder != nil {
-		u.EventRecorder.Eventf(escalation, nil, "Warning", "GroupSyncPartialFailure", "GroupSyncPartialFailure",
-			"Multi-IDP group sync partially failed: %d IDPs succeeded, %d failed. Check the ApprovalGroupMembersResolved condition and related events for details.",
+		eventReason := groupSyncReasonPartialFailure
+		eventMessage := "Multi-IDP group sync partially failed: %d IDPs succeeded, %d failed. Check the ApprovalGroupMembersResolved condition and related events for details."
+		if syncStatus == groupSyncStatusFailed {
+			eventReason = groupSyncReasonFailed
+			eventMessage = "Multi-IDP group sync failed: %d IDPs succeeded, %d failed. Check the ApprovalGroupMembersResolved condition and related events for details."
+		}
+		u.EventRecorder.Eventf(escalation, nil, "Warning", eventReason, eventReason,
+			eventMessage,
 			successCount, failureCount)
 	}
 
