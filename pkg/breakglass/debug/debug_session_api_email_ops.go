@@ -397,7 +397,12 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	capabilities := extractCapabilities(req.SecurityContext)
 	runAsNonRoot := extractRunAsNonRoot(req.SecurityContext)
 	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot); err != nil {
-		apiresponses.RespondForbidden(ctx, err.Error())
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to validate ephemeral container request", "error", err)
+		} else {
+			reqLog.Warnw("Rejected ephemeral container request", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
 		return
 	}
 
@@ -630,6 +635,8 @@ func kubectlDebugOperationHTTPStatus(err error) int {
 			return http.StatusForbidden
 		case kubectlDebugOperationErrorRequest:
 			return http.StatusBadRequest
+		case kubectlDebugOperationErrorInternal:
+			return http.StatusInternalServerError
 		}
 	}
 	if apierrors.IsNotFound(err) {
@@ -644,6 +651,9 @@ type clusterClientAdapter struct {
 }
 
 func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error) {
+	if a.ccProvider == nil {
+		return nil, fmt.Errorf("cluster client provider is not configured")
+	}
 	restCfg, err := a.ccProvider.GetRESTConfig(ctx, clusterName)
 	if err != nil {
 		return nil, err

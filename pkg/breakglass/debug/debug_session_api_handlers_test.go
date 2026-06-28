@@ -548,6 +548,88 @@ func TestHandleInjectEphemeralContainer_TemplateNotKubectlDebug(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "kubectl-debug")
 }
 
+func TestHandleInjectEphemeralContainer_ValidationErrorClassification(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(*breakglassv1alpha1.DebugSession)
+		namespace   string
+		wantHTTP    int
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name: "unsupported ephemeral configuration is bad request",
+			mutate: func(session *breakglassv1alpha1.DebugSession) {
+				session.Status.ResolvedTemplate.KubectlDebug = nil
+			},
+			namespace:   "default",
+			wantHTTP:    http.StatusBadRequest,
+			wantCode:    "BAD_REQUEST",
+			wantMessage: "ephemeral containers not configured",
+		},
+		{
+			name: "namespace policy denial is forbidden",
+			mutate: func(session *breakglassv1alpha1.DebugSession) {
+				session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled:          true,
+						DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"prod"}},
+					},
+				}
+			},
+			namespace:   "prod",
+			wantHTTP:    http.StatusForbidden,
+			wantCode:    "FORBIDDEN",
+			wantMessage: "namespace prod is not allowed",
+		},
+		{
+			name: "namespace label lookup failure is internal",
+			mutate: func(session *breakglassv1alpha1.DebugSession) {
+				session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled: true,
+						AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+							SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+								{MatchLabels: map[string]string{"env": "prod"}},
+							},
+						},
+					},
+				}
+			},
+			namespace:   "prod",
+			wantHTTP:    http.StatusInternalServerError,
+			wantCode:    "INTERNAL_ERROR",
+			wantMessage: "failed to validate ephemeral container request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := newActiveKubectlDebugSession("active-session", "test-user", time.Now().Add(time.Hour))
+			tt.mutate(session)
+			router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+			reqBody := InjectEphemeralContainerRequest{
+				Namespace:     tt.namespace,
+				PodName:       "test-pod",
+				ContainerName: "debug",
+				Image:         "busybox",
+			}
+			body, _ := json.Marshal(reqBody)
+
+			req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, tt.wantHTTP, rr.Code)
+			assertErrorResponse(t, rr, tt.wantCode)
+			assert.Contains(t, rr.Body.String(), tt.wantMessage)
+		})
+	}
+}
+
 // ============================================================================
 // Tests for handleCreatePodCopy
 // ============================================================================

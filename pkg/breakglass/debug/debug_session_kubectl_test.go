@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -72,6 +73,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		runAsNonRoot bool
 		expectError  bool
 		errorContain string
+		wantHTTP     int
 	}{
 		{
 			name: "valid request",
@@ -104,6 +106,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "no resolved template",
+			wantHTTP:     http.StatusBadRequest,
 		},
 		{
 			name: "ephemeral containers not configured",
@@ -119,6 +122,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "ephemeral containers not configured",
+			wantHTTP:     http.StatusBadRequest,
 		},
 		{
 			name: "ephemeral containers disabled",
@@ -138,6 +142,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "not enabled",
+			wantHTTP:     http.StatusBadRequest,
 		},
 		{
 			name: "namespace denied",
@@ -158,6 +163,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "namespace kube-system is not allowed",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "image not allowed",
@@ -178,6 +184,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "malicious:latest",
 			expectError:  true,
 			errorContain: "image malicious:latest is not in the allowed list",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "requires image digest",
@@ -198,6 +205,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "must use @sha256: digest",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "valid with image digest",
@@ -238,6 +246,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			capabilities: []string{"SYS_ADMIN"},
 			expectError:  true,
 			errorContain: "capability SYS_ADMIN is not allowed",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "requires non-root",
@@ -259,6 +268,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			runAsNonRoot: false,
 			expectError:  true,
 			errorContain: "must run as non-root",
+			wantHTTP:     http.StatusForbidden,
 		},
 	}
 
@@ -280,6 +290,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			if tt.expectError {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorContain)
+				assert.Equal(t, tt.wantHTTP, kubectlDebugOperationHTTPStatus(err))
 			} else {
 				require.NoError(t, err)
 			}
@@ -318,6 +329,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 		targetObjects    []ctrlclient.Object
 		expectError      bool
 		expectedErrorMsg string
+		wantHTTP         int
 	}{
 		{
 			name: "allowed selector matches namespace labels",
@@ -338,6 +350,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 			targetObjects:    []ctrlclient.Object{prodNamespace},
 			expectError:      true,
 			expectedErrorMsg: "namespace production is not allowed",
+			wantHTTP:         http.StatusForbidden,
 		},
 		{
 			name: "denied selector blocks matching namespace labels",
@@ -349,6 +362,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 			targetObjects:    []ctrlclient.Object{prodNamespace},
 			expectError:      true,
 			expectedErrorMsg: "namespace production is not allowed",
+			wantHTTP:         http.StatusForbidden,
 		},
 		{
 			name: "selector lookup fails closed when namespace labels cannot be fetched",
@@ -359,6 +373,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 			},
 			expectError:      true,
 			expectedErrorMsg: "failed to fetch namespace labels for production",
+			wantHTTP:         http.StatusInternalServerError,
 		},
 	}
 
@@ -390,6 +405,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 			if tt.expectError {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedErrorMsg)
+				assert.Equal(t, tt.wantHTTP, kubectlDebugOperationHTTPStatus(err))
 			} else {
 				require.NoError(t, err)
 			}

@@ -48,8 +48,9 @@ type ClientProviderInterface interface {
 type kubectlDebugOperationErrorKind string
 
 const (
-	kubectlDebugOperationErrorPolicy  kubectlDebugOperationErrorKind = "policy"
-	kubectlDebugOperationErrorRequest kubectlDebugOperationErrorKind = "request"
+	kubectlDebugOperationErrorPolicy   kubectlDebugOperationErrorKind = "policy"
+	kubectlDebugOperationErrorRequest  kubectlDebugOperationErrorKind = "request"
+	kubectlDebugOperationErrorInternal kubectlDebugOperationErrorKind = "internal"
 )
 
 type kubectlDebugOperationError struct {
@@ -75,6 +76,13 @@ func kubectlDebugPolicyErrorf(format string, args ...interface{}) error {
 func kubectlDebugRequestErrorf(format string, args ...interface{}) error {
 	return &kubectlDebugOperationError{
 		kind: kubectlDebugOperationErrorRequest,
+		err:  fmt.Errorf(format, args...),
+	}
+}
+
+func kubectlDebugInternalErrorf(format string, args ...interface{}) error {
+	return &kubectlDebugOperationError{
+		kind: kubectlDebugOperationErrorInternal,
 		err:  fmt.Errorf(format, args...),
 	}
 }
@@ -201,16 +209,16 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 ) error {
 	template := ds.Status.ResolvedTemplate
 	if template == nil {
-		return fmt.Errorf("no resolved template in session")
+		return kubectlDebugRequestErrorf("no resolved template in session")
 	}
 
 	if template.KubectlDebug == nil || template.KubectlDebug.EphemeralContainers == nil {
-		return fmt.Errorf("ephemeral containers not configured in template")
+		return kubectlDebugRequestErrorf("ephemeral containers not configured in template")
 	}
 
 	ec := template.KubectlDebug.EphemeralContainers
 	if !ec.Enabled {
-		return fmt.Errorf("ephemeral containers are not enabled for this template")
+		return kubectlDebugRequestErrorf("ephemeral containers are not enabled for this template")
 	}
 
 	// Validate namespace
@@ -219,29 +227,29 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 		return err
 	}
 	if !namespaceAllowed {
-		return fmt.Errorf("namespace %s is not allowed for ephemeral container injection", namespace)
+		return kubectlDebugPolicyErrorf("namespace %s is not allowed for ephemeral container injection", namespace)
 	}
 
 	// Validate image
 	if !h.isImageAllowed(image, ec.AllowedImages) {
-		return fmt.Errorf("image %s is not in the allowed list", image)
+		return kubectlDebugPolicyErrorf("image %s is not in the allowed list", image)
 	}
 
 	// Validate image digest if required
 	if ec.RequireImageDigest && !h.hasImageDigest(image) {
-		return fmt.Errorf("image must use @sha256: digest")
+		return kubectlDebugPolicyErrorf("image must use @sha256: digest")
 	}
 
 	// Validate capabilities
 	for _, cap := range capabilities {
 		if !h.isCapabilityAllowed(cap, ec.MaxCapabilities) {
-			return fmt.Errorf("capability %s is not allowed", cap)
+			return kubectlDebugPolicyErrorf("capability %s is not allowed", cap)
 		}
 	}
 
 	// Validate non-root
 	if ec.RequireNonRoot && !runAsNonRoot {
-		return fmt.Errorf("ephemeral container must run as non-root")
+		return kubectlDebugPolicyErrorf("ephemeral container must run as non-root")
 	}
 
 	return nil
@@ -694,15 +702,15 @@ func (h *KubectlDebugHandler) isNamespaceAllowedForEphemeral(
 		return matcher.IsAllowed(namespace), nil
 	}
 	if h.ccProvider == nil {
-		return false, fmt.Errorf("failed to fetch namespace labels for %s: target cluster client provider is not configured", namespace)
+		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: target cluster client provider is not configured", namespace)
 	}
 	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 	if err != nil {
-		return false, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+		return false, kubectlDebugInternalErrorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
 	}
 	nsLabels, err := h.fetchNamespaceLabels(ctx, targetClient, namespace)
 	if err != nil {
-		return false, fmt.Errorf("failed to fetch namespace labels for %s: %w", namespace, err)
+		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: %w", namespace, err)
 	}
 	return matcher.IsAllowedWithLabels(namespace, nsLabels), nil
 }
