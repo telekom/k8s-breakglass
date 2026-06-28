@@ -580,6 +580,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
 		return
 	}
+	if strings.TrimSpace(currentUserStr) == "" {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
 
 	// Get email from context (set by auth middleware from "email" claim)
 	userEmail := ""
