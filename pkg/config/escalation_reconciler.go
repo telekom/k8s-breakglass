@@ -448,7 +448,7 @@ func (r *EscalationReconciler) escalationsForClusterConfig(ctx context.Context, 
 
 	exactRequests := r.escalationRequestsMatching(
 		ctx,
-		appendListOptions(listOpts, client.MatchingFields{indexer.BreakglassEscalationClusterConfigRefField: clusterName}),
+		appendListOptions(listOpts, client.MatchingFields{indexer.BreakglassEscalationClusterConfigRefsField: clusterName}),
 		"ClusterConfig",
 		clusterName,
 		func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
@@ -458,7 +458,7 @@ func (r *EscalationReconciler) escalationsForClusterConfig(ctx context.Context, 
 	patternRequests := r.escalationRequestsMatching(
 		ctx,
 		appendListOptions(listOpts, client.MatchingFields{
-			indexer.BreakglassEscalationClusterConfigRefPatternField: indexer.BreakglassEscalationGlobPatternIndexValue,
+			indexer.BreakglassEscalationClusterConfigRefsPatternField: indexer.BreakglassEscalationGlobPatternIndexValue,
 		}),
 		"ClusterConfig",
 		clusterName,
@@ -477,7 +477,7 @@ func (r *EscalationReconciler) escalationsForIdentityProvider(ctx context.Contex
 	}
 
 	return r.escalationRequestsMatching(ctx, []client.ListOption{
-		client.MatchingFields{indexer.BreakglassEscalationIdentityProviderField: idpName},
+		client.MatchingFields{indexer.BreakglassEscalationAllowedIdentityProvidersField: idpName},
 	}, "IdentityProvider", idpName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
 		return containsTrimmedString(esc.Spec.AllowedIdentityProviders, idpName) ||
 			containsTrimmedString(esc.Spec.AllowedIdentityProvidersForRequests, idpName) ||
@@ -492,7 +492,7 @@ func (r *EscalationReconciler) escalationsForDenyPolicy(ctx context.Context, obj
 	}
 
 	return r.escalationRequestsMatching(ctx, []client.ListOption{
-		client.MatchingFields{indexer.BreakglassEscalationDenyPolicyRefField: policyName},
+		client.MatchingFields{indexer.BreakglassEscalationDenyPolicyRefsField: policyName},
 	}, "DenyPolicy", policyName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
 		return containsTrimmedString(esc.Spec.DenyPolicyRefs, policyName)
 	})
@@ -656,6 +656,7 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 	}
 
 	var missing []string
+	var clusterConfigs *breakglassv1alpha1.ClusterConfigList
 	for _, clusterName := range esc.Spec.ClusterConfigRefs {
 		name := strings.TrimSpace(clusterName)
 		if name == "" || name == "*" {
@@ -666,11 +667,13 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 			if err := validateClusterRefPattern(name); err != nil {
 				return fmt.Errorf("invalid ClusterConfigRefs glob pattern %q: %w", name, err)
 			}
-			matched, err := r.clusterConfigRefHasMatch(ctx, esc.Namespace, name)
-			if err != nil {
-				return err
+			if clusterConfigs == nil {
+				clusterConfigs = &breakglassv1alpha1.ClusterConfigList{}
+				if err := r.client.List(ctx, clusterConfigs, client.InNamespace(esc.Namespace)); err != nil {
+					return fmt.Errorf("failed to list ClusterConfigs in namespace %q for ClusterConfigRefs patterns: %w", esc.Namespace, err)
+				}
 			}
-			if matched {
+			if clusterConfigRefHasMatch(clusterConfigs.Items, name) {
 				continue
 			}
 			missing = append(missing, fmt.Sprintf("%s/%s", esc.Namespace, name))
@@ -700,19 +703,14 @@ func validateClusterRefPattern(pattern string) error {
 	return err
 }
 
-func (r *EscalationReconciler) clusterConfigRefHasMatch(ctx context.Context, namespace, pattern string) (bool, error) {
-	var clusters breakglassv1alpha1.ClusterConfigList
-	if err := r.client.List(ctx, &clusters, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("failed to list ClusterConfigs in namespace %q for pattern %q: %w", namespace, pattern, err)
-	}
-
-	for i := range clusters.Items {
-		if clusterRefMatchesName(pattern, clusters.Items[i].Name) {
-			return true, nil
+func clusterConfigRefHasMatch(clusters []breakglassv1alpha1.ClusterConfig, pattern string) bool {
+	for i := range clusters {
+		if clusterRefMatchesName(pattern, clusters[i].Name) {
+			return true
 		}
 	}
 
-	return false, nil
+	return false
 }
 
 // validateIDPRefs validates that all referenced IDPs exist

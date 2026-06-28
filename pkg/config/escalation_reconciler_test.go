@@ -16,7 +16,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -849,6 +851,39 @@ func TestEscalationReconciler_ValidateClusterRef(t *testing.T) {
 
 		err := r.validateClusterRef(context.Background(), esc)
 		require.NoError(t, err)
+	})
+
+	t.Run("multiple glob cluster refs share one ClusterConfig list", func(t *testing.T) {
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-eu", Namespace: "default"},
+			Spec:       breakglassv1alpha1.ClusterConfigSpec{},
+		}
+		var clusterConfigListCalls int
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, ok := list.(*breakglassv1alpha1.ClusterConfigList); ok {
+						clusterConfigListCalls++
+					}
+					return c.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-*", "prod-e*"},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.NoError(t, err)
+		assert.Equal(t, 1, clusterConfigListCalls)
 	})
 
 	t.Run("glob cluster ref fails when no matching ClusterConfig exists", func(t *testing.T) {

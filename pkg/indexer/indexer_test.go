@@ -82,10 +82,10 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 		"status.state",
 		"status.participants.user",
 		"spec.allowed.cluster",
-		BreakglassEscalationClusterConfigRefField,
-		BreakglassEscalationClusterConfigRefPatternField,
-		BreakglassEscalationIdentityProviderField,
-		BreakglassEscalationDenyPolicyRefField,
+		BreakglassEscalationClusterConfigRefsField,
+		BreakglassEscalationClusterConfigRefsPatternField,
+		BreakglassEscalationAllowedIdentityProvidersField,
+		BreakglassEscalationDenyPolicyRefsField,
 		BreakglassEscalationMailProviderField,
 		"spec.allowed.group",
 		"spec.escalatedGroup",
@@ -442,15 +442,15 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		require.NotNil(t, fn)
 
 		result := fn(escalation)
-		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b", "cluster-c", "cluster-*", "cluster-c", " "}, result)
+		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b", "cluster-c", "cluster-*"}, result)
 
 		// Test with nil escalation
 		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
 		assert.Empty(t, result)
 	})
 
-	t.Run("spec.clusterConfigRef index", func(t *testing.T) {
-		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefField]
+	t.Run("spec.clusterConfigRefs index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefsField]
 		require.NotNil(t, fn)
 
 		result := fn(escalation)
@@ -460,8 +460,8 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		assert.Nil(t, result)
 	})
 
-	t.Run("spec.clusterConfigRefPattern index", func(t *testing.T) {
-		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefPatternField]
+	t.Run("spec.clusterConfigRefs pattern index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefsPatternField]
 		require.NotNil(t, fn)
 
 		result := fn(escalation)
@@ -473,8 +473,8 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		assert.Nil(t, result)
 	})
 
-	t.Run("spec.identityProvider index", func(t *testing.T) {
-		fn := indexer.indexedFields[BreakglassEscalationIdentityProviderField]
+	t.Run("spec.allowedIdentityProviders aggregate index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationAllowedIdentityProvidersField]
 		require.NotNil(t, fn)
 
 		result := fn(escalation)
@@ -484,8 +484,8 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		assert.Nil(t, result)
 	})
 
-	t.Run("spec.denyPolicyRef index", func(t *testing.T) {
-		fn := indexer.indexedFields[BreakglassEscalationDenyPolicyRefField]
+	t.Run("spec.denyPolicyRefs index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationDenyPolicyRefsField]
 		require.NotNil(t, fn)
 
 		result := fn(escalation)
@@ -729,7 +729,7 @@ func TestIsIndexRegistered(t *testing.T) {
 	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.cluster"))
 	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.clusterConfigRef"))
 	assert.True(t, IsIndexRegistered("BreakglassEscalation", "spec.allowed.cluster"))
-	assert.True(t, IsIndexRegistered("BreakglassEscalation", BreakglassEscalationIdentityProviderField))
+	assert.True(t, IsIndexRegistered("BreakglassEscalation", BreakglassEscalationAllowedIdentityProvidersField))
 	assert.True(t, IsIndexRegistered("ClusterConfig", "metadata.name"))
 	assert.False(t, IsIndexRegistered("NonExistent", "field"))
 }

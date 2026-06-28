@@ -20,12 +20,12 @@ import (
 const ExpectedIndexCount = 24
 
 const (
-	BreakglassEscalationClusterConfigRefField        = "spec.clusterConfigRef"
-	BreakglassEscalationClusterConfigRefPatternField = "spec.clusterConfigRefPattern"
-	BreakglassEscalationIdentityProviderField        = "spec.identityProvider"
-	BreakglassEscalationDenyPolicyRefField           = "spec.denyPolicyRef"
-	BreakglassEscalationMailProviderField            = "spec.mailProvider"
-	BreakglassEscalationGlobPatternIndexValue        = "__has_glob_pattern__"
+	BreakglassEscalationClusterConfigRefsField        = "spec.clusterConfigRefs"
+	BreakglassEscalationClusterConfigRefsPatternField = "spec.clusterConfigRefs.pattern"
+	BreakglassEscalationAllowedIdentityProvidersField = "spec.allowedIdentityProviders.all"
+	BreakglassEscalationDenyPolicyRefsField           = "spec.denyPolicyRefs"
+	BreakglassEscalationMailProviderField             = "spec.mailProvider"
+	BreakglassEscalationGlobPatternIndexValue         = "__has_glob_pattern__"
 )
 
 // registeredIndexes tracks which indexes have been successfully registered.
@@ -180,14 +180,14 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 			out := make([]string, 0, len(be.Spec.Allowed.Clusters)+len(be.Spec.ClusterConfigRefs))
 			out = append(out, be.Spec.Allowed.Clusters...)
 			out = append(out, be.Spec.ClusterConfigRefs...)
-			return out
+			return uniqueTrimmedIndexValues(out)
 		})
 	}); err != nil {
 		return err
 	}
 
-	if err := register("BreakglassEscalation", BreakglassEscalationClusterConfigRefField, func() error {
-		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationClusterConfigRefField, func(rawObj client.Object) []string {
+	if err := register("BreakglassEscalation", BreakglassEscalationClusterConfigRefsField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationClusterConfigRefsField, func(rawObj client.Object) []string {
 			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
 			if !ok || be == nil {
 				return nil
@@ -198,8 +198,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
-	if err := register("BreakglassEscalation", BreakglassEscalationClusterConfigRefPatternField, func() error {
-		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationClusterConfigRefPatternField, func(rawObj client.Object) []string {
+	if err := register("BreakglassEscalation", BreakglassEscalationClusterConfigRefsPatternField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationClusterConfigRefsPatternField, func(rawObj client.Object) []string {
 			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
 			if !ok || be == nil {
 				return nil
@@ -215,8 +215,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
-	if err := register("BreakglassEscalation", BreakglassEscalationIdentityProviderField, func() error {
-		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationIdentityProviderField, func(rawObj client.Object) []string {
+	if err := register("BreakglassEscalation", BreakglassEscalationAllowedIdentityProvidersField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationAllowedIdentityProvidersField, func(rawObj client.Object) []string {
 			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
 			if !ok || be == nil {
 				return nil
@@ -234,8 +234,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
-	if err := register("BreakglassEscalation", BreakglassEscalationDenyPolicyRefField, func() error {
-		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationDenyPolicyRefField, func(rawObj client.Object) []string {
+	if err := register("BreakglassEscalation", BreakglassEscalationDenyPolicyRefsField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationDenyPolicyRefsField, func(rawObj client.Object) []string {
 			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
 			if !ok || be == nil {
 				return nil
