@@ -630,11 +630,12 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			}{Valid: false})
 			return
 		}
-		approvalTimedOut := ses.Status.State == breakglassv1alpha1.SessionStatePending && IsSessionApprovalTimedOut(ses)
-		canApprove := !approvalTimedOut && IsSessionPendingApproval(ses) && wc.isSessionApprover(c, ses)
+		pendingApproval := IsSessionPendingApproval(ses)
+		approvalTimedOut := ses.Status.State == breakglassv1alpha1.SessionStatePending && !pendingApproval && !ses.Status.TimeoutAt.IsZero()
+		canApprove := pendingApproval && wc.isSessionApprover(c, ses)
 		alreadyActive := IsSessionActive(ses) && !approvalTimedOut
 		valid := true
-		if approvalTimedOut || IsSessionExpired(ses) || ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn || ses.Status.State == breakglassv1alpha1.SessionStateRejected {
+		if approvalTimedOut || IsSessionExpired(ses) || IsSessionTerminalState(ses.Status.State) {
 			valid = false
 		}
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})

@@ -8849,3 +8849,71 @@ func TestTokenValidation_ApprovalTimedOutPendingSessionIsNotApprovable(t *testin
 	require.False(t, body.CanApprove, "stale pending approval links must not be approvable")
 	require.False(t, body.AlreadyActive, "stale pending approval links must not appear active")
 }
+
+func TestTokenValidation_TerminalStatesAreInvalid(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name  string
+		state breakglassv1alpha1.BreakglassSessionState
+	}{
+		{name: "rejected", state: breakglassv1alpha1.SessionStateRejected},
+		{name: "withdrawn", state: breakglassv1alpha1.SessionStateWithdrawn},
+		{name: "expired", state: breakglassv1alpha1.SessionStateExpired},
+		{name: "idle expired", state: breakglassv1alpha1.SessionStateIdleExpired},
+		{name: "approval timeout", state: breakglassv1alpha1.SessionStateTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionName := "terminal-token-" + strings.ReplaceAll(strings.ToLower(string(tt.state)), " ", "-")
+			session := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: sessionName},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "cl-terminal",
+					User:         "alice@example.com",
+					GrantedGroup: "terminal-group",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:     tt.state,
+					TimeoutAt: metav1.NewTime(now.Add(-time.Hour)),
+					ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+				},
+			}
+
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+			}
+			cli := builder.WithObjects(session).Build()
+			sesmanager := SessionManager{Client: cli}
+			escmanager := testEscalationLookup{Client: cli}
+			logger, _ := zap.NewDevelopment()
+			ctxSetup := func(c *gin.Context) {
+				c.Set("email", "bob@example.com")
+				c.Set("username", "bob")
+				c.Set("user_id", "bob@example.com")
+				c.Set("groups", []string{"system:authenticated"})
+				c.Next()
+			}
+			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+
+			engine := gin.New()
+			_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+			req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?token="+sessionName, nil)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var body struct {
+				CanApprove    bool `json:"canApprove"`
+				AlreadyActive bool `json:"alreadyActive"`
+				Valid         bool `json:"valid"`
+			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+			require.False(t, body.Valid, "terminal session state %s must invalidate token metadata", tt.state)
+			require.False(t, body.CanApprove, "terminal session state %s must not be approvable", tt.state)
+			require.False(t, body.AlreadyActive, "terminal session state %s must not appear active", tt.state)
+		})
+	}
+}
