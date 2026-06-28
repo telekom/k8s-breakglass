@@ -128,21 +128,11 @@ function loadErrorMessage(error: unknown, fallback: string): string {
   }
 
   const responseData = (error as { response?: { data?: unknown } }).response?.data;
-  if (typeof responseData === "string" && responseData.trim()) {
-    return responseData;
-  }
-
   if (responseData && typeof responseData === "object") {
     const data = responseData as Record<string, unknown>;
-    const responseMessage = data.error || data.message;
-    if (typeof responseMessage === "string" && responseMessage.trim()) {
-      return responseMessage;
+    if (typeof data.error === "string" && data.error.trim()) {
+      return data.error;
     }
-  }
-
-  const message = (error as { message?: unknown }).message;
-  if (typeof message === "string" && message.trim() && !message.startsWith("Request failed with status code")) {
-    return message;
   }
 
   return fallback;

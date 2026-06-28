@@ -283,6 +283,22 @@ describe("DebugSessionCreate", () => {
       expect(errorState.text()).not.toContain("Request failed with status code 500");
     });
 
+    it("does not surface response message fields in template load errors", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: {
+          response: {
+            data: { message: "raw backend message" },
+            status: 500,
+          },
+          message: "Request failed with status code 500",
+        },
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.text()).toContain("Debug session templates could not be loaded");
+      expect(errorState.text()).not.toContain("raw backend message");
+    });
+
     it("retries template loading from the error state", async () => {
       const templates = defaultTemplates();
       const wrapper = await createWrapper(templates, {
