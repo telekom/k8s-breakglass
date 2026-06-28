@@ -165,6 +165,58 @@ describe("DebugSessionDetails", () => {
     expect(mockCopy).toHaveBeenCalledWith("kubectl exec -it pod-1 -n ns-1 -- /bin/sh");
   });
 
+  it("renders detail card headings without skipping levels", async () => {
+    mockGetSession.mockResolvedValue({
+      status: {
+        state: "Active",
+        participants: [],
+        allowedPods: [],
+        allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
+      },
+      metadata: {
+        name: "dbg-1",
+        creationTimestamp: new Date().toISOString(),
+        labels: { "breakglass.telekom.de/mode": "kubectl-debug" },
+      },
+      spec: {
+        cluster: "test-cluster",
+        templateRef: "kubectl-debug",
+        requestedBy: "test@example.com",
+        requestedDuration: "1h",
+      },
+    });
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.find("h1").text()).toBe("dbg-1");
+    expect(wrapper.findAll("h2").map((heading) => heading.text())).toEqual([
+      "Status",
+      "Session Information",
+      "Participants (0)",
+      "Debug Pods (0)",
+      "Allowed Pod Operations",
+      "Kubectl Debug Operations",
+    ]);
+
+    await wrapper.find('[data-testid="inject-ephemeral-button"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll("h3").map((heading) => heading.text())).toContain("Inject Ephemeral Container");
+  });
+
   it("shows an error state when loading session details fails", async () => {
     mockGetSession.mockRejectedValueOnce(new Error("detail down"));
 

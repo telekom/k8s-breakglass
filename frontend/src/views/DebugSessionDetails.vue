@@ -505,7 +505,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
       <div class="details-grid" data-testid="details-grid">
         <!-- Status Section -->
         <div class="detail-card status-card" data-testid="status-card">
-          <h3>Status</h3>
+          <h2>Status</h2>
           <div class="status-header">
             <scale-tag :variant="stateVariant" size="large" data-testid="session-state-tag">
               {{ session.status?.state || "Unknown" }}
@@ -589,7 +589,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Session Info -->
         <div class="detail-card" data-testid="session-info-card">
-          <h3>Session Information</h3>
+          <h2>Session Information</h2>
           <dl class="info-list" data-testid="session-info-list">
             <div class="info-item">
               <dt>Template</dt>
@@ -620,7 +620,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Participants -->
         <div class="detail-card" data-testid="participants-card">
-          <h3>Participants ({{ participants.length }})</h3>
+          <h2>Participants ({{ participants.length }})</h2>
           <div v-if="participants.length === 0" class="empty-section">No participants yet.</div>
           <ul v-else class="participant-list" data-testid="participant-list">
             <li v-for="participant in participants" :key="participant.user" class="participant-item">
@@ -642,7 +642,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Debug Pods -->
         <div class="detail-card" data-testid="debug-pods-card">
-          <h3>Debug Pods ({{ allowedPods.length }})</h3>
+          <h2>Debug Pods ({{ allowedPods.length }})</h2>
           <div v-if="allowedPods.length === 0" class="empty-section">No debug pods deployed yet.</div>
           <ul v-else class="pod-list" data-testid="pod-list">
             <li
@@ -705,7 +705,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Allowed Pod Operations -->
         <div class="detail-card" data-testid="allowed-operations-card">
-          <h3>Allowed Pod Operations</h3>
+          <h2>Allowed Pod Operations</h2>
           <p class="card-description">
             Operations permitted on debug session pods. These control what kubectl commands can be used.
           </p>
@@ -743,7 +743,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Kubectl Debug Operations -->
         <div v-if="canUseKubectlDebug" class="detail-card kubectl-debug-card" data-testid="kubectl-debug-card">
-          <h3>Kubectl Debug Operations</h3>
+          <h2>Kubectl Debug Operations</h2>
           <p class="card-description">
             Use kubectl-debug style operations to debug pods and nodes in the target cluster.
           </p>
@@ -786,7 +786,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
           <!-- Ephemeral Container Form -->
           <div v-if="showKubectlDebugForm && kubectlDebugType === 'ephemeral'" class="kubectl-debug-form">
-            <h4>Inject Ephemeral Container</h4>
+            <h3>Inject Ephemeral Container</h3>
             <p class="form-description">Inject a debug container into a running pod without restarting it.</p>
             <scale-text-field
               v-model="ephemeralForm.namespace"
@@ -835,7 +835,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
           <!-- Pod Copy Form -->
           <div v-if="showKubectlDebugForm && kubectlDebugType === 'podCopy'" class="kubectl-debug-form">
-            <h4>Create Pod Copy</h4>
+            <h3>Create Pod Copy</h3>
             <p class="form-description">
               Create a copy of a pod for debugging. The copy can be modified without affecting the original.
             </p>
@@ -869,7 +869,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
           <!-- Node Debug Form -->
           <div v-if="showKubectlDebugForm && kubectlDebugType === 'nodeDebug'" class="kubectl-debug-form">
-            <h4>Create Node Debug Pod</h4>
+            <h3>Create Node Debug Pod</h3>
             <p class="form-description">Create a privileged debug pod on a specific node for node-level debugging.</p>
             <scale-text-field
               v-model="nodeDebugForm.nodeName"
@@ -956,7 +956,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   min-width: 0;
 }
 
-.detail-card h3 {
+.detail-card h2 {
   margin: 0 0 var(--space-md);
   font: var(--telekom-text-style-body);
   font-weight: 600;
@@ -1245,7 +1245,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   margin-top: var(--space-md);
 }
 
-.kubectl-debug-form h4 {
+.kubectl-debug-form h3 {
   margin: 0 0 var(--space-xs);
   font: var(--telekom-text-style-body);
 }
