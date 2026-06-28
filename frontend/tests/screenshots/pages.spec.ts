@@ -216,6 +216,16 @@ async function routeDebugTemplateLoadFailure(page: Page) {
   });
 }
 
+async function routeDebugTemplateClusterLoadFailure(page: Page) {
+  await page.route("**/api/debugSessions/templates/*/clusters", async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "compatible cluster service unavailable" }),
+    });
+  });
+}
+
 async function captureDebugTemplateErrorState(
   page: Page,
   theme: ThemeMode,
@@ -256,12 +266,71 @@ async function captureDebugTemplateErrorState(
   });
 }
 
+async function captureDebugClusterErrorState(
+  page: Page,
+  theme: ThemeMode,
+  viewport: { width: number; height: number },
+  screenshotName: string,
+) {
+  await routeDebugTemplateClusterLoadFailure(page);
+  await page.emulateMedia({ colorScheme: theme === "dark" || theme === "high-contrast-dark" ? "dark" : "light" });
+  await page.setViewportSize(viewport);
+  await performMockLogin(page);
+  await navigateTo(page, "/debug-sessions/create");
+  await setTheme(page, theme);
+  await waitForPageLoad(page);
+
+  await page.getByTestId("next-button").click();
+  await expect(page.getByTestId("debug-session-cluster-error-state")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await hideDynamicContent(page);
+  await page.addStyleTag({
+    content: `
+      .toast-region,
+      .toast-wrapper,
+      scale-notification-toast,
+      [data-testid="error-toast"],
+      [data-testid="success-toast"] {
+        display: none !important;
+        visibility: hidden !important;
+      }
+    `,
+  });
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+
+  await expect(page).toHaveScreenshot(screenshotName, {
+    fullPage: true,
+  });
+}
+
 test("Debug session create template error - light mode", async ({ page }) => {
   await captureDebugTemplateErrorState(
     page,
     "light",
     { width: 1280, height: 720 },
     "debug-session-create-template-error-light.png",
+  );
+});
+
+test("Debug session create cluster error - light mode", async ({ page }) => {
+  await captureDebugClusterErrorState(
+    page,
+    "light",
+    { width: 1280, height: 720 },
+    "debug-session-create-cluster-error-light.png",
+  );
+});
+
+test("Debug session create cluster error - mobile dark mode", async ({ page }) => {
+  await captureDebugClusterErrorState(
+    page,
+    "dark",
+    { width: 390, height: 844 },
+    "debug-session-create-cluster-error-mobile-dark.png",
   );
 });
 

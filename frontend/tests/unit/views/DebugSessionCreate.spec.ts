@@ -406,6 +406,60 @@ describe("DebugSessionCreate", () => {
       const warningText = wrapper.find(".warning-text");
       expect(warningText.exists()).toBe(true);
       expect(warningText.text()).toContain("No clusters are available");
+      expect(wrapper.find('[data-testid="debug-session-cluster-error-state"]').exists()).toBe(false);
+    });
+
+    it("shows a blocking error state when compatible clusters fail to load", async () => {
+      mockGetTemplateClusters.mockRejectedValue({
+        response: {
+          data: { error: "cluster discovery unavailable" },
+          status: 503,
+        },
+        message: "Request failed with status code 503",
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        currentStep: number;
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+
+      vm.goToStep2();
+      await flushPromises();
+
+      const errorState = wrapper.find('[data-testid="debug-session-cluster-error-state"]');
+      expect(vm.currentStep).toBe(2);
+      expect(vm.form.cluster).toBe("");
+      expect(errorState.exists()).toBe(true);
+      expect(errorState.text()).toContain("Unable to load compatible clusters");
+      expect(errorState.text()).toContain("cluster discovery unavailable");
+      expect(wrapper.find(".warning-text").exists()).toBe(false);
+    });
+
+    it("retries compatible cluster loading from the error state", async () => {
+      mockGetTemplateClusters.mockRejectedValueOnce(new Error("cluster discovery unavailable")).mockResolvedValueOnce({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [{ name: "prod-east", displayName: "Production East" }],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+
+      vm.goToStep2();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="debug-session-cluster-error-state"]').exists()).toBe(true);
+
+      await wrapper.find('[data-testid="retry-cluster-load-button"]').trigger("click");
+      await flushPromises();
+
+      expect(mockGetTemplateClusters).toHaveBeenCalledTimes(2);
+      expect(wrapper.find('[data-testid="debug-session-cluster-error-state"]').exists()).toBe(false);
+      expect(vm.form.cluster).toBe("prod-east");
     });
   });
 

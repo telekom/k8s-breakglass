@@ -37,6 +37,7 @@ const loadingClusters = ref(false);
 const submitting = ref(false);
 const extraDeployValid = ref(true);
 const templateLoadError = ref("");
+const clusterLoadError = ref("");
 
 const form = reactive<{
   templateRef: string;
@@ -79,6 +80,7 @@ watch(
       extraDeployValid.value = true;
       form.showAdvancedOptions = false;
       clusterDetails.value = [];
+      clusterLoadError.value = "";
       currentStep.value = 1;
     }
   },
@@ -118,10 +120,11 @@ const selectedTemplate = computed(() => {
 
 const templateLoadErrorFallback =
   "Debug session templates could not be loaded. Please retry or contact an administrator.";
+const clusterLoadErrorFallback = "Compatible clusters could not be loaded. Please retry or contact an administrator.";
 
-function templateLoadErrorMessage(error: unknown): string {
+function loadErrorMessage(error: unknown, fallback: string): string {
   if (!error || typeof error !== "object") {
-    return templateLoadErrorFallback;
+    return fallback;
   }
 
   const responseData = (error as { response?: { data?: unknown } }).response?.data;
@@ -142,7 +145,15 @@ function templateLoadErrorMessage(error: unknown): string {
     return message;
   }
 
-  return templateLoadErrorFallback;
+  return fallback;
+}
+
+function templateLoadErrorMessage(error: unknown): string {
+  return loadErrorMessage(error, templateLoadErrorFallback);
+}
+
+function clusterLoadErrorMessage(error: unknown): string {
+  return loadErrorMessage(error, clusterLoadErrorFallback);
 }
 
 // User groups for variable visibility filtering
@@ -486,6 +497,7 @@ const isValid = computed(() => {
 
 async function fetchTemplates() {
   templateLoadError.value = "";
+  clusterLoadError.value = "";
   loading.value = true;
   try {
     const result = await debugSessionService.listTemplates();
@@ -503,6 +515,7 @@ async function fetchTemplates() {
     form.templateRef = "";
     clusterDetails.value = [];
     form.cluster = "";
+    clusterLoadError.value = "";
     currentStep.value = 1;
     // Error already handled by debugSessionService (pushError with CID)
   } finally {
@@ -513,6 +526,15 @@ async function fetchTemplates() {
 async function fetchTemplateClusters() {
   if (!form.templateRef) return;
 
+  clusterLoadError.value = "";
+  clusterDetails.value = [];
+  form.cluster = "";
+  form.selectedBindingIndex = 0;
+  form.targetNamespace = "";
+  form.selectedSchedulingOption = "";
+  form.extraDeployValues = {};
+  extraDeployValid.value = true;
+  form.showAdvancedOptions = false;
   loadingClusters.value = true;
   try {
     const result = await debugSessionService.getTemplateClusters(form.templateRef);
@@ -522,7 +544,8 @@ async function fetchTemplateClusters() {
     if (clusterDetails.value.length === 1 && clusterDetails.value[0]) {
       form.cluster = clusterDetails.value[0].name;
     }
-  } catch {
+  } catch (error: unknown) {
+    clusterLoadError.value = clusterLoadErrorMessage(error);
     // Error already handled by debugSessionService (pushError with CID)
   } finally {
     loadingClusters.value = false;
@@ -547,6 +570,7 @@ function goToStep2() {
 function goBackToStep1() {
   currentStep.value = 1;
   form.cluster = "";
+  clusterLoadError.value = "";
 }
 
 onMounted(async () => {
@@ -769,7 +793,22 @@ function handleTemplateChange(ev: Event) {
       </div>
 
       <!-- Cluster Selection -->
+      <EmptyState
+        v-if="clusterLoadError"
+        variant="error"
+        title="Unable to load compatible clusters"
+        :description="clusterLoadError"
+        data-testid="debug-session-cluster-error-state"
+      >
+        <template #actions>
+          <scale-button variant="primary" data-testid="retry-cluster-load-button" @click="fetchTemplateClusters">
+            Retry
+          </scale-button>
+          <scale-button variant="secondary" @click="goBackToStep1">Change Template</scale-button>
+        </template>
+      </EmptyState>
       <ClusterSelectGrid
+        v-else
         :clusters="clusterDetails"
         :selected-cluster="form.cluster"
         :loading="loadingClusters"
