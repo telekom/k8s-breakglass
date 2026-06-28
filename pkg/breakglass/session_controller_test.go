@@ -4893,6 +4893,32 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 	assertStates(t, "/breakglassSessions?state=pending&state=approved&mine=true", []string{"multi-pending", "multi-approved"})
 	assertStates(t, "/breakglassSessions?state=pending,approved&mine=true", []string{"multi-pending", "multi-approved"})
+	assertStates(t, "/breakglassSessions?state=all&mine=true", []string{"multi-pending", "multi-approved", "multi-rejected"})
+
+	assertInvalidState := func(t *testing.T, query string, invalidToken string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, query, nil)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		res := w.Result()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", res.StatusCode)
+		}
+		var apiErr struct {
+			Code    string `json:"code"`
+			Error   string `json:"error"`
+			Details string `json:"details"`
+		}
+		require.NoError(t, json.NewDecoder(res.Body).Decode(&apiErr))
+		assert.Equal(t, "BAD_REQUEST", apiErr.Code)
+		assert.Equal(t, "invalid state filter", apiErr.Error)
+		assert.Contains(t, apiErr.Details, invalidToken)
+		assert.Contains(t, apiErr.Details, "Supported values:")
+	}
+
+	assertInvalidState(t, "/breakglassSessions?state=not-a-state&mine=true", "notastate")
+	assertInvalidState(t, "/breakglassSessions?state=pending,not-a-state&mine=true", "notastate")
+	assertInvalidState(t, "/breakglassSessions?state=not-a-state&state=still-not-a-state&mine=true", "stillnotastate")
 }
 
 func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
