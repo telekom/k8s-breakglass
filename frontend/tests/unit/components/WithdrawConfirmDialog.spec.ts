@@ -62,7 +62,6 @@ describe("WithdrawConfirmDialog", () => {
     const wrapper = mountDialog({ opened: true });
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(wrapper.emitted("cancel")).toHaveLength(1);
-    wrapper.unmount();
   });
 
   it("passes opened prop through to scale-modal", () => {
