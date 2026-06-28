@@ -135,15 +135,18 @@ isSessionValid(session) {
 
 The `state` parameter in list/filter operations supports filtering by session state. Valid values:
 
+- `all` - Disable state filtering
 - `pending` - Sessions awaiting approval
 - `approved` - Active sessions granting privileges
+- `active` - Currently valid sessions (`Approved` and not expired)
+- `waiting`, `waitingforscheduledtime`, `scheduled` - Sessions waiting for their scheduled start time
 - `rejected` - Rejected by approver (terminal)
 - `withdrawn` - Withdrawn by requester (terminal)
 - `expired` - Exceeded max duration (terminal)
 - `idleexpired` - Exceeded configured idle timeout (terminal)
-- `timeout` - Approval request timed out (terminal)
+- `timeout`, `approvaltimeout` - Approval request timed out (terminal)
 
-**Note:** Filtering by state uses the session's `state` field directly. Timestamp-based validation (e.g., expiration) happens at access time via `isSessionValid()`.
+**Note:** Most state tokens compare the session's recorded `status.state`. The `expired` token also matches approved sessions whose `status.expiresAt` has passed, and `active` matches only approved sessions that are currently valid according to access-time checks.
 
 ## Breakglass Session API
 
