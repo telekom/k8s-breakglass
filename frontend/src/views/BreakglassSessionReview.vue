@@ -13,6 +13,7 @@ import { pushError, pushSuccess } from "@/services/toast";
 import type { AxiosLikeError } from "@/model/errors";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
+import { useModalBehavior } from "@/composables/useModalBehavior";
 
 const route = useRoute();
 const user = useUser();
@@ -66,6 +67,8 @@ function closeReviewModal() {
   modalSession.value = null;
   approverNote.value = "";
 }
+
+useModalBehavior(showReviewModal, closeReviewModal);
 
 function updateApproverNote(note: string) {
   approverNote.value = note;
@@ -369,6 +372,7 @@ async function onCancel(bg: SessionCR) {
       v-if="showReviewModal && modalSession"
       :opened="showReviewModal"
       heading="Review Session"
+      data-testid="review-modal"
       @scale-close="closeReviewModal"
     >
       <ApprovalModalContent

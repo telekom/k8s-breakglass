@@ -132,7 +132,7 @@ Complete documentation for the breakglass privilege escalation system.
 - Debug sessions and debug pod templates
 - Multi-IDP support with optional group sync
 - CLI automation via `bgctl`
-- Request modals reset to a clean state when closed for consistent UX
+- Request, approval, review, and withdraw modals support Escape dismissal, lock background scrolling, and reset to a clean state when closed for consistent UX
 
 ## Deployment Modes
 

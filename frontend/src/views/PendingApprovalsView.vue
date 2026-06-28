@@ -241,6 +241,7 @@ import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 import { PageHeader, EmptyState, LoadingState, StatusTag, ReasonPanel, ActionButton } from "@/components/common";
+import { useModalBehavior } from "@/composables/useModalBehavior";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { handleAxiosError } from "@/services/logger";
@@ -448,6 +449,8 @@ function closeApproveModal() {
   showApproveModal.value = false;
   modalSession.value = null;
 }
+
+useModalBehavior(showApproveModal, closeApproveModal);
 
 function updateApproverNote(note: string) {
   if (modalSession.value?.metadata?.name) {
