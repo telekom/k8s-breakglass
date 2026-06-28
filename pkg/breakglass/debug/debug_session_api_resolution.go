@@ -114,17 +114,13 @@ func (c *DebugSessionAPIController) resolveSchedulingOptions(template *breakglas
 	return response
 }
 
-// resolveNamespaceConstraints resolves namespace constraints from binding or template
+// resolveNamespaceConstraints resolves the restrictive effective namespace constraints.
 func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *NamespaceConstraintsResponse {
-	var nc *breakglassv1alpha1.NamespaceConstraints
-
-	// Binding constraints take precedence
-	if binding != nil && binding.Spec.NamespaceConstraints != nil {
-		nc = binding.Spec.NamespaceConstraints
-	} else if template.Spec.NamespaceConstraints != nil {
-		nc = template.Spec.NamespaceConstraints
+	var bindingConstraints *breakglassv1alpha1.NamespaceConstraints
+	if binding != nil {
+		bindingConstraints = binding.Spec.NamespaceConstraints
 	}
-
+	nc := c.mergeNamespaceConstraints(template.Spec.NamespaceConstraints, bindingConstraints)
 	if nc == nil {
 		return nil
 	}
@@ -791,5 +787,5 @@ func convertSelectorTerms(terms []breakglassv1alpha1.NamespaceSelectorTerm) []Na
 
 // resolveTargetNamespace validates and resolves the target namespace for debug pods.
 // Returns the resolved namespace or an error if the requested namespace is not allowed.
-// If a binding is provided and has namespace constraints, those constraints are used to extend
-// or override the template's constraints (e.g., binding.AllowUserNamespace=true overrides template's false).
+// If a binding is provided and has namespace constraints, those constraints are enforced in
+// addition to the template's constraints and cannot widen the template boundary.

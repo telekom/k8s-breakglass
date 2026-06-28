@@ -2238,7 +2238,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
-	t.Run("binding overrides template AllowUserNamespace", func(t *testing.T) {
+	t.Run("binding cannot enable template user namespaces", func(t *testing.T) {
 		// Template disallows user-specified namespaces
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-restricted"},
@@ -2250,7 +2250,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding enables user-specified namespaces
+		// Binding attempts to enable user-specified namespaces
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-binding",
@@ -2263,18 +2263,16 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Without binding - should reject user namespace
 		_, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		// With binding override - should allow user namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "custom-ns", ns)
+		_, err = ctrl.resolveTargetNamespace(template, "custom-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
 
-	t.Run("binding merges allowed namespace patterns", func(t *testing.T) {
+	t.Run("binding narrows allowed namespace patterns", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-patterns"},
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
@@ -2287,7 +2285,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding adds more allowed patterns
+		// Binding narrows the template's debug-* allowance to debug-team-*.
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-binding",
@@ -2296,7 +2294,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
-						Patterns: []string{"tenant-*"}, // Additional pattern from binding
+						Patterns: []string{"debug-team-*"},
 					},
 					AllowUserNamespace: true,
 				},
@@ -2312,14 +2310,18 @@ func TestResolveTargetNamespace(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
-		// With binding - both debug-* and tenant-* are allowed
-		ns, err = ctrl.resolveTargetNamespace(template, "debug-app", binding)
+		// With binding - only namespaces matching both template and binding filters are allowed.
+		ns, err = ctrl.resolveTargetNamespace(template, "debug-team-app", binding)
 		require.NoError(t, err)
-		assert.Equal(t, "debug-app", ns)
+		assert.Equal(t, "debug-team-app", ns)
 
-		ns, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "tenant-app", ns)
+		_, err = ctrl.resolveTargetNamespace(template, "debug-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+
+		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
 
 	// =========================================================================
@@ -2360,7 +2362,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Equal(t, "binding-default", ns)
 	})
 
-	t.Run("binding denied namespaces override template denied", func(t *testing.T) {
+	t.Run("binding denied namespaces add to template denied", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-denied-ns"},
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
@@ -2373,7 +2375,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding has more permissive denied list (only denies kube-system specifically)
+		// Binding has its own denied list, which must not remove template denies.
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "permissive-denied-binding",
@@ -2383,7 +2385,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowUserNamespace: true,
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
-						Patterns: []string{"kube-system"}, // Only deny kube-system
+						Patterns: []string{"tenant-*"},
 					},
 				},
 			},
@@ -2404,10 +2406,15 @@ func TestResolveTargetNamespace(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
-		// With binding - system-test now allowed (binding overrode denied list)
-		ns, err := ctrl.resolveTargetNamespace(template, "system-test", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "system-test", ns)
+		// With binding - system-test remains denied by the template.
+		_, err = ctrl.resolveTargetNamespace(template, "system-test", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+
+		// With binding - tenant namespaces are additionally denied by the binding.
+		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
 	t.Run("binding with nil namespaceConstraints uses template constraints", func(t *testing.T) {
@@ -2443,10 +2450,10 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
 
-	t.Run("real-world schiff scenario: developer-basic template with developer-workload binding", func(t *testing.T) {
-		// This replicates the exact scenario from schiff-cp:
-		// Template developer-basic has allowUserNamespace: false
-		// Binding has allowUserNamespace: true with allowed patterns [breakglass-*, debug-*]
+	t.Run("binding cannot widen developer-basic template namespace policy", func(t *testing.T) {
+		// Template developer-basic has allowUserNamespace: false.
+		// A binding with allowUserNamespace: true and allowed patterns must not
+		// bypass that template-level boundary.
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "developer-basic",
@@ -2498,28 +2505,25 @@ func TestResolveTargetNamespace(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		// With binding - user namespace allowed via binding override
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "debug-my-session", ns)
+		_, err = ctrl.resolveTargetNamespace(template, "debug-my-session", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		// With binding - namespace matching allowed pattern
-		ns, err = ctrl.resolveTargetNamespace(template, "breakglass-test", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "breakglass-test", ns)
+		_, err = ctrl.resolveTargetNamespace(template, "breakglass-test", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		// With binding - namespace NOT matching allowed pattern should fail
 		_, err = ctrl.resolveTargetNamespace(template, "production-ns", binding)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
 		// With binding - empty namespace uses default
-		ns, err = ctrl.resolveTargetNamespace(template, "", binding)
+		ns, err := ctrl.resolveTargetNamespace(template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
 
-	t.Run("bad path: binding cannot remove allowed namespaces requirement", func(t *testing.T) {
+	t.Run("bad path: binding cannot widen allowed namespaces requirement", func(t *testing.T) {
 		// Template requires namespace to be in allowed list
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-with-allowed"},
@@ -2533,31 +2537,36 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding also has an allowed list - they get merged
+		// Binding also has an allowed list; requested namespaces must satisfy both.
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "extends-allowed-binding",
+				Name:      "narrows-allowed-binding",
 				Namespace: "test-ns",
 			},
 			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowUserNamespace: true,
 					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
-						Patterns: []string{"extra-*"},
+						Patterns: []string{"safe-team-*"},
 					},
 				},
 			},
 		}
 
-		// With binding - safe-* still allowed (from template)
-		ns, err := ctrl.resolveTargetNamespace(template, "safe-ns", binding)
+		// With binding - safe-team-* matches both the template and binding filters.
+		ns, err := ctrl.resolveTargetNamespace(template, "safe-team-ns", binding)
 		require.NoError(t, err)
-		assert.Equal(t, "safe-ns", ns)
+		assert.Equal(t, "safe-team-ns", ns)
 
-		// With binding - extra-* now also allowed (from binding)
-		ns, err = ctrl.resolveTargetNamespace(template, "extra-ns", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "extra-ns", ns)
+		// With binding - safe-* alone no longer satisfies the binding filter.
+		_, err = ctrl.resolveTargetNamespace(template, "safe-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+
+		// With binding - binding-only patterns cannot widen the template boundary.
+		_, err = ctrl.resolveTargetNamespace(template, "extra-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
 		// With binding - random namespace still blocked
 		_, err = ctrl.resolveTargetNamespace(template, "random-ns", binding)

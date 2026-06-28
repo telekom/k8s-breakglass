@@ -931,6 +931,7 @@ When a user creates a debug session:
 3. **Namespace specified + `allowUserNamespace: true`**: 
    - Validated against `allowedNamespaces` patterns/selectors
    - Validated against `deniedNamespaces` (deny takes precedence)
+   - If a `DebugSessionClusterBinding` is selected, the namespace must satisfy both the template constraints and the binding constraints
 4. **Namespace doesn't exist**: 
    - `createIfNotExists: true`: Creates namespace with `namespaceLabels`
    - `createIfNotExists: false`: Session fails or uses fail-open mode
