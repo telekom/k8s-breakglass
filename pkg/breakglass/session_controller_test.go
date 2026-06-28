@@ -5882,8 +5882,13 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g1"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired, ExpiresAt: metav1.NewTime(now.Add(-time.Hour))},
 	}
+	s7 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "s7"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g2"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateIdleExpired, LastActivity: &metav1.Time{Time: now.Add(-time.Hour)}},
+	}
 
-	cli := builder.WithObjects(s1, s2, s3, s4, s5, s6).Build()
+	cli := builder.WithObjects(s1, s2, s3, s4, s5, s6, s7).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -5917,12 +5922,13 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 	}{
 		{"cluster_c1_mine_u1", "cluster=c1&mine=true", "u1@example.com", []string{"s1", "s5"}},
 		{"cluster_c1_user_u2_mine", "cluster=c1&user=u2@example.com&mine=true", "u2@example.com", []string{"s2"}},
-		{"user_u2_mine", "user=u2@example.com&mine=true", "u2@example.com", []string{"s2", "s4", "s6"}},
+		{"user_u2_mine", "user=u2@example.com&mine=true", "u2@example.com", []string{"s2", "s4", "s6", "s7"}},
 		{"group_g1_mine_u1", "group=g1&mine=true", "u1@example.com", []string{"s1"}},
 		{"cluster_c2_group_g2_mine_u1", "cluster=c2&group=g2&mine=true", "u1@example.com", []string{"s3"}},
 		{"state_pending_mine_u2", "state=pending&mine=true", "u2@example.com", []string{"s4"}},
 		{"state_approved_mine_u2", "state=approved&mine=true", "u2@example.com", []string{"s2"}},
 		{"cluster_c2_state_expired_mine_u2", "cluster=c2&state=expired&mine=true", "u2@example.com", []string{"s6"}},
+		{"cluster_c2_state_idleexpired_mine_u2", "cluster=c2&state=idleexpired&mine=true", "u2@example.com", []string{"s7"}},
 		{"user_u1_group_g2_mine", "user=u1@example.com&group=g2&mine=true", "u1@example.com", []string{"s3", "s5"}},
 	}
 

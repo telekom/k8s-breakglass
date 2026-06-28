@@ -92,7 +92,7 @@ The breakglass API implements a **state-first validation architecture**:
 ### State Priority Rules
 
 1. **State is ultimate authority** - A session's `state` field determines validity, not timestamps
-2. **Terminal states override timestamps** - Sessions in Rejected, Withdrawn, Expired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
+2. **Terminal states override timestamps** - Sessions in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
 3. **Timestamp preservation** - Timestamps are never cleared, only added/updated, creating a complete audit history
 
 ### Session Validity Rules
@@ -100,7 +100,7 @@ The breakglass API implements a **state-first validation architecture**:
 A session is considered valid for access ONLY if:
 
 1. **State is Approved** - Session must be in `Approved` state
-2. **Not in terminal state** - Must not be in Rejected, Withdrawn, Expired, or ApprovalTimeout
+2. **Not in terminal state** - Must not be in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout
 3. **Not scheduled for future** - If `scheduledStartTime` is in the future, session is not yet valid
 4. **Not expired** - `expiresAt` timestamp must be in the future
 
@@ -109,7 +109,7 @@ A session is considered valid for access ONLY if:
 ```go
 isSessionValid(session) {
     // Terminal states override everything
-    if (session.state in [Rejected, Withdrawn, Expired, ApprovalTimeout]) {
+    if (session.state in [Rejected, Withdrawn, Expired, IdleExpired, ApprovalTimeout]) {
         return false
     }
     
@@ -140,6 +140,7 @@ The `state` parameter in list/filter operations supports filtering by session st
 - `rejected` - Rejected by approver (terminal)
 - `withdrawn` - Withdrawn by requester (terminal)
 - `expired` - Exceeded max duration (terminal)
+- `idleexpired` - Exceeded configured idle timeout (terminal)
 - `timeout` - Approval request timed out (terminal)
 
 **Note:** Filtering by state uses the session's `state` field directly. Timestamp-based validation (e.g., expiration) happens at access time via `isSessionValid()`.
