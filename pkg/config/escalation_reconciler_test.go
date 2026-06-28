@@ -140,9 +140,36 @@ func TestShouldReconcileEscalationUpdate(t *testing.T) {
 		assert.True(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
 	})
 
-	t.Run("allows unexpected object types", func(t *testing.T) {
+	t.Run("ignores unchanged deletion timestamp", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		now := metav1.NewTime(time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC))
+		oldEsc.DeletionTimestamp = &now
+		newEsc := oldEsc.DeepCopy()
+
+		assert.False(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("reconciles changed deletion timestamp", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		oldTime := metav1.NewTime(time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC))
+		oldEsc.DeletionTimestamp = &oldTime
+		newEsc := oldEsc.DeepCopy()
+		newTime := metav1.NewTime(oldTime.Add(time.Minute))
+		newEsc.DeletionTimestamp = &newTime
+
+		assert.True(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("allows unexpected old object type", func(t *testing.T) {
 		assert.True(t, shouldReconcileEscalationUpdate(
 			&breakglassv1alpha1.ClusterConfig{},
+			baseEscalation(),
+		))
+	})
+
+	t.Run("allows unexpected new object type", func(t *testing.T) {
+		assert.True(t, shouldReconcileEscalationUpdate(
+			baseEscalation(),
 			&breakglassv1alpha1.ClusterConfig{},
 		))
 	})
