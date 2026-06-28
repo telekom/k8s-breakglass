@@ -100,10 +100,11 @@ SelfSubjectReview.
 
 ### maxValidFor
 
-Maximum time a session will remain active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365.
+Maximum time a session will remain active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365, and the duration must be positive. If omitted, admission and runtime behavior use the default `1h`.
 
 ```yaml
-maxValidFor: "2h"    # 2 hours (default: 1h)
+maxValidFor: "1h"    # 1 hour (default)
+maxValidFor: "2h"    # 2 hours
 maxValidFor: "30m"   # 30 minutes
 maxValidFor: "4h"    # 4 hours
 maxValidFor: "1d12h" # 1 day and 12 hours
@@ -128,7 +129,7 @@ idleTimeout: "30m"   # Expire after 30 minutes of inactivity
 
 **Effective granularity**: Idle checks run every ~5 minutes (the cleanup interval), so a 1-minute idle timeout may not trigger until up to 5 minutes after the true idle point.
 
-**Relationship to maxValidFor**: `idleTimeout` must not exceed `maxValidFor` (if both are set).
+**Relationship to maxValidFor**: `idleTimeout` must not exceed `maxValidFor`. If `maxValidFor` is omitted, admission validates against the default `1h`.
 
 ### retainFor
 
@@ -138,6 +139,8 @@ How long to retain expired/revoked sessions before deletion:
 retainFor: "720h"    # Keep for 30 days (default: 720h)
 retainFor: "168h"    # Keep for 7 days
 ```
+
+The value must be a positive duration.
 
 ### approvalTimeout
 
@@ -150,6 +153,8 @@ approvalTimeout: "30m"   # Timeout after 30 minutes
 ```
 
 If not set, a default timeout of `1h` is applied. To change this behavior, explicitly set `approvalTimeout` to the desired duration.
+
+`approvalTimeout` must be a positive duration and must not exceed `maxValidFor`. If `maxValidFor` is omitted, admission validates it against the default `1h`.
 
 **Example:** Require quick approvals for emergency escalations:
 
@@ -479,6 +484,9 @@ allowedIdentityProvidersForApprovers:
   resolved member list is authoritative for that group.
 - Approval endpoints deny requests when an approver allowlist is configured but
   the authenticated caller's IDP is missing or not listed.
+- Session admission applies requester IDP restrictions to matching escalations
+  found through exact or glob matches in both `allowed.clusters` and
+  `clusterConfigRefs`.
 
 #### Example: Restrict to Corporate OIDC only
 

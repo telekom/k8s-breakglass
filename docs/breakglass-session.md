@@ -170,7 +170,7 @@ grantedGroup: "view-only"         # Read-only access
 
 #### maxValidFor
 
-Maximum time the session will be active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365.
+Maximum time the session will be active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365, and the duration must be positive. If omitted, admission and runtime behavior use the default `1h`.
 
 ```yaml
 maxValidFor: "1h"   # 1 hour (default)
@@ -180,7 +180,7 @@ maxValidFor: "30m"  # 30 minutes
 
 #### idleTimeout
 
-Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day units like `"1d12h"`). Must be at least `1m` and must not exceed `maxValidFor`.
+Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day units like `"1d12h"`). Must be at least `1m` and must not exceed `maxValidFor`; when `maxValidFor` is omitted, admission validates against the default `1h`.
 
 Copied automatically from the matched `BreakglassEscalation` at approval time.
 
@@ -197,6 +197,8 @@ Time to wait before removing the session object after it expires:
 retainFor: "720h"  # 720 hours / 30 days (default)
 retainFor: "168h"  # 168 hours / 7 days
 ```
+
+The value must be a positive duration.
 
 #### clusterConfigRef
 

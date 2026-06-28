@@ -234,11 +234,35 @@ func TestValidateBreakglassEscalation(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "must not exceed maxValidFor")
 	})
 
+	t.Run("escalation idleTimeout exceeds default maxValidFor", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.IdleTimeout = "2h"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "default 1h")
+	})
+
 	t.Run("escalation idleTimeout exactly at minimum floor", func(t *testing.T) {
 		e := validEscalation()
 		e.Spec.IdleTimeout = "1m"
 		result := ValidateBreakglassEscalation(e)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("escalation retainFor invalid", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.RetainFor = "garbage"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
+	})
+
+	t.Run("escalation retainFor must be positive", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.RetainFor = "0s"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
 	})
 }
 
@@ -359,6 +383,14 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
 	})
 
+	t.Run("idleTimeout exceeds default maxValidFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "2h"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "default 1h")
+	})
+
 	t.Run("idleTimeout within maxValidFor", func(t *testing.T) {
 		s := validSession()
 		s.Spec.IdleTimeout = "30m"
@@ -370,6 +402,7 @@ func TestValidateBreakglassSession(t *testing.T) {
 	t.Run("idleTimeout with day unit", func(t *testing.T) {
 		s := validSession()
 		s.Spec.IdleTimeout = "1d"
+		s.Spec.MaxValidFor = "2d"
 		result := ValidateBreakglassSession(s)
 		assert.True(t, result.IsValid())
 	})
@@ -402,6 +435,38 @@ func TestValidateBreakglassSession(t *testing.T) {
 		result := ValidateBreakglassSession(s)
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "positive")
+	})
+
+	t.Run("invalid maxValidFor format", func(t *testing.T) {
+		s := validSession()
+		s.Spec.MaxValidFor = "not-a-duration"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
+	})
+
+	t.Run("maxValidFor must be positive", func(t *testing.T) {
+		s := validSession()
+		s.Spec.MaxValidFor = "0s"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
+	})
+
+	t.Run("invalid retainFor format", func(t *testing.T) {
+		s := validSession()
+		s.Spec.RetainFor = "not-a-duration"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
+	})
+
+	t.Run("retainFor must be positive", func(t *testing.T) {
+		s := validSession()
+		s.Spec.RetainFor = "-1h"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
 	})
 }
 

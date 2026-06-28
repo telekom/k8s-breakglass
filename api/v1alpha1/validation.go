@@ -244,31 +244,28 @@ func ValidateBreakglassSession(session *BreakglassSession) *ValidationResult {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("grantedGroup"), "grantedGroup is required"))
 	}
 
-	// Validate durations
-	if session.Spec.MaxValidFor != "" {
-		result.Errors = append(result.Errors, validateDurationFormat(session.Spec.MaxValidFor, specPath.Child("maxValidFor"))...)
+	maxValidForDuration, maxValidForErr := parsePositiveDurationField(session.Spec.MaxValidFor, "maxValidFor", specPath.Child("maxValidFor"))
+	if maxValidForErr != nil {
+		result.Errors = append(result.Errors, maxValidForErr)
+	}
+	effectiveMaxValidFor, effectiveMaxValidForLabel := effectiveMaxValidForDuration(session.Spec.MaxValidFor, maxValidForDuration)
+
+	if _, retainForErr := parsePositiveDurationField(session.Spec.RetainFor, "retainFor", specPath.Child("retainFor")); retainForErr != nil {
+		result.Errors = append(result.Errors, retainForErr)
 	}
 
-	if session.Spec.RetainFor != "" {
-		result.Errors = append(result.Errors, validateDurationFormat(session.Spec.RetainFor, specPath.Child("retainFor"))...)
-	}
-
+	// Validate idleTimeout if set
 	if session.Spec.IdleTimeout != "" {
-		idleTimeout, err := ParseDuration(session.Spec.IdleTimeout)
-		if err != nil {
-			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, fmt.Sprintf("invalid duration: %v", err)))
-		} else if idleTimeout <= 0 {
-			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, "idleTimeout must be positive"))
+		idleTimeout, idleTimeoutErr := parsePositiveDurationField(session.Spec.IdleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
+		if idleTimeoutErr != nil {
+			result.Errors = append(result.Errors, idleTimeoutErr)
 		} else if idleTimeout < time.Minute {
 			// Minimum 1 minute to avoid premature expiry from the 30s activity flush buffer.
 			// Activity is flushed to status every ~30s; shorter idle timeouts would race with the buffer.
 			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, "idleTimeout must be at least 1m"))
-		} else if session.Spec.MaxValidFor != "" {
-			maxValid, mvErr := ParseDuration(session.Spec.MaxValidFor)
-			if mvErr == nil && idleTimeout > maxValid {
-				result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout,
-					fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", session.Spec.IdleTimeout, session.Spec.MaxValidFor)))
-			}
+		} else if maxValidForErr == nil && idleTimeout > effectiveMaxValidFor {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout,
+				fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", session.Spec.IdleTimeout, effectiveMaxValidForLabel)))
 		}
 	}
 

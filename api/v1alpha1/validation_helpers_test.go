@@ -435,6 +435,23 @@ func TestValidateTimeoutRelationships_ApprovalTimeoutTooLarge(t *testing.T) {
 	assert.NotNil(t, errs, "approvalTimeout > maxValidFor should fail")
 }
 
+func TestValidateTimeoutRelationships_ApprovalTimeoutUsesDefaultMaxValidFor(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		ApprovalTimeout: "30m",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.Nil(t, errs, "approvalTimeout <= default maxValidFor should pass")
+}
+
+func TestValidateTimeoutRelationships_ApprovalTimeoutExceedsDefaultMaxValidFor(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		ApprovalTimeout: "2h",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.NotNil(t, errs, "approvalTimeout > default maxValidFor should fail")
+	assert.Contains(t, errs.ToAggregate().Error(), "default 1h")
+}
+
 func TestValidateTimeoutRelationships_InvalidMaxValidFor(t *testing.T) {
 	spec := &BreakglassEscalationSpec{
 		MaxValidFor: "invalid",
@@ -495,12 +512,35 @@ func TestValidateTimeoutRelationships_IdleTimeoutExceedsMaxValidFor(t *testing.T
 	assert.NotNil(t, errs, "idleTimeout > maxValidFor should fail")
 }
 
+func TestValidateTimeoutRelationships_IdleTimeoutExceedsDefaultMaxValidFor(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		IdleTimeout: "2h",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.NotNil(t, errs, "idleTimeout > default maxValidFor should fail")
+	assert.Contains(t, errs.ToAggregate().Error(), "default 1h")
+}
+
 func TestValidateTimeoutRelationships_IdleTimeoutInvalidFormat(t *testing.T) {
 	spec := &BreakglassEscalationSpec{
 		IdleTimeout: "garbage",
 	}
 	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
 	assert.NotNil(t, errs, "invalid idleTimeout format should fail")
+}
+
+func TestValidateTimeoutRelationships_RetainForInvalid(t *testing.T) {
+	testCases := []string{"garbage", "0s", "-1h"}
+	for _, retainFor := range testCases {
+		t.Run(retainFor, func(t *testing.T) {
+			spec := &BreakglassEscalationSpec{
+				RetainFor: retainFor,
+			}
+			errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+			assert.NotNil(t, errs, "invalid retainFor should fail")
+			assert.Contains(t, errs.ToAggregate().Error(), "retainFor")
+		})
+	}
 }
 
 // TestEnsureClusterWideUniqueName tests cluster-wide name uniqueness validation
@@ -676,6 +716,89 @@ func TestValidateSessionIdentityProviderAuthorization_WithMatchingEscalation(t *
 		field.NewPath("spec").Child("identityProviderName"),
 	)
 	assert.NotNil(t, errs, "should reject non-matching IDP")
+}
+
+func TestValidateSessionIdentityProviderAuthorization_MatchesAllowedClusterGlob(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-glob", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			Allowed: BreakglassEscalationAllowed{
+				Clusters: []string{"prod-*"},
+			},
+			Approvers:                BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProviders: []string{"corporate-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"unauthorized-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.NotNil(t, errs, "glob-matched escalation should enforce allowed IDPs")
+}
+
+func TestValidateSessionIdentityProviderAuthorization_MatchesClusterConfigRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-clusterconfig", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:                       "cluster-admin",
+			ClusterConfigRefs:                    []string{"prod-*"},
+			Allowed:                              BreakglassEscalationAllowed{},
+			Approvers:                            BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"requester-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.Nil(t, errs, "clusterConfigRefs glob should match and allow requester IDP")
+
+	errs = validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"unauthorized-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.NotNil(t, errs, "clusterConfigRefs glob should match and reject disallowed IDP")
 }
 
 func TestValidateSessionIdentityProviderAuthorization_DifferentGroup(t *testing.T) {
