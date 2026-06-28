@@ -165,6 +165,17 @@ describe("PendingApprovalsView (component)", () => {
     expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
   });
 
+  it("announces pending approval result counts as a status update", async () => {
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="toolbar-info"]');
+
+    expect(status.exists()).toBe(true);
+    expect(status.attributes("role")).toBe("status");
+    expect(status.attributes("aria-live")).toBe("polite");
+    expect(status.attributes("aria-atomic")).toBe("true");
+    expect(status.text()).toBe("Showing 0 of 0 pending requests");
+  });
+
   it("shows session list when pending sessions exist", async () => {
     mockFetchPendingSessionsForApproval.mockResolvedValueOnce([
       {

@@ -332,7 +332,14 @@ function onStateToggle(state: string, event: Event) {
       </template>
     </EmptyState>
 
-    <div v-if="!loading" class="results-info ui-toolbar-info">
+    <div
+      v-if="!loading"
+      class="results-info ui-toolbar-info"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-testid="debug-session-results-status"
+    >
       Showing {{ filteredSessions.length }} of {{ sessions.length }} sessions
     </div>
   </div>

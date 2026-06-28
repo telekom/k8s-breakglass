@@ -38,7 +38,13 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
+      <div
+        class="toolbar-info ui-toolbar-info"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="toolbar-info"
+      >
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
       </div>
     </div>

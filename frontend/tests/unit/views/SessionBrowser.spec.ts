@@ -15,37 +15,35 @@ import { AuthKey } from "@/keys";
 // Mock services
 vi.mock("@/services/breakglass", () => ({
   default: class MockBreakglassService {
-    searchSessions = vi.fn().mockResolvedValue({
-      sessions: [
-        {
-          metadata: { name: "session-1", namespace: "default" },
-          spec: {
-            user: "user@example.com",
-            cluster: "test-cluster",
-            escalatedGroup: "admin-group",
-            duration: "2h",
-          },
-          status: {
-            state: "approved",
-            startedAt: new Date().toISOString(),
-            expiresAt: new Date(Date.now() + 7200000).toISOString(),
-          },
+    searchSessions = vi.fn().mockResolvedValue([
+      {
+        metadata: { name: "session-1", namespace: "default" },
+        spec: {
+          user: "user@example.com",
+          cluster: "test-cluster",
+          escalatedGroup: "admin-group",
+          duration: "2h",
         },
-        {
-          metadata: { name: "session-2", namespace: "default" },
-          spec: {
-            user: "admin@example.com",
-            cluster: "prod-cluster",
-            escalatedGroup: "superadmin",
-            duration: "1h",
-          },
-          status: {
-            state: "pending",
-            timeoutAt: new Date(Date.now() + 3600000).toISOString(),
-          },
+        status: {
+          state: "approved",
+          startedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 7200000).toISOString(),
         },
-      ],
-    });
+      },
+      {
+        metadata: { name: "session-2", namespace: "default" },
+        spec: {
+          user: "admin@example.com",
+          cluster: "prod-cluster",
+          escalatedGroup: "superadmin",
+          duration: "1h",
+        },
+        status: {
+          state: "pending",
+          timeoutAt: new Date(Date.now() + 3600000).toISOString(),
+        },
+      },
+    ]);
     rejectSession = vi.fn().mockResolvedValue({});
     withdrawSession = vi.fn().mockResolvedValue({});
   },
@@ -170,6 +168,20 @@ describe("SessionBrowser", () => {
     it("has proper DOM structure", async () => {
       const wrapper = await createWrapper();
       expect(wrapper.element.tagName).toBeDefined();
+    });
+
+    it("announces result counts without replacing the heading semantics", async () => {
+      const wrapper = await createWrapper();
+      const heading = wrapper.find("h2");
+      const status = wrapper.find('[data-testid="session-results-status"]');
+
+      expect(heading.text()).toBe("Results (2)");
+      expect(status.exists()).toBe(true);
+      expect(status.attributes("role")).toBe("status");
+      expect(status.attributes("aria-live")).toBe("polite");
+      expect(status.attributes("aria-atomic")).toBe("true");
+      expect(status.classes()).toContain("sr-only");
+      expect(status.text()).toBe("Showing 2 of 2 sessions");
     });
   });
 

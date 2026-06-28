@@ -147,6 +147,17 @@ describe("DebugSessionBrowser", () => {
       expect(refreshButton.classes()).toContain("ui-toolbar-icon-control");
     });
 
+    it("announces filtered result counts as a status update", async () => {
+      const wrapper = await createWrapper();
+      const status = wrapper.find('[data-testid="debug-session-results-status"]');
+
+      expect(status.exists()).toBe(true);
+      expect(status.attributes("role")).toBe("status");
+      expect(status.attributes("aria-live")).toBe("polite");
+      expect(status.attributes("aria-atomic")).toBe("true");
+      expect(status.text()).toBe("Showing 2 of 2 sessions");
+    });
+
     it("shows an error state when loading debug sessions fails", async () => {
       mockListSessions.mockRejectedValueOnce(new Error("debug list down"));
 

@@ -163,6 +163,17 @@ describe("BreakglassSessionReview", () => {
     });
   });
 
+  it("announces review result counts as a status update", async () => {
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="review-results-status"]');
+
+    expect(status.exists()).toBe(true);
+    expect(status.attributes("role")).toBe("status");
+    expect(status.attributes("aria-live")).toBe("polite");
+    expect(status.attributes("aria-atomic")).toBe("true");
+    expect(status.text()).toBe("Showing 0 of 0 sessions");
+  });
+
   it("uses approver mode params when route query has approver=true", async () => {
     await createWrapper("/review?approver=true&name=session-1");
 
