@@ -177,6 +177,7 @@ Add `IdleExpired` to the status tag mapping and session state options in the fro
 ### 6.1 Admission Webhook
 
 - Validate `idleTimeout` is parseable via `v1alpha1.ParseDuration` if set.
+- Validate `idleTimeout` is at least `1m` when set.
 - Validate `idleTimeout` ≤ `maxValidFor` (idle timeout should not exceed session lifetime).
 
 ### 6.2 Unit Tests

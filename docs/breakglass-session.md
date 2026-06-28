@@ -179,7 +179,7 @@ maxValidFor: "30m"  # 30 minutes
 
 #### idleTimeout
 
-Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day units like `"1d12h"`). Must not exceed `maxValidFor`.
+Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day units like `"1d12h"`). Must be at least `1m` and must not exceed `maxValidFor`.
 
 Copied automatically from the matched `BreakglassEscalation` at approval time.
 
