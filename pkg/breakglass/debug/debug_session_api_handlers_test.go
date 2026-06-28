@@ -100,21 +100,27 @@ func TestRespondKubectlDebugOperationError(t *testing.T) {
 	}{
 		{
 			name:     "namespace policy denial is forbidden",
-			err:      errors.New("namespace prod is not allowed for pod copy"),
+			err:      kubectlDebugPolicyErrorf("namespace prod is not allowed for pod copy"),
 			wantHTTP: http.StatusForbidden,
 			wantCode: "FORBIDDEN",
 		},
 		{
 			name:     "node selector mismatch is forbidden",
-			err:      errors.New("node worker-1 does not match required selector pool=debug"),
+			err:      kubectlDebugPolicyErrorf("node worker-1 does not match required selector pool=debug"),
 			wantHTTP: http.StatusForbidden,
 			wantCode: "FORBIDDEN",
 		},
 		{
 			name:     "unsupported request is bad request",
-			err:      errors.New("pod copy not configured in template"),
+			err:      kubectlDebugRequestErrorf("pod copy not configured in template"),
 			wantHTTP: http.StatusBadRequest,
 			wantCode: "BAD_REQUEST",
+		},
+		{
+			name:     "plain policy-like string remains internal",
+			err:      errors.New("namespace prod is not allowed for pod copy"),
+			wantHTTP: http.StatusInternalServerError,
+			wantCode: "INTERNAL_ERROR",
 		},
 		{
 			name:     "backend failure remains internal",

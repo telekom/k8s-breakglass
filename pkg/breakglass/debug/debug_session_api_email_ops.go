@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -491,7 +492,11 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
 	if err != nil {
-		reqLog.Errorw("Failed to create pod copy", "error", err)
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to create pod copy", "error", err)
+		} else {
+			reqLog.Warnw("Rejected pod copy request", "error", err)
+		}
 		respondKubectlDebugOperationError(ctx, err, "failed to create pod copy")
 		return
 	}
@@ -582,7 +587,11 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
 	if err != nil {
-		reqLog.Errorw("Failed to create node debug pod", "error", err)
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to create node debug pod", "error", err)
+		} else {
+			reqLog.Warnw("Rejected node debug pod request", "error", err)
+		}
 		respondKubectlDebugOperationError(ctx, err, "failed to create node debug pod")
 		return
 	}
@@ -603,26 +612,30 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 }
 
 func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback string) {
-	message := err.Error()
-	switch {
-	case isKubectlDebugPolicyError(message):
-		apiresponses.RespondForbidden(ctx, message)
-	case isKubectlDebugRequestError(message) || apierrors.IsNotFound(err):
-		apiresponses.RespondBadRequest(ctx, message)
+	switch kubectlDebugOperationHTTPStatus(err) {
+	case http.StatusForbidden:
+		apiresponses.RespondForbidden(ctx, err.Error())
+	case http.StatusBadRequest:
+		apiresponses.RespondBadRequest(ctx, err.Error())
 	default:
 		apiresponses.RespondInternalErrorSimple(ctx, fallback)
 	}
 }
 
-func isKubectlDebugPolicyError(message string) bool {
-	return strings.Contains(message, "not allowed") ||
-		strings.Contains(message, "does not match required selector")
-}
-
-func isKubectlDebugRequestError(message string) bool {
-	return strings.Contains(message, "not configured in template") ||
-		strings.Contains(message, "is not enabled for this template") ||
-		strings.Contains(message, "does not exist")
+func kubectlDebugOperationHTTPStatus(err error) int {
+	var operationErr *kubectlDebugOperationError
+	if errors.As(err, &operationErr) {
+		switch operationErr.kind {
+		case kubectlDebugOperationErrorPolicy:
+			return http.StatusForbidden
+		case kubectlDebugOperationErrorRequest:
+			return http.StatusBadRequest
+		}
+	}
+	if apierrors.IsNotFound(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 // clusterClientAdapter adapts cluster.ClientProvider to ClientProviderInterface

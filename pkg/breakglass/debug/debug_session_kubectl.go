@@ -45,6 +45,40 @@ type ClientProviderInterface interface {
 	GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error)
 }
 
+type kubectlDebugOperationErrorKind string
+
+const (
+	kubectlDebugOperationErrorPolicy  kubectlDebugOperationErrorKind = "policy"
+	kubectlDebugOperationErrorRequest kubectlDebugOperationErrorKind = "request"
+)
+
+type kubectlDebugOperationError struct {
+	kind kubectlDebugOperationErrorKind
+	err  error
+}
+
+func (e *kubectlDebugOperationError) Error() string {
+	return e.err.Error()
+}
+
+func (e *kubectlDebugOperationError) Unwrap() error {
+	return e.err
+}
+
+func kubectlDebugPolicyErrorf(format string, args ...interface{}) error {
+	return &kubectlDebugOperationError{
+		kind: kubectlDebugOperationErrorPolicy,
+		err:  fmt.Errorf(format, args...),
+	}
+}
+
+func kubectlDebugRequestErrorf(format string, args ...interface{}) error {
+	return &kubectlDebugOperationError{
+		kind: kubectlDebugOperationErrorRequest,
+		err:  fmt.Errorf(format, args...),
+	}
+}
+
 // NewKubectlDebugHandler creates a new kubectl debug handler
 func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderInterface) *KubectlDebugHandler {
 	return &KubectlDebugHandler{
@@ -310,12 +344,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 ) (*corev1.Pod, error) {
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.PodCopy == nil {
-		return nil, fmt.Errorf("pod copy not configured in template")
+		return nil, kubectlDebugRequestErrorf("pod copy not configured in template")
 	}
 
 	pc := template.KubectlDebug.PodCopy
 	if !pc.Enabled {
-		return nil, fmt.Errorf("pod copy is not enabled for this template")
+		return nil, kubectlDebugRequestErrorf("pod copy is not enabled for this template")
 	}
 
 	// Get target cluster client (needed before namespace validation to fetch labels)
@@ -330,7 +364,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	}
 	matcher := utils.NewNamespaceAllowDenyMatcher(pc.AllowedNamespaces, pc.DeniedNamespaces)
 	if !matcher.IsAllowedWithLabels(originalNamespace, nsLabels) {
-		return nil, fmt.Errorf("namespace %s is not allowed for pod copy", originalNamespace)
+		return nil, kubectlDebugPolicyErrorf("namespace %s is not allowed for pod copy", originalNamespace)
 	}
 
 	// Get the original pod
@@ -349,7 +383,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	ns := &corev1.Namespace{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("target namespace %s does not exist", targetNs)
+			return nil, kubectlDebugRequestErrorf("target namespace %s does not exist", targetNs)
 		}
 		return nil, fmt.Errorf("failed to check namespace: %w", err)
 	}
@@ -462,12 +496,12 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 ) (*corev1.Pod, error) {
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.NodeDebug == nil {
-		return nil, fmt.Errorf("node debug not configured in template")
+		return nil, kubectlDebugRequestErrorf("node debug not configured in template")
 	}
 
 	nd := template.KubectlDebug.NodeDebug
 	if !nd.Enabled {
-		return nil, fmt.Errorf("node debug is not enabled for this template")
+		return nil, kubectlDebugRequestErrorf("node debug is not enabled for this template")
 	}
 
 	// Validate node selector if configured
@@ -487,7 +521,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		// Check node selector
 		for k, v := range nd.NodeSelector {
 			if nodeVal, exists := node.Labels[k]; !exists || nodeVal != v {
-				return nil, fmt.Errorf("node %s does not match required selector %s=%s", nodeName, k, v)
+				return nil, kubectlDebugPolicyErrorf("node %s does not match required selector %s=%s", nodeName, k, v)
 			}
 		}
 	}
