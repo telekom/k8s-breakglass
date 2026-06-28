@@ -273,9 +273,10 @@ describe("DebugSessionCreate", () => {
 
       const host = document.createElement("div");
       document.body.appendChild(host);
-      const wrapper = await createWrapper(defaultTemplates(), host);
+      let wrapper: Awaited<ReturnType<typeof createWrapper>> | undefined;
 
       try {
+        wrapper = await createWrapper(defaultTemplates(), host);
         const nextButton = wrapper.find('[data-testid="next-button"]');
 
         await nextButton.trigger("click");
@@ -285,7 +286,7 @@ describe("DebugSessionCreate", () => {
         expect(step2Heading.exists()).toBe(true);
         expect(document.activeElement).toBe(step2Heading.element);
       } finally {
-        wrapper.unmount();
+        wrapper?.unmount();
         host.remove();
       }
     });
