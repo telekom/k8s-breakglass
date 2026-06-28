@@ -155,8 +155,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		}
 	}
 
-	ds.Status.AllowedPods = allowedPods
-	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	return c.patchDebugSessionAllowedPods(ctx, ds, allowedPods)
 }
 
 // monitorPodHealth checks pod status and emits audit events for failures/restarts

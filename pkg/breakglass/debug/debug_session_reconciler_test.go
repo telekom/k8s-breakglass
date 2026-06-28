@@ -767,6 +767,81 @@ func TestDebugSessionReconciler_AllowedPodsTracking(t *testing.T) {
 	})
 }
 
+func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrParticipants(t *testing.T) {
+	scheme := testScheme()
+
+	oldExpiry := metav1.NewTime(time.Now().Add(30 * time.Minute).Truncate(time.Second))
+	renewedExpiry := metav1.NewTime(time.Now().Add(2 * time.Hour).Truncate(time.Second))
+	joinedAt := metav1.Now()
+
+	session := newTestDebugSession("pods-live-merge-session", "test-template", "test-cluster", "owner@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &renewedExpiry
+	session.Status.RenewalCount = 1
+	session.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{
+		{
+			User:     "owner@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleOwner,
+			JoinedAt: joinedAt,
+		},
+		{
+			User:     "peer@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleParticipant,
+			JoinedAt: joinedAt,
+		},
+	}
+	session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+		{
+			Namespace: "breakglass-debug",
+			Name:      "old-pod",
+			Ready:     true,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	staleSession := session.DeepCopy()
+	staleSession.Status.ExpiresAt = &oldExpiry
+	staleSession.Status.RenewalCount = 0
+	staleSession.Status.Participants = staleSession.Status.Participants[:1]
+
+	controller := &DebugSessionController{
+		client: fakeClient,
+		log:    zap.NewNop().Sugar(),
+	}
+	allowedPods := []breakglassv1alpha1.AllowedPodRef{
+		{
+			Namespace: "breakglass-debug",
+			Name:      "new-pod",
+			NodeName:  "worker-1",
+			Ready:     true,
+			Phase:     string(corev1.PodRunning),
+		},
+	}
+
+	err := controller.patchDebugSessionAllowedPods(context.Background(), staleSession, allowedPods)
+	require.NoError(t, err)
+
+	var fetchedSession breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      "pods-live-merge-session",
+		Namespace: "breakglass",
+	}, &fetchedSession)
+	require.NoError(t, err)
+
+	require.NotNil(t, fetchedSession.Status.ExpiresAt)
+	assert.True(t, fetchedSession.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", fetchedSession.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, int32(1), fetchedSession.Status.RenewalCount)
+	require.Len(t, fetchedSession.Status.Participants, 2)
+	assert.Equal(t, "peer@example.com", fetchedSession.Status.Participants[1].User)
+	assert.Equal(t, allowedPods, fetchedSession.Status.AllowedPods)
+}
+
 func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 	scheme := testScheme()
 
