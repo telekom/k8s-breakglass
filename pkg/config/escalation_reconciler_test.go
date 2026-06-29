@@ -85,6 +85,96 @@ func (f *escalationFakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object,
 	}
 }
 
+func TestShouldReconcileEscalationUpdate(t *testing.T) {
+	baseEscalation := func() *breakglassv1alpha1.BreakglassEscalation {
+		return &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-escalation",
+				Namespace:  "default",
+				Generation: 1,
+			},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup: "test-group",
+				MaxValidFor:    "1h",
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+					Groups: []string{"allowed-group"},
+				},
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		}
+	}
+
+	t.Run("ignores status only update", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		newEsc := oldEsc.DeepCopy()
+		newEsc.ResourceVersion = "2"
+		newEsc.Status.ObservedGeneration = 1
+		newEsc.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.BreakglassEscalationConditionReady),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: 1,
+			Reason:             "ValidationSucceeded",
+			Message:            "Validation passed",
+		})
+
+		assert.False(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("reconciles any spec generation update", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		newEsc := oldEsc.DeepCopy()
+		newEsc.Generation = 2
+		newEsc.Spec.EscalatedGroup = "updated-group"
+
+		assert.True(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("reconciles deletion timestamp changes", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		newEsc := oldEsc.DeepCopy()
+		now := metav1.Now()
+		newEsc.DeletionTimestamp = &now
+
+		assert.True(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("ignores unchanged deletion timestamp", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		now := metav1.NewTime(time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC))
+		oldEsc.DeletionTimestamp = &now
+		newEsc := oldEsc.DeepCopy()
+
+		assert.False(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("reconciles changed deletion timestamp", func(t *testing.T) {
+		oldEsc := baseEscalation()
+		oldTime := metav1.NewTime(time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC))
+		oldEsc.DeletionTimestamp = &oldTime
+		newEsc := oldEsc.DeepCopy()
+		newTime := metav1.NewTime(oldTime.Add(time.Minute))
+		newEsc.DeletionTimestamp = &newTime
+
+		assert.True(t, shouldReconcileEscalationUpdate(oldEsc, newEsc))
+	})
+
+	t.Run("allows unexpected old object type", func(t *testing.T) {
+		assert.True(t, shouldReconcileEscalationUpdate(
+			&breakglassv1alpha1.ClusterConfig{},
+			baseEscalation(),
+		))
+	})
+
+	t.Run("allows unexpected new object type", func(t *testing.T) {
+		assert.True(t, shouldReconcileEscalationUpdate(
+			baseEscalation(),
+			&breakglassv1alpha1.ClusterConfig{},
+		))
+	})
+}
+
 func TestEscalationReconciler_Reconcile(t *testing.T) {
 	scheme := newTestEscalationReconcilerScheme()
 	logger := zap.NewNop().Sugar()

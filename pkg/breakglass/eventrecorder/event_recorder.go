@@ -67,6 +67,9 @@ func (r *K8sEventRecorder) Eventf(regarding runtime.Object, related runtime.Obje
 	if r.Scheme != nil {
 		if ref, err := reference.GetReference(r.Scheme, regarding); err == nil {
 			regardingRef = ref
+			if regardingRef.Namespace == "" {
+				regardingRef.Namespace = involvedNS
+			}
 		}
 	}
 

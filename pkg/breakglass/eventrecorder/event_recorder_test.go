@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -80,4 +81,44 @@ func TestEventRecorder_FallbackToPodNamespace(t *testing.T) {
 	if !found {
 		t.Fatalf("expected event involvedObject.namespace to be 'podns' when object has no namespace")
 	}
+}
+
+func TestEventRecorder_FallbackToPodNamespaceWithSchemeReference(t *testing.T) {
+	cs := fake.NewClientset()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add corev1 to scheme: %v", err)
+	}
+	logger, _ := zap.NewDevelopment()
+	rec := &K8sEventRecorder{
+		Clientset: cs,
+		Source:    corev1.EventSource{Component: "test"},
+		Scheme:    scheme,
+		Namespace: "podns",
+		Logger:    logger.Sugar(),
+	}
+
+	obj := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pod-without-namespace",
+			UID:  "3333",
+		},
+	}
+
+	rec.Eventf(obj, nil, "Warning", "ReasonWithScheme", "ReasonWithScheme", "scheme message")
+
+	evs, err := cs.EventsV1().Events("podns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(evs.Items) == 0 {
+		t.Fatalf("expected at least one event in namespace 'podns', got 0")
+	}
+
+	for _, e := range evs.Items {
+		if e.Regarding.Name == "pod-without-namespace" && e.Regarding.Namespace == "podns" {
+			return
+		}
+	}
+	t.Fatalf("expected scheme reference fallback to set event involvedObject.namespace to 'podns'")
 }
