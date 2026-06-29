@@ -431,7 +431,11 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	// Check if user is authorized to approve (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
-	if !c.isUserAuthorizedToApprove(apiCtx, session, currentUser.(string), userGroups) {
+	currentUserEmail := ""
+	if email, exists := ctx.Get("email"); exists && email != nil {
+		currentUserEmail, _ = email.(string)
+	}
+	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
 		return
 	}
@@ -517,7 +521,11 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	// Check if user is authorized to reject (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
-	if !c.isUserAuthorizedToApprove(apiCtx, session, currentUser.(string), userGroups) {
+	currentUserEmail := ""
+	if email, exists := ctx.Get("email"); exists && email != nil {
+		currentUserEmail, _ = email.(string)
+	}
+	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
 		return
 	}

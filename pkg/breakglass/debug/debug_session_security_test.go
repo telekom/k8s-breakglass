@@ -106,6 +106,28 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 		assert.True(t, authorized, "Explicitly allowed user should be authorized")
 	})
 
+	t.Run("explicitly allowed email can approve when username is subject", func(t *testing.T) {
+		authorized := controller.isUserIdentityAuthorizedToApprove(
+			ctx,
+			session,
+			"oidc-subject-123",
+			"admin@example.com",
+			nil, // No groups
+		)
+		assert.True(t, authorized, "Configured approver email should authorize even when username is a subject")
+	})
+
+	t.Run("explicitly allowed email can approve when username only differs by case", func(t *testing.T) {
+		authorized := controller.isUserIdentityAuthorizedToApprove(
+			ctx,
+			session,
+			"Admin@Example.com",
+			"admin@example.com",
+			nil, // No groups
+		)
+		assert.True(t, authorized, "Configured approver email should be checked when username casing differs")
+	})
+
 	t.Run("unauthorized user cannot approve", func(t *testing.T) {
 		authorized := controller.isUserAuthorizedToApprove(
 			ctx,
@@ -126,6 +148,152 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 		)
 		assert.False(t, authorized, "Session requester should not be able to approve their own session even if in approver group")
 	})
+
+	t.Run("requester email cannot approve when username differs", func(t *testing.T) {
+		sessionWithEmail := session.DeepCopy()
+		sessionWithEmail.Spec.RequestedBy = "oidc-subject-123"
+		sessionWithEmail.Spec.RequestedByEmail = "developer@example.com"
+
+		authorized := controller.isUserIdentityAuthorizedToApprove(
+			ctx,
+			sessionWithEmail,
+			"different-username",
+			"developer@example.com",
+			[]string{"platform-leads"}, // This group IS an approver group, but self-approval should still be blocked
+		)
+		assert.False(t, authorized, "Session requester email should be blocked from self-approval even if username differs")
+	})
+}
+
+func TestDebugSessionSecurity_ApprovalAuthorizationUsesRecordedBinding(t *testing.T) {
+	scheme := testScheme()
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "secure-debug"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+		},
+	}
+	recordedBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "recorded-binding",
+			Namespace: "team-a",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "secure-debug"},
+			Clusters:    []string{"production"},
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"team-a-approver@example.com"},
+			},
+		},
+	}
+	siblingBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sibling-binding",
+			Namespace: "team-b",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "secure-debug"},
+			Clusters:    []string{"production"},
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"sibling-approver@example.com"},
+			},
+		},
+	}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "binding-session",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "secure-debug",
+			Cluster:     "production",
+			RequestedBy: "developer@example.com",
+			BindingRef: &breakglassv1alpha1.BindingReference{
+				Name:      "recorded-binding",
+				Namespace: "team-a",
+			},
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(template, recordedBinding, siblingBinding, session).
+		WithStatusSubresource(session).
+		Build()
+	controller := &DebugSessionAPIController{
+		client: fakeClient,
+		log:    zaptest.NewLogger(t).Sugar(),
+	}
+
+	ctx := context.Background()
+
+	assert.True(t, controller.isUserIdentityAuthorizedToApprove(
+		ctx,
+		session,
+		"team-a-approver@example.com",
+		"",
+		nil,
+	), "Approver from the recorded binding should be authorized")
+	assert.False(t, controller.isUserIdentityAuthorizedToApprove(
+		ctx,
+		session,
+		"sibling-approver@example.com",
+		"",
+		nil,
+	), "Approver from a sibling binding for the same template and cluster must not be authorized")
+}
+
+func TestDebugSessionSecurity_ApprovalAuthorizationDeniesMissingRecordedBinding(t *testing.T) {
+	scheme := testScheme()
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "secure-debug"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"template-approver@example.com"},
+			},
+		},
+	}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "secure-debug",
+			Cluster:     "production",
+			RequestedBy: "developer@example.com",
+			BindingRef: &breakglassv1alpha1.BindingReference{
+				Name:      "missing-binding",
+				Namespace: "team-a",
+			},
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(template, session).
+		WithStatusSubresource(session).
+		Build()
+	controller := &DebugSessionAPIController{
+		client: fakeClient,
+		log:    zaptest.NewLogger(t).Sugar(),
+	}
+
+	authorized := controller.isUserIdentityAuthorizedToApprove(
+		context.Background(),
+		session,
+		"template-approver@example.com",
+		"",
+		nil,
+	)
+
+	assert.False(t, authorized, "Missing recorded binding should fail closed instead of falling back to template approvers")
 }
 
 // TestDebugSessionSecurity_WildcardPatternMatching tests pattern matching security

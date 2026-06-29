@@ -1466,6 +1466,10 @@ The approval workflow:
 3. Approver approves/rejects → State: `Active` or `Failed`
 4. Session runs until expiry or termination
 
+Approval and rejection handlers block requester self-approval by comparing both the authenticated username and email against `spec.requestedBy` and `spec.requestedByEmail`. A requester remains blocked even when they also belong to an approver group.
+
+When a session is created through a `DebugSessionClusterBinding`, approval and rejection use the approvers from the recorded `spec.bindingRef`. Other bindings that match the same template or cluster do not grant approval for that session.
+
 ## Participant Roles
 
 Debug sessions support multiple participant roles:
