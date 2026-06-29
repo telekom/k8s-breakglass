@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Frontend: share Multi-IDP contract types across model and service layers**: `frontend/src/services/multiIDP.ts` now imports and re-exports the canonical `IDPInfo` and `MultiIDPConfig` definitions from `frontend/src/model/multiIDP.ts`, and the frontend multi-IDP tests now exercise the real shared service/model contract instead of duplicating local interfaces.
 - **BreakglassEscalation reconciliation and events**: Escalation reconciliation now reacts to all spec generation changes and deletion timestamp updates, and Kubernetes Events emitted through the breakglass recorder retain a valid involved-object namespace when the scheme reference omits one.
 - **CI: pin ORT scan image**: The ORT workflow now uses a digest-pinned `ghcr.io/oss-review-toolkit/ort:89.2.0` image instead of the moving `latest` tag, avoiding transient ORT CLI startup failures from mutable container image updates.
 - **Debug session namespace semantics**: `POST /api/debugSessions` now treats legacy body `namespace` as a deprecated alias for `targetNamespace` and rejects conflicting values. DebugSession objects are always created in the matching `ClusterConfig` namespace, and named debug-session routes honor an explicit `?namespace=` hint strictly instead of falling back to another namespace.

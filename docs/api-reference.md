@@ -778,6 +778,7 @@ GET /api/config/idps
 - If `escalationIDPMapping[escalationName]` is empty or missing, the escalation allows any IDP
 - Frontend uses this to pre-populate IDP selection based on escalation choice
 - Data is cached by the reconciler to prevent API server overload
+- The frontend maintains `IDPInfo` and `MultiIDPConfig` as a single shared TypeScript contract in `frontend/src/model/multiIDP.ts`; service helpers import those shared types rather than redefining the response shape.
 
 ### OIDC Authority Proxy
 
