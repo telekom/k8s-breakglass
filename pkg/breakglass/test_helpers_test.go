@@ -22,6 +22,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -91,12 +92,24 @@ func (t *testEscalationLookup) GetClusterBreakglassEscalations(ctx context.Conte
 	for _, e := range list.Items {
 		for _, c := range e.Spec.Allowed.Clusters {
 			if c == cluster || c == "*" {
-				out = append(out, e)
+				out = append(out, testEscalationWithUID(e))
 				break
 			}
 		}
 	}
 	return out, nil
+}
+
+func testEscalationWithUID(escalation breakglassv1alpha1.BreakglassEscalation) breakglassv1alpha1.BreakglassEscalation {
+	if escalation.UID != "" {
+		return escalation
+	}
+	namespace := escalation.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+	escalation.UID = types.UID("test-" + namespace + "-" + escalation.Name)
+	return escalation
 }
 
 func (t *testEscalationLookup) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
@@ -126,4 +139,44 @@ func (t *testEscalationLookup) GetResolver() GroupMemberResolver {
 
 func (t *testEscalationLookup) SetResolver(resolver GroupMemberResolver) {
 	t.resolver = resolver
+}
+
+type uidlessEscalationLookup struct {
+	escalation breakglassv1alpha1.BreakglassEscalation
+	resolver   GroupMemberResolver
+}
+
+func (u *uidlessEscalationLookup) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
+	_ = ctx
+	for _, allowedCluster := range u.escalation.Spec.Allowed.Clusters {
+		if allowedCluster == cluster || allowedCluster == "*" {
+			return []breakglassv1alpha1.BreakglassEscalation{u.escalation}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (u *uidlessEscalationLookup) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
+	clusterEscalations, err := u.GetClusterBreakglassEscalations(ctx, cluster)
+	if err != nil || len(clusterEscalations) == 0 {
+		return clusterEscalations, err
+	}
+	groupSet := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		groupSet[group] = struct{}{}
+	}
+	for _, allowedGroup := range u.escalation.Spec.Allowed.Groups {
+		if _, ok := groupSet[allowedGroup]; ok {
+			return clusterEscalations, nil
+		}
+	}
+	return nil, nil
+}
+
+func (u *uidlessEscalationLookup) GetResolver() GroupMemberResolver {
+	return u.resolver
+}
+
+func (u *uidlessEscalationLookup) SetResolver(resolver GroupMemberResolver) {
+	u.resolver = resolver
 }

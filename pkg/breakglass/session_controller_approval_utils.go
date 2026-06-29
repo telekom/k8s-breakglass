@@ -90,6 +90,10 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		if esc.Spec.EscalatedGroup != session.Spec.GrantedGroup {
 			continue
 		}
+		if sessionHasEscalationOwner(session) && !sessionOwnedByEscalation(session, esc) {
+			reqLog.Debugw("Skipping escalation that does not own the session", "session", session.Name, "escalation", esc.Name)
+			continue
+		}
 		foundMatchingEscalation = true
 		reqLog.Debugw("Evaluating matching escalation", "escalation", esc.Name, "users", len(esc.Spec.Approvers.Users), "groups", len(esc.Spec.Approvers.Groups))
 
@@ -210,6 +214,31 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	}
 
 	return mostSpecificDenial
+}
+
+func sessionHasEscalationOwner(session breakglassv1alpha1.BreakglassSession) bool {
+	for _, ownerRef := range session.OwnerReferences {
+		if ownerRef.APIVersion == breakglassv1alpha1.GroupVersion.String() &&
+			ownerRef.Kind == "BreakglassEscalation" &&
+			ownerRef.Controller != nil &&
+			*ownerRef.Controller {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionOwnedByEscalation(session breakglassv1alpha1.BreakglassSession, esc breakglassv1alpha1.BreakglassEscalation) bool {
+	for _, ownerRef := range session.OwnerReferences {
+		if ownerRef.APIVersion == breakglassv1alpha1.GroupVersion.String() &&
+			ownerRef.Kind == "BreakglassEscalation" &&
+			ownerRef.Name == esc.Name &&
+			ownerRef.Controller != nil &&
+			*ownerRef.Controller {
+			return ownerRef.UID != "" && esc.UID != "" && ownerRef.UID == esc.UID
+		}
+	}
+	return false
 }
 
 // isSessionApprover returns true if the current user is authorized to approve/reject the session.

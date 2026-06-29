@@ -30,6 +30,12 @@ import (
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
+const (
+	denyPolicyPodsAdminGroup       = "breakglass-policy-pods-admin"
+	denyPolicyEmergencyAdminGroup  = "breakglass-policy-emergency-admin"
+	denyPolicyMultiClusterOpsGroup = "breakglass-policy-multi-cluster-ops"
+)
+
 // TestDenyPolicyEnforcement tests that DenyPolicy resources are enforced correctly.
 //
 // Test coverage for issue #48:
@@ -188,7 +194,7 @@ func TestDenyPolicyBlocksSpecificVerbs(t *testing.T) {
 
 	// Create escalation referencing the DenyPolicy
 	escalation := helpers.NewEscalationBuilder("e2e-dp001-escalation", namespace).
-		WithEscalatedGroup("breakglass-pods-admin"). // Use breakglass-pods-admin which has RBAC for pods
+		WithEscalatedGroup(denyPolicyPodsAdminGroup).
 		WithAllowedClusters(clusterName).
 		WithMaxValidFor("1h").
 		WithApprovalTimeout("15m").
@@ -199,6 +205,7 @@ func TestDenyPolicyBlocksSpecificVerbs(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
@@ -281,7 +288,7 @@ func TestDenyPolicyBlocksSpecificResources(t *testing.T) {
 
 	// Create escalation referencing the DenyPolicy
 	escalation := helpers.NewEscalationBuilder("e2e-dp002-escalation", namespace).
-		WithEscalatedGroup("breakglass-emergency-admin"). // Use breakglass-emergency-admin which has RBAC for all resources
+		WithEscalatedGroup(denyPolicyEmergencyAdminGroup).
 		WithAllowedClusters(clusterName).
 		WithMaxValidFor("1h").
 		WithApprovalTimeout("15m").
@@ -292,6 +299,7 @@ func TestDenyPolicyBlocksSpecificResources(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
@@ -373,7 +381,7 @@ func TestDenyPolicyBlocksSpecificNamespaces(t *testing.T) {
 
 	// Create escalation referencing the DenyPolicy
 	escalation := helpers.NewEscalationBuilder("e2e-dp003-escalation", namespace).
-		WithEscalatedGroup("breakglass-pods-admin"). // Use breakglass-pods-admin which has RBAC for pods
+		WithEscalatedGroup(denyPolicyPodsAdminGroup).
 		WithAllowedClusters(clusterName).
 		WithMaxValidFor("1h").
 		WithApprovalTimeout("15m").
@@ -384,6 +392,7 @@ func TestDenyPolicyBlocksSpecificNamespaces(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
@@ -466,7 +475,7 @@ func TestDenyPolicyBlocksSpecificAPIGroups(t *testing.T) {
 
 	// Create escalation referencing the DenyPolicy
 	escalation := helpers.NewEscalationBuilder("e2e-dp004-escalation", namespace).
-		WithEscalatedGroup("breakglass-multi-cluster-ops"). // Use breakglass-multi-cluster-ops which has RBAC for apps group
+		WithEscalatedGroup(denyPolicyMultiClusterOpsGroup).
 		WithAllowedClusters(clusterName).
 		WithMaxValidFor("1h").
 		WithApprovalTimeout("15m").
@@ -477,6 +486,7 @@ func TestDenyPolicyBlocksSpecificAPIGroups(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
@@ -567,7 +577,7 @@ func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
 
 	// Create escalation referencing the DenyPolicy
 	escalation := helpers.NewEscalationBuilder("e2e-dp005-escalation", namespace).
-		WithEscalatedGroup("breakglass-emergency-admin"). // Use breakglass-emergency-admin which has RBAC for all resources
+		WithEscalatedGroup(denyPolicyEmergencyAdminGroup).
 		WithAllowedClusters(clusterName).
 		WithMaxValidFor("1h").
 		WithApprovalTimeout("15m").
@@ -578,6 +588,7 @@ func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
@@ -675,7 +686,7 @@ func TestDenyPolicyPrecedenceOrdering(t *testing.T) {
 
 	// Create escalation referencing both policies
 	escalation := helpers.NewEscalationBuilder("e2e-dp007-escalation", namespace).
-		WithEscalatedGroup("breakglass-emergency-admin"). // Use breakglass-emergency-admin which has RBAC for all resources
+		WithEscalatedGroup(denyPolicyEmergencyAdminGroup).
 		WithAllowedClusters(clusterName).
 		WithMaxValidFor("1h").
 		WithApprovalTimeout("15m").
@@ -686,6 +697,7 @@ func TestDenyPolicyPrecedenceOrdering(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
@@ -829,7 +841,7 @@ func TestDenyPolicyAppliesToClusters(t *testing.T) {
 
 	// Create escalation referencing the DenyPolicy
 	escalation := helpers.NewEscalationBuilder("e2e-dp011-escalation", namespace).
-		WithEscalatedGroup("breakglass-emergency-admin"). // Must have RBAC binding for SAR to succeed
+		WithEscalatedGroup(denyPolicyEmergencyAdminGroup).
 		WithAllowedClusters(clusterName).
 		WithMaxValidFor("1h").
 		WithApprovalTimeout("15m").
@@ -840,6 +852,7 @@ func TestDenyPolicyAppliesToClusters(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{

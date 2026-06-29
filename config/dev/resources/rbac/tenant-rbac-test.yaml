@@ -50,6 +50,8 @@ roleRef:
 subjects:
 - kind: Group
   name: breakglass-pods-admin
+- kind: Group
+  name: breakglass-policy-pods-admin
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -75,6 +77,8 @@ roleRef:
 subjects:
 - kind: Group
   name: breakglass-emergency-admin
+- kind: Group
+  name: breakglass-policy-emergency-admin
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -162,6 +166,8 @@ roleRef:
 subjects:
 - kind: Group
   name: breakglass-multi-cluster-ops
+- kind: Group
+  name: breakglass-policy-multi-cluster-ops
 ---
 # Additional test groups for e2e test escalation scenarios
 # These groups are used by various e2e tests that create escalations

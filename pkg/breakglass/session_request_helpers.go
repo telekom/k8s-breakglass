@@ -652,10 +652,17 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	bs.Labels["breakglass.t-caas.telekom.com/group"] = naming.ToRFC1123Label(params.request.GroupName)
 	// Ensure session is created in the same namespace as the matched escalation
 	if params.matchedEsc != nil {
-		reqLog.Debugw("Matched escalation found during session creation; attaching ownerRef",
+		reqLog.Debugw("Matched escalation found during session creation",
 			"escalationName", params.matchedEsc.Name, "escalationUID", params.matchedEsc.UID, "escalationNamespace", params.matchedEsc.Namespace)
 		bs.Namespace = params.matchedEsc.Namespace
-		// Attach owner reference so the session can be linked back to its escalation
+		if params.matchedEsc.UID == "" {
+			err := fmt.Errorf("matched escalation %s/%s has no UID", params.matchedEsc.Namespace, params.matchedEsc.Name)
+			reqLog.Errorw("Refusing to create session for matched escalation without UID",
+				"error", err, "escalationName", params.matchedEsc.Name, "escalationNamespace", params.matchedEsc.Namespace)
+			apiresponses.RespondInternalError(c, "resolve matched escalation identity", err, reqLog)
+			return nil, false
+		}
+		// Attach owner reference so the session can be linked back to its escalation.
 		// This allows other components (webhook/controller) to resolve the escalation
 		// via the session's OwnerReferences.
 		bs.OwnerReferences = []metav1.OwnerReference{{

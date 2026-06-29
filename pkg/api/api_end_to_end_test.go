@@ -116,6 +116,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      e2eEscalation,
 			Namespace: e2eNamespace,
+			UID:       "allow-create-uid",
 		},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
@@ -962,6 +963,7 @@ func TestEndToEndSARPodSecurityWithEscalationOverride(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "override-escalation",
 			Namespace: e2eNamespace,
+			UID:       "override-escalation-uid",
 		},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
