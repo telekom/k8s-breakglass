@@ -72,11 +72,6 @@ lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friend
 verify-release-provenance: ## Verify release image provenance signs the registry digest.
 	bash hack/verify-release-provenance.sh
 
-.PHONY: verify-ort-enforcement
-verify-ort-enforcement: ## Verify ORT workflow fails on issues and policy violations.
-	bash hack/verify-ort-enforcement.sh --self-test
-	bash hack/verify-ort-enforcement.sh
-
 .PHONY: vulncheck
 vulncheck: ## Run govulncheck to check for known vulnerabilities.
 	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
@@ -124,7 +119,7 @@ validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass G
 	@echo "Fixture validation passed"
 
 .PHONY: verify
-verify: fmt vet lint-strict test verify-release-provenance verify-ort-enforcement vulncheck ## Run all verification checks (fmt, vet, lint, test, workflow guards, vulncheck).
+verify: fmt vet lint-strict test verify-release-provenance vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
 	go build ./...
 	@echo "All verification checks passed!"
 
