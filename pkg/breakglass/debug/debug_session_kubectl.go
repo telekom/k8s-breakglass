@@ -723,6 +723,9 @@ func (h *KubectlDebugHandler) isNamespaceAllowedForEphemeral(
 	}
 	nsLabels, err := h.fetchNamespaceLabels(ctx, targetClient, namespace)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, kubectlDebugRequestErrorf("namespace %s not found", namespace)
+		}
 		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: %w", namespace, err)
 	}
 	return matcher.IsAllowedWithLabels(namespace, nsLabels), nil

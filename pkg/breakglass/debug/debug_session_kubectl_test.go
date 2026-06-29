@@ -409,15 +409,15 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 			wantHTTP:         http.StatusForbidden,
 		},
 		{
-			name: "selector lookup fails closed when namespace labels cannot be fetched",
+			name: "selector lookup treats missing namespace as request error",
 			allowed: &breakglassv1alpha1.NamespaceFilter{
 				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 					{MatchLabels: map[string]string{"env": "prod"}},
 				},
 			},
 			expectError:      true,
-			expectedErrorMsg: "failed to fetch namespace labels for production",
-			wantHTTP:         http.StatusInternalServerError,
+			expectedErrorMsg: "namespace production not found",
+			wantHTTP:         http.StatusBadRequest,
 		},
 	}
 
