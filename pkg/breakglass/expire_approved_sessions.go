@@ -27,7 +27,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 
 			updated, applied, err := wc.updateSessionStatusIfCurrent(
 				context.Background(),
-				ses.Name,
+				ses,
 				breakglassv1alpha1.SessionStateApproved,
 				IsSessionExpired,
 				func(current *breakglassv1alpha1.BreakglassSession) {

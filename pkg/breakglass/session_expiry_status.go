@@ -1,18 +1,6 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
 
 package breakglass
 
@@ -29,7 +17,7 @@ type sessionExpiryPredicate func(breakglassv1alpha1.BreakglassSession) bool
 
 func (wc *BreakglassSessionController) updateSessionStatusIfCurrent(
 	ctx context.Context,
-	sessionName string,
+	session breakglassv1alpha1.BreakglassSession,
 	expectedState breakglassv1alpha1.BreakglassSessionState,
 	shouldUpdate sessionExpiryPredicate,
 	mutate sessionExpiryMutator,
@@ -38,9 +26,17 @@ func (wc *BreakglassSessionController) updateSessionStatusIfCurrent(
 	var applied bool
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current, err := wc.sessionManager.GetBreakglassSessionByName(ctx, sessionName)
-		if err != nil {
-			return err
+		var current breakglassv1alpha1.BreakglassSession
+		key := client.ObjectKeyFromObject(&session)
+		if err := wc.sessionManager.Reader().Get(ctx, key, &current); err != nil {
+			if key.Namespace != "" {
+				return err
+			}
+			fallback, fallbackErr := wc.sessionManager.GetBreakglassSessionByName(ctx, key.Name)
+			if fallbackErr != nil {
+				return fallbackErr
+			}
+			current = fallback
 		}
 		updated = current
 

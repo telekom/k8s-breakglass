@@ -23,7 +23,7 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 			now := time.Now()
 			updated, applied, err := wc.updateSessionStatusIfCurrent(
 				context.Background(),
-				ses.Name,
+				ses,
 				breakglassv1alpha1.SessionStatePending,
 				IsSessionApprovalTimedOut,
 				func(current *breakglassv1alpha1.BreakglassSession) {
