@@ -394,6 +394,8 @@ describe("useSessionList", () => {
       });
 
       expect(filtered.length).toBe(2);
+      expect(filtered.map((s) => s!.spec!.user).sort()).toEqual(["ALICE.SMITH@CORP.COM", "alice@example.com"]);
+      expect(filtered.some((s) => s!.spec!.user === "bob@example.com")).toBe(false);
     });
 
     it("filters by name with partial match", () => {
@@ -413,6 +415,8 @@ describe("useSessionList", () => {
       });
 
       expect(filtered.length).toBe(2);
+      expect(filtered.map((s) => s!.metadata!.name).sort()).toEqual(["emergency-prod-003", "session-prod-001"]);
+      expect(filtered.some((s) => s!.metadata!.name === "session-staging-002")).toBe(false);
     });
 
     it("filters by multiple states", () => {
@@ -433,6 +437,7 @@ describe("useSessionList", () => {
       });
 
       expect(filtered.length).toBe(2);
+      expect(filtered.map((s) => s!.status!.state).sort()).toEqual(["Approved", "Pending"]);
     });
 
     it("returns all sessions with empty filters", () => {
