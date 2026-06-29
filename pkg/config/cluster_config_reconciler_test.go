@@ -540,7 +540,8 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 		},
 	}
 
-	// Already failed session - should be skipped
+	// Failed sessions may still have tracked resources, so they should be
+	// moved into the terminated cleanup path.
 	failedDebugSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "failed-debug",
@@ -591,11 +592,13 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, other.Status.State)
 
-	// Verify already failed session state unchanged
+	// Verify failed session was terminated so cleanup can run
 	var failed breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "failed-debug", Namespace: "default"}, &failed)
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, failed.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, failed.Status.State)
+	assert.Contains(t, failed.Status.Message, "ClusterConfig")
+	assert.Contains(t, failed.Status.Message, "deleted")
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesBothSessionTypes(t *testing.T) {
@@ -724,12 +727,11 @@ func TestClusterConfigReconciler_SkipsTerminalStates(t *testing.T) {
 		})
 	}
 
-	// Add debug sessions in terminal states
+	// Add debug sessions that are already in cleanup terminal states.
 	debugTerminalStates := []struct {
 		name  string
 		state breakglassv1alpha1.DebugSessionState
 	}{
-		{"debug-failed", breakglassv1alpha1.DebugSessionStateFailed},
 		{"debug-terminated", breakglassv1alpha1.DebugSessionStateTerminated},
 		{"debug-expired", breakglassv1alpha1.DebugSessionStateExpired},
 	}

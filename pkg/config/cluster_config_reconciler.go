@@ -249,9 +249,8 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 
-		// Skip already terminal sessions
-		if session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+		// Skip sessions that are already in cleanup or already cleaned up.
+		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
 			continue
 		}
