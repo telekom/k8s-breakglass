@@ -1401,6 +1401,8 @@ Requested durations must be positive and cannot exceed the effective
 target cluster, that binding's duration constraints override the template
 constraints for that session. Renewals extend the current expiration time, but
 the renewed expiration cannot move past `status.startsAt + maxDuration`.
+Only the requester or an active `owner`/`participant` status entry can renew a
+session; `viewer` entries and participants with `leftAt` set cannot renew.
 
 ## Terminal Sharing
 
