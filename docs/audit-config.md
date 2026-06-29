@@ -384,6 +384,8 @@ The audit system exposes Prometheus metrics:
 - `breakglass_audit_circuit_breaker_rejections_total{sink="..."}` - Writes rejected while a sink circuit is open
 - `breakglass_audit_circuit_breaker_state_transitions_total{sink="...",from="...",to="..."}` - Circuit state transitions
 
+Kafka and webhook sinks use the maintained `github.com/sony/gobreaker/v2` library behind these metrics while keeping the public audit sink health/state contract unchanged.
+
 ## Examples
 
 See [config/samples/audit_config_kafka.yaml](../config/samples/audit_config_kafka.yaml) for complete examples including:
