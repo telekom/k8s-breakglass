@@ -66,11 +66,14 @@ describe("IDPSelector Utilities", () => {
   describe("getAllowedIDPsForEscalation()", () => {
     const mockConfig: MultiIDPConfig = {
       identityProviders: [
-        { name: "keycloak", displayName: "Keycloak SSO", enabled: true },
-        { name: "azure", displayName: "Azure AD", enabled: true },
-        { name: "disabled-idp", displayName: "Disabled IDP", enabled: false },
+        { name: "keycloak", displayName: "Keycloak SSO", issuer: "https://keycloak", enabled: true },
+        { name: "azure", displayName: "Azure AD", issuer: "https://azure", enabled: true },
+        { name: "disabled-idp", displayName: "Disabled IDP", issuer: "https://disabled", enabled: false },
       ],
-      defaultIDP: "keycloak",
+      escalationIDPMapping: {
+        "production-access": ["keycloak"],
+        "azure-only": ["azure"],
+      },
     };
 
     const mockEscalations: EscalationInfo[] = [
@@ -84,7 +87,7 @@ describe("IDPSelector Utilities", () => {
     });
 
     it("returns empty array when config has no IDPs", () => {
-      const emptyConfig = { identityProviders: [] };
+      const emptyConfig: MultiIDPConfig = { identityProviders: [], escalationIDPMapping: {} };
       expect(getAllowedIDPsForEscalation(emptyConfig, "production-access", mockEscalations)).toEqual([]);
     });
 
@@ -109,9 +112,10 @@ describe("IDPSelector Utilities", () => {
     it("filters out disabled IDPs from allowed list", () => {
       const config: MultiIDPConfig = {
         identityProviders: [
-          { name: "disabled-idp", enabled: false },
-          { name: "enabled-idp", enabled: true },
+          { name: "disabled-idp", displayName: "Disabled", issuer: "https://disabled", enabled: false },
+          { name: "enabled-idp", displayName: "Enabled", issuer: "https://enabled", enabled: true },
         ],
+        escalationIDPMapping: {},
       };
       const escalations: EscalationInfo[] = [{ name: "test", allowedIDPs: ["disabled-idp", "enabled-idp"] }];
       const result = getAllowedIDPsForEscalation(config, "test", escalations);
@@ -122,25 +126,25 @@ describe("IDPSelector Utilities", () => {
 
   describe("getIDPDisplayName()", () => {
     it("returns displayName when present", () => {
-      const idp: IDPInfo = { name: "keycloak", displayName: "Keycloak SSO", enabled: true };
+      const idp: IDPInfo = { name: "keycloak", displayName: "Keycloak SSO", issuer: "https://keycloak", enabled: true };
       expect(getIDPDisplayName(idp)).toBe("Keycloak SSO");
     });
 
     it("returns name when displayName is not present", () => {
-      const idp: IDPInfo = { name: "keycloak", enabled: true };
+      const idp: IDPInfo = { name: "keycloak", displayName: "", issuer: "https://keycloak", enabled: true };
       expect(getIDPDisplayName(idp)).toBe("keycloak");
     });
 
     it("returns name when displayName is empty string", () => {
-      const idp: IDPInfo = { name: "keycloak", displayName: "", enabled: true };
+      const idp: IDPInfo = { name: "keycloak", displayName: "", issuer: "https://keycloak", enabled: true };
       expect(getIDPDisplayName(idp)).toBe("keycloak");
     });
   });
 
   describe("isIDPSelectionValid()", () => {
     const allowedIDPs: IDPInfo[] = [
-      { name: "keycloak", enabled: true },
-      { name: "azure", enabled: true },
+      { name: "keycloak", displayName: "Keycloak", issuer: "https://keycloak", enabled: true },
+      { name: "azure", displayName: "Azure", issuer: "https://azure", enabled: true },
     ];
 
     it("returns true when IDP is in allowed list", () => {
