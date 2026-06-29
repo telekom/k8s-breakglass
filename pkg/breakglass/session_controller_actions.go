@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,14 +20,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+var errAuthenticatedIdentityNotFound = errors.New("authenticated identity claims not found in token")
+
 func (wc *BreakglassSessionController) authenticatedUserIdentifiers(c *gin.Context) (string, []string, error) {
-	email, err := wc.identityProvider.GetEmail(c)
-	username := wc.identityProvider.GetUsername(c)
-	userID := wc.identityProvider.GetIdentity(c)
-	if err != nil && username == "" && userID == "" {
-		return "", nil, err
+	email := c.GetString("email")
+	username := c.GetString("username")
+	userID := c.GetString("user_id")
+	authIdentifiers := collectAuthIdentifiers(email, username, userID)
+	if len(authIdentifiers) == 0 {
+		return "", nil, errAuthenticatedIdentityNotFound
 	}
-	return firstNonEmpty(email, username, userID), collectAuthIdentifiers(email, username, userID), nil
+	return firstNonEmpty(email, username, userID), authIdentifiers, nil
 }
 
 // handleWithdrawMyRequest allows the session requester to withdraw their own pending request
@@ -49,8 +53,12 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	// Only allow the original requester to withdraw
 	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
-		reqLog.Error("error getting user identity email", zap.Error(err))
-		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
+		reqLog.Error("error getting authenticated user identifiers", zap.Error(err))
+		if errors.Is(err, errAuthenticatedIdentityNotFound) {
+			apiresponses.RespondUnauthorizedWithMessage(c, "authenticated identity claims not found in token")
+			return
+		}
+		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
 	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) {
@@ -130,8 +138,12 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	// Only allow the original requester to drop
 	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
-		reqLog.Error("error getting user identity email", zap.Error(err))
-		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
+		reqLog.Error("error getting authenticated user identifiers", zap.Error(err))
+		if errors.Is(err, errAuthenticatedIdentityNotFound) {
+			apiresponses.RespondUnauthorizedWithMessage(c, "authenticated identity claims not found in token")
+			return
+		}
+		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
 	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) {

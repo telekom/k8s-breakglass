@@ -4845,6 +4845,139 @@ func (e ErrIdentityProvider) GetUserIdentifier(c *gin.Context, claimType breakgl
 	return "", fmt.Errorf("simulated idp error")
 }
 
+type failOnEmailIdentityProvider struct {
+	t *testing.T
+}
+
+func (p failOnEmailIdentityProvider) GetEmail(c *gin.Context) (string, error) {
+	p.t.Fatal("GetEmail must not be called when alternate authenticated identifiers are present")
+	return "", nil
+}
+func (p failOnEmailIdentityProvider) GetUsername(c *gin.Context) string { return "" }
+func (p failOnEmailIdentityProvider) GetIdentity(c *gin.Context) string { return "" }
+func (p failOnEmailIdentityProvider) GetUserIdentifier(c *gin.Context, claimType breakglassv1alpha1.UserIdentifierClaimType) (string, error) {
+	return "", fmt.Errorf("simulated idp error")
+}
+
+func TestAuthenticatedUserIdentifiersUsesContextClaimsWithoutEmailLookup(t *testing.T) {
+	ctrl := &BreakglassSessionController{
+		identityProvider: failOnEmailIdentityProvider{t: t},
+	}
+
+	t.Run("username and subject without email", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set("username", "owner-username")
+		c.Set("user_id", "owner-subject")
+
+		requester, identifiers, err := ctrl.authenticatedUserIdentifiers(c)
+
+		require.NoError(t, err)
+		require.Equal(t, "owner-username", requester)
+		require.Equal(t, []string{"owner-username", "owner-subject"}, identifiers)
+	})
+
+	t.Run("no authenticated identifiers", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+		requester, identifiers, err := ctrl.authenticatedUserIdentifiers(c)
+
+		require.ErrorIs(t, err, errAuthenticatedIdentityNotFound)
+		require.Empty(t, requester)
+		require.Nil(t, identifiers)
+	})
+}
+
+func TestRequesterActionsReturnUnauthorizedWhenIdentityMissing(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "withdraw", path: "withdraw"},
+		{name: "drop", path: "drop"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+			}
+			session := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: tc.name + "-missing-identity"},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "identity-cluster",
+					User:         "owner@example.com",
+					GrantedGroup: "breakglass-admin",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+			}
+			cli := builder.WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+			sesmanager := SessionManager{Client: cli}
+			escmanager := testEscalationLookup{Client: cli}
+			logger, _ := zap.NewDevelopment()
+			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+			engine := gin.New()
+			_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+			req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/%s", session.Name, tc.path), nil)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
+			require.Contains(t, w.Body.String(), "authenticated identity claims")
+		})
+	}
+}
+
+func TestOwnerRejectRecordsSubjectActorWhenEmailAndUsernameMissing(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "subject-owner-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "subject-cluster",
+			User:         "owner-subject",
+			GrantedGroup: "breakglass-admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	cli := builder.WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	mockAudit := NewMockAuditEmitter(true)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("user_id", "owner-subject")
+		c.Next()
+	}, "/config/config.yaml", nil, cli).WithAuditService(mockAudit)
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/subject-owner-session/reject", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Result().StatusCode)
+	var got breakglassv1alpha1.BreakglassSession
+	require.NoError(t, json.NewDecoder(w.Result().Body).Decode(&got))
+	require.Equal(t, breakglassv1alpha1.SessionStateRejected, got.Status.State)
+	require.Equal(t, "owner-subject", got.Status.Approver)
+	require.Contains(t, got.Status.Approvers, "owner-subject")
+	require.NotEmpty(t, got.Status.Conditions)
+	require.Contains(t, got.Status.Conditions[len(got.Status.Conditions)-1].Message, "owner-subject")
+
+	events := mockAudit.GetEvents()
+	require.Len(t, events, 1)
+	require.Equal(t, audit.EventSessionDenied, events[0].Type)
+	require.Equal(t, "owner-subject", events[0].Actor.User)
+}
+
 // Test that when identity provider fails to return email and mine=true is requested,
 // the handler returns HTTP 500.
 func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
