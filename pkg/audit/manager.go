@@ -100,6 +100,9 @@ type ManagerConfig struct {
 	// Default: empty (all events treated equally)
 	HighVolumeEventTypes []EventType
 
+	// AlwaysCaptureEventTypes are never sampled (always 100%).
+	AlwaysCaptureEventTypes []EventType
+
 	// WriteTimeout is the timeout for writing to sinks.
 	// Default: 5s
 	WriteTimeout time.Duration
