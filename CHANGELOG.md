@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--disable-session-rate-limit` flag**: New CLI flag (`BREAKGLASS_DISABLE_SESSION_RATE_LIMIT` env var) replaces the strict session-creation rate limiter with a permissive one (1000 req/s, burst 10000). Intended for E2E testing and development environments only. Do not use in production.
 
 ### Fixed
-- **Deployment topologies**: Added `--enable-controllers` flag to properly isolate backend reconcilers, cache invalidation handlers, and status updaters in component-specific pods. Leader election is now skipped entirely when `--enable-leader-election=false`, removing unexpected Lease RBAC requirements for webhook-only or frontend-only deployments.
+- **Deployment topologies**: Added `--enable-controllers` (`ENABLE_CONTROLLERS`) to isolate backend reconcilers, controller field indexes, cache invalidation handlers, and status updaters from component-specific pods. Lease creation is skipped whenever the effective role configuration does not need leader election, reducing RBAC requirements for webhook-only or frontend-only deployments.
 - **BreakglassSession validation**: `BreakglassSession` objects with whitespace-only `cluster`, `user`, or `grantedGroup` fields are now rejected during validation.
 
 
