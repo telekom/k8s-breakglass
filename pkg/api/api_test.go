@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -1220,4 +1221,32 @@ func TestBuildInfoEndpoint_OnlyPublicFields(t *testing.T) {
 	}
 	assert.Contains(t, m, "version")
 	assert.Contains(t, m, "buildDate")
+}
+
+func TestSetup_FrontendOnly_ExcludesSAR(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	cfg := &config.Config{
+		Frontend: config.Frontend{BaseURL: "http://localhost:8080"},
+	}
+
+	// enableFrontend=true, enableAPI=false
+	apiControllers, webhookCtrl := Setup(nil, nil, nil, true, false, "",
+		nil, nil, nil, cfg, logger, nil, nil)
+
+	assert.NotNil(t, webhookCtrl)
+
+	for _, ctrl := range apiControllers {
+		if ctrl == webhookCtrl {
+			t.Fatal("webhookCtrl was added to apiControllers despite enableAPI=false")
+		}
+	}
+
+	server := NewServer(zap.NewNop(), *cfg, false, nil)
+	err := server.RegisterAll(apiControllers)
+	assert.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/breakglass/webhook/authorize/foo", nil)
+	server.gin.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
