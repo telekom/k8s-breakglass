@@ -803,11 +803,16 @@ func TestCheckNameCollisions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)
 
-	t.Run("returns nil when client is nil", func(t *testing.T) {
-		// Reset webhookClient to nil for this test
+	t.Run("returns nil when webhook reader and client are nil", func(t *testing.T) {
+		// Reset webhookReader and webhookClient to nil for this test.
 		originalClient := webhookClient
+		originalReader := webhookReader
 		webhookClient = nil
-		defer func() { webhookClient = originalClient }()
+		webhookReader = nil
+		defer func() {
+			webhookClient = originalClient
+			webhookReader = originalReader
+		}()
 
 		binding := &DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
@@ -926,6 +931,62 @@ func TestCheckNameCollisions(t *testing.T) {
 		require.Len(t, collisions, 1)
 		assert.Equal(t, "shared-template", collisions[0].TemplateName)
 		assert.Equal(t, "cluster-1", collisions[0].ClusterName)
+		assert.Equal(t, "existing-binding", collisions[0].CollidingBinding)
+	})
+
+	t.Run("uses live reader instead of stale cached client", func(t *testing.T) {
+		existingBinding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "existing-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "shared-template"},
+				Clusters:    []string{"cluster-1"},
+			},
+		}
+
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "shared-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				DisplayName: "Shared Template",
+			},
+		}
+
+		staleClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(template).
+			Build()
+		liveReader := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(existingBinding, template).
+			Build()
+
+		originalClient := webhookClient
+		originalReader := webhookReader
+		webhookClient = staleClient
+		webhookReader = liveReader
+		defer func() {
+			webhookClient = originalClient
+			webhookReader = originalReader
+		}()
+
+		newBinding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "new-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "shared-template"},
+				Clusters:    []string{"cluster-1"},
+			},
+		}
+
+		collisions, err := CheckNameCollisions(context.Background(), newBinding)
+		assert.NoError(t, err)
+		require.Len(t, collisions, 1)
 		assert.Equal(t, "existing-binding", collisions[0].CollidingBinding)
 	})
 
