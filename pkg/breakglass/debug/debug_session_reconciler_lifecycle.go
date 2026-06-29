@@ -377,11 +377,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			ds.Status.AllowedPods = nil
 			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 		}
-		return fmt.Errorf("failed to get REST config: %w", err)
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
+		return errors.Join(cleanupErrors...)
 	}
 	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to create client: %w", err))
+		return errors.Join(cleanupErrors...)
 	}
 
 	// Cleanup auxiliary resources first using the manager

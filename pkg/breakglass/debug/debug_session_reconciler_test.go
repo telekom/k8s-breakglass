@@ -40,6 +40,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -4877,6 +4878,35 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 
 		err := controller.cleanupResources(context.Background(), session)
 		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
+	})
+
+	t.Run("returns_kubectl_cleanup_error_with_rest_config_error", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-kubectl-rest-config", "test-template", "test-cluster", "user@example.com")
+		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster",
+				Namespace: "default",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session, clusterConfig).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:        zap.NewNop().Sugar(),
+			client:     fakeClient,
+			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get client for cluster test-cluster")
+		assert.Contains(t, err.Error(), "failed to get REST config")
+		assert.Contains(t, err.Error(), "no authentication method configured for cluster test-cluster")
 	})
 }
 
