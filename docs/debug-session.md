@@ -1480,7 +1480,7 @@ Debug sessions support multiple participant roles:
 | `participant` | Can use debug pods, view terminal |
 | `viewer` | Read-only access, can observe terminal sharing |
 
-Joining an existing session requires an entry in `spec.invitedParticipants`, an active unexpired session, and terminal sharing enabled by the resolved template/status. Self-service join requests always create `viewer` entries; users cannot request the `participant` role for themselves.
+Joining an existing session requires an entry in `spec.invitedParticipants`, an active unexpired session, and terminal sharing enabled by the resolved template/status. Leaving or terminating through the API also requires the session to still be active and unexpired. Self-service join requests always create `viewer` entries; users cannot request the `participant` role for themselves.
 
 Leaving a session sets `status.participants[].leftAt`. Participants with
 `leftAt` set are no longer treated as active participants for kubectl-debug

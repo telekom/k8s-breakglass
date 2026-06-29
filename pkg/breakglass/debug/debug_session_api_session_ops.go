@@ -369,6 +369,14 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
 	}
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot terminate session in state '%s'", session.Status.State))
+		return
+	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot terminate expired session")
+		return
+	}
 
 	// Mark as terminated
 	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
@@ -605,26 +613,34 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 
 	// Find the participant
 	username := currentUser.(string)
-	found := false
-	now := metav1.Now()
+	participantIndex := -1
 	for i := range session.Status.Participants {
 		if session.Status.Participants[i].User == username {
-			// Check if owner - owners cannot leave
-			if session.Status.Participants[i].Role == breakglassv1alpha1.ParticipantRoleOwner {
-				apiresponses.RespondForbidden(ctx, "session owner cannot leave; use terminate instead")
-				return
-			}
-			// Mark as left
-			session.Status.Participants[i].LeftAt = &now
-			found = true
+			participantIndex = i
 			break
 		}
 	}
 
-	if !found {
+	if participantIndex == -1 {
 		apiresponses.RespondNotFoundSimple(ctx, "user is not a participant in this session")
 		return
 	}
+	if session.Status.Participants[participantIndex].Role == breakglassv1alpha1.ParticipantRoleOwner {
+		apiresponses.RespondForbidden(ctx, "session owner cannot leave; use terminate instead")
+		return
+	}
+
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot leave session in state '%s'", session.Status.State))
+		return
+	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot leave expired session")
+		return
+	}
+
+	now := metav1.Now()
+	session.Status.Participants[participantIndex].LeftAt = &now
 
 	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to leave session", "session", name, "user", username, "error", err)
