@@ -15,12 +15,13 @@ let previousDocumentOverflow = "";
 
 function handleDocumentKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape" || modalStack.length === 0) return;
+  if (event.defaultPrevented) return;
 
   const activeModal = modalStack[modalStack.length - 1];
   if (!activeModal) return;
 
   event.preventDefault();
-  event.stopImmediatePropagation();
+  event.stopPropagation();
   activeModal.close();
 }
 
@@ -30,7 +31,7 @@ function activateModal(token: symbol, onClose: () => void) {
   deactivateModal(token);
   modalStack.push({ token, close: onClose });
   if (modalStack.length === 1) {
-    document.addEventListener("keydown", handleDocumentKeydown, true);
+    document.addEventListener("keydown", handleDocumentKeydown);
   }
 }
 
@@ -42,7 +43,7 @@ function deactivateModal(token: symbol) {
     modalStack.splice(index, 1);
   }
   if (modalStack.length === 0) {
-    document.removeEventListener("keydown", handleDocumentKeydown, true);
+    document.removeEventListener("keydown", handleDocumentKeydown);
   }
 }
 

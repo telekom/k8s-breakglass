@@ -24,6 +24,41 @@ const ModalHarness = defineComponent({
   template: "<div />",
 });
 
+const ModalWithEscapeChildHarness = defineComponent({
+  props: {
+    opened: {
+      type: Boolean,
+      required: true,
+    },
+    preventDefault: {
+      type: Boolean,
+      default: false,
+    },
+    stopPropagation: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  emits: ["child-escape", "close"],
+  setup(props, { emit }) {
+    useModalBehavior(toRef(props, "opened"), () => emit("close"));
+
+    function handleChildKeydown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (props.preventDefault) event.preventDefault();
+      if (props.stopPropagation) event.stopPropagation();
+      emit("child-escape");
+    }
+
+    return { handleChildKeydown };
+  },
+  template: `
+    <div>
+      <button type="button" data-test="child-control" @keydown="handleChildKeydown">Child</button>
+    </div>
+  `,
+});
+
 const SelfClosingModalHarness = defineComponent({
   emits: ["close"],
   setup(_, { emit }) {
@@ -83,6 +118,36 @@ describe("useModalBehavior", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 
     expect(wrapper.emitted("close")).toHaveLength(1);
+  });
+
+  it("lets nested controls consume Escape before closing the modal", () => {
+    const wrapper = mount(ModalWithEscapeChildHarness, {
+      attachTo: document.body,
+      props: { opened: true, stopPropagation: true },
+    });
+    mountedWrappers.push(wrapper);
+
+    wrapper
+      .find('[data-test="child-control"]')
+      .element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    expect(wrapper.emitted("child-escape")).toHaveLength(1);
+    expect(wrapper.emitted("close")).toBeUndefined();
+  });
+
+  it("ignores Escape events already handled by nested controls", () => {
+    const wrapper = mount(ModalWithEscapeChildHarness, {
+      attachTo: document.body,
+      props: { opened: true, preventDefault: true },
+    });
+    mountedWrappers.push(wrapper);
+
+    wrapper
+      .find('[data-test="child-control"]')
+      .element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+    expect(wrapper.emitted("child-escape")).toHaveLength(1);
+    expect(wrapper.emitted("close")).toBeUndefined();
   });
 
   it("locks background scrolling while any modal is open", async () => {
