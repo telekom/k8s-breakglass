@@ -1250,7 +1250,7 @@ The two-step session creation flow uses the template clusters API to show users 
 GET /api/debugSessions/templates/:name/clusters
 ```
 
-Only ready cluster configurations are offered as debug targets. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, no ready condition, or a duplicate `metadata.name` in another namespace are hidden from this response and `POST /api/debugSessions` rejects new debug sessions that target them.
+Only ready cluster configurations are offered as debug targets. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, no ready condition, or a duplicate `metadata.name` in another namespace are hidden from this response and `POST /api/debugSessions` rejects new debug sessions that target them. `DebugSessionClusterBinding` objects with `spec.hidden: true` are also omitted from this UI discovery response, but callers that already know the binding name can still use it through an explicit `bindingRef` in `POST /api/debugSessions`.
 
 Response includes per-cluster details:
 
@@ -1481,6 +1481,10 @@ Debug sessions support multiple participant roles:
 | `viewer` | Read-only access, can observe terminal sharing |
 
 Joining an existing session requires an entry in `spec.invitedParticipants`, an active unexpired session, and terminal sharing enabled by the resolved template/status. Self-service join requests always create `viewer` entries; users cannot request the `participant` role for themselves.
+
+Leaving a session sets `status.participants[].leftAt`. Participants with
+`leftAt` set are no longer treated as active participants for kubectl-debug
+lookup or authorization webhook pod operations.
 
 ## Audit Logging
 
@@ -1863,8 +1867,9 @@ Active debug sessions take precedence over [deny policies](deny-policy.md) for p
 
 This means:
 
-- A debug session participant can exec into their allowed pods even if a `DenyPolicy` would normally block exec operations.
+- An active debug session participant can exec into their allowed pods even if a `DenyPolicy` would normally block exec operations.
 - The bypass applies **only** to pods listed in `status.allowedPods` and operations resolved in `status.allowedPodOperations` (derived from the template/binding configuration).
+- Participants with `status.participants[].leftAt` set no longer receive this bypass.
 - All other operations (e.g., `get`, `delete`, `create` on non-pod resources) still go through normal deny policy evaluation.
 
 This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:

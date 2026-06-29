@@ -497,6 +497,60 @@ func TestIsSessionOccupyingSlot(t *testing.T) {
 	}
 }
 
+func TestIsSessionAccessActive(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name      string
+		state     breakglassv1alpha1.BreakglassSessionState
+		expiresAt *time.Time
+		expected  bool
+	}{
+		{
+			name:      "approved session with valid expiry grants access",
+			state:     breakglassv1alpha1.SessionStateApproved,
+			expiresAt: func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
+			expected:  true,
+		},
+		{
+			name:     "pending session does not grant access",
+			state:    breakglassv1alpha1.SessionStatePending,
+			expected: false,
+		},
+		{
+			name:     "waiting session does not grant access",
+			state:    breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			expected: false,
+		},
+		{
+			name:      "expired approved session does not grant access",
+			state:     breakglassv1alpha1.SessionStateApproved,
+			expiresAt: func() *time.Time { t := now.Add(-1 * time.Hour); return &t }(),
+			expected:  false,
+		},
+		{
+			name:     "rejected session does not grant access",
+			state:    breakglassv1alpha1.SessionStateRejected,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State: tt.state,
+				},
+			}
+			if tt.expiresAt != nil {
+				session.Status.ExpiresAt = metav1.NewTime(*tt.expiresAt)
+			}
+
+			assert.Equal(t, tt.expected, IsSessionAccessActive(session))
+		})
+	}
+}
+
 // TestDropK8sInternalFieldsSession tests the dropK8sInternalFieldsSession function
 func TestDropK8sInternalFieldsSession(t *testing.T) {
 	t.Run("nil session does not panic", func(t *testing.T) {

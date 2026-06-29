@@ -1,5 +1,6 @@
 import axios from "axios";
 import { debug, error as logError } from "@/services/logger";
+import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 
 /**
  * Phase 8: Multi-IDP Configuration Service
@@ -15,38 +16,7 @@ import { debug, error as logError } from "@/services/logger";
  * - Enforce authorization constraints at UI level
  */
 
-/**
- * Information about a single identity provider
- * Used for rendering the IDP selection dropdown and displaying metadata
- */
-export interface IDPInfo {
-  /** Unique identifier for the IDP (used in session.identityProvider) */
-  name: string;
-  /** Human-readable name for UI display in dropdowns and labels */
-  displayName: string;
-  /** OIDC issuer URL (for frontend debugging/validation) */
-  issuer: string;
-  /** Whether this IDP is currently active/enabled */
-  enabled: boolean;
-  /** OIDC authority endpoint for direct IDP login (optional) */
-  oidcAuthority?: string;
-  /** OIDC client ID for direct IDP login (optional) */
-  oidcClientID?: string;
-}
-
-/**
- * Multi-IDP configuration response from the backend
- * Combines available IDPs with authorization context
- */
-export interface MultiIDPConfig {
-  /** List of enabled identity providers available for selection */
-  identityProviders: IDPInfo[];
-  /** Maps escalation names to their allowed IDP names
-   *  Empty array [] means all IDPs are allowed (backward compatibility)
-   *  Example: { "prod-admin": ["corporate-idp"], "dev-admin": [] }
-   */
-  escalationIDPMapping: Record<string, string[]>;
-}
+export type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 
 const emptyMultiIDPConfig = (): MultiIDPConfig => ({
   identityProviders: [],

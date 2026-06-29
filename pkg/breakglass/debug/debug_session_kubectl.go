@@ -149,7 +149,7 @@ func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, clust
 
 		// Check if user is a participant
 		for _, p := range ds.Status.Participants {
-			if p.User == user {
+			if p.User == user && p.LeftAt == nil {
 				return &ds, nil
 			}
 		}

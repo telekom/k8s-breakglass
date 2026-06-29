@@ -1,12 +1,8 @@
 import { vi, type Mock } from "vitest";
 import axios from "axios";
-import {
-  getMultiIDPConfig,
-  getAllowedIDPsForEscalation,
-  isIDPAllowedForEscalation,
-  type MultiIDPConfig,
-} from "./multiIDP";
+import { getMultiIDPConfig, getAllowedIDPsForEscalation, isIDPAllowedForEscalation } from "./multiIDP";
 import { error as logError } from "@/services/logger";
+import type { MultiIDPConfig } from "@/model/multiIDP";
 
 vi.mock("axios", () => ({
   __esModule: true,

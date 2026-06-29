@@ -8,7 +8,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
 
 - [ ] Kubernetes cluster version 1.27+ (tested with up to 1.32)
 - [ ] cert-manager installed (for webhook TLS certificates)
-- [ ] Ingress controller configured (nginx, traefik, or similar) **or** Gateway API with HTTPRoute (see [Gateway API Configuration](gateway-api-configuration.md))
+- [ ] Ingress controller configured (nginx, traefik, or similar)
 - [ ] TLS certificates for external access (production CA, not self-signed)
 - [ ] DNS configured for breakglass service endpoint
 - [ ] Storage for audit logs (optional, if using persistent audit)
@@ -175,13 +175,6 @@ affinity:
 | BreakglassSessionCleanupFailing | Cleanup errors for 15m | Warning |
 | BreakglassNoLeader | No leader for 2m | Critical |
 | BreakglassDown | No healthy replicas | Critical |
-
-### Distributed Tracing (Optional)
-
-- [ ] Deploy an OpenTelemetry Collector (or compatible backend like Tempo/Jaeger)
-- [ ] Enable tracing via `--otel-enabled` / `OTEL_ENABLED=true`
-- [ ] Set the collector endpoint (`--otel-endpoint` / `OTEL_EXPORTER_OTLP_ENDPOINT`)
-- [ ] Adjust sampling rate for your traffic volume (`--otel-sampling-rate=0.1`)
 
 ### Health Checks
 

@@ -14,8 +14,8 @@ vi.mock("@/services/logger", () => ({
 import AuthService, { useUser, AuthRedirect, AuthSilentRedirect } from "./auth";
 import { User } from "oidc-client-ts";
 import { getMultiIDPConfig } from "@/services/multiIDP";
-import type { MultiIDPConfig } from "@/services/multiIDP";
 import type Config from "@/model/config";
+import type { MultiIDPConfig } from "@/model/multiIDP";
 
 const mockedGetMultiIDPConfig = getMultiIDPConfig as Mock<typeof getMultiIDPConfig>;
 const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";

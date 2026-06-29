@@ -169,8 +169,8 @@ Authorization: Bearer <token>
 | `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions) |
 | `approver` | boolean | Sessions user can approve (default: `true`) |
 | `approvedByMe` | boolean | Sessions the user has already approved |
-| `activeOnly` | boolean | Only return active (currently running) sessions |
-| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`. |
+| `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
+| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. |
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:
 
@@ -778,6 +778,7 @@ GET /api/config/idps
 - If `escalationIDPMapping[escalationName]` is empty or missing, the escalation allows any IDP
 - Frontend uses this to pre-populate IDP selection based on escalation choice
 - Data is cached by the reconciler to prevent API server overload
+- The frontend maintains `IDPInfo` and `MultiIDPConfig` as a single shared TypeScript contract in `frontend/src/model/multiIDP.ts`; service helpers import those shared types rather than redefining the response shape.
 
 ### OIDC Authority Proxy
 
@@ -968,6 +969,9 @@ POST /api/debugSessions/:name/leave
 ```
 
 Allows a participant (not owner) to leave a session. Owners must use terminate instead.
+The API sets the participant's `leftAt` timestamp; users with `leftAt` set are
+excluded from active participant checks and cannot use debug-session pod
+operations.
 
 ### Renew Debug Session
 
@@ -1152,7 +1156,7 @@ Returns full `DebugSessionTemplate` CRD object.
 GET /api/debugSessions/templates/:name/clusters
 ```
 
-Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions.
+Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions. `DebugSessionClusterBinding` resources with `spec.hidden: true` are omitted from this discovery response and cannot become the default `bindingRef` here, but explicit `POST /api/debugSessions` requests may still use a hidden binding by providing `bindingRef`.
 
 **Response (200 OK):**
 
@@ -1219,7 +1223,7 @@ Returns available clusters for a template with resolved constraints from cluster
 | `clusters[].name` | string | Cluster identifier |
 | `clusters[].displayName` | string | Human-readable cluster name |
 | `clusters[].environment` | string | Cluster environment (production, staging, etc.) |
-| `clusters[].bindingRef` | object | Reference to the `DebugSessionClusterBinding` providing access |
+| `clusters[].bindingRef` | object | Reference to the visible `DebugSessionClusterBinding` providing access |
 | `clusters[].constraints` | object | Resolved session constraints (from binding or template) |
 | `clusters[].schedulingOptions` | object | Available scheduling options for node selection |
 | `clusters[].namespaceConstraints` | object | Namespace restrictions and defaults |
