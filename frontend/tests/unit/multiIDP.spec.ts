@@ -10,11 +10,8 @@
  * @vitest-environment jsdom
  */
 
-import {
-  getAllowedIDPsForEscalation,
-  isIDPAllowedForEscalation,
-} from "@/services/multiIDP";
-import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
+import { getAllowedIDPsForEscalation, isIDPAllowedForEscalation } from "@/services/multiIDP";
+import type { MultiIDPConfig } from "@/model/multiIDP";
 
 describe("Frontend Multi-IDP: shared contract wiring", () => {
   it("keeps the shared model as the canonical Multi-IDP contract definition", async () => {
