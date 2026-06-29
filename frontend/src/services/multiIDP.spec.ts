@@ -4,9 +4,9 @@ import {
   getMultiIDPConfig,
   getAllowedIDPsForEscalation,
   isIDPAllowedForEscalation,
-  type MultiIDPConfig,
 } from "./multiIDP";
 import { error as logError } from "@/services/logger";
+import type { MultiIDPConfig } from "@/model/multiIDP";
 
 vi.mock("axios", () => ({
   __esModule: true,
