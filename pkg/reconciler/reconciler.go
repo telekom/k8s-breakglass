@@ -151,8 +151,9 @@ func Setup(
 		return fmt.Errorf("index registration assertion failed: %w", err)
 	}
 
-	// Register IdentityProvider Reconciler with controller-runtime manager
-	log.Debugw("Setting up IdentityProvider reconciler")
+	if enableControllers {
+		// Register IdentityProvider Reconciler with controller-runtime manager
+		log.Debugw("Setting up IdentityProvider reconciler")
 	idpReconciler := config.NewIdentityProviderReconciler(
 		mgr.GetClient(),
 		log,
@@ -363,7 +364,6 @@ func Setup(
 		return fmt.Errorf("failed to setup AuditConfig reconciler with manager: %w", err)
 	}
 	log.Infow("Successfully registered AuditConfig reconciler", "resyncPeriod", "10m")
-
 	} else {
 		log.Infow("Reconcilers disabled via --enable-controllers=false")
 	}

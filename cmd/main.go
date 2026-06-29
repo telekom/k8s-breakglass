@@ -297,7 +297,6 @@ func run() error {
 
 	var resourceLock resourcelock.Interface
 	var leaderBroadcaster record.EventBroadcaster
-	var err error
 	if cliConfig.EnableLeaderElection {
 		resourceLock, leaderBroadcaster, err = createLeaderElectionLock(
 			kubeClientset, scheme, hostname, cliConfig, log)
