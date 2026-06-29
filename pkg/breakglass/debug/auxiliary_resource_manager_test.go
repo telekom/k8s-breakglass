@@ -1719,6 +1719,67 @@ func TestCheckAuxiliaryResourcesReadiness_AlreadyReady(t *testing.T) {
 	assert.True(t, allReady)
 }
 
+func TestCheckAuxiliaryResourcesReadiness_RechecksAdditionalResourcesWhenPrimaryReady(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	readyAt := "2024-01-01T00:00:00Z"
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "multi-doc-config",
+					Created:      true,
+					Ready:        true,
+					ReadyAt:      &readyAt,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "primary-cm",
+					Namespace:    "default",
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "late-cm",
+							Namespace:    "default",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+	require.NoError(t, err)
+	assert.False(t, allReady)
+	assert.False(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "NotFound", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+
+	require.NoError(t, fakeClient.Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "late-cm",
+			Namespace: "default",
+		},
+	}))
+
+	allReady, err = mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+	require.NoError(t, err)
+	assert.True(t, allReady)
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+}
+
 func TestCheckAuxiliaryResourcesReadiness_NotCreated(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 

@@ -897,61 +897,62 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 	log := m.log.With("session", session.Name, "namespace", session.Namespace)
 
 	allReady = true
-	for i, status := range session.Status.AuxiliaryResourceStatuses {
-		// Skip if not created, already ready, or deleted
-		if !status.Created || status.Ready || status.Deleted {
-			if status.Created && !status.Ready && !status.Deleted {
-				allReady = false
-			}
+	for i := range session.Status.AuxiliaryResourceStatuses {
+		status := &session.Status.AuxiliaryResourceStatuses[i]
+		// Skip if not created or deleted.
+		if !status.Created || status.Deleted {
 			continue
 		}
 
 		// Check primary resource readiness
-		primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
-		session.Status.AuxiliaryResourceStatuses[i].ReadinessStatus = primaryReady.readinessStatus
-		if primaryReady.ready {
-			session.Status.AuxiliaryResourceStatuses[i].Ready = true
-			now := time.Now().UTC().Format(time.RFC3339)
-			session.Status.AuxiliaryResourceStatuses[i].ReadyAt = &now
-			log.Infow("Auxiliary resource is ready",
-				"resource", status.Name,
-				"kind", status.Kind,
-				"name", status.ResourceName)
-		} else if primaryReady.failed {
-			session.Status.AuxiliaryResourceStatuses[i].Error = primaryReady.message
-			log.Warnw("Auxiliary resource failed",
-				"resource", status.Name,
-				"kind", status.Kind,
-				"name", status.ResourceName,
-				"message", primaryReady.message)
-			allReady = false
-		} else {
-			log.Debugw("Auxiliary resource not ready yet",
-				"resource", status.Name,
-				"kind", status.Kind,
-				"name", status.ResourceName,
-				"status", primaryReady.readinessStatus,
-				"message", primaryReady.message)
-			allReady = false
+		if !status.Ready {
+			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
+			status.ReadinessStatus = primaryReady.readinessStatus
+			if primaryReady.ready {
+				status.Ready = true
+				now := time.Now().UTC().Format(time.RFC3339)
+				status.ReadyAt = &now
+				log.Infow("Auxiliary resource is ready",
+					"resource", status.Name,
+					"kind", status.Kind,
+					"name", status.ResourceName)
+			} else if primaryReady.failed {
+				status.Error = primaryReady.message
+				log.Warnw("Auxiliary resource failed",
+					"resource", status.Name,
+					"kind", status.Kind,
+					"name", status.ResourceName,
+					"message", primaryReady.message)
+				allReady = false
+			} else {
+				log.Debugw("Auxiliary resource not ready yet",
+					"resource", status.Name,
+					"kind", status.Kind,
+					"name", status.ResourceName,
+					"status", primaryReady.readinessStatus,
+					"message", primaryReady.message)
+				allReady = false
+			}
 		}
 
 		// Check additional resources from multi-document YAML templates
-		for j, addlRes := range status.AdditionalResources {
+		for j := range status.AdditionalResources {
+			addlRes := &status.AdditionalResources[j]
 			if addlRes.Ready || addlRes.Deleted {
 				continue
 			}
 
 			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace)
-			session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].ReadinessStatus = addlReady.readinessStatus
+			addlRes.ReadinessStatus = addlReady.readinessStatus
 
 			if addlReady.ready {
-				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Ready = true
+				addlRes.Ready = true
 				log.Infow("Additional auxiliary resource is ready",
 					"resource", status.Name,
 					"kind", addlRes.Kind,
 					"name", addlRes.ResourceName)
 			} else if addlReady.failed {
-				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Error = addlReady.message
+				addlRes.Error = addlReady.message
 				log.Warnw("Additional auxiliary resource failed",
 					"resource", status.Name,
 					"kind", addlRes.Kind,
