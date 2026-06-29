@@ -228,6 +228,7 @@ func TestConfig_Print(t *testing.T) {
 		EnableFrontend:       true,
 		EnableAPI:            true,
 		EnableCleanup:        true,
+		EnableControllers:    true,
 		Webhook: WebhookConfig{
 			BindAddr:       ":9443",
 			CertPath:       "/certs",
@@ -261,6 +262,7 @@ func TestConfig_DefaultValues(t *testing.T) {
 	assert.False(t, config.EnableFrontend)
 	assert.False(t, config.EnableAPI)
 	assert.False(t, config.EnableCleanup)
+	assert.False(t, config.EnableControllers)
 }
 
 func TestWebhookConfig_DefaultValues(t *testing.T) {
@@ -365,4 +367,31 @@ func TestParse_DisableSessionRateLimit_FlagOverridesEnv(t *testing.T) {
 
 	assert.True(t, cfg.DisableSessionRateLimit,
 		"CLI flag --disable-session-rate-limit should override BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false")
+}
+
+func TestParse_EnableControllers_Default(t *testing.T) {
+	t.Setenv("ENABLE_CONTROLLERS", "")
+
+	cfg := parseWithArgs(t, []string{})
+
+	assert.True(t, cfg.EnableControllers,
+		"EnableControllers should default to true when neither flag nor env var is set")
+}
+
+func TestParse_EnableControllers_Flag(t *testing.T) {
+	t.Setenv("ENABLE_CONTROLLERS", "true")
+
+	cfg := parseWithArgs(t, []string{"--enable-controllers=false"})
+
+	assert.False(t, cfg.EnableControllers,
+		"CLI flag --enable-controllers=false should override ENABLE_CONTROLLERS=true")
+}
+
+func TestParse_EnableControllers_EnvVar(t *testing.T) {
+	t.Setenv("ENABLE_CONTROLLERS", "false")
+
+	cfg := parseWithArgs(t, []string{})
+
+	assert.False(t, cfg.EnableControllers,
+		"EnableControllers should be false when ENABLE_CONTROLLERS=false")
 }

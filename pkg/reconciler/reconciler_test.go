@@ -149,6 +149,39 @@ func TestNewManager_HTTP2Disabled(t *testing.T) {
 	assert.NotNil(t, mgr)
 }
 
+func TestControllerSetupPlan(t *testing.T) {
+	tests := []struct {
+		name              string
+		enableControllers bool
+		want              controllerSetupPlan
+	}{
+		{
+			name:              "controllers enabled",
+			enableControllers: true,
+			want: controllerSetupPlan{
+				registerControllerIndexes: true,
+				registerReconcilers:       true,
+				attachCachedReconcilers:   true,
+			},
+		},
+		{
+			name:              "controllers disabled",
+			enableControllers: false,
+			want: controllerSetupPlan{
+				registerControllerIndexes: false,
+				registerReconcilers:       false,
+				attachCachedReconcilers:   false,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, newControllerSetupPlan(tt.enableControllers))
+		})
+	}
+}
+
 func TestNewManager_MetricsServerOptions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := breakglassv1alpha1.AddToScheme(scheme)
