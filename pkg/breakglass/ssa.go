@@ -43,14 +43,17 @@ func PatchDebugSessionStatusWithOptimisticLock(
 	}
 
 	base := session.DeepCopy()
-	mutate(&session.Status)
-	if session.Generation > 0 {
-		session.Status.ObservedGeneration = session.Generation
+	patched := session.DeepCopy()
+	mutate(&patched.Status)
+	if patched.Generation > 0 {
+		patched.Status.ObservedGeneration = patched.Generation
 	}
 
-	if err := c.Status().Patch(ctx, session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+	if err := c.Status().Patch(ctx, patched, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("patch DebugSession %s/%s status with optimistic lock: %w", session.Namespace, session.Name, err)
 	}
+	session.Status = patched.Status
+	session.ResourceVersion = patched.ResourceVersion
 	return nil
 }
 

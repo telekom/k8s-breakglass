@@ -464,6 +464,47 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		assert.Contains(t, updated.Status.Message, "Approval timed out")
 	})
 
+	t.Run("session approval timeout conflict preserves live status", func(t *testing.T) {
+		timeout := breakglass.DebugSessionApprovalTimeout
+
+		stale := newTestDebugSession("timeout-conflict-session", "test-template", "production", "user@example.com")
+		stale.ResourceVersion = "1"
+		stale.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * timeout))
+		stale.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		stale.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
+			Required: true,
+		}
+
+		live := stale.DeepCopy()
+		live.ResourceVersion = "2"
+		live.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		live.Status.Message = "activated concurrently"
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(live).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := NewDebugSessionController(
+			zap.NewNop().Sugar(), fakeClient, nil,
+		)
+
+		result, err := controller.handlePendingApproval(context.Background(), stale)
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, stale.Status.State)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      "timeout-conflict-session",
+			Namespace: "breakglass",
+		}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+		assert.Equal(t, "activated concurrently", updated.Status.Message)
+	})
+
 	t.Run("session within approval timeout requeues", func(t *testing.T) {
 		// Use the current configured timeout and create a session well within it
 		timeout := breakglass.DebugSessionApprovalTimeout
@@ -989,6 +1030,9 @@ func TestDebugSessionReconciler_HandleActiveDoesNotExpireRenewedStaleSnapshot(t 
 	}
 
 	metrics.DebugSessionsActive.WithLabelValues(liveSession.Spec.Cluster, liveSession.Spec.TemplateRef).Set(3)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(liveSession.Spec.Cluster, liveSession.Spec.TemplateRef)
+	})
 
 	result, err := controller.handleActive(context.Background(), staleSession)
 	require.NoError(t, err)
