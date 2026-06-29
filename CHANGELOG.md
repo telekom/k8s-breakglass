@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--disable-session-rate-limit` flag**: New CLI flag (`BREAKGLASS_DISABLE_SESSION_RATE_LIMIT` env var) replaces the strict session-creation rate limiter with a permissive one (1000 req/s, burst 10000). Intended for E2E testing and development environments only. Do not use in production.
 
 ### Fixed
+- **BreakglassSession validation**: `BreakglassSession` objects with whitespace-only `cluster`, `user`, or `grantedGroup` fields are now rejected during validation.
+
 
 - **BreakglassEscalation reconciliation and events**: Escalation reconciliation now reacts to all spec generation changes and deletion timestamp updates, and Kubernetes Events emitted through the breakglass recorder retain a valid involved-object namespace when the scheme reference omits one.
 - **CI: pin ORT scan image**: The ORT workflow now uses a digest-pinned `ghcr.io/oss-review-toolkit/ort:89.2.0` image instead of the moving `latest` tag, avoiding transient ORT CLI startup failures from mutable container image updates.

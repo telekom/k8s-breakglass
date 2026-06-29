@@ -1355,14 +1355,25 @@ func TestValidateBreakglassSession_MalformedResources(t *testing.T) {
 		assert.False(t, result.IsValid())
 		assert.Len(t, result.Errors, 3)
 		
-		errMsgs := make([]string, 0, len(result.Errors))
+		hasClusterErr := false
+		hasUserErr := false
+		hasGroupErr := false
+		
 		for _, e := range result.Errors {
-			errMsgs = append(errMsgs, e.Error())
+			if e.Field == "spec.cluster" && e.Type == "FieldValueRequired" {
+				hasClusterErr = true
+			}
+			if e.Field == "spec.user" && e.Type == "FieldValueRequired" {
+				hasUserErr = true
+			}
+			if e.Field == "spec.grantedGroup" && e.Type == "FieldValueRequired" {
+				hasGroupErr = true
+			}
 		}
 		
-		assert.Contains(t, errMsgs, "spec.cluster: Required value: cluster is required")
-		assert.Contains(t, errMsgs, "spec.user: Required value: user is required")
-		assert.Contains(t, errMsgs, "spec.grantedGroup: Required value: grantedGroup is required")
+		assert.True(t, hasClusterErr)
+		assert.True(t, hasUserErr)
+		assert.True(t, hasGroupErr)
 	})
 }
 
@@ -1980,6 +1991,22 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 // ==================== BreakglassSessionForReconciler Tests ====================
 
 func TestValidateBreakglassSessionForReconciler(t *testing.T) {
+	t.Run("session with whitespace-only values", func(t *testing.T) {
+		s := &BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "malformed",
+				Namespace: "test",
+			},
+			Spec: BreakglassSessionSpec{
+				Cluster:      "   ",
+				User:         "   ",
+				GrantedGroup: "   ",
+			},
+		}
+		result := ValidateBreakglassSessionForReconciler(s)
+		assert.False(t, result.IsValid())
+		assert.Len(t, result.Errors, 3)
+	})
 	t.Run("nil session", func(t *testing.T) {
 		result := ValidateBreakglassSessionForReconciler(nil)
 		assert.False(t, result.IsValid())
