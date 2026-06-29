@@ -736,7 +736,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			}
 		}
 
-		if activeOnly && !IsSessionActive(ses) {
+		if activeOnly && !IsSessionAccessActive(ses) {
 			continue
 		}
 

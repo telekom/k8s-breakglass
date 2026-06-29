@@ -409,6 +409,16 @@ func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
 	}
 }
 
+// IsSessionAccessActive returns true when a session is currently granting
+// breakglass access. Unlike IsSessionActive, it does not include pending
+// requests that still occupy session-limit slots.
+func IsSessionAccessActive(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Status.State != breakglassv1alpha1.SessionStateApproved {
+		return false
+	}
+	return IsSessionValid(session)
+}
+
 // isOwnedByEscalation checks if a session is owned by the given escalation by matching
 // the owner reference UID. This ensures sessions from different escalations that grant
 // the same group are counted separately.
@@ -860,7 +870,7 @@ func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
 			})
 		case "active":
 			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionActive(session)
+				return IsSessionAccessActive(session)
 			})
 		case "waitingforscheduledtime", "waiting", "scheduled":
 			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
