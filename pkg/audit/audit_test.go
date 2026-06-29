@@ -640,7 +640,7 @@ func TestKubernetesEventSink(t *testing.T) {
 func BenchmarkManagerEmit(b *testing.B) {
 	logger := zap.NewNop()
 	sink := &testSink{name: "noop"}
-	manager := NewManager(sink, ManagerConfig{QueueSize: 100000, WorkerCount: 4}, logger)
+	manager := NewManager(sink, ManagerConfig{QueueSize: 100000, WorkerCount: 4, SampleRate: 1.0}, logger)
 	defer func() { _ = manager.Close() }()
 
 	ctx := context.Background()
