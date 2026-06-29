@@ -243,6 +243,7 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
 	require.NoError(t, err)
 
+	leftAt := metav1.Now()
 	debugSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "debug-session",
@@ -256,6 +257,7 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{User: "user-a@example.com"},
 				{User: "user-b@example.com"},
+				{User: "left-user@example.com", LeftAt: &leftAt},
 			},
 		},
 	}

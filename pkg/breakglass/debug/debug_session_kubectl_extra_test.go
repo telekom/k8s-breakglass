@@ -66,6 +66,17 @@ func TestFindActiveSession(t *testing.T) {
 			},
 		},
 	}
+	leftAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	leftParticipantSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "left-participant", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "owner@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "user@example.com", LeftAt: &leftAt},
+			},
+		},
+	}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(activeSession, otherSession, expiredSession).Build()
 	handler := NewKubectlDebugHandler(client, &mockClientProvider{})
@@ -101,6 +112,12 @@ func TestFindActiveSession(t *testing.T) {
 	clientExpired := fake.NewClientBuilder().WithScheme(scheme).WithObjects(expiredSession).Build()
 	handlerExpired := NewKubectlDebugHandler(clientExpired, &mockClientProvider{})
 	found, err = handlerExpired.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+	require.NoError(t, err)
+	assert.Nil(t, found)
+
+	clientLeft := fake.NewClientBuilder().WithScheme(scheme).WithObjects(leftParticipantSession).Build()
+	handlerLeft := NewKubectlDebugHandler(clientLeft, &mockClientProvider{})
+	found, err = handlerLeft.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 }
