@@ -10,42 +10,22 @@
  * @vitest-environment jsdom
  */
 
-// Mock types
-interface IDPInfo {
-  name: string;
-  displayName: string;
-  issuer: string;
-  enabled: boolean;
-}
+import { getAllowedIDPsForEscalation, isIDPAllowedForEscalation } from "@/services/multiIDP";
+import type { MultiIDPConfig } from "@/model/multiIDP";
 
-interface MultiIDPConfig {
-  identityProviders: IDPInfo[];
-  escalationIDPMapping: Record<string, string[]>;
-}
+describe("Frontend Multi-IDP: shared contract wiring", () => {
+  it("keeps the shared model as the canonical Multi-IDP contract definition", async () => {
+    const serviceModule = await import("@/services/multiIDP");
+    const modelModule = await import("@/model/multiIDP");
 
-// Service implementations (simulated from multiIDP.ts)
-function getAllowedIDPsForEscalation(escalationName: string, config: MultiIDPConfig): IDPInfo[] {
-  const allowedIDPNames = config.escalationIDPMapping[escalationName];
-
-  // Empty array [] means all IDPs allowed (backward compatibility)
-  if (allowedIDPNames === undefined || allowedIDPNames.length === 0) {
-    return config.identityProviders;
-  }
-
-  // Filter to only allowed IDPs
-  return config.identityProviders.filter((idp) => allowedIDPNames.includes(idp.name));
-}
-
-function isIDPAllowedForEscalation(idpName: string, escalationName: string, config: MultiIDPConfig): boolean {
-  const allowedIDPNames = config.escalationIDPMapping[escalationName];
-
-  // Empty array [] means all IDPs allowed
-  if (allowedIDPNames === undefined || allowedIDPNames.length === 0) {
-    return true;
-  }
-
-  return allowedIDPNames.includes(idpName);
-}
+    // Note: The shared types (IDPInfo, MultiIDPConfig) are strictly TS constructs and erased at runtime.
+    // This compile-time-only validation is intentional. The below assertions only prove the service module
+    // doesn't export conflicting runtime values with those names.
+    expect(serviceModule).not.toHaveProperty("IDPInfo");
+    expect(serviceModule).not.toHaveProperty("MultiIDPConfig");
+    expect(modelModule).toBeTypeOf("object");
+  });
+});
 
 // ============================================================================
 // PHASE 9 TEST SUITE: Multi-IDP Services
