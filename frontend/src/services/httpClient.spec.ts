@@ -21,8 +21,7 @@ describe("createAuthenticatedApiClient", () => {
     vi.restoreAllMocks();
 
     const globalWindow = (globalThis as unknown as Record<string, unknown>).window as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     if (globalWindow && "__DEV_TOKEN_LOG" in (globalWindow as object)) {
       delete globalWindow.__DEV_TOKEN_LOG;
     }
@@ -128,9 +127,7 @@ describe("timeout detection", () => {
         "timeout of 30000ms exceeded",
         "ECONNABORTED",
         config as InternalAxiosRequestConfig,
-        {
-          /* mock request object */
-        },
+        {/* mock request object */},
         undefined, // no response for timeout
       );
       throw error;
@@ -152,9 +149,7 @@ describe("timeout detection", () => {
         "Connection timeout while establishing TLS",
         "ENETUNREACH", // Not ECONNABORTED
         config as InternalAxiosRequestConfig,
-        {
-          /* mock request object */
-        },
+        {/* mock request object */},
         undefined,
       );
       throw error;
@@ -178,9 +173,7 @@ describe("timeout detection", () => {
         "Network Error",
         "ERR_NETWORK",
         config as InternalAxiosRequestConfig,
-        {
-          /* mock request object */
-        },
+        {/* mock request object */},
         undefined,
       );
       throw error;

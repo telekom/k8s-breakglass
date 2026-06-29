@@ -11,14 +11,7 @@ const TAG = "useSessionList";
 
 export type SortOption = "urgent" | "recent" | "groups" | "cluster" | "user";
 export type SessionState =
-  | "pending"
-  | "approved"
-  | "active"
-  | "rejected"
-  | "withdrawn"
-  | "timeout"
-  | "expired"
-  | "scheduled";
+  "pending" | "approved" | "active" | "rejected" | "withdrawn" | "timeout" | "expired" | "scheduled";
 
 export interface SessionWithUrgency extends SessionCR {
   urgency: UrgencyLevel;
