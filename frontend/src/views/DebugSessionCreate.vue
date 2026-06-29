@@ -702,7 +702,7 @@ function handleTemplateChange(ev: Event) {
 
     <!-- Step 2: Cluster Selection & Configuration -->
     <div v-else-if="currentStep === 2" class="create-form">
-      <h2 ref="step2Heading" class="sr-only-focusable" tabindex="-1" data-testid="step-2-focus-heading">
+      <h2 ref="step2Heading" class="sr-only sr-only-focusable" tabindex="-1" data-testid="step-2-focus-heading">
         Cluster and configuration
       </h2>
 
@@ -970,26 +970,19 @@ function handleTemplateChange(ev: Event) {
   font: var(--telekom-text-style-small);
 }
 
-.sr-only-focusable {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .sr-only-focusable:focus {
-  position: static;
-  width: auto;
-  height: auto;
-  margin: 0 0 var(--space-md);
-  overflow: visible;
-  clip: auto;
-  white-space: normal;
+  position: static !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  margin: 0 0 var(--space-md) !important;
+  overflow: visible !important;
+  clip: auto !important;
+  clip-path: none !important;
+  white-space: normal !important;
   outline: 2px solid var(--telekom-color-primary-standard);
   outline-offset: 2px;
 }
