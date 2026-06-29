@@ -25,67 +25,40 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 			now := time.Now()
 			wc.log.Infow("Expiring approved session due to reached ExpiresAt", "session", ses.Name, "expiresAt", ses.Status.ExpiresAt.Time, "now", now)
 
-			// Prepare status transition
-			ses.Status.State = breakglassv1alpha1.SessionStateExpired
-			ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{
-				Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: metav1.Now(),
-				Reason:             "ExpiredByTime",
-				Message:            "Session expired because its ExpiresAt has been reached.",
-			})
-			// set short reason for UI consumption
-			ses.Status.ReasonEnded = "timeExpired"
-			retainFor := ParseRetainFor(ses.Spec, wc.log)
-			ses.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
-
-			// Ensure we have the correct namespace/resourceVersion from the stored object before updating status.
-			if stored, gerr := wc.sessionManager.GetBreakglassSessionByName(context.Background(), ses.Name); gerr == nil {
-				// copy any necessary metadata so client can locate the object
-				ses.Namespace = stored.Namespace
-				ses.ResourceVersion = stored.ResourceVersion
-			} else {
-				// If we cannot refetch, log and proceed; Update may still fail and will be retried below
-				wc.log.Debugw("could not refetch session before status update; will attempt update anyway", "session", ses.Name, "error", gerr)
+			updated, applied, err := wc.updateSessionStatusIfCurrent(
+				context.Background(),
+				ses,
+				breakglassv1alpha1.SessionStateApproved,
+				IsSessionExpired,
+				func(current *breakglassv1alpha1.BreakglassSession) {
+					current.Status.State = breakglassv1alpha1.SessionStateExpired
+					current.Status.Conditions = append(current.Status.Conditions, metav1.Condition{
+						Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
+						Status:             metav1.ConditionTrue,
+						LastTransitionTime: metav1.Now(),
+						Reason:             "ExpiredByTime",
+						Message:            "Session expired because its ExpiresAt has been reached.",
+					})
+					current.Status.ReasonEnded = "timeExpired"
+					retainFor := ParseRetainFor(current.Spec, wc.log)
+					current.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
+				},
+			)
+			if err != nil {
+				wc.log.Errorw("failed to update expired session status", "session", ses.Name, "error", err)
+				continue
+			}
+			if !applied {
+				wc.log.Infow("Session no longer approved or expired after refetch; skipping time expiry",
+					"session", ses.Name,
+					"currentState", updated.Status.State,
+				)
+				continue
 			}
 
-			// Persist the status change using SSA against the status subresource and retry on conflict.
-			var lastErr error
-			for attempt := range 3 {
-				if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
-					lastErr = nil
-					// count as expired when status update succeeds
-					metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
-					// Emit audit event for session expiration
-					wc.emitSessionExpiredAuditEvent(context.Background(), &ses, "timeExpired")
-					break
-				} else {
-					lastErr = fmt.Errorf("status update attempt %d failed: %w", attempt+1, err)
-					wc.log.Warnw("failed to update expired session status (will retry)", "session", ses.Name, "attempt", attempt+1, "error", err)
-
-					// On conflict or other recoverable errors, re-fetch the latest object and reapply status changes
-					if updated, gerr := wc.sessionManager.GetBreakglassSessionByName(context.Background(), ses.Name); gerr == nil {
-						// copy status changes onto updated object and retry
-						updated.Status.State = ses.Status.State
-						updated.Status.Conditions = ses.Status.Conditions
-						updated.Status.ReasonEnded = ses.Status.ReasonEnded
-						updated.Status.RetainedUntil = ses.Status.RetainedUntil
-						ses = updated
-					} else {
-						// If we cannot re-fetch, short-circuit and surface error
-						wc.log.Errorw("failed to refetch session after failed status update", "session", ses.Name, "error", gerr)
-						break
-					}
-					// small backoff between retries
-					time.Sleep(200 * time.Millisecond)
-				}
-			}
-			if lastErr != nil {
-				wc.log.Errorw("failed to update expired session after retries", "session", ses.Name, "error", lastErr)
-			} else {
-				// Send expiration email on successful status update
-				wc.sendSessionExpiredEmail(ses, "timeExpired")
-			}
+			metrics.SessionExpired.WithLabelValues(updated.Spec.Cluster).Inc()
+			wc.emitSessionExpiredAuditEvent(context.Background(), &updated, "timeExpired")
+			wc.sendSessionExpiredEmail(updated, "timeExpired")
 		}
 	}
 }
