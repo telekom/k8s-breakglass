@@ -1246,7 +1246,7 @@ func TestSetup_FrontendOnly_ExcludesSAR(t *testing.T) {
 	assert.NoError(t, err)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/breakglass/webhook/authorize/foo", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/foo", nil)
 	server.gin.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
