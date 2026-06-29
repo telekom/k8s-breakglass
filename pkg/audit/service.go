@@ -144,6 +144,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	workerCount := 2   // Per-sink workers
 	dropOnFull := true
 	sampleRate := 1.0
+	sampleRateConfigured := false
 	var highVolume []EventType
 	var alwaysCapture []EventType
 
@@ -164,6 +165,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 			if config.Spec.Sampling.Rate != "" {
 				if rate, err := strconv.ParseFloat(config.Spec.Sampling.Rate, 64); err == nil && rate >= 0 && rate <= 1 {
 					sampleRate = rate
+					sampleRateConfigured = true
 				}
 			}
 			for _, hv := range config.Spec.Sampling.HighVolumeEventTypes {
@@ -195,6 +197,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 		BatchTimeout:            100 * time.Millisecond,
 		DropOnFull:              dropOnFull,
 		SampleRate:              sampleRate,
+		sampleRateConfigured:    sampleRateConfigured,
 		HighVolumeEventTypes:    highVolume,
 		AlwaysCaptureEventTypes: alwaysCapture,
 		WriteTimeout:            5 * time.Second,

@@ -1092,7 +1092,7 @@ func TestManager_ShouldSample(t *testing.T) {
 		assert.Equal(t, int64(100), received)
 	})
 
-	t.Run("always capture events are never sampled", func(t *testing.T) {
+	t.Run("always capture overrides zero sample rate for high volume events", func(t *testing.T) {
 		var received int64
 		sink := &testSink{
 			name: "test",
@@ -1104,9 +1104,10 @@ func TestManager_ShouldSample(t *testing.T) {
 		manager := NewManager(sink, ManagerConfig{
 			QueueSize:               1000,
 			WorkerCount:             1,
-			SampleRate:              0.0,                           // Sample everything that can be sampled
+			SampleRate:              0.0,                           // Drop every event eligible for sampling
+			sampleRateConfigured:    true,                          // Preserve explicit 0.0 rather than defaulting to 1.0
 			HighVolumeEventTypes:    []EventType{EventResourceGet}, // Would normally be dropped
-			AlwaysCaptureEventTypes: []EventType{EventResourceGet}, // But it's in always capture!
+			AlwaysCaptureEventTypes: []EventType{EventResourceGet}, // Always-capture wins over high-volume
 		}, logger)
 
 		for i := 0; i < 10; i++ {

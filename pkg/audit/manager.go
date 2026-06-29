@@ -94,6 +94,9 @@ type ManagerConfig struct {
 	// Use for high-volume environments where 100% capture is too expensive.
 	// Default: 1.0 (capture all events)
 	SampleRate float64
+	// sampleRateConfigured is true when SampleRate was explicitly configured.
+	// It preserves the zero-value default while allowing an explicit 0.0 rate.
+	sampleRateConfigured bool
 
 	// HighVolumeEventTypes are sampled at SampleRate.
 	// Other events are always captured.
@@ -146,6 +149,9 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	}
 	if cfg.BatchTimeout <= 0 {
 		cfg.BatchTimeout = 100 * time.Millisecond
+	}
+	if !cfg.sampleRateConfigured && cfg.SampleRate == 0 {
+		cfg.SampleRate = 1.0
 	}
 	if cfg.SampleRate < 0 || cfg.SampleRate > 1 {
 		cfg.SampleRate = 1.0
@@ -345,10 +351,10 @@ func (m *Manager) shouldSample(eventType EventType) bool {
 		return false
 	}
 
-	// Always capture overrides
+	// Always-capture selectors override high-volume sampling.
 	for _, acType := range m.config.AlwaysCaptureEventTypes {
 		if acType == eventType {
-			return false // Never sample this type
+			return false
 		}
 	}
 
