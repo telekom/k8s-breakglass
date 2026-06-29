@@ -340,7 +340,7 @@ function onStateToggle(state: string, event: Event) {
       aria-atomic="true"
       data-testid="debug-session-results-status"
     >
-      Showing {{ filteredSessions.length }} of {{ sessions.length }} sessions
+      Showing {{ filteredSessions.length }} of {{ sessions.length }} debug sessions
     </div>
   </div>
 </template>

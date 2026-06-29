@@ -155,7 +155,7 @@ describe("DebugSessionBrowser", () => {
       expect(status.attributes("role")).toBe("status");
       expect(status.attributes("aria-live")).toBe("polite");
       expect(status.attributes("aria-atomic")).toBe("true");
-      expect(status.text()).toBe("Showing 2 of 2 sessions");
+      expect(status.text()).toBe("Showing 2 of 2 debug sessions");
     });
 
     it("shows an error state when loading debug sessions fails", async () => {
