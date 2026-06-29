@@ -368,6 +368,7 @@ func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
 			w := httptest.NewRecorder()
 			engine.ServeHTTP(w, req)
 			res := w.Result()
+			defer res.Body.Close()
 			if res.StatusCode != http.StatusBadRequest {
 				t.Fatalf("expected 400 for timed-out pending session, got %d", res.StatusCode)
 			}
@@ -393,6 +394,22 @@ func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("pending_timeout_at_current_instant", func(t *testing.T) {
+		session := breakglassv1alpha1.BreakglassSession{
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStatePending,
+				ApprovedAt: metav1.Time{},
+				RejectedAt: metav1.Time{},
+				TimeoutAt:  metav1.NewTime(now),
+			},
+		}
+
+		result := isSessionApprovalTimedOutAt(session, now)
+		if !result {
+			t.Errorf("expected timeout to be elapsed at the exact timeout instant")
+		}
+	})
 }
 
 // Test that approving a session records the approver email in Status.Approver and
@@ -1691,7 +1708,7 @@ func TestSessionApproveRejectInvalidOptionalBody(t *testing.T) {
 	}
 }
 
-func TestApproveExpiredPendingSessionReturnsConflict(t *testing.T) {
+func TestApproveExpiredPendingSessionReturnsBadRequest(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)

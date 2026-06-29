@@ -342,10 +342,6 @@ details.
 elapsed, approval fails with `400 Bad Request` and the stale pending session is
 left unchanged for cleanup to transition to `ApprovalTimeout`.
 
-If the pending session's approval timeout has already elapsed, the endpoint returns
-`409 Conflict` and leaves the session pending until cleanup records the
-`ApprovalTimeout` terminal state.
-
 **Response:** Complete updated `BreakglassSession` resource with approved status.
 
 When the approval notification email is successfully enqueued, the response includes an `X-Notification-Sent: true` header.

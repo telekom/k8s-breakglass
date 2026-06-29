@@ -8,6 +8,10 @@ import (
 )
 
 func IsSessionApprovalTimedOut(session breakglassv1alpha1.BreakglassSession) bool {
+	return isSessionApprovalTimedOutAt(session, time.Now())
+}
+
+func isSessionApprovalTimedOutAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	// Only Pending sessions can newly time out; all other states are state-machine
 	// outcomes that must not be reclassified by a stale TimeoutAt timestamp.
 	if session.Status.State != breakglassv1alpha1.SessionStatePending {
@@ -18,5 +22,5 @@ func IsSessionApprovalTimedOut(session breakglassv1alpha1.BreakglassSession) boo
 		return false
 	}
 	// Timeout must be set and must have passed
-	return !session.Status.TimeoutAt.IsZero() && time.Now().After(session.Status.TimeoutAt.Time)
+	return !session.Status.TimeoutAt.IsZero() && !now.Before(session.Status.TimeoutAt.Time)
 }
