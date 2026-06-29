@@ -261,9 +261,18 @@ func TestCircuitBreaker_ForceOpenAndClose(t *testing.T) {
 
 	cb.ForceOpen()
 	assert.Equal(t, CircuitOpen, cb.State())
+	rejectedErr := cb.Execute(context.Background(), func(ctx context.Context) error {
+		t.Fatal("forced-open circuit should reject execution")
+		return nil
+	})
+	assert.ErrorIs(t, rejectedErr, ErrCircuitOpen)
+	assert.Equal(t, int64(1), cb.Stats().TotalRejections)
 
 	cb.ForceClose()
 	assert.Equal(t, CircuitClosed, cb.State())
+	assert.NoError(t, cb.Execute(context.Background(), func(ctx context.Context) error {
+		return nil
+	}))
 }
 
 func TestCircuitBreaker_Reset(t *testing.T) {
