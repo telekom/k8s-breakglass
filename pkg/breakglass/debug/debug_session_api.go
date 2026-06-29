@@ -316,6 +316,7 @@ type DebugSessionListResponse struct {
 type DebugSessionSummary struct {
 	Name                   string                                   `json:"name"`
 	TemplateRef            string                                   `json:"templateRef"`
+	TargetNamespace        string                                   `json:"targetNamespace,omitempty"`
 	Cluster                string                                   `json:"cluster"`
 	RequestedBy            string                                   `json:"requestedBy"`
 	RequestedByDisplayName string                                   `json:"requestedByDisplayName,omitempty"`
@@ -503,6 +504,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		summaries = append(summaries, DebugSessionSummary{
 			Name:                   s.Name,
 			TemplateRef:            s.Spec.TemplateRef,
+			TargetNamespace:        s.Spec.TargetNamespace,
 			Cluster:                s.Spec.Cluster,
 			RequestedBy:            s.Spec.RequestedBy,
 			RequestedByDisplayName: s.Spec.RequestedByDisplayName,

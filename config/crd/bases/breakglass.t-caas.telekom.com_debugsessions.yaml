@@ -29,6 +29,10 @@ spec:
       jsonPath: .spec.templateRef
       name: Template
       type: string
+    - description: Target namespace
+      jsonPath: .spec.targetNamespace
+      name: Target NS
+      type: string
     - description: Session owner
       jsonPath: .spec.requestedBy
       name: Requested By

@@ -548,6 +548,7 @@ type CopiedPodRef struct {
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=".status.state",description="Session state"
 // +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=".spec.cluster",description="Target cluster"
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=".spec.templateRef",description="Debug template"
+// +kubebuilder:printcolumn:name="Target NS",type=string,JSONPath=".spec.targetNamespace",description="Target namespace"
 // +kubebuilder:printcolumn:name="Requested By",type=string,JSONPath=".spec.requestedBy",description="Session owner"
 // +kubebuilder:printcolumn:name="Expires At",type=string,JSONPath=".status.expiresAt",description="Expiration time"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
