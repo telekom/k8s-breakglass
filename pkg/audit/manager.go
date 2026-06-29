@@ -147,7 +147,7 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	if cfg.BatchTimeout <= 0 {
 		cfg.BatchTimeout = 100 * time.Millisecond
 	}
-	if cfg.SampleRate <= 0 || cfg.SampleRate > 1 {
+	if cfg.SampleRate < 0 || cfg.SampleRate > 1 {
 		cfg.SampleRate = 1.0
 	}
 	if cfg.WriteTimeout <= 0 {
@@ -343,6 +343,13 @@ func (m *Manager) shouldSample(eventType EventType) bool {
 
 	if m.config.SampleRate >= 1.0 {
 		return false
+	}
+
+	// Always capture overrides
+	for _, acType := range m.config.AlwaysCaptureEventTypes {
+		if acType == eventType {
+			return false // Never sample this type
+		}
 	}
 
 	// Check if this is a high-volume event type

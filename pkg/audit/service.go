@@ -162,7 +162,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 
 		if config.Spec.Sampling != nil {
 			if config.Spec.Sampling.Rate != "" {
-				if rate, err := strconv.ParseFloat(config.Spec.Sampling.Rate, 64); err == nil && rate > 0 && rate <= 1 {
+				if rate, err := strconv.ParseFloat(config.Spec.Sampling.Rate, 64); err == nil && rate >= 0 && rate <= 1 {
 					sampleRate = rate
 				}
 			}
