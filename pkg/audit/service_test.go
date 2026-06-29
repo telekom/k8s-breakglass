@@ -151,7 +151,9 @@ func TestService_ReloadWithSampling(t *testing.T) {
 		Spec: breakglassv1alpha1.AuditConfigSpec{
 			Enabled: true,
 			Sampling: &breakglassv1alpha1.AuditSamplingConfig{
-				Rate: "0.5",
+				Rate:                    "0.0",
+				HighVolumeEventTypes:    []string{string(EventResourceGet), string(EventResourceList)},
+				AlwaysCaptureEventTypes: []string{string(EventSessionRequested)},
 			},
 			Sinks: []breakglassv1alpha1.AuditSinkConfig{
 				{
@@ -165,6 +167,16 @@ func TestService_ReloadWithSampling(t *testing.T) {
 	err := svc.Reload(context.Background(), config)
 	assert.NoError(t, err)
 	assert.True(t, svc.IsEnabled())
+	require.NotNil(t, svc.manager)
+	assert.Equal(t, 0.0, svc.manager.config.SampleRate)
+	assert.ElementsMatch(t,
+		[]EventType{EventResourceGet, EventResourceList},
+		svc.manager.config.HighVolumeEventTypes,
+	)
+	assert.ElementsMatch(t,
+		[]EventType{EventSessionRequested},
+		svc.manager.config.AlwaysCaptureEventTypes,
+	)
 
 	// Cleanup
 	_ = svc.Close()

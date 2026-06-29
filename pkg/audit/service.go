@@ -144,6 +144,9 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	workerCount := 2   // Per-sink workers
 	dropOnFull := true
 	sampleRate := 1.0
+	sampleRateConfigured := false
+	var highVolume []EventType
+	var alwaysCapture []EventType
 
 	// Use the first config's queue settings as baseline
 	if len(enabledConfigs) > 0 {
@@ -158,9 +161,18 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 			dropOnFull = config.Spec.Queue.DropOnFull
 		}
 
-		if config.Spec.Sampling != nil && config.Spec.Sampling.Rate != "" {
-			if rate, err := strconv.ParseFloat(config.Spec.Sampling.Rate, 64); err == nil && rate > 0 && rate <= 1 {
-				sampleRate = rate
+		if config.Spec.Sampling != nil {
+			if config.Spec.Sampling.Rate != "" {
+				if rate, err := strconv.ParseFloat(config.Spec.Sampling.Rate, 64); err == nil && rate >= 0 && rate <= 1 {
+					sampleRate = rate
+					sampleRateConfigured = true
+				}
+			}
+			for _, hv := range config.Spec.Sampling.HighVolumeEventTypes {
+				highVolume = append(highVolume, EventType(hv))
+			}
+			for _, ac := range config.Spec.Sampling.AlwaysCaptureEventTypes {
+				alwaysCapture = append(alwaysCapture, EventType(ac))
 			}
 		}
 	}
@@ -179,13 +191,16 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 
 	// Create manager config (now simpler since queuing is per-sink)
 	managerCfg := ManagerConfig{
-		QueueSize:    100000, // Main queue still buffers before broadcasting
-		WorkerCount:  5,
-		BatchSize:    100,
-		BatchTimeout: 100 * time.Millisecond,
-		DropOnFull:   dropOnFull,
-		SampleRate:   sampleRate,
-		WriteTimeout: 5 * time.Second,
+		QueueSize:               100000, // Main queue still buffers before broadcasting
+		WorkerCount:             5,
+		BatchSize:               100,
+		BatchTimeout:            100 * time.Millisecond,
+		DropOnFull:              dropOnFull,
+		SampleRate:              sampleRate,
+		sampleRateConfigured:    sampleRateConfigured,
+		HighVolumeEventTypes:    highVolume,
+		AlwaysCaptureEventTypes: alwaysCapture,
+		WriteTimeout:            5 * time.Second,
 		// DirectSinks references the same sink instances stored in s.sinks.
 		// On the next ReloadMultiple call, the Manager is closed (draining all
 		// async workers) before s.closeSinksLocked() tears down these sinks, so

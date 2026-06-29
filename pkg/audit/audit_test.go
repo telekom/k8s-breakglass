@@ -640,7 +640,7 @@ func TestKubernetesEventSink(t *testing.T) {
 func BenchmarkManagerEmit(b *testing.B) {
 	logger := zap.NewNop()
 	sink := &testSink{name: "noop"}
-	manager := NewManager(sink, ManagerConfig{QueueSize: 100000, WorkerCount: 4}, logger)
+	manager := NewManager(sink, ManagerConfig{QueueSize: 100000, WorkerCount: 4, SampleRate: 1.0}, logger)
 	defer func() { _ = manager.Close() }()
 
 	ctx := context.Background()
@@ -1090,6 +1090,55 @@ func TestManager_ShouldSample(t *testing.T) {
 
 		// All events should be received
 		assert.Equal(t, int64(100), received)
+	})
+
+	t.Run("always capture overrides zero sample rate for high volume events", func(t *testing.T) {
+		var received int64
+		sink := &testSink{
+			name: "test",
+			writeFunc: func(_ *Event) {
+				received++
+			},
+		}
+
+		manager := NewManager(sink, ManagerConfig{
+			QueueSize:               1000,
+			WorkerCount:             1,
+			SampleRate:              0.0,                           // Drop every event eligible for sampling
+			sampleRateConfigured:    true,                          // Preserve explicit 0.0 rather than defaulting to 1.0
+			HighVolumeEventTypes:    []EventType{EventResourceGet}, // Would normally be dropped
+			AlwaysCaptureEventTypes: []EventType{EventResourceGet}, // Always-capture wins over high-volume
+		}, logger)
+
+		for i := 0; i < 10; i++ {
+			manager.Emit(context.Background(), &Event{
+				Type: EventResourceGet,
+			})
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		_ = manager.Close()
+
+		// All events should be received because AlwaysCapture overrides HighVolume
+		assert.Equal(t, int64(10), received)
+	})
+
+	t.Run("explicit zero sample rate drops all eligible high volume events", func(t *testing.T) {
+		sink := &testSink{name: "test"}
+		manager := NewManager(sink, ManagerConfig{
+			QueueSize:            1000,
+			WorkerCount:          1,
+			SampleRate:           0.0,
+			sampleRateConfigured: true,
+			HighVolumeEventTypes: []EventType{EventResourceGet},
+		}, logger)
+		defer func() {
+			_ = manager.Close()
+		}()
+
+		for i := 0; i < 100; i++ {
+			assert.True(t, manager.shouldSample(EventResourceGet))
+		}
 	})
 
 	t.Run("sample rate 0 samples all high volume events", func(t *testing.T) {

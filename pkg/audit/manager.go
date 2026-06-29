@@ -94,11 +94,17 @@ type ManagerConfig struct {
 	// Use for high-volume environments where 100% capture is too expensive.
 	// Default: 1.0 (capture all events)
 	SampleRate float64
+	// sampleRateConfigured is true when SampleRate was explicitly configured.
+	// It preserves the zero-value default while allowing an explicit 0.0 rate.
+	sampleRateConfigured bool
 
 	// HighVolumeEventTypes are sampled at SampleRate.
 	// Other events are always captured.
 	// Default: empty (all events treated equally)
 	HighVolumeEventTypes []EventType
+
+	// AlwaysCaptureEventTypes are never sampled (always 100%).
+	AlwaysCaptureEventTypes []EventType
 
 	// WriteTimeout is the timeout for writing to sinks.
 	// Default: 5s
@@ -144,7 +150,10 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	if cfg.BatchTimeout <= 0 {
 		cfg.BatchTimeout = 100 * time.Millisecond
 	}
-	if cfg.SampleRate <= 0 || cfg.SampleRate > 1 {
+	if !cfg.sampleRateConfigured && cfg.SampleRate == 0 {
+		cfg.SampleRate = 1.0
+	}
+	if cfg.SampleRate < 0 || cfg.SampleRate > 1 {
 		cfg.SampleRate = 1.0
 	}
 	if cfg.WriteTimeout <= 0 {
@@ -342,6 +351,13 @@ func (m *Manager) shouldSample(eventType EventType) bool {
 		return false
 	}
 
+	// Always-capture selectors override high-volume sampling.
+	for _, acType := range m.config.AlwaysCaptureEventTypes {
+		if acType == eventType {
+			return false
+		}
+	}
+
 	// Check if this is a high-volume event type
 	isHighVolume := false
 	for _, hvType := range m.config.HighVolumeEventTypes {
@@ -355,8 +371,12 @@ func (m *Manager) shouldSample(eventType EventType) bool {
 		return false // Always capture non-high-volume events
 	}
 
+	if m.config.SampleRate <= 0 {
+		return true
+	}
+
 	// Simple hash-based sampling using event timestamp nanoseconds
-	return float64(time.Now().UnixNano()%1000)/1000.0 > m.config.SampleRate
+	return float64(time.Now().UnixNano()%1000)/1000.0 >= m.config.SampleRate
 }
 
 // processQueue handles events from the async queue (single-event mode).
