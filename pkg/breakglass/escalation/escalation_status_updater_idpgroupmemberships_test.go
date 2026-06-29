@@ -257,6 +257,7 @@ func TestUpdateApprovalGroupMembersResolvedConditionIncludesIDPContextOnFailures
 	tests := []struct {
 		name       string
 		syncStatus string
+		idpCount   int
 		reason     string
 		message    string
 		errorCount int
@@ -264,6 +265,7 @@ func TestUpdateApprovalGroupMembersResolvedConditionIncludesIDPContextOnFailures
 		{
 			name:       "partial failure",
 			syncStatus: groupSyncStatusPartialFailure,
+			idpCount:   2,
 			reason:     groupSyncReasonPartialFailure,
 			message:    "Approver group sync partially failed for 3 group(s) from 2 identity provider(s); 1 error(s) encountered.",
 			errorCount: 1,
@@ -271,6 +273,7 @@ func TestUpdateApprovalGroupMembersResolvedConditionIncludesIDPContextOnFailures
 		{
 			name:       "full failure",
 			syncStatus: groupSyncStatusFailed,
+			idpCount:   2,
 			reason:     groupSyncReasonFailed,
 			message:    "Approver group sync failed for 3 group(s) from 2 identity provider(s); 2 error(s) encountered.",
 			errorCount: 2,
@@ -278,8 +281,25 @@ func TestUpdateApprovalGroupMembersResolvedConditionIncludesIDPContextOnFailures
 		{
 			name:       "unknown status",
 			syncStatus: "Unexpected",
+			idpCount:   2,
 			reason:     groupSyncReasonFailed,
 			message:    "Approver group sync returned unknown status \"Unexpected\" for 3 group(s) from 2 identity provider(s).",
+			errorCount: 0,
+		},
+		{
+			name:       "full failure without resolver context",
+			syncStatus: groupSyncStatusFailed,
+			idpCount:   0,
+			reason:     groupSyncReasonFailed,
+			message:    "Approver group sync failed for 3 group(s); 3 error(s) encountered.",
+			errorCount: 3,
+		},
+		{
+			name:       "unknown status without resolver context",
+			syncStatus: "Unexpected",
+			idpCount:   0,
+			reason:     groupSyncReasonFailed,
+			message:    "Approver group sync returned unknown status \"Unexpected\" for 3 group(s).",
 			errorCount: 0,
 		},
 	}
@@ -292,7 +312,7 @@ func TestUpdateApprovalGroupMembersResolvedConditionIncludesIDPContextOnFailures
 				},
 			}
 
-			changed := updateApprovalGroupMembersResolvedCondition(escalation, tt.syncStatus, 3, 2, tt.errorCount)
+			changed := updateApprovalGroupMembersResolvedCondition(escalation, tt.syncStatus, 3, tt.idpCount, tt.errorCount)
 
 			assert.True(t, changed)
 			condition := escalation.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
@@ -461,8 +481,9 @@ func TestEmptyApproverGroups(t *testing.T) {
 
 	escalation := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "no-approvers",
-			Namespace: "default",
+			Name:       "no-approvers",
+			Namespace:  "default",
+			Generation: 3,
 		},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			EscalatedGroup: "admin-group",
@@ -474,6 +495,7 @@ func TestEmptyApproverGroups(t *testing.T) {
 			},
 		},
 		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ObservedGeneration: 1,
 			ApproverGroupMembers: map[string][]string{
 				"admin": {"alice@example.com"},
 			},
@@ -514,14 +536,48 @@ func TestEmptyApproverGroups(t *testing.T) {
 	// Stale group-member status should be cleared when no approver groups remain.
 	assert.Nil(t, updated.Status.ApproverGroupMembers)
 	assert.Nil(t, updated.Status.IDPGroupMemberships)
+	assert.Equal(t, int64(3), updated.Status.ObservedGeneration)
 	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
 	if assert.NotNil(t, condition) {
 		assert.Equal(t, metav1.ConditionTrue, condition.Status)
 		assert.Equal(t, "NoApproverGroupsConfigured", condition.Reason)
 		assert.Equal(t, "No approver groups are configured; group member resolution is not required.", condition.Message)
+		assert.Equal(t, int64(3), condition.ObservedGeneration)
 	}
 
 	t.Logf("✅ Test passed: Empty approver groups correctly skipped")
+}
+
+func TestPruneUnconfiguredApproverGroupStatus(t *testing.T) {
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"admin":   {"alice@example.com"},
+				"removed": {"stale@example.com"},
+			},
+			IDPGroupMemberships: map[string]map[string][]string{
+				"idp-a": {
+					"admin":   {"alice@example.com"},
+					"removed": {"stale@example.com"},
+				},
+				"idp-b": {
+					"removed": {"other-stale@example.com"},
+				},
+			},
+		},
+	}
+
+	changed := pruneUnconfiguredApproverGroupStatus(escalation, []string{"admin"})
+
+	assert.True(t, changed)
+	assert.Equal(t, map[string][]string{
+		"admin": {"alice@example.com"},
+	}, escalation.Status.ApproverGroupMembers)
+	assert.Equal(t, map[string]map[string][]string{
+		"idp-a": {
+			"admin": {"alice@example.com"},
+		},
+	}, escalation.Status.IDPGroupMemberships)
 }
 
 func TestExplicitIDPsWithoutLoaderReportLegacyResolverCondition(t *testing.T) {
