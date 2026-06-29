@@ -1250,7 +1250,7 @@ The two-step session creation flow uses the template clusters API to show users 
 GET /api/debugSessions/templates/:name/clusters
 ```
 
-Only ready cluster configurations are offered as debug targets. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, no ready condition, or a duplicate `metadata.name` in another namespace are hidden from this response and `POST /api/debugSessions` rejects new debug sessions that target them.
+Only ready cluster configurations are offered as debug targets. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, no ready condition, or a duplicate `metadata.name` in another namespace are hidden from this response and `POST /api/debugSessions` rejects new debug sessions that target them. `DebugSessionClusterBinding` objects with `spec.hidden: true` are also omitted from this UI discovery response, but callers that already know the binding name can still use it through an explicit `bindingRef` in `POST /api/debugSessions`.
 
 Response includes per-cluster details:
 

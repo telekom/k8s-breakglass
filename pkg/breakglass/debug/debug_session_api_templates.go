@@ -526,8 +526,10 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	// Build cluster name -> ready ClusterConfig map. Unready clusters are not offered as debug targets.
 	clusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
-	// Find all bindings that apply to this template
-	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)
+	// Find UI-visible bindings that apply to this template. Hidden bindings can
+	// still be used through explicit API bindingRef requests, but are not offered
+	// as selectable cluster options.
+	applicableBindings := c.findVisibleBindingsForTemplate(template, bindingList.Items)
 
 	// Build the response - resolve clusters from bindings and template's allowed.clusters
 	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap, groups)
@@ -570,8 +572,10 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 ) int {
 	seenClusters := make(map[string]bool)
 
-	// Find bindings that match this template
-	applicableBindings := c.findBindingsForTemplate(template, allBindings)
+	// Count only UI-visible bindings. Hidden bindings can still be used through
+	// explicit API bindingRef requests, but should not make templates appear
+	// available in UI discovery.
+	applicableBindings := c.findVisibleBindingsForTemplate(template, allBindings)
 
 	// Collect clusters from bindings
 	for i := range applicableBindings {
@@ -644,6 +648,23 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglass
 		}
 	}
 	return result
+}
+
+func (c *DebugSessionAPIController) findVisibleBindingsForTemplate(template *breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding) []breakglassv1alpha1.DebugSessionClusterBinding {
+	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	visibleBindings := make([]breakglassv1alpha1.DebugSessionClusterBinding, 0, len(applicableBindings))
+	for i := range applicableBindings {
+		binding := &applicableBindings[i]
+		if binding.Spec.Hidden {
+			c.log.Debugw("findVisibleBindingsForTemplate: skipping hidden binding",
+				"template", template.Name,
+				"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
+			)
+			continue
+		}
+		visibleBindings = append(visibleBindings, *binding)
+	}
+	return visibleBindings
 }
 
 // resolveTemplateClusters resolves all available clusters for a template.

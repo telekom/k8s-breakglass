@@ -3114,4 +3114,105 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 		// Primary binding ref should still be set for backward compat
 		require.NotNil(t, clusterADetail.BindingRef, "Primary BindingRef should be set")
 	})
+
+	t.Run("omits hidden bindings from cluster options", func(t *testing.T) {
+		visibleBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-visible",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters:    []string{"cluster-a"},
+				DisplayName: "Visible Access",
+			},
+		}
+		hiddenBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-hidden",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters:    []string{"cluster-a"},
+				DisplayName: "Hidden Access",
+				Hidden:      true,
+			},
+		}
+
+		router, _ := setupTestRouter(t, template, clusterA, visibleBinding, hiddenBinding)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+
+		var clusterADetail *AvailableClusterDetail
+		for i := range resp.Clusters {
+			if resp.Clusters[i].Name == "cluster-a" {
+				clusterADetail = &resp.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, clusterADetail, "cluster-a should be in response")
+		require.NotNil(t, clusterADetail.BindingRef)
+		assert.Equal(t, "binding-visible", clusterADetail.BindingRef.Name)
+
+		require.Len(t, clusterADetail.BindingOptions, 1)
+		assert.Equal(t, "binding-visible", clusterADetail.BindingOptions[0].BindingRef.Name)
+	})
+
+	t.Run("omits cluster available only through hidden binding", func(t *testing.T) {
+		bindingOnlyTemplate := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "binding-only-template",
+			},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Binding Only Template",
+				Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"*"},
+				},
+			},
+		}
+		hiddenBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "hidden-only-binding",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "binding-only-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Hidden:   true,
+			},
+		}
+
+		router, _ := setupTestRouter(t, bindingOnlyTemplate, clusterA, hiddenBinding)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/binding-only-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Empty(t, resp.Clusters)
+	})
 }

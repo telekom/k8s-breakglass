@@ -263,7 +263,7 @@ Control how the binding appears in the UI:
 | Field | Type | Description |
 |-------|------|-------------|
 | `displayName` | string | Human-readable name for the binding |
-| `hidden` | bool | Hide this binding from UI (still usable via API/CLI) |
+| `hidden` | bool | Hide this binding from UI discovery responses (still usable via explicit API/CLI `bindingRef`) |
 | `priority` | int32 | UI display ordering (lower values appear first) |
 | `disabled` | bool | Disable the binding entirely |
 
@@ -1021,7 +1021,7 @@ The `displayName` is computed using this priority:
 
 ### Template Clusters API Integration
 
-The `/api/debugSessions/templates/:name/clusters` endpoint uses the same resolution logic to show per-cluster effective configuration. When multiple bindings match a cluster, all binding options are returned:
+The `/api/debugSessions/templates/:name/clusters` endpoint uses the same resolution logic to show per-cluster effective configuration for UI discovery. When multiple visible bindings match a cluster, all visible binding options are returned. Bindings with `spec.hidden: true` are omitted from `bindingRef` and `bindingOptions`; clusters available only through hidden bindings are not returned by this discovery endpoint.
 
 ```http
 GET /api/debugSessions/templates/network-debug/clusters
@@ -1087,8 +1087,10 @@ GET /api/debugSessions/templates/network-debug/clusters
 
 | Scenario | Behavior |
 |----------|----------|
-| Multiple bindings match | All matching bindings returned in `bindingOptions` array; user selects which to use |
+| Multiple visible bindings match | All visible matching bindings returned in `bindingOptions` array; user selects which to use |
 | User selects binding via API | Include `bindingRef` in `CreateDebugSessionRequest` to specify which binding. The API validates `namespace/name` format, active binding state, template match, cluster match, and requester allowlists before creating the session. |
+| Hidden binding selected via API | Explicit `bindingRef` requests can use a hidden binding when it is active, matches the template and cluster, and authorizes the requester |
+| Cluster only has hidden bindings | The cluster is omitted from the template clusters discovery response |
 | No binding selected | First matching binding used as default (backward compatible) |
 | Binding becomes disabled | Auto-discovery skips disabled bindings |
 | Binding deleted after session created | Session continues with cached `ResolvedBinding` info |
