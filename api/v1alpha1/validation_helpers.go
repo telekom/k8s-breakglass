@@ -532,9 +532,8 @@ func validateSessionIdentityProviderAuthorization(
 	// Load all escalations to find those matching this session's cluster and group
 	escalationList := &BreakglassEscalationList{}
 	if err := reader.List(ctx, escalationList); err != nil {
-		// If we can't list escalations, we can't validate - let it pass
-		// The normal escalation validation will catch issues
-		return nil
+		// Fail closed: if we can't load escalations, we can't authorize the IDP
+		return field.ErrorList{field.InternalError(field.NewPath("spec", "identityProviderName"), err)}
 	}
 
 	// Find escalations that match this session's cluster and grantedGroup
