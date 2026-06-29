@@ -2700,7 +2700,7 @@ func TestEmitPodSecurityAudit(t *testing.T) {
 
 			var auditSvc *audit.Service
 			if tt.auditService {
-				auditSvc = audit.NewService(cli, logger, "test-ns")
+				auditSvc = audit.NewService(cli, nil, logger, "test-ns")
 			}
 			wc.WithAuditService(auditSvc)
 
@@ -2827,7 +2827,7 @@ func TestEmitAccessDecisionAudit(t *testing.T) {
 			wc.emitAccessDecisionAudit(ctx, tt.sarSpec.User, []string{"group1", "group2"}, "test-cluster", sar, tt.allowed, tt.source, "test reason")
 
 			// Test with audit service set (but disabled - should still not panic)
-			auditSvc := audit.NewService(cli, logger, "test-ns")
+			auditSvc := audit.NewService(cli, nil, logger, "test-ns")
 			wc.WithAuditService(auditSvc)
 			wc.emitAccessDecisionAudit(ctx, tt.sarSpec.User, []string{"group1", "group2"}, "test-cluster", sar, tt.allowed, tt.source, "test reason with audit service")
 		})
@@ -2918,7 +2918,7 @@ func TestEmitPolicyDenialAudit(t *testing.T) {
 			wc.emitPolicyDenialAudit(ctx, tt.sarSpec.User, []string{"group1"}, "test-cluster", sar, tt.policyName, tt.scope)
 
 			// Test with audit service set
-			auditSvc := audit.NewService(cli, logger, "test-ns")
+			auditSvc := audit.NewService(cli, nil, logger, "test-ns")
 			wc.WithAuditService(auditSvc)
 			wc.emitPolicyDenialAudit(ctx, tt.sarSpec.User, []string{"group1"}, "test-cluster", sar, tt.policyName, tt.scope)
 		})
@@ -3323,7 +3323,7 @@ func TestEmitAuditWithResourceAndNonResourceAttributes(t *testing.T) {
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Set up audit service
-	auditSvc := audit.NewService(cli, logger, "test-ns")
+	auditSvc := audit.NewService(cli, nil, logger, "test-ns")
 	wc.WithAuditService(auditSvc)
 
 	t.Run("handles SAR with only ResourceAttributes", func(t *testing.T) {
@@ -3404,7 +3404,7 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Set up audit service
-	auditSvc := audit.NewService(cli, logger, "test-ns")
+	auditSvc := audit.NewService(cli, nil, logger, "test-ns")
 	wc.WithAuditService(auditSvc)
 
 	sar := &authorizationv1.SubjectAccessReview{

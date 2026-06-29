@@ -26,7 +26,7 @@ import (
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/tools/record"
 )
 
 // Sink defines the interface for audit event destinations.
@@ -303,13 +303,13 @@ func (s *WebhookSink) Name() string {
 
 // KubernetesEventSink creates Kubernetes Events for audit entries.
 type KubernetesEventSink struct {
-	recorder events.EventRecorder
+	recorder record.EventRecorder
 	// Only emit events for these types (empty means all)
 	includeTypes map[EventType]bool
 }
 
 // NewKubernetesEventSink creates a new KubernetesEventSink.
-func NewKubernetesEventSink(recorder events.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
+func NewKubernetesEventSink(recorder record.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
 	typeMap := make(map[EventType]bool)
 	for _, t := range includeTypes {
 		typeMap[t] = true
@@ -350,9 +350,18 @@ func (s *KubernetesEventSink) Write(_ context.Context, event *Event) error {
 		}
 	}
 
-	// Note: This is a placeholder - actual implementation would need the object reference
-	_ = eventType
-	_ = message
+	regarding := &corev1.ObjectReference{
+		Kind:      event.Target.Kind,
+		Name:      event.Target.Name,
+		Namespace: event.Target.Namespace,
+	}
+	if regarding.Kind == "BreakglassSession" || regarding.Kind == "DebugSession" || regarding.Kind == "DebugSessionTemplate" || regarding.Kind == "DebugSessionClusterBinding" {
+		regarding.APIVersion = "breakglass.t-caas.telekom.com/v1alpha1"
+	}
+
+	if s.recorder != nil {
+		s.recorder.Eventf(regarding, eventType, string(event.Type), "%s", message)
+	}
 	return nil
 }
 

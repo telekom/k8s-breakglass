@@ -452,7 +452,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	}
 
 	// Create audit service for Kafka/webhook/log audit event emission
-	auditService := audit.NewService(uncachedClient, zapLogger, cliConfig.BreakglassNamespace)
+	auditService := audit.NewService(uncachedClient, reconcilerMgr.GetEventRecorderFor("breakglass-audit"), zapLogger, cliConfig.BreakglassNamespace)
 
 	// Enable multi-IDP support in auth handler for token verification
 	auth.WithIdentityProviderLoader(idpLoader)
