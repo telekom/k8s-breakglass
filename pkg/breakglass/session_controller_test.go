@@ -8896,6 +8896,9 @@ func TestTokenValidation_TerminalStatesAreInvalid(t *testing.T) {
 				c.Next()
 			}
 			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+			ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+				return []string{"system:authenticated"}, nil
+			}
 
 			engine := gin.New()
 			_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))

@@ -856,7 +856,7 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 	authResult := wc.checkApprovalAuthorization(c, session)
 	meta.IsApprover = authResult.Allowed
 
-	if session.Status.State == breakglassv1alpha1.SessionStatePending && IsSessionApprovalTimedOut(session) {
+	if IsSessionApprovalTimedOut(session) {
 		meta.StateMessage = "This session has timed out waiting for approval"
 		if !meta.IsApprover && !meta.IsRequester {
 			meta.DenialReason = authResult.Message
