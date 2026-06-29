@@ -63,19 +63,16 @@ func TestNewBreakglassEscalationController(t *testing.T) {
 	//   Kubernetes context required by NewEscalationManager.
 	//
 	logger := zaptest.NewLogger(t)
-	// Create a real EscalationManager for testing initialization
-	manager, err := NewEscalationManager("", &KeycloakGroupMemberResolver{})
-	if err != nil {
-		t.Skip("Skipping test as it requires Kubernetes context")
-	}
+	fakeClient := fake.NewClientBuilder().Build()
+	manager := NewEscalationManagerWithClient(fakeClient, &KeycloakGroupMemberResolver{})
 
 	middleware := func(c *gin.Context) {}
 
-	controller := NewBreakglassEscalationController(logger.Sugar(), &manager, middleware, "/config/config.yaml")
+	controller := NewBreakglassEscalationController(logger.Sugar(), manager, middleware, "/config/config.yaml")
 
 	assert.NotNil(t, controller)
 	assert.Equal(t, logger.Sugar(), controller.log)
-	assert.Equal(t, &manager, controller.manager)
+	assert.Equal(t, manager, controller.manager)
 	assert.NotNil(t, controller.identityProvider)
 	assert.NotNil(t, controller.getUserGroupsFn)
 }
