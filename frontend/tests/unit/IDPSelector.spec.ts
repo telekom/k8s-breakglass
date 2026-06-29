@@ -9,16 +9,7 @@
  * @vitest-environment jsdom
  */
 
-interface IDPInfo {
-  name: string;
-  displayName?: string;
-  enabled: boolean;
-}
-
-interface MultiIDPConfig {
-  identityProviders: IDPInfo[];
-  defaultIDP?: string;
-}
+import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 
 interface EscalationInfo {
   name: string;

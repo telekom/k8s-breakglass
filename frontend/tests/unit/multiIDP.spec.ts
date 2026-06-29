@@ -18,6 +18,9 @@ describe("Frontend Multi-IDP: shared contract wiring", () => {
     const serviceModule = await import("@/services/multiIDP");
     const modelModule = await import("@/model/multiIDP");
 
+    // Note: The shared types (IDPInfo, MultiIDPConfig) are strictly TS constructs and erased at runtime.
+    // This compile-time-only validation is intentional. The below assertions only prove the service module
+    // doesn't export conflicting runtime values with those names.
     expect(serviceModule).not.toHaveProperty("IDPInfo");
     expect(serviceModule).not.toHaveProperty("MultiIDPConfig");
     expect(modelModule).toBeTypeOf("object");
