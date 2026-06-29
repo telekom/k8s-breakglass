@@ -55,7 +55,7 @@ cleanup() {
             while IFS= read -r session || [[ -n "$session" ]]; do
                 if [[ -n "$session" ]]; then
                     log_info "  Dropping session: $session"
-                    run_as_requester session drop "$session" 2>/dev/null || true
+                    run_as_requester session drop "$session" --yes 2>/dev/null || true
                 fi
             done < "$TEST_DIR/sessions_to_cleanup"
         fi
@@ -66,7 +66,7 @@ cleanup() {
             while IFS= read -r session || [[ -n "$session" ]]; do
                 if [[ -n "$session" ]]; then
                     log_info "  Dropping debug session: $session"
-                    run_as_requester debug session terminate "$session" 2>/dev/null || true
+                    run_as_requester debug session terminate "$session" --yes 2>/dev/null || true
                 fi
             done < "$TEST_DIR/debug_sessions_to_cleanup"
         fi
@@ -308,7 +308,7 @@ test_session_approval_flow() {
     if [[ -n "$existing_sessions" ]]; then
         for session in $existing_sessions; do
             log_info "Dropping existing approved session: $session"
-            run_as_requester session drop "$session" 2>/dev/null || true
+            run_as_requester session drop "$session" --yes 2>/dev/null || true
         done
         # Give some time for cleanup
         sleep 2
@@ -396,7 +396,7 @@ test_session_rejection_flow() {
     if [[ -n "$existing_sessions" ]]; then
         for session in $existing_sessions; do
             log_info "Dropping existing approved session: $session"
-            run_as_requester session drop "$session" 2>/dev/null || true
+            run_as_requester session drop "$session" --yes 2>/dev/null || true
         done
         # Give some time for cleanup
         sleep 2

@@ -22,7 +22,7 @@ limitations under the License.
 //
 // Usage:
 //
-//	svc := audit.NewService(kubeClient, logger, "breakglass-system")
+//	svc := audit.NewService(kubeClient, recorder, logger, "breakglass-system")
 //	// When AuditConfig is created/updated:
 //	svc.Reload(ctx, config)
 //	// Emit events:
@@ -41,7 +41,7 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -52,7 +52,7 @@ import (
 // It watches AuditConfig changes and reconfigures the audit manager accordingly.
 type Service struct {
 	client            client.Client
-	recorder          record.EventRecorder
+	recorder          events.EventRecorder
 	logger            *zap.Logger
 	mu                sync.RWMutex
 	manager           *Manager
@@ -63,7 +63,7 @@ type Service struct {
 }
 
 // NewService creates a new audit Service.
-func NewService(kubeClient client.Client, recorder record.EventRecorder, logger *zap.Logger, controllerNamespace string) *Service {
+func NewService(kubeClient client.Client, recorder events.EventRecorder, logger *zap.Logger, controllerNamespace string) *Service {
 	return &Service{
 		client:   kubeClient,
 		recorder: recorder,

@@ -47,9 +47,15 @@ const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   },
 };
 
-const resolvedNodeEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env
-  ?.NODE_ENV;
-const isProdBuild = resolvedNodeEnv === "production";
+function isProductionBuild(): boolean {
+  if (import.meta.env.PROD) {
+    return true;
+  }
+
+  return (
+    (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env?.NODE_ENV === "production"
+  );
+}
 
 type UserLoadedHandler = (loadedUser: User) => void;
 
@@ -236,7 +242,7 @@ function base64UrlEncodeObject(obj: Record<string, unknown>): string {
  * Consumers must NEVER rely on the signature because the header uses alg "none".
  */
 function createMockJWT(payload: Record<string, unknown>): string {
-  if (isProdBuild) {
+  if (isProductionBuild()) {
     throw new Error("Mock JWT generation is disabled in production builds.");
   }
   const header = { alg: "none", typ: "JWT" };
@@ -307,7 +313,7 @@ export default class AuthService {
 
     this.mockMode = options?.mock ?? false;
 
-    if (this.mockMode && isProdBuild) {
+    if (this.mockMode && isProductionBuild()) {
       throw new Error("Mock authentication cannot be enabled in production builds.");
     }
 

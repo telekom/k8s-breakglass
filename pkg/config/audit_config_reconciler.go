@@ -222,10 +222,11 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 				r.onError(ctx, err)
 			}
 			// Record failure event to each config that was part of the reload
-			for _, cfg := range allConfigs.Items {
+			for i := range allConfigs.Items {
+				cfg := &allConfigs.Items[i]
 				if cfg.Spec.Enabled && r.isConfigInList(cfg.Name, validConfigs) {
 					if r.recorder != nil {
-						r.recorder.Eventf(&cfg, nil, corev1.EventTypeWarning, "ReloadFailed", "Reload",
+						r.recorder.Eventf(cfg, nil, corev1.EventTypeWarning, "ReloadFailed", "Reload",
 							"Failed to reload audit configuration: %v", err)
 					}
 				}
@@ -248,8 +249,17 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		"configNames", configNames,
 		"totalSinks", totalSinks)
 
-	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
+}
+
+// isConfigInList checks if a config name is in the valid configs list
+func (r *AuditConfigReconciler) isConfigInList(name string, configs []*breakglassv1alpha1.AuditConfig) bool {
+	for _, cfg := range configs {
+		if cfg.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // validateConfig validates the AuditConfig and returns a list of errors

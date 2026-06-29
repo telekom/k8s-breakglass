@@ -22,11 +22,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 )
 
 // Sink defines the interface for audit event destinations.
@@ -303,13 +304,13 @@ func (s *WebhookSink) Name() string {
 
 // KubernetesEventSink creates Kubernetes Events for audit entries.
 type KubernetesEventSink struct {
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 	// Only emit events for these types (empty means all)
 	includeTypes map[EventType]bool
 }
 
 // NewKubernetesEventSink creates a new KubernetesEventSink.
-func NewKubernetesEventSink(recorder record.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
+func NewKubernetesEventSink(recorder events.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
 	typeMap := make(map[EventType]bool)
 	for _, t := range includeTypes {
 		typeMap[t] = true
@@ -360,9 +361,28 @@ func (s *KubernetesEventSink) Write(_ context.Context, event *Event) error {
 	}
 
 	if s.recorder != nil {
-		s.recorder.Eventf(regarding, eventType, string(event.Type), "%s", message)
+		reason := kubernetesEventReason(event.Type)
+		s.recorder.Eventf(regarding, nil, eventType, reason, reason, "%s", message)
 	}
 	return nil
+}
+
+func kubernetesEventReason(eventType EventType) string {
+	parts := strings.FieldsFunc(string(eventType), func(r rune) bool {
+		return r == '.' || r == '_' || r == '-'
+	})
+	var builder strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		builder.WriteString(strings.ToUpper(part[:1]))
+		builder.WriteString(part[1:])
+	}
+	if builder.Len() == 0 {
+		return "AuditEvent"
+	}
+	return builder.String()
 }
 
 // Close is a no-op for KubernetesEventSink.

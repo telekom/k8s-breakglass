@@ -311,6 +311,12 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		)
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
+
+	// Merge our prepared conditions onto the latest version
+	// This preserves any updates from other controllers while applying our changes
+	for _, condition := range idp.Status.Conditions {
+		latest.SetCondition(condition)
+	}
 	latest.Status.ObservedGeneration = idp.Status.ObservedGeneration
 
 	// Persist status to API server

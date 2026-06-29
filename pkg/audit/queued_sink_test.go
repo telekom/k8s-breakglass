@@ -142,7 +142,7 @@ func TestQueuedSink_QueueOverflow(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		event := &Event{
 			ID:   "flood-" + string(rune('0'+i)),
-			Type: EventSessionRequested,
+			Type: EventHealthCheck,
 		}
 		_ = qs.Write(ctx, event)
 	}

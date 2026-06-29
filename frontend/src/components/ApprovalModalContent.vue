@@ -51,9 +51,13 @@
         :value="approverNote"
         :placeholder="approvalReasonPlaceholder"
         :invalid="isNoteRequired && !approverNote.trim()"
+        :aria-describedby="isRequiredNoteMissing ? noteErrorId : undefined"
         helper-text-invalid="This field is required."
         @scale-change="handleNoteChange"
       />
+      <p v-if="isRequiredNoteMissing" :id="noteErrorId" class="approval-note-required" role="alert">
+        This field is required.
+      </p>
     </div>
 
     <div class="modal-actions">

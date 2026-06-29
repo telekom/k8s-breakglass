@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // allSensitiveEventTypes mirrors the cases in IsSensitiveEvent so that
@@ -635,6 +636,42 @@ func TestKubernetesEventSink(t *testing.T) {
 
 	assert.Equal(t, "kubernetes", sink.Name())
 	assert.NoError(t, sink.Close())
+}
+
+func TestKubernetesEventSinkUsesStableEventReason(t *testing.T) {
+	recorder := &capturingEventRecorder{}
+	sink := NewKubernetesEventSink(recorder, nil)
+
+	err := sink.Write(context.Background(), &Event{
+		Type:     EventDebugSessionApprovalTimeout,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "approver@example.com"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      "debug-session-1",
+			Namespace: "breakglass-system",
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "Warning", recorder.eventType)
+	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.reason)
+	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.action)
+	assert.Contains(t, recorder.note, string(EventDebugSessionApprovalTimeout))
+}
+
+type capturingEventRecorder struct {
+	eventType string
+	reason    string
+	action    string
+	note      string
+}
+
+func (r *capturingEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, eventType, reason, action, note string, args ...interface{}) {
+	r.eventType = eventType
+	r.reason = reason
+	r.action = action
+	r.note = fmt.Sprintf(note, args...)
 }
 
 func BenchmarkManagerEmit(b *testing.B) {
