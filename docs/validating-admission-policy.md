@@ -178,16 +178,6 @@ patches:
 2. Confirming zero false positives
 3. Verifying all existing resources pass VAP validation
 
-## Combining with Gateway API
-
-Both components can be used together:
-
-```yaml
-components:
-  - ../../components/gateway-api
-  - ../../components/vap
-```
-
 ## Troubleshooting
 
 ### Policy Not Taking Effect
@@ -229,6 +219,5 @@ In Phase 1, both webhook and VAP validate simultaneously. If they disagree:
 ## Related Documentation
 
 - [Ingress Configuration](ingress-configuration.md) — Network setup
-- [Gateway API Configuration](gateway-api-configuration.md) — HTTPRoute setup
 - [Installation Guide](installation.md) — Step-by-step deployment
 - [Kubernetes VAP Documentation](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/) — Upstream reference

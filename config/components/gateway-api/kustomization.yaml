@@ -12,8 +12,8 @@
 #   components:
 #     - ../../components/gateway-api
 #
-# Customize parentRefs and hostnames via strategic merge patches in your overlay.
-# See docs/gateway-api-configuration.md for details.
+# Customize parentRefs, hostnames, gateway class, listener section names, and
+# cross-namespace grants via strategic merge patches in your overlay.
 
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
