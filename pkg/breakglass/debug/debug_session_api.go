@@ -620,6 +620,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
 		return
 	}
+	if strings.TrimSpace(currentUserStr) == "" {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
 
 	// Get email from context (set by auth middleware from "email" claim)
 	userEmail := ""
@@ -1032,9 +1036,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	// Check binding session limits if a binding is resolved
 	if resolvedBinding != nil {
-		if err := c.checkBindingSessionLimits(apiCtx, resolvedBinding, userEmail); err != nil {
+		if err := c.checkBindingSessionLimits(apiCtx, resolvedBinding, debugSessionReadIdentity{
+			username: currentUserStr,
+			email:    userEmail,
+		}); err != nil {
 			reqLog.Warnw("Binding session limits exceeded",
 				"bindingRef", req.BindingRef,
+				"user", currentUserStr,
 				"userEmail", userEmail,
 				"error", err,
 			)
