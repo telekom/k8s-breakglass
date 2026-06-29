@@ -1236,7 +1236,7 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 		log.Infow("API controllers enabled", "components", "BreakglassSession, BreakglassEscalation")
 	}
 
-	// Webhook controller is always registered but may not be exposed via webhooks
+	// Create webhook controller (exposed when API is enabled)
 	webhookCtrl := webhook.NewWebhookController(log, *cfg, sessionManager, escalationManager, ccProvider, denyEval).
 		WithAuditService(auditService)
 
