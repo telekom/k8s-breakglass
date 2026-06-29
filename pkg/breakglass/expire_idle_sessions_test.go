@@ -409,6 +409,107 @@ func TestExpireIdleSessions_UsesReaderBeforeStatusUpdate(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("fails closed when listed session has no namespace", func(t *testing.T) {
+		staleCached := breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "missing-namespace-idle-session"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "production",
+				User:         "user@example.com",
+				GrantedGroup: "admin",
+				IdleTimeout:  "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &staleActivity,
+			},
+		}
+		manager := NewSessionManagerWithClientAndReader(newIdleTestClient(scheme), newIdleTestClient(scheme))
+		ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+		_, _, ok, err := ctrl.prepareIdleExpiredSession(context.Background(), staleCached)
+
+		require.Error(t, err)
+		assert.False(t, ok)
+		assert.Contains(t, err.Error(), "without namespace")
+	})
+}
+
+func TestExpireIdleSessions_ReevaluatesLiveIdleTimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	staleActivity := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+
+	t.Run("skips when live idle timeout is extended", func(t *testing.T) {
+		staleCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "live-timeout-session", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "production",
+				User:         "user@example.com",
+				GrantedGroup: "admin",
+				IdleTimeout:  "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &staleActivity,
+			},
+		}
+		live := staleCached.DeepCopy()
+		live.Spec.IdleTimeout = "30m"
+
+		cacheClient := newIdleTestClient(scheme, staleCached)
+		readerClient := newIdleTestClient(scheme, live)
+		manager := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+		ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+		ctrl.ExpireIdleSessions(context.Background())
+
+		var cachedAfter breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(context.Background(), client.ObjectKeyFromObject(staleCached), &cachedAfter))
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, cachedAfter.Status.State)
+	})
+
+	t.Run("uses live idle timeout in expired condition", func(t *testing.T) {
+		staleCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "live-condition-session", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "production",
+				User:         "user@example.com",
+				GrantedGroup: "admin",
+				IdleTimeout:  "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &staleActivity,
+			},
+		}
+		live := staleCached.DeepCopy()
+		live.Spec.IdleTimeout = "15m"
+
+		cacheClient := newIdleTestClient(scheme, staleCached)
+		readerClient := newIdleTestClient(scheme, live)
+		manager := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+		ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+		ctrl.ExpireIdleSessions(context.Background())
+
+		var cachedAfter breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(context.Background(), client.ObjectKeyFromObject(staleCached), &cachedAfter))
+		assert.Equal(t, breakglassv1alpha1.SessionStateIdleExpired, cachedAfter.Status.State)
+
+		var idleCondition *metav1.Condition
+		for i := range cachedAfter.Status.Conditions {
+			if cachedAfter.Status.Conditions[i].Type == string(breakglassv1alpha1.SessionConditionTypeIdle) {
+				idleCondition = &cachedAfter.Status.Conditions[i]
+				break
+			}
+		}
+		require.NotNil(t, idleCondition)
+		assert.Contains(t, idleCondition.Message, "idle timeout: 15m")
+	})
 }
 
 func TestExpireIdleSessions_SendsEmail(t *testing.T) {

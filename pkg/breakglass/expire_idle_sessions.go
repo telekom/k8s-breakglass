@@ -94,7 +94,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 			continue
 		}
 
-		fresh, refreshedIdle, ok, err := wc.prepareIdleExpiredSession(ctx, ses, idleTimeout)
+		fresh, refreshedIdle, ok, err := wc.prepareIdleExpiredSession(ctx, ses)
 		if err != nil || !ok {
 			continue
 		}
@@ -123,7 +123,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 				wc.log.Warnw("failed to update idle-expired session status (will retry)",
 					"session", ses.Name, "attempt", attempt+1, "error", err)
 
-				if updated, _, ok, err := wc.prepareIdleExpiredSession(ctx, ses, idleTimeout); err != nil {
+				if updated, _, ok, err := wc.prepareIdleExpiredSession(ctx, ses); err != nil {
 					break
 				} else if ok {
 					ses = updated
@@ -153,7 +153,6 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 func (wc *BreakglassSessionController) prepareIdleExpiredSession(
 	ctx context.Context,
 	session breakglassv1alpha1.BreakglassSession,
-	idleTimeout time.Duration,
 ) (breakglassv1alpha1.BreakglassSession, time.Duration, bool, error) {
 	refreshed, err := wc.getFreshIdleSession(ctx, session)
 	if err != nil {
@@ -177,11 +176,27 @@ func (wc *BreakglassSessionController) prepareIdleExpiredSession(
 		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
 	}
 
+	if refreshed.Spec.IdleTimeout == "" {
+		wc.log.Infow("Session no longer has idle timeout after refetch; skipping idle expiry",
+			"session", session.Name)
+		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
+	}
+
+	refreshedIdleTimeout, err := breakglassv1alpha1.ParseDuration(refreshed.Spec.IdleTimeout)
+	if err != nil {
+		wc.log.Warnw("invalid idleTimeout on refetched session, skipping idle expiry",
+			"session", session.Name,
+			"idleTimeout", refreshed.Spec.IdleTimeout,
+			"error", err)
+		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
+	}
+
 	refreshedIdle := time.Since(refreshed.Status.LastActivity.Time)
-	if refreshedIdle < idleTimeout {
+	if refreshedIdle < refreshedIdleTimeout {
 		wc.log.Infow("Session no longer idle after refetch; skipping expiry",
 			"session", session.Name,
-			"refreshedIdleSince", refreshedIdle.Round(time.Second))
+			"refreshedIdleSince", refreshedIdle.Round(time.Second),
+			"idleTimeout", refreshed.Spec.IdleTimeout)
 		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
 	}
 
@@ -198,7 +213,7 @@ func (wc *BreakglassSessionController) getFreshIdleSession(
 	session breakglassv1alpha1.BreakglassSession,
 ) (breakglassv1alpha1.BreakglassSession, error) {
 	if session.Namespace == "" {
-		return wc.sessionManager.GetBreakglassSessionByName(ctx, session.Name)
+		return breakglassv1alpha1.BreakglassSession{}, fmt.Errorf("refusing idle session refetch without namespace for %q", session.Name)
 	}
 
 	refreshed := breakglassv1alpha1.BreakglassSession{}
