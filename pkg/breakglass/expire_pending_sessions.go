@@ -6,12 +6,10 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
-
-	// ExpirePendingSessions sets state to Timeout for pending sessions that have expired (approval timeout)
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ExpirePendingSessions sets state to Timeout for pending sessions that have expired (approval timeout).
 func (wc *BreakglassSessionController) ExpirePendingSessions() {
 	// Use indexed query to fetch only pending sessions (matching ExpireApprovedSessions pattern)
 	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStatePending)
