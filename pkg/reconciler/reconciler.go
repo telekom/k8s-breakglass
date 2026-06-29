@@ -129,6 +129,7 @@ func Setup(
 	auditService *audit.Service,
 	mailService *mail.Service,
 	escalationManager *escalation.EscalationManager,
+	enableControllers bool,
 	log *zap.SugaredLogger,
 ) error {
 	// Register health check handlers for liveness and readiness probes
@@ -362,6 +363,10 @@ func Setup(
 		return fmt.Errorf("failed to setup AuditConfig reconciler with manager: %w", err)
 	}
 	log.Infow("Successfully registered AuditConfig reconciler", "resyncPeriod", "10m")
+
+	} else {
+		log.Infow("Reconcilers disabled via --enable-controllers=false")
+	}
 
 	// Note: Leadership election is NOT handled by the manager at this level.
 	// Background loops (cleanup, escalation updater, cluster config checker) use the resourcelock

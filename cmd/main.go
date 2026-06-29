@@ -295,12 +295,17 @@ func run() error {
 		return fmt.Errorf("create event recorder: %w", err)
 	}
 
-	resourceLock, leaderBroadcaster, err := createLeaderElectionLock(
-		kubeClientset, scheme, hostname, cliConfig, log)
-	if err != nil {
-		return err
+	var resourceLock resourcelock.Interface
+	var leaderBroadcaster record.EventBroadcaster
+	var err error
+	if cliConfig.EnableLeaderElection {
+		resourceLock, leaderBroadcaster, err = createLeaderElectionLock(
+			kubeClientset, scheme, hostname, cliConfig, log)
+		if err != nil {
+			return err
+		}
+		defer leaderBroadcaster.Shutdown()
 	}
-	defer leaderBroadcaster.Shutdown()
 
 	// Create channels for leader election signal and background error propagation
 	leaderElectedCh := make(chan struct{})
@@ -629,39 +634,51 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		log.Infow("Cleanup routine disabled via --enable-cleanup=false")
 	}
 
-	if err := cluster.RegisterInvalidationHandlers(ctx, deps.reconcilerMgr, deps.ccProvider, log); err != nil {
-		log.Warnw("Failed to register cluster cache invalidation handlers", "error", err)
+	if deps.cliConfig.EnableControllers {
+		if err := cluster.RegisterInvalidationHandlers(ctx, deps.reconcilerMgr, deps.ccProvider, log); err != nil {
+			log.Warnw("Failed to register cluster cache invalidation handlers", "error", err)
+		}
+	} else {
+		log.Infow("Cache invalidation handlers disabled via --enable-controllers=false")
 	}
 
-	// Escalation status updater with EventRecorder and IDPLoader
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		escalation.EscalationStatusUpdater{
-			Log:           log,
-			K8sClient:     deps.escalationManager.Client,
-			Resolver:      deps.escalationManager.GetResolver(),
-			EventRecorder: deps.eventsRecorder,
-			IDPLoader:     deps.idpLoader,
-			Interval:      cli.ParseEscalationStatusUpdateInterval(deps.cliConfig.EscalationStatusUpdateInt, log),
-			LeaderElected: leaderElectedCh,
-		}.Start(ctx)
-	}()
-
-	// ClusterConfig checker: validates referenced kubeconfig secrets contain the expected key
-	intervalStr := deps.cliConfig.ClusterConfigCheckInterval
-	if intervalStr == "" && deps.cfg.Kubernetes.ClusterConfigCheckInterval != "" {
-		intervalStr = deps.cfg.Kubernetes.ClusterConfigCheckInterval
+	if deps.cliConfig.EnableControllers {
+		// Escalation status updater with EventRecorder and IDPLoader
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			escalation.EscalationStatusUpdater{
+				Log:           log,
+				K8sClient:     deps.escalationManager.Client,
+				Resolver:      deps.escalationManager.GetResolver(),
+				EventRecorder: deps.eventsRecorder,
+				IDPLoader:     deps.idpLoader,
+				Interval:      cli.ParseEscalationStatusUpdateInterval(deps.cliConfig.EscalationStatusUpdateInt, log),
+				LeaderElected: leaderElectedCh,
+			}.Start(ctx)
+		}()
+	} else {
+		log.Infow("Escalation status updater disabled via --enable-controllers=false")
 	}
-	interval := cli.ParseClusterConfigCheckInterval(intervalStr, log)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		clusterconfig.ClusterConfigChecker{
-			Log: log, Client: deps.escalationManager.Client,
-			Recorder: deps.eventsRecorder, Interval: interval, LeaderElected: leaderElectedCh,
-		}.Start(ctx)
-	}()
+
+	if deps.cliConfig.EnableControllers {
+		// ClusterConfig checker: validates referenced kubeconfig secrets contain the expected key
+		intervalStr := deps.cliConfig.ClusterConfigCheckInterval
+		if intervalStr == "" && deps.cfg.Kubernetes.ClusterConfigCheckInterval != "" {
+			intervalStr = deps.cfg.Kubernetes.ClusterConfigCheckInterval
+		}
+		interval := cli.ParseClusterConfigCheckInterval(intervalStr, log)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			clusterconfig.ClusterConfigChecker{
+				Log: log, Client: deps.escalationManager.Client,
+				Recorder: deps.eventsRecorder, Interval: interval, LeaderElected: leaderElectedCh,
+			}.Start(ctx)
+		}()
+	} else {
+		log.Infow("ClusterConfig checker disabled via --enable-controllers=false")
+	}
 
 	// Leader election
 	if deps.cliConfig.EnableLeaderElection {
@@ -681,7 +698,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 	go func() {
 		defer wg.Done()
 		if err := reconciler.Setup(ctx, deps.reconcilerMgr, deps.idpLoader, deps.server,
-			deps.ccProvider, deps.auditService, deps.mailService, deps.escalationManager, log); err != nil {
+			deps.ccProvider, deps.auditService, deps.mailService, deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)
 		}
 	}()

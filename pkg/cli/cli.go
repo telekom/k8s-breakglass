@@ -41,6 +41,7 @@ type Config struct {
 	EnableAPI                bool
 	EnableCleanup            bool
 	EnableValidatingWebhooks bool
+	EnableControllers        bool
 
 	// Configuration flags
 	ConfigPath              string
@@ -155,6 +156,7 @@ func Parse() *Config {
 		"Enable the API controller for BreakglassSession and BreakglassEscalation endpoints. Use false when deploying a webhook-only instance")
 	flag.BoolVar(&config.EnableCleanup, "enable-cleanup", getEnvBool("ENABLE_CLEANUP", true),
 		"Enable the background cleanup routine for expired sessions. Use false when deploying a webhook-only instance")
+	flag.BoolVar(&config.EnableControllers, "enable-controllers", getEnvBool("ENABLE_CONTROLLERS", true), "Enable Kubernetes controllers and status updaters")
 	flag.BoolVar(&config.EnableValidatingWebhooks, "enable-validating-webhooks", getEnvBool("ENABLE_VALIDATING_WEBHOOKS", true),
 		"Enable validating webhooks for breakglass CRDs. Disable when running a frontend/API-only instance")
 
