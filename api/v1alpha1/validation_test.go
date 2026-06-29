@@ -1360,13 +1360,13 @@ func TestValidateBreakglassSession_MalformedResources(t *testing.T) {
 		hasGroupErr := false
 
 		for _, e := range result.Errors {
-			if e.Field == "spec.cluster" && e.Type == "FieldValueRequired" {
+			if e.Field == "spec.cluster" && e.Type == field.ErrorTypeRequired {
 				hasClusterErr = true
 			}
-			if e.Field == "spec.user" && e.Type == "FieldValueRequired" {
+			if e.Field == "spec.user" && e.Type == field.ErrorTypeRequired {
 				hasUserErr = true
 			}
-			if e.Field == "spec.grantedGroup" && e.Type == "FieldValueRequired" {
+			if e.Field == "spec.grantedGroup" && e.Type == field.ErrorTypeRequired {
 				hasGroupErr = true
 			}
 		}
