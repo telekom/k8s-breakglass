@@ -24,7 +24,7 @@
     </div>
 
     <!-- Activation status badge -->
-    <div v-if="session.status?.state === 'WaitingForScheduledTime'" class="modal-pill tone-info">
+    <div v-if="isAwaitingScheduledStart" class="modal-pill tone-info">
       <span aria-hidden="true">⏳</span> Approved and awaiting scheduled start
     </div>
 
@@ -90,6 +90,7 @@
 <script setup lang="ts">
 import { computed, useId } from "vue";
 import { formatDateTime, formatDurationRounded, formatEndTime } from "@/composables";
+import { getSessionState, normalizeState } from "@/composables/useSessionList";
 import type { SessionCR } from "@/model/breakglass";
 
 const noteErrorId = `approval-note-error-${useId()}`;
@@ -134,8 +135,11 @@ const approvalReason = computed(() => {
 
 const isNoteRequired = computed(() => approvalReason.value?.mandatory ?? false);
 const isRequiredNoteMissing = computed(() => isNoteRequired.value && !props.approverNote.trim());
-const isAwaitingScheduledStart = computed(() => props.session.status?.state === "WaitingForScheduledTime");
-const canReview = computed(() => props.session.status?.state === "Pending");
+const normalizedSessionState = computed(() => normalizeState(getSessionState(props.session)));
+const isAwaitingScheduledStart = computed(
+  () => normalizedSessionState.value === "waitingforscheduledtime" || normalizedSessionState.value === "scheduled",
+);
+const canReview = computed(() => normalizedSessionState.value === "pending");
 
 const approvalReasonPlaceholder = computed(() => {
   return approvalReason.value?.description || "Optional approver note";

@@ -43,8 +43,7 @@ const emit = defineEmits<{
 // Get normalized state for action logic
 const sessionState = computed(() => {
   const state = props.breakglass.status?.state || props.breakglass.state;
-  if (!state) return "";
-  return typeof state === "string" ? state.toLowerCase() : "";
+  return typeof state === "string" ? state.toLowerCase().replace(/\s+/g, "") : "";
 });
 
 // Session is actionable if in a non-terminal state

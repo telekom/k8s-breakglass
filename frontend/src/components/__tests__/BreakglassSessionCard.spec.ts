@@ -249,10 +249,10 @@ describe("BreakglassSessionCard", () => {
       expect(wrapper.find("[data-testid='session-actions']").exists()).toBe(false);
     });
 
-    it("WaitingForScheduledTime session does not expose approval actions", () => {
+    it("waiting for scheduled time session does not expose approval actions", () => {
       const wrapper = mountCard({
         status: {
-          state: "WaitingForScheduledTime",
+          state: "Waiting For Scheduled Time",
           approvedAt: undefined,
           expiresAt: undefined,
           retainedUntil: new Date(Date.now() + 86400000).toISOString(),

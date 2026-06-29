@@ -74,6 +74,29 @@ describe("ApprovalModalContent", () => {
     expect(wrapper.find(".approval-note-required").exists()).toBe(false);
   });
 
+  it("shows approval controls for lowercase pending state", () => {
+    const wrapper = mount(ApprovalModalContent, {
+      props: {
+        session: {
+          ...requiredNoteSession,
+          status: { state: "pending" },
+        },
+        approverNote: "INC-123 reviewed",
+        isApproving: false,
+      },
+      global: {
+        stubs: {
+          "scale-button": ScaleButtonStub,
+          "scale-textarea": true,
+        },
+      },
+    });
+
+    expect(wrapper.find('[data-testid="rejection-reason-input"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="approve-button"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="reject-button"]').exists()).toBe(true);
+  });
+
   it("hides approval controls when a scheduled session is already approved", () => {
     const wrapper = mount(ApprovalModalContent, {
       props: {
@@ -98,6 +121,35 @@ describe("ApprovalModalContent", () => {
 
     expect(wrapper.find('[data-testid="scheduled-activation-note"]').text()).toContain("already been approved");
     expect(wrapper.find('[data-testid="rejection-reason-input"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="approve-button"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="reject-button"]').exists()).toBe(false);
+  });
+
+  it("uses top-level scheduled state fallback for approved scheduled sessions", () => {
+    const wrapper = mount(ApprovalModalContent, {
+      props: {
+        session: {
+          ...requiredNoteSession,
+          spec: {
+            ...requiredNoteSession.spec,
+            scheduledStartTime: "2026-02-20T12:00:00Z",
+          },
+          status: {},
+          state: "waiting for scheduled time",
+        },
+        approverNote: "",
+        isApproving: false,
+      },
+      global: {
+        stubs: {
+          "scale-button": ScaleButtonStub,
+          "scale-textarea": true,
+        },
+      },
+    });
+
+    expect(wrapper.find(".modal-pill").text()).toContain("Approved and awaiting scheduled start");
+    expect(wrapper.find('[data-testid="scheduled-activation-note"]').text()).toContain("already been approved");
     expect(wrapper.find('[data-testid="approve-button"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="reject-button"]').exists()).toBe(false);
   });
