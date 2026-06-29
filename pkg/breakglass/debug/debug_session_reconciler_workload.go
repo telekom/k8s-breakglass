@@ -200,8 +200,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
-	var auxStatuses []breakglassv1alpha1.AuxiliaryResourceStatus
-	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
+	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
+	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
+	if auxiliaryResourcesConfigured {
 		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
 		auxStatuses = append(auxStatuses, beforeStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
@@ -232,7 +233,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		"namespace", targetNs,
 		"kind", gvk.Kind)
 
-	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
+	if auxiliaryResourcesConfigured {
 		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
 		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
@@ -242,6 +243,15 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	return nil
+}
+
+func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliaryResourcesConfigured bool) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	if !auxiliaryResourcesConfigured {
+		return nil
+	}
+	statuses := []breakglassv1alpha1.AuxiliaryResourceStatus{}
+	ds.Status.AuxiliaryResourceStatuses = statuses
+	return statuses
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.

@@ -901,6 +901,32 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 	assert.Equal(t, "Current", persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
 }
 
+func TestStartAuxiliaryStatusTracking(t *testing.T) {
+	t.Run("configured resources force explicit empty status list", func(t *testing.T) {
+		session := newTestDebugSession("aux-empty-status", "test-template", "test-cluster", "user@example.com")
+
+		statuses := startAuxiliaryStatusTracking(session, true)
+
+		if statuses == nil {
+			t.Fatal("expected non-nil auxiliary status slice")
+		}
+		if session.Status.AuxiliaryResourceStatuses == nil {
+			t.Fatal("expected non-nil session auxiliary status slice")
+		}
+		assert.Empty(t, statuses)
+		assert.Empty(t, session.Status.AuxiliaryResourceStatuses)
+	})
+
+	t.Run("unconfigured resources leave status untouched", func(t *testing.T) {
+		session := newTestDebugSession("aux-no-status", "test-template", "test-cluster", "user@example.com")
+
+		statuses := startAuxiliaryStatusTracking(session, false)
+
+		assert.Nil(t, statuses)
+		assert.Nil(t, session.Status.AuxiliaryResourceStatuses)
+	})
+}
+
 func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 	scheme := testScheme()
 
