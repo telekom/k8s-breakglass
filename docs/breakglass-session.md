@@ -35,7 +35,7 @@ Approval and rejection REST requests may omit the optional JSON body. When a bod
 | `Approved` | Active and granting privileges | ✅ Yes (if not expired) | Approver approved OR scheduled time reached | `approvedAt`, `expiresAt` |
 | `Rejected` | Approver denied the request | ❌ No | Approver rejected request | `rejectedAt` (Terminal) |
 | `Withdrawn` | User canceled their own request | ❌ No | User withdrew before approval | `withdrawnAt` (Terminal) |
-| `Expired` | Session reached max duration OR approver dropped it | ❌ No | Session time exceeded OR explicitly expired | `expiresAt` (Terminal) |
+| `Expired` | Session reached max duration OR was explicitly ended after approval | ❌ No | Session time exceeded OR explicitly expired | `expiresAt` (Terminal) |
 | `IdleExpired` | Session idle timeout exceeded | ❌ No | No activity within configured `idleTimeout` | `lastActivity` (Terminal) |
 | `ApprovalTimeout` | Pending session timed out awaiting approval | ❌ No | Pending session exceeded timeout threshold | `timeoutAt` (Terminal) |
 
@@ -71,9 +71,13 @@ Timestamps are preserved across state transitions to maintain audit history:
 ```
 Initial (Pending): metadata.creationTimestamp=10:30
 ↓ User approves: approvedAt=10:31, expiresAt=10:32
-↓ Admin drops early: expiresAt=10:31 (UPDATED), approvedAt=10:31 (PRESERVED)
+↓ Owner drops early: expiresAt=10:31 (UPDATED), approvedAt=10:31 (PRESERVED)
   Terminal state: Expired, retainedUntil=11:01, all previous timestamps intact
 ```
+
+Dropping an approved session that is still `WaitingForScheduledTime` follows the
+same audit rule: the session becomes terminal `Expired`, while `approvedAt`,
+`approver`, `approvers`, and `approvalReason` remain intact.
 
 ## Resource Definition
 

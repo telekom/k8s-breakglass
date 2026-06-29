@@ -2546,6 +2546,63 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 }
 
+func TestDropScheduledApprovedSessionExpiresAndPreservesApprovalHistory(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	baseTime := time.Date(2026, time.June, 24, 16, 0, 0, 0, time.UTC)
+	approvedAt := metav1.NewTime(baseTime.Add(-5 * time.Minute))
+	scheduledStart := metav1.NewTime(baseTime.Add(25 * time.Minute))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "scheduled-drop"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:            "c",
+			User:               "user@e.com",
+			GrantedGroup:       "g",
+			ScheduledStartTime: &scheduledStart,
+			RetainFor:          "30m",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:          breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			ApprovedAt:     approvedAt,
+			ApprovalReason: "approved for scheduled maintenance",
+			Approver:       "approver@e.com",
+			Approvers:      []string{"approver@e.com"},
+		},
+	}
+
+	cli := builder.WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("email", "user@e.com")
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/scheduled-drop/drop", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+	var got breakglassv1alpha1.BreakglassSession
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Name: "scheduled-drop"}, &got))
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, got.Status.State)
+	assert.False(t, got.Status.ExpiresAt.IsZero())
+	assert.True(t, got.Status.WithdrawnAt.IsZero(), "scheduled approved drops must not be recorded as withdrawals")
+	assert.True(t, got.Status.ApprovedAt.Time.Equal(approvedAt.Time), "approvedAt changed")
+	assert.Equal(t, "approved for scheduled maintenance", got.Status.ApprovalReason)
+	assert.Equal(t, "approver@e.com", got.Status.Approver)
+	assert.Equal(t, []string{"approver@e.com"}, got.Status.Approvers)
+	assert.Equal(t, "dropped", got.Status.ReasonEnded)
+	assert.False(t, got.Status.RetainedUntil.IsZero())
+}
+
 func TestDropTerminalSessionRejected(t *testing.T) {
 	terminalStates := []breakglassv1alpha1.BreakglassSessionState{
 		breakglassv1alpha1.SessionStateRejected,

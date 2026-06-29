@@ -131,8 +131,10 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		return
 	}
 
-	// If approved -> mark as Expired and set RetainedUntil appropriately (owner requested termination)
-	if bs.Status.State == breakglassv1alpha1.SessionStateApproved && !bs.Status.ApprovedAt.IsZero() {
+	// If already approved or waiting for scheduled activation, mark as Expired and retain approval history.
+	if (bs.Status.State == breakglassv1alpha1.SessionStateApproved ||
+		bs.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime) &&
+		!bs.Status.ApprovedAt.IsZero() {
 		// Approved session dropped - transition to Expired
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		bs.Status.ExpiresAt = metav1.NewTime(time.Now())
