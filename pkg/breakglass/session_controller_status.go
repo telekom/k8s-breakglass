@@ -348,10 +348,10 @@ func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Co
 
 	validSessions := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	for _, ses := range sessions {
-		if !IsSessionActive(ses) {
+		if !IsSessionOccupyingSlot(ses) {
 			continue
 		}
-		wc.log.Debugw("Found active session candidate", "session", ses.Name)
+		wc.log.Debugw("Found session slot candidate", "session", ses.Name, "state", ses.Status.State)
 		validSessions = append(validSessions, ses)
 	}
 
@@ -503,11 +503,11 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 		return fmt.Errorf("failed to list sessions for user: %w", err)
 	}
 
-	// Count active sessions for this user (across ALL escalations)
+	// Count sessions that still reserve a request slot for this user (across ALL escalations).
 	var userActive int32
 	for i := range sessionList {
 		session := &sessionList[i]
-		if !IsSessionActive(*session) {
+		if !IsSessionOccupyingSlot(*session) {
 			continue
 		}
 		userActive++
@@ -520,16 +520,16 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 		"source", source)
 
 	if userActive >= limit {
-		return fmt.Errorf("session limit reached: maximum %d active sessions per user allowed (%s)", limit, source)
+		return fmt.Errorf("session limit reached: maximum %d slot-occupying sessions per user allowed (%s)", limit, source)
 	}
 
 	return nil
 }
 
-// checkTotalSessionCount counts total active sessions for an escalation and checks against a limit.
+// checkTotalSessionCount counts sessions occupying request slots for an escalation and checks against a limit.
 // Sessions are counted by matching owner reference to ensure sessions created by different
 // escalations that grant the same group are not incorrectly counted together.
-// Optimized: only lists sessions in states that can be active (Pending, Approved) instead of all sessions.
+// Optimized: only lists sessions in states that can occupy a slot instead of all sessions.
 func (wc *BreakglassSessionController) checkTotalSessionCount(
 	ctx context.Context,
 	escalation *breakglassv1alpha1.BreakglassEscalation,
@@ -537,7 +537,7 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	source string,
 	log *zap.SugaredLogger,
 ) error {
-	// Optimization: only list sessions in potentially active states (Pending and Approved)
+	// Optimization: only list sessions in potentially slot-occupying states
 	// rather than listing all sessions and filtering out terminal states.
 	// This reduces data transfer from etcd significantly in clusters with many expired sessions.
 	pendingSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStatePending)
@@ -548,26 +548,22 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	if err != nil {
 		return fmt.Errorf("failed to list approved sessions: %w", err)
 	}
+	waitingSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateWaitingForScheduledTime)
+	if err != nil {
+		return fmt.Errorf("failed to list scheduled waiting sessions: %w", err)
+	}
 
-	// Count active sessions for this specific escalation (by matching owner reference UID)
+	// Count slot-occupying sessions for this specific escalation (by matching owner reference UID)
 	// This ensures sessions from different escalations that grant the same group are counted separately.
 	var totalActive int32
-	for i := range pendingSessions {
-		session := &pendingSessions[i]
+	slotSessions := append(pendingSessions, approvedSessions...)
+	slotSessions = append(slotSessions, waitingSessions...)
+	for i := range slotSessions {
+		session := &slotSessions[i]
 		if !isOwnedByEscalation(session, escalation) {
 			continue
 		}
-		if !IsSessionActive(*session) {
-			continue
-		}
-		totalActive++
-	}
-	for i := range approvedSessions {
-		session := &approvedSessions[i]
-		if !isOwnedByEscalation(session, escalation) {
-			continue
-		}
-		if !IsSessionActive(*session) {
+		if !IsSessionOccupyingSlot(*session) {
 			continue
 		}
 		totalActive++
@@ -581,7 +577,7 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 		"source", source)
 
 	if totalActive >= limit {
-		return fmt.Errorf("session limit reached: maximum %d total active sessions allowed (%s)", limit, source)
+		return fmt.Errorf("session limit reached: maximum %d total slot-occupying sessions allowed (%s)", limit, source)
 	}
 
 	return nil

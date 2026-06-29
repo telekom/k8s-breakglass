@@ -390,6 +390,25 @@ func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
 	return IsSessionValid(session)
 }
 
+// IsSessionOccupyingSlot returns true when a session should block duplicate
+// requests and count against active-session limits.
+//
+// WaitingForScheduledTime sessions deliberately remain invalid for access, but
+// they reserve capacity after approval until their scheduled activation window
+// expires.
+func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
+	switch session.Status.State {
+	case breakglassv1alpha1.SessionStatePending:
+		return IsSessionPendingApproval(session)
+	case breakglassv1alpha1.SessionStateApproved:
+		return IsSessionActive(session)
+	case breakglassv1alpha1.SessionStateWaitingForScheduledTime:
+		return session.Status.ExpiresAt.IsZero() || !time.Now().After(session.Status.ExpiresAt.Time)
+	default:
+		return false
+	}
+}
+
 // isOwnedByEscalation checks if a session is owned by the given escalation by matching
 // the owner reference UID. This ensures sessions from different escalations that grant
 // the same group are counted separately.

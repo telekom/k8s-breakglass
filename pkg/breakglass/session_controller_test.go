@@ -62,6 +62,9 @@ var sessionIndexFunctions = map[string]client.IndexerFunc{
 	"spec.grantedGroup": func(o client.Object) []string {
 		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
+	"status.state": func(o client.Object) []string {
+		return []string{string(o.(*breakglassv1alpha1.BreakglassSession).Status.State)}
+	},
 	"metadata.name": func(o client.Object) []string {
 		return []string{o.GetName()}
 	},
@@ -6492,7 +6495,7 @@ func TestSessionLimits(t *testing.T) {
 		require.Equal(t, http.StatusUnprocessableEntity, w.Result().StatusCode, "should reject when total session limit reached")
 		body, _ := io.ReadAll(w.Result().Body)
 		require.Contains(t, string(body), "session limit reached")
-		require.Contains(t, string(body), "total active sessions")
+		require.Contains(t, string(body), "total slot-occupying sessions")
 	})
 
 	t.Run("IDP group override with unlimited allows sessions", func(t *testing.T) {
@@ -6623,6 +6626,99 @@ func TestSessionLimits(t *testing.T) {
 
 		// Should succeed because sre-oncall group has unlimited override
 		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "should allow session with IDP group unlimited override")
+	})
+}
+
+func TestWaitingForScheduledTimeSessionsOccupyRequestSlots(t *testing.T) {
+	newIndexedClient := func(objects ...client.Object) client.Client {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+		}
+		return builder.WithObjects(objects...).Build()
+	}
+	newController := func(cli client.Client) *BreakglassSessionController {
+		logger := zap.NewNop().Sugar()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := testEscalationLookup{Client: cli}
+		return NewBreakglassSessionController(logger, config.Config{}, &sesmanager, &escmanager, nil, "/config/config.yaml", nil, cli)
+	}
+	waitingSession := func(name string) *breakglassv1alpha1.BreakglassSession {
+		now := time.Now()
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "default",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "test-cluster",
+				User:         "user@example.com",
+				GrantedGroup: "admin-group",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(now),
+				ExpiresAt:  metav1.NewTime(now.Add(time.Hour)),
+			},
+		}
+	}
+
+	t.Run("duplicate request is rejected while scheduled approval waits", func(t *testing.T) {
+		cli := newIndexedClient(waitingSession("scheduled-session"))
+		ctrl := newController(cli)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+
+		ok := ctrl.checkDuplicateSession(
+			c,
+			context.Background(),
+			"user@example.com",
+			"test-cluster",
+			"admin-group",
+			zap.NewNop().Sugar(),
+		)
+
+		require.False(t, ok)
+		require.Equal(t, http.StatusConflict, w.Code)
+		require.Contains(t, w.Body.String(), "already approved")
+	})
+
+	t.Run("per-user limit counts scheduled waiting sessions", func(t *testing.T) {
+		cli := newIndexedClient(waitingSession("scheduled-session"))
+		ctrl := newController(cli)
+
+		err := ctrl.checkUserSessionCount(context.Background(), "user@example.com", 1, "test limit", zap.NewNop().Sugar())
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "session limit reached")
+	})
+
+	t.Run("total escalation limit counts scheduled waiting sessions", func(t *testing.T) {
+		escalationUID := types.UID("esc-uid-scheduled-slot")
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: "default",
+				UID:       escalationUID,
+			},
+		}
+		session := waitingSession("scheduled-session")
+		session.OwnerReferences = []metav1.OwnerReference{
+			{
+				APIVersion: "breakglass.t-caas.telekom.com/v1alpha1",
+				Kind:       "BreakglassEscalation",
+				Name:       esc.Name,
+				UID:        escalationUID,
+			},
+		}
+		cli := newIndexedClient(esc, session)
+		ctrl := newController(cli)
+
+		err := ctrl.checkTotalSessionCount(context.Background(), esc, 1, "test total limit", zap.NewNop().Sugar())
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "session limit reached")
 	})
 }
 
