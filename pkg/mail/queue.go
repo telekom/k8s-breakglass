@@ -69,7 +69,7 @@ func NewQueue(sender Sender, log *zap.SugaredLogger, maxRetries, initialBackoffM
 		"initialBackoffMs", initialBackoffMs,
 		"maxQueueSize", maxQueueSize)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is stored on Queue and called by Stop or worker panic handling.
 
 	q := &Queue{
 		sender:           sender,

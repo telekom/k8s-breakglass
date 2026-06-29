@@ -13,5 +13,5 @@ func openExistingRegularNoFollow(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.NewFile(uintptr(fd), path), nil
+	return os.NewFile(uintptr(fd), path), nil // #nosec G115 -- unix.Open returns a valid file descriptor and os.NewFile requires uintptr.
 }

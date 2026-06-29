@@ -19,6 +19,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,16 +81,18 @@ type CircuitBreaker struct {
 	config CircuitBreakerConfig
 	logger *zap.Logger
 
-	mu      sync.Mutex
-	breaker *gobreaker.TwoStepCircuitBreaker[struct{}]
+	mu                sync.Mutex
+	breaker           *gobreaker.TwoStepCircuitBreaker[struct{}]
+	breakerGeneration int64
 
-	state             atomic.Int32
-	forcedOpen        atomic.Bool
-	halfOpenRequests  atomic.Int64
-	halfOpenSuccesses atomic.Int64
-	lastFailureTime   atomic.Value
-	lastStateChange   atomic.Value
-	lastError         atomic.Value
+	state              atomic.Int32
+	forcedOpen         atomic.Bool
+	halfOpenRequests   atomic.Int64
+	halfOpenSuccesses  atomic.Int64
+	halfOpenGeneration int64
+	lastFailureTime    atomic.Value
+	lastStateChange    atomic.Value
+	lastError          atomic.Value
 
 	totalRequests   atomic.Int64
 	totalSuccesses  atomic.Int64
@@ -120,7 +123,8 @@ func NewCircuitBreaker(name string, cfg CircuitBreakerConfig, logger *zap.Logger
 	cb.lastStateChange.Store(time.Now())
 	cb.lastFailureTime.Store(time.Time{})
 	cb.lastError.Store(storedError{})
-	cb.breaker = cb.newBreaker()
+	cb.breakerGeneration = 1
+	cb.breaker = cb.newBreaker(cb.breakerGeneration)
 	metrics.AuditCircuitBreakerState.WithLabelValues(cb.name).Set(float64(CircuitClosed))
 
 	logger.Info("circuit breaker created",
@@ -132,21 +136,43 @@ func NewCircuitBreaker(name string, cfg CircuitBreakerConfig, logger *zap.Logger
 	return cb
 }
 
-func (cb *CircuitBreaker) newBreaker() *gobreaker.TwoStepCircuitBreaker[struct{}] {
+func (cb *CircuitBreaker) newBreaker(generation int64) *gobreaker.TwoStepCircuitBreaker[struct{}] {
 	return gobreaker.NewTwoStepCircuitBreaker[struct{}](gobreaker.Settings{
 		Name:        cb.name,
-		MaxRequests: uint32(maxInt(cb.config.SuccessThreshold, cb.config.HalfOpenMaxRequests)),
+		MaxRequests: breakerMaxRequests(cb.config.SuccessThreshold, cb.config.HalfOpenMaxRequests),
 		Timeout:     cb.config.OpenTimeout,
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
 			return int(counts.ConsecutiveFailures) >= cb.config.FailureThreshold
 		},
 		OnStateChange: func(_ string, from, to gobreaker.State) {
-			cb.transitionState(mapGobreakerState(from), mapGobreakerState(to))
+			cb.transitionState(generation, mapGobreakerState(from), mapGobreakerState(to))
 		},
 		IsExcluded: func(err error) bool {
 			return errors.Is(err, errHalfOpenProbeLimit)
 		},
 	})
+}
+
+func breakerMaxRequests(successThreshold, halfOpenMaxRequests int) uint32 {
+	maxRequests := maxInt(successThreshold, halfOpenMaxRequests)
+	if maxRequests <= 0 {
+		return 1
+	}
+	if maxRequests > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return uint32(maxRequests)
+}
+
+func (cb *CircuitBreaker) currentBreaker() (*gobreaker.TwoStepCircuitBreaker[struct{}], int64) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.breaker, cb.breakerGeneration
+}
+
+func (cb *CircuitBreaker) replaceBreakerLocked() {
+	cb.breakerGeneration++
+	cb.breaker = cb.newBreaker(cb.breakerGeneration)
 }
 
 func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) error) error {
@@ -155,24 +181,29 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) 
 		return ErrCircuitOpen
 	}
 
-	done, err := cb.breaker.Allow()
+	breaker, breakerGeneration := cb.currentBreaker()
+	done, err := breaker.Allow()
 	if err != nil {
 		cb.recordRejection()
 		return ErrCircuitOpen
 	}
 
 	halfOpenProbe := cb.State() == CircuitHalfOpen
-	if halfOpenProbe && cb.halfOpenRequests.Add(1) > int64(cb.config.HalfOpenMaxRequests) {
-		cb.halfOpenRequests.Add(-1)
-		done(errHalfOpenProbeLimit)
-		cb.recordRejection()
-		return ErrCircuitOpen
+	var halfOpenGeneration int64
+	if halfOpenProbe {
+		var limited bool
+		halfOpenGeneration, halfOpenProbe, limited = cb.startHalfOpenProbe(breakerGeneration)
+		if limited {
+			done(errHalfOpenProbeLimit)
+			cb.recordRejection()
+			return ErrCircuitOpen
+		}
 	}
 
 	cb.totalRequests.Add(1)
 	err = fn(ctx)
 	if halfOpenProbe {
-		cb.halfOpenRequests.Add(-1)
+		cb.finishHalfOpenProbe(halfOpenGeneration)
 	}
 	if err != nil {
 		cb.totalFailures.Add(1)
@@ -185,13 +216,46 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) 
 	cb.totalSuccesses.Add(1)
 	done(nil)
 	if halfOpenProbe {
-		successes := cb.halfOpenSuccesses.Add(1)
-		cb.maybeCloseAfterHalfOpenSuccess(successes)
+		successes := cb.recordHalfOpenSuccess(halfOpenGeneration)
+		cb.maybeCloseAfterHalfOpenSuccess(halfOpenGeneration, successes)
 	}
 	return nil
 }
 
-func (cb *CircuitBreaker) maybeCloseAfterHalfOpenSuccess(successes int64) {
+func (cb *CircuitBreaker) startHalfOpenProbe(breakerGeneration int64) (int64, bool, bool) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if breakerGeneration != cb.breakerGeneration || CircuitState(cb.state.Load()) != CircuitHalfOpen {
+		return 0, false, false
+	}
+	if cb.halfOpenRequests.Load() >= int64(cb.config.HalfOpenMaxRequests) {
+		return cb.halfOpenGeneration, false, true
+	}
+	cb.halfOpenRequests.Add(1)
+	return cb.halfOpenGeneration, true, false
+}
+
+func (cb *CircuitBreaker) finishHalfOpenProbe(halfOpenGeneration int64) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if halfOpenGeneration != cb.halfOpenGeneration || CircuitState(cb.state.Load()) != CircuitHalfOpen {
+		return
+	}
+	if cb.halfOpenRequests.Load() > 0 {
+		cb.halfOpenRequests.Add(-1)
+	}
+}
+
+func (cb *CircuitBreaker) recordHalfOpenSuccess(halfOpenGeneration int64) int64 {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if halfOpenGeneration != cb.halfOpenGeneration || CircuitState(cb.state.Load()) != CircuitHalfOpen {
+		return 0
+	}
+	return cb.halfOpenSuccesses.Add(1)
+}
+
+func (cb *CircuitBreaker) maybeCloseAfterHalfOpenSuccess(halfOpenGeneration int64, successes int64) {
 	if int(successes) < cb.config.SuccessThreshold {
 		return
 	}
@@ -201,16 +265,19 @@ func (cb *CircuitBreaker) maybeCloseAfterHalfOpenSuccess(successes int64) {
 	if cb.forcedOpen.Load() || CircuitState(cb.state.Load()) != CircuitHalfOpen {
 		return
 	}
+	if halfOpenGeneration != cb.halfOpenGeneration {
+		return
+	}
 	if int(cb.halfOpenSuccesses.Load()) < cb.config.SuccessThreshold {
 		return
 	}
 
-	cb.breaker = cb.newBreaker()
-	cb.transitionStateLocked(CircuitHalfOpen, CircuitClosed)
+	cb.replaceBreakerLocked()
+	if !cb.transitionStateLocked(CircuitHalfOpen, CircuitClosed) {
+		return
+	}
 	cb.lastError.Store(storedError{})
 	cb.lastFailureTime.Store(time.Time{})
-	cb.halfOpenRequests.Store(0)
-	cb.halfOpenSuccesses.Store(0)
 	metrics.AuditCircuitBreakerState.WithLabelValues(cb.name).Set(float64(CircuitClosed))
 	metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(cb.name, CircuitHalfOpen.String(), CircuitClosed.String()).Inc()
 	if cb.config.OnStateChange != nil {
@@ -226,10 +293,15 @@ func (cb *CircuitBreaker) recordRejection() {
 	metrics.AuditCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
 }
 
-func (cb *CircuitBreaker) transitionState(from, to CircuitState) {
+func (cb *CircuitBreaker) transitionState(generation int64, from, to CircuitState) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	cb.transitionStateLocked(from, to)
+	if generation != cb.breakerGeneration {
+		return
+	}
+	if !cb.transitionStateLocked(from, to) {
+		return
+	}
 	metrics.AuditCircuitBreakerState.WithLabelValues(cb.name).Set(float64(to))
 	metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(cb.name, from.String(), to.String()).Inc()
 	if cb.config.OnStateChange != nil {
@@ -240,17 +312,24 @@ func (cb *CircuitBreaker) transitionState(from, to CircuitState) {
 		zap.String("to", to.String()))
 }
 
-func (cb *CircuitBreaker) transitionStateLocked(from, to CircuitState) {
+func (cb *CircuitBreaker) transitionStateLocked(from, to CircuitState) bool {
 	if from == to {
-		return
+		return false
+	}
+	if current := CircuitState(cb.state.Load()); current != from {
+		return false
 	}
 	cb.state.Store(int32(to))
 	cb.lastStateChange.Store(time.Now())
-	cb.halfOpenRequests.Store(0)
-	cb.halfOpenSuccesses.Store(0)
+	if from == CircuitHalfOpen || to == CircuitHalfOpen {
+		cb.halfOpenGeneration++
+		cb.halfOpenRequests.Store(0)
+		cb.halfOpenSuccesses.Store(0)
+	}
 	if to == CircuitClosed {
 		cb.forcedOpen.Store(false)
 	}
+	return true
 }
 
 func (cb *CircuitBreaker) State() CircuitState {
@@ -271,7 +350,8 @@ type CircuitBreakerStats struct {
 }
 
 func (cb *CircuitBreaker) Stats() CircuitBreakerStats {
-	counts := cb.breaker.Counts()
+	breaker, _ := cb.currentBreaker()
+	counts := breaker.Counts()
 	stats := CircuitBreakerStats{
 		State:            cb.State(),
 		ConsecutiveFails: int64(counts.ConsecutiveFailures),
@@ -298,8 +378,8 @@ func (cb *CircuitBreaker) ForceOpen() {
 	defer cb.mu.Unlock()
 	oldState := cb.State()
 	cb.forcedOpen.Store(true)
-	cb.transitionStateLocked(oldState, CircuitOpen)
-	if oldState != CircuitOpen {
+	changed := cb.transitionStateLocked(oldState, CircuitOpen)
+	if changed {
 		metrics.AuditCircuitBreakerState.WithLabelValues(cb.name).Set(float64(CircuitOpen))
 		metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(cb.name, oldState.String(), CircuitOpen.String()).Inc()
 		if cb.config.OnStateChange != nil {
@@ -313,9 +393,9 @@ func (cb *CircuitBreaker) ForceClose() {
 	defer cb.mu.Unlock()
 	oldState := cb.State()
 	cb.forcedOpen.Store(false)
-	cb.breaker = cb.newBreaker()
-	cb.transitionStateLocked(oldState, CircuitClosed)
-	if oldState != CircuitClosed {
+	cb.replaceBreakerLocked()
+	changed := cb.transitionStateLocked(oldState, CircuitClosed)
+	if changed {
 		metrics.AuditCircuitBreakerState.WithLabelValues(cb.name).Set(float64(CircuitClosed))
 		metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(cb.name, oldState.String(), CircuitClosed.String()).Inc()
 		if cb.config.OnStateChange != nil {
@@ -329,7 +409,7 @@ func (cb *CircuitBreaker) Reset() {
 	defer cb.mu.Unlock()
 	oldState := cb.State()
 	cb.forcedOpen.Store(false)
-	cb.breaker = cb.newBreaker()
+	cb.replaceBreakerLocked()
 	cb.totalRequests.Store(0)
 	cb.totalSuccesses.Store(0)
 	cb.totalFailures.Store(0)

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -231,6 +232,90 @@ func TestCircuitBreaker_HalfOpenCountsInitialProbeAsInFlight(t *testing.T) {
 	require.Equal(t, CircuitClosed, cb.State())
 }
 
+func TestCircuitBreaker_ForceCloseIgnoresInFlightOldBreakerTransition(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cfg := CircuitBreakerConfig{
+		FailureThreshold: 1,
+		OpenTimeout:      time.Hour,
+	}
+	cb := NewCircuitBreaker("test-sink", cfg, logger)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- cb.Execute(context.Background(), func(ctx context.Context) error {
+			close(started)
+			<-release
+			return errors.New("old breaker failure")
+		})
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not start")
+	}
+
+	cb.ForceClose()
+	require.Equal(t, CircuitClosed, cb.State())
+
+	close(release)
+	require.Error(t, <-done)
+	require.Equal(t, CircuitClosed, cb.State())
+}
+
+func TestCircuitBreaker_ResetWhileHalfOpenProbesRunDoesNotUnderflow(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cfg := CircuitBreakerConfig{
+		FailureThreshold:    1,
+		SuccessThreshold:    1,
+		OpenTimeout:         10 * time.Millisecond,
+		HalfOpenMaxRequests: 2,
+	}
+	cb := NewCircuitBreaker("test-sink", cfg, logger)
+
+	err := cb.Execute(context.Background(), func(ctx context.Context) error {
+		return errors.New("fail")
+	})
+	require.Error(t, err)
+	require.Equal(t, CircuitOpen, cb.State())
+
+	time.Sleep(20 * time.Millisecond)
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			done <- cb.Execute(context.Background(), func(ctx context.Context) error {
+				started <- struct{}{}
+				<-release
+				return nil
+			})
+		}()
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("half-open probe did not start")
+		}
+	}
+	require.Equal(t, int64(2), cb.halfOpenRequests.Load())
+
+	cb.Reset()
+	require.Equal(t, CircuitClosed, cb.State())
+	require.Equal(t, int64(0), cb.halfOpenRequests.Load())
+
+	close(release)
+	require.NoError(t, <-done)
+	require.NoError(t, <-done)
+	require.Equal(t, CircuitClosed, cb.State())
+	require.Equal(t, int64(0), cb.halfOpenRequests.Load())
+}
+
 func TestCircuitBreaker_LastErrorStoresMixedConcreteTypes(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	cfg := CircuitBreakerConfig{
@@ -352,6 +437,43 @@ func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
 
 	assert.Equal(t, int64(10000), executed.Load())
 	assert.Equal(t, CircuitClosed, cb.State())
+}
+
+func TestCircuitBreaker_ConcurrentExecuteResetAndStats(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cfg := CircuitBreakerConfig{
+		FailureThreshold: 100000,
+		OpenTimeout:      time.Second,
+	}
+	cb := NewCircuitBreaker("test-sink", cfg, logger)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = cb.Execute(context.Background(), func(ctx context.Context) error {
+					return nil
+				})
+			}
+		}()
+	}
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				cb.Reset()
+				cb.ForceClose()
+				_ = cb.Stats()
+			}
+		}()
+	}
+
+	wg.Wait()
+	require.Equal(t, CircuitClosed, cb.State())
 }
 
 func TestCircuitBreakerSink_Write(t *testing.T) {
