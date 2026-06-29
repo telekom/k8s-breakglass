@@ -5167,6 +5167,67 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 	})
 }
 
+func TestDebugSessionAPIController_SessionOperationStrictJSON(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	router := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "alice@example.com", nil)
+
+	tests := []struct {
+		name     string
+		path     string
+		body     string
+		wantText string
+	}{
+		{
+			name:     "join rejects unknown fields",
+			path:     "/api/v1/debugSessions/test-session/join",
+			body:     `{"role":"viewer","ignored":true}`,
+			wantText: "unknown field",
+		},
+		{
+			name:     "join rejects trailing JSON",
+			path:     "/api/v1/debugSessions/test-session/join",
+			body:     `{"role":"viewer"} {"role":"viewer"}`,
+			wantText: "invalid request body",
+		},
+		{
+			name:     "renew rejects unknown fields",
+			path:     "/api/v1/debugSessions/test-session/renew",
+			body:     `{"extendBy":"1h","ignored":true}`,
+			wantText: "unknown field",
+		},
+		{
+			name:     "renew rejects trailing JSON",
+			path:     "/api/v1/debugSessions/test-session/renew",
+			body:     `{"extendBy":"1h"} {"extendBy":"24h"}`,
+			wantText: "invalid request body",
+		},
+		{
+			name:     "renew rejects missing extendBy",
+			path:     "/api/v1/debugSessions/test-session/renew",
+			body:     `{}`,
+			wantText: "extendBy is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), tt.wantText)
+		})
+	}
+}
+
 // TestDebugSessionAPIController_HandleLeaveDebugSession tests the handleLeaveDebugSession handler
 func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	scheme := testScheme()

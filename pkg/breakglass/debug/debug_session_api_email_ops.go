@@ -329,7 +329,11 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	namespaceHint := ctx.Query("namespace")
 
 	var req InjectEphemeralContainerRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
+		apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
+		return
+	}
+	if err := validateInjectEphemeralContainerRequest(req); err != nil {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
@@ -417,7 +421,11 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	namespaceHint := ctx.Query("namespace")
 
 	var req CreatePodCopyRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
+		apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
+		return
+	}
+	if err := validateCreatePodCopyRequest(req); err != nil {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
@@ -500,7 +508,11 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	namespaceHint := ctx.Query("namespace")
 
 	var req CreateNodeDebugPodRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
+		apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
+		return
+	}
+	if err := validateCreateNodeDebugPodRequest(req); err != nil {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
