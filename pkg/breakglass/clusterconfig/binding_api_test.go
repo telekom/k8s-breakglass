@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -723,7 +724,8 @@ func TestClusterBindingAPIController_GetBindingsForCluster(t *testing.T) {
 
 	clusterConfig := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-cluster",
+			Name:      "test-cluster",
+			Namespace: "tenant-a",
 			Labels: map[string]string{
 				"env": "production",
 			},
@@ -776,6 +778,25 @@ func TestClusterBindingAPIController_GetBindingsForCluster(t *testing.T) {
 		_, err := ctrl.GetBindingsForCluster(context.Background(), "nonexistent-cluster")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get cluster config")
+	})
+
+	t.Run("returns conflict when cluster name is duplicated", func(t *testing.T) {
+		duplicateA := clusterConfig.DeepCopy()
+		duplicateA.Namespace = "tenant-a"
+		duplicateB := clusterConfig.DeepCopy()
+		duplicateB.Namespace = "tenant-b"
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(duplicateA, duplicateB).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		_, err := ctrl.GetBindingsForCluster(context.Background(), "test-cluster")
+		require.Error(t, err)
+		assert.True(t, apierrors.IsConflict(err), "expected conflict error, got %v", err)
+		assert.Contains(t, err.Error(), "tenant-a,tenant-b")
 	})
 }
 
@@ -1396,7 +1417,8 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 	// Create a ClusterConfig for cluster-a
 	clusterConfigA := breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "cluster-a",
+			Name:      "cluster-a",
+			Namespace: "tenant-a",
 		},
 		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			Tenant: "test-tenant",
@@ -1442,7 +1464,8 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 		// Create a ClusterConfig for cluster-b but no bindings reference it
 		clusterConfigB := breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "cluster-b",
+				Name:      "cluster-b",
+				Namespace: "tenant-b",
 			},
 			Spec: breakglassv1alpha1.ClusterConfigSpec{
 				Tenant: "test-tenant",
@@ -1501,6 +1524,32 @@ func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *t
 
 		assert.Len(t, response, 1)
 		assert.Equal(t, "cluster-a-binding", response[0].Name)
+	})
+
+	t.Run("returns 409 for duplicate ClusterConfig names", func(t *testing.T) {
+		duplicateA := clusterConfigA.DeepCopy()
+		duplicateA.Namespace = "tenant-a"
+		duplicateB := clusterConfigA.DeepCopy()
+		duplicateB.Namespace = "tenant-b"
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&binding, duplicateA, duplicateB).
+			WithStatusSubresource(&binding, duplicateA, duplicateB).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings/forCluster/cluster-a", nil)
+		c.Params = gin.Params{
+			{Key: "cluster", Value: "cluster-a"},
+		}
+
+		ctrl.handleListBindingsForCluster(c)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
 	})
 }
 

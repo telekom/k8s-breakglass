@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -33,6 +34,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/clusterconfiglookup"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -277,7 +279,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 		}
 
 		// Check if template is ready
-		ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready")
+		ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, string(breakglassv1alpha1.DebugSessionTemplateConditionReady))
 
 		resolved = append(resolved, breakglassv1alpha1.ResolvedTemplateRef{
 			Name:        template.Name,
@@ -308,7 +310,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 				displayName = binding.Spec.DisplayNamePrefix + displayName
 			}
 
-			ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready")
+			ready := apimeta.IsStatusConditionTrue(template.Status.Conditions, string(breakglassv1alpha1.DebugSessionTemplateConditionReady))
 
 			resolved = append(resolved, breakglassv1alpha1.ResolvedTemplateRef{
 				Name:        template.Name,
@@ -335,12 +337,12 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 			continue
 		}
 
-		clusterConfig := &breakglassv1alpha1.ClusterConfig{}
-		if err := r.client.Get(ctx, client.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
+		clusterConfig, err := r.getClusterConfigByName(ctx, clusterName)
+		if err != nil {
 			return nil, err
 		}
 
-		ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, "Ready")
+		ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
 
 		resolved = append(resolved, breakglassv1alpha1.ResolvedClusterRef{
 			Name:      clusterConfig.Name,
@@ -363,6 +365,7 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 			if err := r.client.List(ctx, clusterList); err != nil {
 				return nil, err
 			}
+			clusterConfigIndex := clusterconfiglookup.NewNameIndex(clusterList.Items)
 
 			for i := range clusterList.Items {
 				cluster := &clusterList.Items[i]
@@ -376,19 +379,47 @@ func (r *DebugSessionClusterBindingReconciler) resolveClusters(
 					continue
 				}
 
-				ready := apimeta.IsStatusConditionTrue(cluster.Status.Conditions, "Ready")
+				clusterConfig, err := clusterConfigIndex.Single(cluster.Name)
+				if err != nil {
+					return nil, err
+				}
+				if clusterConfig == nil {
+					continue
+				}
+
+				ready := apimeta.IsStatusConditionTrue(clusterConfig.Status.Conditions, string(breakglassv1alpha1.ClusterConfigConditionReady))
 
 				resolved = append(resolved, breakglassv1alpha1.ResolvedClusterRef{
-					Name:      cluster.Name,
+					Name:      clusterConfig.Name,
 					Ready:     ready,
 					MatchedBy: "selector",
 				})
-				seenClusters[cluster.Name] = true
+				seenClusters[clusterConfig.Name] = true
 			}
 		}
 	}
 
 	return resolved, nil
+}
+
+func (r *DebugSessionClusterBindingReconciler) getClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	clusterList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := r.client.List(ctx, clusterList, client.MatchingFields{"metadata.name": name}); err == nil {
+		return clusterconfiglookup.SingleByNameOrNotFound(clusterList.Items, name)
+	} else if !clusterconfiglookup.IsNameIndexError(err) {
+		return nil, fmt.Errorf("list clusterconfigs by name: %w", err)
+	}
+
+	clusterList = &breakglassv1alpha1.ClusterConfigList{}
+	if err := r.client.List(ctx, clusterList); err != nil {
+		return nil, fmt.Errorf("list clusterconfigs: %w", err)
+	}
+
+	clusterConfig, err := clusterconfiglookup.SingleByName(clusterList.Items, name)
+	if clusterConfig != nil || err != nil {
+		return clusterConfig, err
+	}
+	return nil, clusterconfiglookup.NotFound(name)
 }
 
 // SetupWithManager registers this reconciler with the controller-runtime manager.

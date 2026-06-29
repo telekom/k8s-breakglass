@@ -28,6 +28,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
+	"github.com/telekom/k8s-breakglass/pkg/clusterconfiglookup"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -218,10 +219,14 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 	}
 
 	// First get the ClusterConfig to access its labels
-	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
+	clusterConfig, err := c.getClusterConfigByName(ctx, clusterName)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			apiresponses.RespondNotFoundSimple(ctx, fmt.Sprintf("cluster %s not found", clusterName))
+			return
+		}
+		if apierrors.IsConflict(err) {
+			apiresponses.RespondConflict(ctx, fmt.Sprintf("cluster %s is ambiguous", clusterName))
 			return
 		}
 		c.log.Errorw("Failed to get cluster config", "cluster", clusterName, "error", err)
@@ -338,8 +343,8 @@ func (c *ClusterBindingAPIController) bindingToResponse(binding *breakglassv1alp
 // This is a helper method for internal use
 func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context, clusterName string) ([]breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	// Get the ClusterConfig
-	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
+	clusterConfig, err := c.getClusterConfigByName(ctx, clusterName)
+	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster config: %w", err)
 	}
 
@@ -358,6 +363,26 @@ func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context,
 	}
 
 	return matching, nil
+}
+
+func (c *ClusterBindingAPIController) getClusterConfigByName(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	clusterList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.client.List(ctx, clusterList, ctrlclient.MatchingFields{"metadata.name": name}); err == nil {
+		return clusterconfiglookup.SingleByNameOrNotFound(clusterList.Items, name)
+	} else if !clusterconfiglookup.IsNameIndexError(err) {
+		return nil, fmt.Errorf("list clusterconfigs by name: %w", err)
+	}
+
+	clusterList = &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.client.List(ctx, clusterList); err != nil {
+		return nil, fmt.Errorf("list clusterconfigs: %w", err)
+	}
+
+	clusterConfig, err := clusterconfiglookup.SingleByName(clusterList.Items, name)
+	if clusterConfig != nil || err != nil {
+		return clusterConfig, err
+	}
+	return nil, clusterconfiglookup.NotFound(name)
 }
 
 // IsBindingActive checks if a binding is currently active.

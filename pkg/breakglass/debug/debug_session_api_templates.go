@@ -786,13 +786,22 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 // resolveClustersFromBinding resolves cluster names from a binding's spec
 func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig) []string {
 	var result []string
+	seen := make(map[string]struct{}, len(binding.Spec.Clusters))
+	addCluster := func(clusterName string) {
+		if _, exists := clusterMap[clusterName]; !exists {
+			return
+		}
+		if _, exists := seen[clusterName]; exists {
+			return
+		}
+		seen[clusterName] = struct{}{}
+		result = append(result, clusterName)
+	}
 	bindingID := fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 
 	// Add explicit clusters
 	for _, clusterName := range binding.Spec.Clusters {
-		if _, exists := clusterMap[clusterName]; exists {
-			result = append(result, clusterName)
-		}
+		addCluster(clusterName)
 	}
 
 	c.log.Debugw("resolveClustersFromBinding: explicit clusters",
@@ -820,7 +829,7 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 				labelSet := labelSetFromMap(cc.Labels)
 				matches := selector.Matches(labelSet)
 				if matches {
-					result = append(result, name)
+					addCluster(name)
 					c.log.Debugw("resolveClustersFromBinding: cluster matched selector",
 						"binding", bindingID,
 						"cluster", name,
@@ -837,6 +846,45 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 	)
 
 	return result
+}
+
+func bindingReferencesAmbiguousClusterName(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfigs []breakglassv1alpha1.ClusterConfig) bool {
+	if !hasDuplicateClusterConfigName(clusterConfigs, clusterName) {
+		return false
+	}
+	for _, explicitCluster := range binding.Spec.Clusters {
+		if explicitCluster == clusterName {
+			return true
+		}
+	}
+	if binding.Spec.ClusterSelector == nil {
+		return false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	if err != nil {
+		return false
+	}
+	for i := range clusterConfigs {
+		clusterConfig := &clusterConfigs[i]
+		if clusterConfig.Name == clusterName && selector.Matches(labelSetFromMap(clusterConfig.Labels)) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDuplicateClusterConfigName(clusterConfigs []breakglassv1alpha1.ClusterConfig, clusterName string) bool {
+	matches := 0
+	for i := range clusterConfigs {
+		if clusterConfigs[i].Name != clusterName {
+			continue
+		}
+		matches++
+		if matches > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeConstraints merges template and binding constraints

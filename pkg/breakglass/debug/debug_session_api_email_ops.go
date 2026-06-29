@@ -688,14 +688,16 @@ type ClusterAllowedResult struct {
 
 // isClusterAllowedByTemplateOrBinding checks if a cluster is allowed by the template's allowed.clusters
 // or by any active binding that references this template.
-// This function requires the caller to pass in the bindings and clusterConfigs.
+// This function requires the caller to pass in the bindings, unique ClusterConfig map,
+// and full ClusterConfig item list used for ambiguous-name binding checks.
 // If the template has no allowed.clusters, cluster access depends on bindings.
-// If there are no bindings either, access is implicitly allowed (backward compatibility).
+// If there are no applicable bindings either, access is denied as an unavailable template.
 func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	clusterName string,
 	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	clusterConfigs map[string]*breakglassv1alpha1.ClusterConfig,
+	clusterConfigItems []breakglassv1alpha1.ClusterConfig,
 ) ClusterAllowedResult {
 	result := ClusterAllowedResult{}
 
@@ -761,6 +763,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	for i := range applicableBindings {
 		binding := &applicableBindings[i]
 		bindingClusters := c.resolveClustersFromBinding(binding, clusterConfigs)
+		bindingAllowsCluster := false
 		c.log.Debugw("Binding cluster resolution",
 			"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
 			"resolvedClusters", bindingClusters,
@@ -768,16 +771,23 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 		)
 		for _, bc := range bindingClusters {
 			if bc == clusterName {
-				result.AllBindings = append(result.AllBindings, *binding)
-				if !result.Allowed {
-					result.Allowed = true
-					result.AllowedBySource = fmt.Sprintf("binding:%s/%s", binding.Namespace, binding.Name)
-					result.MatchingBinding = binding
-					c.log.Debugw("Cluster allowed by binding",
-						"cluster", clusterName,
-						"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
-					)
-				}
+				bindingAllowsCluster = true
+				break
+			}
+		}
+		if !bindingAllowsCluster && bindingReferencesAmbiguousClusterName(binding, clusterName, clusterConfigItems) {
+			bindingAllowsCluster = true
+		}
+		if bindingAllowsCluster {
+			result.AllBindings = append(result.AllBindings, *binding)
+			if !result.Allowed {
+				result.Allowed = true
+				result.AllowedBySource = fmt.Sprintf("binding:%s/%s", binding.Namespace, binding.Name)
+				result.MatchingBinding = binding
+				c.log.Debugw("Cluster allowed by binding",
+					"cluster", clusterName,
+					"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
+				)
 			}
 		}
 	}

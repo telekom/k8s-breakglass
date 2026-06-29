@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -75,7 +76,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateRefValid(t *test
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
 				{
-					Type:   "Ready",
+					Type:   string(breakglassv1alpha1.DebugSessionTemplateConditionReady),
 					Status: metav1.ConditionTrue,
 				},
 			},
@@ -93,7 +94,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateRefValid(t *test
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
 				{
-					Type:   "Ready",
+					Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
 					Status: metav1.ConditionTrue,
 				},
 			},
@@ -149,6 +150,128 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateRefValid(t *test
 	assert.Equal(t, "explicit", updated.Status.ResolvedClusters[0].MatchedBy)
 }
 
+func TestDebugSessionClusterBindingReconciler_ResolveClusters_FindsNamespacedClusterConfig(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+
+	cluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-a",
+		},
+		Status: breakglassv1alpha1.ClusterConfigStatus{
+			Conditions: []metav1.Condition{
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue},
+			},
+		},
+	}
+
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-binding",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Clusters: []string{"tenant-cluster"},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, binding).
+		Build()
+
+	resolved, err := r.resolveClusters(context.Background(), binding)
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, "tenant-cluster", resolved[0].Name)
+	assert.True(t, resolved[0].Ready)
+	assert.Equal(t, "explicit", resolved[0].MatchedBy)
+}
+
+func TestDebugSessionClusterBindingReconciler_ResolveClusters_DuplicateClusterConfigNameConflict(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+
+	clusterA := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-a",
+		},
+	}
+	clusterB := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-b",
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-binding",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Clusters: []string{"tenant-cluster"},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterA, clusterB, binding).
+		Build()
+
+	resolved, err := r.resolveClusters(context.Background(), binding)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict error, got %v", err)
+	assert.Contains(t, err.Error(), "tenant-a,tenant-b")
+	assert.Nil(t, resolved)
+}
+
+func TestDebugSessionClusterBindingReconciler_ResolveClusters_ClusterSelectorDuplicateClusterConfigNameConflict(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+
+	clusterA := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-a",
+			Labels: map[string]string{
+				"env": "production",
+			},
+		},
+	}
+	clusterB := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-cluster",
+			Namespace: "tenant-b",
+			Labels: map[string]string{
+				"env": "staging",
+			},
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-binding",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"env": "production",
+				},
+			},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterA, clusterB, binding).
+		Build()
+
+	resolved, err := r.resolveClusters(context.Background(), binding)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict error, got %v", err)
+	assert.Contains(t, err.Error(), "tenant-a,tenant-b")
+	assert.Nil(t, resolved)
+}
+
 func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateNotFound(t *testing.T) {
 	r, scheme := newTestClusterBindingReconciler()
 
@@ -193,7 +316,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterNotFound(t *testi
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -247,7 +370,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateSelector(t *test
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -264,7 +387,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_TemplateSelector(t *test
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -337,7 +460,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterSelector(t *testi
 		},
 		Status: breakglassv1alpha1.DebugSessionTemplateStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.DebugSessionTemplateConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -352,7 +475,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterSelector(t *testi
 		},
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}
@@ -366,7 +489,7 @@ func TestDebugSessionClusterBindingReconciler_Reconcile_ClusterSelector(t *testi
 		},
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionFalse},
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse},
 			},
 		},
 	}
@@ -474,7 +597,7 @@ func TestDebugSessionClusterBindingReconciler_ResolveClusters_DeduplicatesExplic
 		},
 		Status: breakglassv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionTrue},
+				{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue},
 			},
 		},
 	}

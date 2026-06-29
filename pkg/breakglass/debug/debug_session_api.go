@@ -638,10 +638,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	requestedClusterConfig, ambiguousTenant := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
+	requestedClusterConfig, clusterAmbiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
 	authorizationClusters := []string{req.Cluster}
-	if requestedClusterConfig != nil && !ambiguousTenant {
+	if requestedClusterConfig != nil {
 		authorizationClusters = append([]string{requestedClusterConfig.Name}, authorizationClusters...)
+	}
+	ambiguousClusterName := req.Cluster
+	if requestedClusterConfig != nil && clusterAmbiguity == debugClusterConfigAmbiguityName {
+		ambiguousClusterName = requestedClusterConfig.Name
 	}
 	clusterMap := debugClusterConfigMap(clusterConfigList.Items)
 
@@ -696,6 +700,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				break
 			}
 		}
+		if !bindingAllowsRequestedCluster &&
+			clusterAmbiguity == debugClusterConfigAmbiguityName &&
+			bindingReferencesAmbiguousClusterName(resolvedBinding, ambiguousClusterName, clusterConfigList.Items) {
+			bindingAllowsRequestedCluster = true
+		}
 		if !bindingAllowsRequestedCluster {
 			reqLog.Warnw("Binding does not grant requested cluster",
 				"bindingRef", req.BindingRef,
@@ -714,7 +723,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	} else {
 		for _, authorizationCluster := range authorizationClusters {
-			allowedResult = c.isClusterAllowedByTemplateOrBinding(template, authorizationCluster, bindingList.Items, clusterMap)
+			allowedResult = c.isClusterAllowedByTemplateOrBinding(template, authorizationCluster, bindingList.Items, clusterMap, clusterConfigList.Items)
 			if allowedResult.Allowed {
 				break
 			}
@@ -753,7 +762,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
 		return
 	}
-	if ambiguousTenant {
+	if clusterAmbiguity == debugClusterConfigAmbiguityName {
+		reqLog.Warnw("ClusterConfig name is ambiguous for debug session creation",
+			"cluster", req.Cluster,
+			"clusterConfig", ambiguousClusterName,
+		)
+		apiresponses.RespondConflict(ctx, fmt.Sprintf("cluster '%s' matches multiple ClusterConfig names", ambiguousClusterName))
+		return
+	}
+	if clusterAmbiguity == debugClusterConfigAmbiguityTenant {
 		reqLog.Warnw("ClusterConfig tenant alias is ambiguous for debug session creation", "cluster", req.Cluster)
 		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' matches multiple ClusterConfig tenants", req.Cluster))
 		return
