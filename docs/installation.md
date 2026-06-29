@@ -315,7 +315,6 @@ components:
   - ../../components/gateway-api
 ```
 
-This creates an HTTPRoute and ReferenceGrant, and removes the default Ingress. Customize via kustomize patches — see [Gateway API Configuration](gateway-api-configuration.md) for full setup with Istio, Envoy Gateway, and Kong.
 
 Verify DNS resolution:
 

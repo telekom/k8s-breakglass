@@ -182,7 +182,6 @@ affinity:
 - [ ] Enable tracing via `--otel-enabled` / `OTEL_ENABLED=true`
 - [ ] Set the collector endpoint (`--otel-endpoint` / `OTEL_EXPORTER_OTLP_ENDPOINT`)
 - [ ] Adjust sampling rate for your traffic volume (`--otel-sampling-rate=0.1`)
-- [ ] See [OpenTelemetry Tracing](./opentelemetry-tracing.md) for full configuration
 
 ### Health Checks
 
