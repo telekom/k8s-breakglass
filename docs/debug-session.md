@@ -1943,6 +1943,10 @@ The following Vue components are available for debug session management:
 | `DebugSessionDetails` | `views/DebugSessionDetails.vue` | View session details, participants, pods, kubectl-debug operations |
 | `DebugSessionCard` | `components/DebugSessionCard.vue` | Summary card for session list |
 
+The debug session create wizard moves keyboard focus to the cluster and
+configuration step after the template step advances, so keyboard and screen
+reader users are placed in the newly rendered workflow context.
+
 **Routes:**
 
 - `/debug-sessions` - Browse all debug sessions

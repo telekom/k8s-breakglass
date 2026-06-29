@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, reactive, ref, watch } from "vue";
+import { computed, inject, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { debug } from "@/services/logger";
@@ -27,6 +27,7 @@ const router = useRouter();
 
 // Wizard state
 const currentStep = ref<1 | 2>(1);
+const step2Heading = ref<HTMLElement | null>(null);
 
 // Templates and clusters data
 const templates = ref<DebugSessionTemplateResponse[]>([]);
@@ -491,12 +492,18 @@ async function fetchTemplateClusters() {
   }
 }
 
+async function focusStep2Heading() {
+  await nextTick();
+  step2Heading.value?.focus({ preventScroll: true });
+}
+
 function goToStep2() {
   if (!form.templateRef) {
     pushError("Please select a template first");
     return;
   }
   currentStep.value = 2;
+  void focusStep2Heading();
   fetchTemplateClusters();
 }
 
@@ -695,6 +702,10 @@ function handleTemplateChange(ev: Event) {
 
     <!-- Step 2: Cluster Selection & Configuration -->
     <div v-else-if="currentStep === 2" class="create-form">
+      <h2 ref="step2Heading" class="sr-only sr-only-focusable" tabindex="-1" data-testid="step-2-focus-heading">
+        Cluster and configuration
+      </h2>
+
       <!-- Selected Template Summary -->
       <div class="template-summary" data-testid="template-summary">
         <span class="summary-label">Template:</span>
@@ -957,5 +968,22 @@ function handleTemplateChange(ev: Event) {
 
 .unavailable-templates-notice small {
   font: var(--telekom-text-style-small);
+}
+
+.sr-only-focusable:focus {
+  position: static !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  margin: 0 0 var(--space-md) !important;
+  overflow: visible !important;
+  clip: auto !important;
+  clip-path: none !important;
+  white-space: normal !important;
+  outline: 2px solid var(--telekom-color-primary-standard);
+  outline-offset: 2px;
 }
 </style>

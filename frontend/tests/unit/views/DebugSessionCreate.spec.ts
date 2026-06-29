@@ -145,13 +145,14 @@ describe("DebugSessionCreate", () => {
     ];
   }
 
-  const createWrapper = async (templates = defaultTemplates()) => {
+  const createWrapper = async (templates = defaultTemplates(), attachTo?: HTMLElement) => {
     mockListTemplates.mockResolvedValue({ templates });
 
     await router.push("/debug-sessions/create");
     await router.isReady();
 
     const wrapper = mount(DebugSessionCreate, {
+      attachTo,
       global: {
         plugins: [router],
         stubs: {
@@ -258,6 +259,36 @@ describe("DebugSessionCreate", () => {
       // Should be on step 2 and have fetched cluster details
       expect(vm.currentStep).toBe(2);
       expect(mockGetTemplateClusters).toHaveBeenCalledWith("standard-debug");
+    });
+
+    it("moves focus to the cluster configuration step when advancing", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          { name: "prod-east", displayName: "Production East" },
+          { name: "prod-west", displayName: "Production West" },
+        ],
+      });
+
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      let wrapper: Awaited<ReturnType<typeof createWrapper>> | undefined;
+
+      try {
+        wrapper = await createWrapper(defaultTemplates(), host);
+        const nextButton = wrapper.find('[data-testid="next-button"]');
+
+        await nextButton.trigger("click");
+        await flushPromises();
+
+        const step2Heading = wrapper.find('[data-testid="step-2-focus-heading"]');
+        expect(step2Heading.exists()).toBe(true);
+        expect(document.activeElement).toBe(step2Heading.element);
+      } finally {
+        wrapper?.unmount();
+        host.remove();
+      }
     });
 
     it("shows warning when template has no available clusters in step 2", async () => {
