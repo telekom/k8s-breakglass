@@ -20,13 +20,16 @@ package ssa
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -475,6 +478,41 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get object for status update")
 	})
+}
+
+func TestDebugSessionStatusFromPreservesExplicitEmptyAuxiliaryStatuses(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		State:                     breakglassv1alpha1.DebugSessionStateActive,
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{},
+	}
+	applyConfig := ac.DebugSession("test-debug", "default").
+		WithStatus(DebugSessionStatusFrom(status))
+
+	data, err := json.Marshal(applyConfig)
+	require.NoError(t, err)
+
+	u := &unstructured.Unstructured{}
+	require.NoError(t, json.Unmarshal(data, u))
+	ensureExplicitDebugSessionEmptyStatusLists(applyConfig, u)
+
+	desiredStatus, ok := u.Object["status"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{}, desiredStatus["auxiliaryResourceStatuses"])
+
+	currentStatus := map[string]interface{}{
+		"state": string(breakglassv1alpha1.DebugSessionStateActive),
+		"auxiliaryResourceStatuses": []interface{}{
+			map[string]interface{}{
+				"name":         "old-config",
+				"kind":         "ConfigMap",
+				"apiVersion":   "v1",
+				"resourceName": "old-config",
+				"namespace":    "default",
+				"created":      true,
+			},
+		},
+	}
+	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
 }
 
 // TestApplyAuditConfigStatus tests SSA status updates for AuditConfig.

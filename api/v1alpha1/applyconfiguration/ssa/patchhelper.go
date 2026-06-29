@@ -93,6 +93,7 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 	if err := json.Unmarshal(data, u); err != nil {
 		return 0, fmt.Errorf("failed to unmarshal apply configuration: %w", err)
 	}
+	ensureExplicitDebugSessionEmptyStatusLists(applyConfig, u)
 
 	// Clear managed fields.
 	u.SetManagedFields(nil)
@@ -144,6 +145,22 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 	}
 
 	return PatchApplyResultPatched, nil
+}
+
+func ensureExplicitDebugSessionEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *unstructured.Unstructured) {
+	dsConfig, ok := applyConfig.(*ac.DebugSessionApplyConfiguration)
+	if !ok || dsConfig.Status == nil {
+		return
+	}
+	if dsConfig.Status.AuxiliaryResourceStatuses == nil || len(dsConfig.Status.AuxiliaryResourceStatuses) > 0 {
+		return
+	}
+	status, _ := u.Object["status"].(map[string]interface{})
+	if status == nil {
+		status = map[string]interface{}{}
+		u.Object["status"] = status
+	}
+	status["auxiliaryResourceStatuses"] = []interface{}{}
 }
 
 // ---------------------------------------------------------------------------

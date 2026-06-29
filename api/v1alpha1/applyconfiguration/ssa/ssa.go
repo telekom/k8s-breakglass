@@ -224,6 +224,9 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	}
 
 	// Set auxiliary resource statuses
+	if status.AuxiliaryResourceStatuses != nil {
+		result.AuxiliaryResourceStatuses = []ac.AuxiliaryResourceStatusApplyConfiguration{}
+	}
 	for i := range status.AuxiliaryResourceStatuses {
 		result.WithAuxiliaryResourceStatuses(AuxiliaryResourceStatusFrom(&status.AuxiliaryResourceStatuses[i]))
 	}
