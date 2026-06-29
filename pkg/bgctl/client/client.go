@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -185,6 +186,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body any, out 
 	if err != nil {
 		if c.verbose && c.logger != nil {
 			c.logger("[bgctl] ERROR: %s %s (correlationID=%s): %v\n", method, fullURL.Path, correlationID, err)
+		}
+		if errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "i/o timeout") {
+			return fmt.Errorf("cluster '%s' is unreachable. Check your VPN connection. Run 'bgctl config list-clusters' to see available clusters (%w)", c.baseURL.Host, err)
 		}
 		return err
 	}
