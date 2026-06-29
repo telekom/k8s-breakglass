@@ -41,6 +41,7 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -51,6 +52,7 @@ import (
 // It watches AuditConfig changes and reconfigures the audit manager accordingly.
 type Service struct {
 	client            client.Client
+	recorder          record.EventRecorder
 	logger            *zap.Logger
 	mu                sync.RWMutex
 	manager           *Manager
@@ -61,9 +63,10 @@ type Service struct {
 }
 
 // NewService creates a new audit Service.
-func NewService(kubeClient client.Client, logger *zap.Logger, controllerNamespace string) *Service {
+func NewService(kubeClient client.Client, recorder record.EventRecorder, logger *zap.Logger, controllerNamespace string) *Service {
 	return &Service{
 		client:   kubeClient,
+		recorder: recorder,
 		logger:   logger.Named("audit-service"),
 		enabled:  false,
 		configNS: controllerNamespace,
@@ -620,8 +623,13 @@ func (s *Service) buildWebhookSink(sinkCfg breakglassv1alpha1.AuditSinkConfig) (
 }
 
 func (s *Service) buildKubernetesSink(sinkCfg breakglassv1alpha1.AuditSinkConfig) (Sink, error) {
-	// Kubernetes event sink - placeholder for now
-	return NewLogSink(s.logger.Named("k8s-events")), nil
+	var eventTypes []EventType
+	if sinkCfg.Kubernetes != nil {
+		for _, et := range sinkCfg.Kubernetes.EventTypes {
+			eventTypes = append(eventTypes, EventType(et))
+		}
+	}
+	return NewKubernetesEventSink(s.recorder, eventTypes), nil
 }
 
 // getSecretKey retrieves a specific key from a Kubernetes secret.

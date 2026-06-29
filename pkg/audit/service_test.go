@@ -26,7 +26,7 @@ func TestNewService(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 	assert.NotNil(t, svc)
 	assert.False(t, svc.IsEnabled())
 }
@@ -38,7 +38,7 @@ func TestService_ReloadDisablesOnNilConfig(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	err := svc.Reload(context.Background(), nil)
 	assert.NoError(t, err)
@@ -52,7 +52,7 @@ func TestService_ReloadDisablesOnDisabledConfig(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -73,7 +73,7 @@ func TestService_ReloadWithLogSink(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -109,7 +109,7 @@ func TestService_ReloadWithQueueConfig(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -144,7 +144,7 @@ func TestService_ReloadWithSampling(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -189,7 +189,7 @@ func TestService_ReloadNoSinks(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -212,7 +212,7 @@ func TestService_EmitWhenDisabled(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	// Service is disabled by default
 	event := &Event{
@@ -237,7 +237,7 @@ func TestService_EmitWhenEnabled(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -281,7 +281,7 @@ func TestService_CloseWhenNotInitialized(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	// Close without Reload
 	err := svc.Close()
@@ -295,7 +295,7 @@ func TestService_ReloadMultipleTimes(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config1 := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "config1"},
@@ -344,7 +344,7 @@ func TestService_BuildWebhookSink(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -381,7 +381,7 @@ func TestService_BuildKubernetesSink(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -411,7 +411,7 @@ func TestService_SkipsInvalidSinkType(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -446,7 +446,7 @@ func TestService_KafkaSinkMissingConfig(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -475,7 +475,7 @@ func TestService_WebhookSinkMissingConfig(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -519,7 +519,7 @@ func TestService_GetSecretKey(t *testing.T) {
 		WithObjects(secret).
 		Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	// Get existing key
 	data, err := svc.getSecretKey(context.Background(), "test-secret", "test-namespace", "username")
@@ -554,7 +554,7 @@ func TestService_GetSinkHealth_NoSinks(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	health := svc.GetSinkHealth()
 	assert.Empty(t, health)
@@ -567,7 +567,7 @@ func TestService_GetSinkHealth_WithLogSink(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -603,7 +603,7 @@ func TestService_GetQueuedSinkHealth_NoSinks(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	health := svc.GetQueuedSinkHealth()
 	assert.Nil(t, health)
@@ -616,7 +616,7 @@ func TestService_GetQueuedSinkHealth_WithSink(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -679,7 +679,7 @@ func TestService_BuildKafkaTLSConfig(t *testing.T) {
 		WithObjects(caSecret, clientCertSecret).
 		Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 	ctx := context.Background()
 
 	t.Run("with CA only", func(t *testing.T) {
@@ -759,7 +759,7 @@ func TestService_BuildKafkaTLSConfig(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(secretNoKey).
 			Build()
-		svcNoKey := NewService(clientWithNoKey, logger, "test-namespace")
+		svcNoKey := NewService(clientWithNoKey, nil, logger, "test-namespace")
 
 		tlsCfg := &breakglassv1alpha1.KafkaTLSSpec{
 			ClientCertSecretRef: &breakglassv1alpha1.SecretKeySelector{
@@ -795,7 +795,7 @@ func TestService_BuildKafkaSASLConfig(t *testing.T) {
 		WithObjects(saslSecret).
 		Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 	ctx := context.Background()
 
 	t.Run("with PLAIN mechanism", func(t *testing.T) {
@@ -853,7 +853,7 @@ func TestService_BuildKafkaSASLConfig(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(secretNoPass).
 			Build()
-		svcNoPass := NewService(clientNoPass, logger, "test-namespace")
+		svcNoPass := NewService(clientNoPass, nil, logger, "test-namespace")
 
 		saslCfg := &breakglassv1alpha1.KafkaSASLSpec{
 			Mechanism: "PLAIN",
@@ -882,7 +882,7 @@ func TestService_BuildKafkaSASLConfig(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(saslSecretOtherNS).
 			Build()
-		svcOtherNS := NewService(clientOtherNS, logger, "test-namespace")
+		svcOtherNS := NewService(clientOtherNS, nil, logger, "test-namespace")
 
 		saslCfg := &breakglassv1alpha1.KafkaSASLSpec{
 			Mechanism: "PLAIN",
@@ -905,7 +905,7 @@ func TestService_GetStats_NoManager(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	// No manager initialized
 	stats := svc.GetStats()
@@ -919,7 +919,7 @@ func TestService_GetStats_WithManager(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	// Reload with a valid config to initialize the manager
 	config := &breakglassv1alpha1.AuditConfig{
@@ -956,7 +956,7 @@ func TestService_Manager_NilBeforeReload(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 	assert.Nil(t, svc.Manager())
 }
 
@@ -967,7 +967,7 @@ func TestService_Manager_NonNilAfterSuccessfulReload(t *testing.T) {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	svc := NewService(client, logger, "test-namespace")
+	svc := NewService(client, nil, logger, "test-namespace")
 
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-manager-config"},
