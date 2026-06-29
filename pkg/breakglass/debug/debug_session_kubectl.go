@@ -26,10 +26,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
@@ -51,6 +51,69 @@ func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderI
 		client:     client,
 		ccProvider: ccProvider,
 	}
+}
+
+func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetry(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	mutate func(*breakglassv1alpha1.DebugSessionStatus),
+) error {
+	var patchedStatus breakglassv1alpha1.DebugSessionStatus
+	var patchedResourceVersion string
+
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &breakglassv1alpha1.DebugSession{}
+		if err := h.client.Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
+			return err
+		}
+
+		base := current.DeepCopy()
+		mutate(&current.Status)
+		if current.Generation > 0 {
+			current.Status.ObservedGeneration = current.Generation
+		}
+
+		if err := h.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+		patchedStatus = current.Status
+		patchedResourceVersion = current.ResourceVersion
+		return nil
+	}); err != nil {
+		return fmt.Errorf("patch kubectl-debug session status: %w", err)
+	}
+
+	ds.Status = patchedStatus
+	ds.ResourceVersion = patchedResourceVersion
+	return nil
+}
+
+func ensureKubectlDebugStatus(status *breakglassv1alpha1.DebugSessionStatus) *breakglassv1alpha1.KubectlDebugStatus {
+	if status.KubectlDebugStatus == nil {
+		status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+	}
+	return status.KubectlDebugStatus
+}
+
+func addAllowedPodIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref breakglassv1alpha1.AllowedPodRef) {
+	for _, existing := range status.AllowedPods {
+		if existing.Namespace == ref.Namespace && existing.Name == ref.Name {
+			return
+		}
+	}
+	status.AllowedPods = append(status.AllowedPods, ref)
+}
+
+func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref breakglassv1alpha1.DeployedResourceRef) {
+	for _, existing := range status.DeployedResources {
+		if existing.APIVersion == ref.APIVersion &&
+			existing.Kind == ref.Kind &&
+			existing.Namespace == ref.Namespace &&
+			existing.Name == ref.Name {
+			return
+		}
+	}
+	status.DeployedResources = append(status.DeployedResources, ref)
 }
 
 // FindActiveSession finds an active debug session for the user/cluster
@@ -200,39 +263,37 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 
 	// Track the injected container in session status
 	now := metav1.Now()
-	if ds.Status.KubectlDebugStatus == nil {
-		ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+	injectedContainer := breakglassv1alpha1.EphemeralContainerRef{
+		PodName:       podName,
+		Namespace:     namespace,
+		ContainerName: containerName,
+		Image:         image,
+		InjectedAt:    now,
+		InjectedBy:    user,
+	}
+	allowedPod := breakglassv1alpha1.AllowedPodRef{
+		Namespace: namespace,
+		Name:      podName,
+		Ready:     true,
 	}
 
-	ds.Status.KubectlDebugStatus.EphemeralContainersInjected = append(
-		ds.Status.KubectlDebugStatus.EphemeralContainersInjected,
-		breakglassv1alpha1.EphemeralContainerRef{
-			PodName:       podName,
-			Namespace:     namespace,
-			ContainerName: containerName,
-			Image:         image,
-			InjectedAt:    now,
-			InjectedBy:    user,
-		},
-	)
-
-	// Also add to allowed pods if not already present
-	podAlreadyAllowed := false
-	for _, p := range ds.Status.AllowedPods {
-		if p.Namespace == namespace && p.Name == podName {
-			podAlreadyAllowed = true
-			break
+	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		kubectlStatus := ensureKubectlDebugStatus(status)
+		alreadyTracked := false
+		for _, existing := range kubectlStatus.EphemeralContainersInjected {
+			if existing.Namespace == injectedContainer.Namespace &&
+				existing.PodName == injectedContainer.PodName &&
+				existing.ContainerName == injectedContainer.ContainerName {
+				alreadyTracked = true
+				break
+			}
 		}
-	}
-	if !podAlreadyAllowed {
-		ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
-			Namespace: namespace,
-			Name:      podName,
-			Ready:     true,
-		})
-	}
+		if !alreadyTracked {
+			kubectlStatus.EphemeralContainersInjected = append(kubectlStatus.EphemeralContainersInjected, injectedContainer)
+		}
 
-	return breakglass.ApplyDebugSessionStatus(ctx, h.client, ds)
+		addAllowedPodIfMissing(status, allowedPod)
+	})
 }
 
 // CreatePodCopy creates a debug copy of a pod
@@ -353,30 +414,35 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 
 	// Track the copied pod in session status
 	now := metav1.Now()
-	if ds.Status.KubectlDebugStatus == nil {
-		ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+	copiedPod := breakglassv1alpha1.CopiedPodRef{
+		OriginalPod:       originalPodName,
+		OriginalNamespace: originalNamespace,
+		CopyName:          copyName,
+		CopyNamespace:     targetNs,
+		CreatedAt:         now,
+		ExpiresAt:         &expiresAt,
 	}
-
-	ds.Status.KubectlDebugStatus.CopiedPods = append(
-		ds.Status.KubectlDebugStatus.CopiedPods,
-		breakglassv1alpha1.CopiedPodRef{
-			OriginalPod:       originalPodName,
-			OriginalNamespace: originalNamespace,
-			CopyName:          copyName,
-			CopyNamespace:     targetNs,
-			CreatedAt:         now,
-			ExpiresAt:         &expiresAt,
-		},
-	)
-
-	// Add to allowed pods
-	ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
+	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: targetNs,
 		Name:      copyName,
 		Ready:     false, // Will be updated by reconciler
-	})
+	}
 
-	if err := breakglass.ApplyDebugSessionStatus(ctx, h.client, ds); err != nil {
+	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		kubectlStatus := ensureKubectlDebugStatus(status)
+		alreadyTracked := false
+		for _, existing := range kubectlStatus.CopiedPods {
+			if existing.CopyNamespace == copiedPod.CopyNamespace && existing.CopyName == copiedPod.CopyName {
+				alreadyTracked = true
+				break
+			}
+		}
+		if !alreadyTracked {
+			kubectlStatus.CopiedPods = append(kubectlStatus.CopiedPods, copiedPod)
+		}
+
+		addAllowedPodIfMissing(status, allowedPod)
+	}); err != nil {
 		return nil, fmt.Errorf("failed to update session status: %w", err)
 	}
 
@@ -516,21 +582,23 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 
 	// Add to allowed pods and deployed resources
-	ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
+	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: namespace,
 		Name:      podName,
 		NodeName:  nodeName,
 		Ready:     false, // Will be updated by reconciler
-	})
-
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+	}
+	deployedResource := breakglassv1alpha1.DeployedResourceRef{
 		APIVersion: "v1",
 		Kind:       "Pod",
 		Name:       podName,
 		Namespace:  namespace,
-	})
+	}
 
-	if err := breakglass.ApplyDebugSessionStatus(ctx, h.client, ds); err != nil {
+	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		addAllowedPodIfMissing(status, allowedPod)
+		addDeployedResourceIfMissing(status, deployedResource)
+	}); err != nil {
 		return nil, fmt.Errorf("failed to update session status: %w", err)
 	}
 
@@ -564,9 +632,9 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 
 	// Note: Ephemeral containers cannot be removed, they remain until pod deletion
 	// Clear the status
-	ds.Status.KubectlDebugStatus = nil
-
-	return breakglass.ApplyDebugSessionStatus(ctx, h.client, ds)
+	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.KubectlDebugStatus = nil
+	})
 }
 
 // Helper functions

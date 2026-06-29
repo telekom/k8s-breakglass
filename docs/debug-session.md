@@ -1535,6 +1535,11 @@ non-empty join bodies must still be strict JSON.
 
 These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode:
 
+Kubectl-debug operations merge their operation-specific status fields into the
+latest `DebugSession` status before returning. Concurrent renewals, participant
+changes, and lifecycle updates are preserved while the operation records copied
+pods, injected containers, allowed pods, or cleanup state.
+
 #### Inject Ephemeral Container
 
 **POST** `/api/v1/debugSessions/{name}/injectEphemeralContainer`
