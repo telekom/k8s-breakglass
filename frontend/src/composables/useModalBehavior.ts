@@ -86,7 +86,7 @@ export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, opti
     if (lockScroll) unlockDocumentScroll(scrollLockToken);
   }
 
-  watch(opened, setActive, { immediate: true });
+  watch(opened, setActive, { immediate: true, flush: "sync" });
 
   onBeforeUnmount(() => {
     setActive(false);

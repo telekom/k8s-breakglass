@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { defineComponent, toRef } from "vue";
+import { defineComponent, ref, toRef } from "vue";
 import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it } from "vitest";
 import { useModalBehavior } from "@/composables/useModalBehavior";
@@ -19,6 +19,19 @@ const ModalHarness = defineComponent({
   emits: ["close"],
   setup(props, { emit }) {
     useModalBehavior(toRef(props, "opened"), () => emit("close"));
+    return {};
+  },
+  template: "<div />",
+});
+
+const SelfClosingModalHarness = defineComponent({
+  emits: ["close"],
+  setup(_, { emit }) {
+    const opened = ref(true);
+    useModalBehavior(opened, () => {
+      opened.value = false;
+      emit("close");
+    });
     return {};
   },
   template: "<div />",
@@ -60,6 +73,16 @@ describe("useModalBehavior", () => {
 
     expect(first.emitted("close")).toBeUndefined();
     expect(second.emitted("close")).toHaveLength(1);
+  });
+
+  it("removes a synchronously closed modal before repeated Escape events", () => {
+    const wrapper = mount(SelfClosingModalHarness);
+    mountedWrappers.push(wrapper);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    expect(wrapper.emitted("close")).toHaveLength(1);
   });
 
   it("locks background scrolling while any modal is open", async () => {
