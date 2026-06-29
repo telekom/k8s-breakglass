@@ -1354,11 +1354,11 @@ func TestValidateBreakglassSession_MalformedResources(t *testing.T) {
 		result := ValidateBreakglassSession(s)
 		assert.False(t, result.IsValid())
 		assert.Len(t, result.Errors, 3)
-		
+
 		hasClusterErr := false
 		hasUserErr := false
 		hasGroupErr := false
-		
+
 		for _, e := range result.Errors {
 			if e.Field == "spec.cluster" && e.Type == "FieldValueRequired" {
 				hasClusterErr = true
@@ -1370,7 +1370,7 @@ func TestValidateBreakglassSession_MalformedResources(t *testing.T) {
 				hasGroupErr = true
 			}
 		}
-		
+
 		assert.True(t, hasClusterErr)
 		assert.True(t, hasUserErr)
 		assert.True(t, hasGroupErr)
