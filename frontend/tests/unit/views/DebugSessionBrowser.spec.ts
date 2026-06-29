@@ -158,6 +158,27 @@ describe("DebugSessionBrowser", () => {
       expect(status.text()).toBe("Showing 2 of 2 debug sessions");
     });
 
+    it("uses singular debug session text when there is one result", async () => {
+      mockListSessions.mockResolvedValueOnce({
+        sessions: [
+          {
+            name: "debug-session-1",
+            namespace: "default",
+            cluster: "test-cluster",
+            state: "Active",
+            templateRef: "standard-debug",
+            requestedBy: "user@example.com",
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const status = wrapper.find('[data-testid="debug-session-results-status"]');
+
+      expect(status.text()).toBe("Showing 1 of 1 debug session");
+    });
+
     it("shows an error state when loading debug sessions fails", async () => {
       mockListSessions.mockRejectedValueOnce(new Error("debug list down"));
 

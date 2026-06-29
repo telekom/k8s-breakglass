@@ -12,38 +12,14 @@ import { ref } from "vue";
 import SessionBrowser from "@/views/SessionBrowser.vue";
 import { AuthKey } from "@/keys";
 
+const { mockSearchSessions } = vi.hoisted(() => ({
+  mockSearchSessions: vi.fn(),
+}));
+
 // Mock services
 vi.mock("@/services/breakglass", () => ({
   default: class MockBreakglassService {
-    searchSessions = vi.fn().mockResolvedValue([
-      {
-        metadata: { name: "session-1", namespace: "default" },
-        spec: {
-          user: "user@example.com",
-          cluster: "test-cluster",
-          escalatedGroup: "admin-group",
-          duration: "2h",
-        },
-        status: {
-          state: "approved",
-          startedAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 7200000).toISOString(),
-        },
-      },
-      {
-        metadata: { name: "session-2", namespace: "default" },
-        spec: {
-          user: "admin@example.com",
-          cluster: "prod-cluster",
-          escalatedGroup: "superadmin",
-          duration: "1h",
-        },
-        status: {
-          state: "pending",
-          timeoutAt: new Date(Date.now() + 3600000).toISOString(),
-        },
-      },
-    ]);
+    searchSessions = mockSearchSessions;
     rejectSession = vi.fn().mockResolvedValue({});
     withdrawSession = vi.fn().mockResolvedValue({});
   },
@@ -109,6 +85,35 @@ describe("SessionBrowser", () => {
   };
 
   beforeEach(() => {
+    mockSearchSessions.mockResolvedValue([
+      {
+        metadata: { name: "session-1", namespace: "default" },
+        spec: {
+          user: "user@example.com",
+          cluster: "test-cluster",
+          escalatedGroup: "admin-group",
+          duration: "2h",
+        },
+        status: {
+          state: "approved",
+          startedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 7200000).toISOString(),
+        },
+      },
+      {
+        metadata: { name: "session-2", namespace: "default" },
+        spec: {
+          user: "admin@example.com",
+          cluster: "prod-cluster",
+          escalatedGroup: "superadmin",
+          duration: "1h",
+        },
+        status: {
+          state: "pending",
+          timeoutAt: new Date(Date.now() + 3600000).toISOString(),
+        },
+      },
+    ]);
     router = createRouter({
       history: createMemoryHistory(),
       routes: [{ path: "/sessions", name: "sessions", component: SessionBrowser }],
@@ -182,6 +187,30 @@ describe("SessionBrowser", () => {
       expect(status.attributes("aria-atomic")).toBe("true");
       expect(status.classes()).toContain("sr-only");
       expect(status.text()).toBe("Showing 2 of 2 sessions");
+    });
+
+    it("uses singular session text when there is one result", async () => {
+      mockSearchSessions.mockResolvedValue([
+        {
+          metadata: { name: "session-1", namespace: "default" },
+          spec: {
+            user: "user@example.com",
+            cluster: "test-cluster",
+            escalatedGroup: "admin-group",
+            duration: "2h",
+          },
+          status: {
+            state: "approved",
+            startedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 7200000).toISOString(),
+          },
+        },
+      ]);
+
+      const wrapper = await createWrapper();
+      const status = wrapper.find('[data-testid="session-results-status"]');
+
+      expect(status.text()).toBe("Showing 1 of 1 session");
     });
   });
 

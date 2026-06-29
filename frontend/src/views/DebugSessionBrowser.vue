@@ -128,6 +128,8 @@ const filteredSessions = computed(() => {
   return result;
 });
 
+const debugSessionCountLabel = computed(() => (sessions.value.length === 1 ? "debug session" : "debug sessions"));
+
 function isOwner(session: DebugSessionSummary): boolean {
   return session.requestedBy === currentUserEmail.value;
 }
@@ -340,7 +342,7 @@ function onStateToggle(state: string, event: Event) {
       aria-atomic="true"
       data-testid="debug-session-results-status"
     >
-      Showing {{ filteredSessions.length }} of {{ sessions.length }} debug sessions
+      Showing {{ filteredSessions.length }} of {{ sessions.length }} {{ debugSessionCountLabel }}
     </div>
   </div>
 </template>

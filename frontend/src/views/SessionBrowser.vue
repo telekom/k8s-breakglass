@@ -355,6 +355,8 @@ const visibleSessions = computed(() => {
   });
 });
 
+const sessionCountLabel = computed(() => (sessions.value.length === 1 ? "session" : "sessions"));
+
 const activeFiltersDescription = computed(() => {
   const desc: string[] = [];
   if (filters.mine) desc.push("Mine");
@@ -485,7 +487,7 @@ onMounted(() => {
           aria-atomic="true"
           data-testid="session-results-status"
         >
-          Showing {{ visibleSessions.length }} of {{ sessions.length }} sessions
+          Showing {{ visibleSessions.length }} of {{ sessions.length }} {{ sessionCountLabel }}
         </p>
         <p v-if="loading" role="status" aria-live="polite" data-testid="loading-indicator">Loading sessions…</p>
         <p v-else-if="error" class="error" role="alert" data-testid="error-message">{{ error }}</p>

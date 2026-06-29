@@ -146,8 +146,8 @@ npx playwright test --config=playwright.a11y.config.ts
 This runs axe-core audits against all primary pages, error pages, and modals in four theme modes (light, dark, high contrast, high contrast dark). The tests use the mock dev server.
 
 Dynamic session result counts are exposed through polite, atomic status regions
-so filter changes on session, debug-session, and approval list pages are
-announced without interrupting the current screen-reader task.
+so filter changes on session, debug-session, approval, and review list pages
+are announced without interrupting the current screen-reader task.
 
 See `frontend/SCALE_DEVIATIONS.md` for documented contrast deviations from the Scale Design System and their rationale.
 

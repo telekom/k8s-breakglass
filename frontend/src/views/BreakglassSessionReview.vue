@@ -279,6 +279,8 @@ const filteredBreakglasses = computed(() => {
   return sessions;
 });
 
+const reviewSessionCountLabel = computed(() => (state.breakglasses.length === 1 ? "session" : "sessions"));
+
 const currentUserEmail = computed(() => {
   return currentUserIdentifier(user.value);
 });
@@ -351,13 +353,17 @@ async function onCancel(bg: SessionCR) {
       </div>
 
       <div
+        v-if="!state.loading && !state.getBreakglassesMsg"
         class="toolbar-info"
-        :role="!state.loading && !state.getBreakglassesMsg ? 'status' : undefined"
-        :aria-live="!state.loading && !state.getBreakglassesMsg ? 'polite' : undefined"
-        :aria-atomic="!state.loading && !state.getBreakglassesMsg ? 'true' : undefined"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
         data-testid="review-results-status"
       >
-        Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} sessions
+        Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} {{ reviewSessionCountLabel }}
+      </div>
+      <div v-else class="toolbar-info" data-testid="review-results-status">
+        Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} {{ reviewSessionCountLabel }}
       </div>
     </section>
 

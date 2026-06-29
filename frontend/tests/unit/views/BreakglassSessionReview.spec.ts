@@ -174,6 +174,24 @@ describe("BreakglassSessionReview", () => {
     expect(status.text()).toBe("Showing 0 of 0 sessions");
   });
 
+  it("uses singular session text when there is one review result", async () => {
+    mockGetSessionStatus.mockResolvedValueOnce({
+      status: 200,
+      data: [
+        {
+          metadata: { name: "session-1" },
+          spec: { user: "user@example.com", cluster: "cluster-a", grantedGroup: "admin" },
+          status: { state: "Active" },
+        },
+      ],
+    });
+
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="review-results-status"]');
+
+    expect(status.text()).toBe("Showing 1 of 1 session");
+  });
+
   it("uses approver mode params when route query has approver=true", async () => {
     await createWrapper("/review?approver=true&name=session-1");
 
