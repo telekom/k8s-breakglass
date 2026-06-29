@@ -317,6 +317,10 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 				if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 					status.Message = "Session expiring soon"
 				}); err != nil {
+					if apierrors.IsConflict(err) {
+						log.Debugw("skipping expiring-soon status update after concurrent debug session change", "error", err)
+						return ctrl.Result{}, nil
+					}
 					return ctrl.Result{}, err
 				}
 			}
@@ -331,6 +335,10 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 				status.Message = "Session expired (notify-only)"
 				status.ExpiresAt = nil
 			}); err != nil {
+				if apierrors.IsConflict(err) {
+					log.Debugw("skipping notify-only expiration status update after concurrent debug session change", "error", err)
+					return ctrl.Result{}, nil
+				}
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
@@ -339,6 +347,10 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 			status.State = breakglassv1alpha1.DebugSessionStateExpired
 			status.Message = "Session expired"
 		}); err != nil {
+			if apierrors.IsConflict(err) {
+				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
+				return ctrl.Result{}, nil
+			}
 			return ctrl.Result{}, err
 		}
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()

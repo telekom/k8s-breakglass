@@ -21,12 +21,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -38,6 +38,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 // Helper to create a fake client with status subresource support
@@ -987,9 +988,12 @@ func TestDebugSessionReconciler_HandleActiveDoesNotExpireRenewedStaleSnapshot(t 
 		client: fakeClient,
 	}
 
-	_, err := controller.handleActive(context.Background(), staleSession)
-	require.Error(t, err)
-	assert.True(t, apierrors.IsConflict(err), "expected conflict, got %v", err)
+	metrics.DebugSessionsActive.WithLabelValues(liveSession.Spec.Cluster, liveSession.Spec.TemplateRef).Set(3)
+
+	result, err := controller.handleActive(context.Background(), staleSession)
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
+	assert.Equal(t, float64(3), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(liveSession.Spec.Cluster, liveSession.Spec.TemplateRef)))
 
 	var updated breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(context.Background(), types.NamespacedName{
@@ -1036,9 +1040,9 @@ func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoo
 		client: fakeClient,
 	}
 
-	_, err := controller.handleActive(context.Background(), staleSession)
-	require.Error(t, err)
-	assert.True(t, apierrors.IsConflict(err), "expected conflict, got %v", err)
+	result, err := controller.handleActive(context.Background(), staleSession)
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	var updated breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(context.Background(), types.NamespacedName{

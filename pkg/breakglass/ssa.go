@@ -38,6 +38,10 @@ func PatchDebugSessionStatusWithOptimisticLock(
 	session *breakglassv1alpha1.DebugSession,
 	mutate func(*breakglassv1alpha1.DebugSessionStatus),
 ) error {
+	if session.ResourceVersion == "" {
+		return fmt.Errorf("patch DebugSession %s/%s status with optimistic lock: missing resourceVersion", session.Namespace, session.Name)
+	}
+
 	base := session.DeepCopy()
 	mutate(&session.Status)
 	if session.Generation > 0 {
