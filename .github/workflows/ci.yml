@@ -483,13 +483,26 @@ jobs:
 
   # ============================================================================
   # Publish Image — SBOM, registry push, attestation, Artifactory push
-  # Runs in parallel with E2E tests (does not block them).
+  # Runs after all quality gates pass.
   # ============================================================================
 
   publish-image:
     name: Publish Image
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: 
+      - build-image
+      - lint
+      - unit-tests-controller
+      - unit-tests-cli
+      - crd-validation
+      - npm-audit
+      - manifest-validation
+      - frontend-tests
+      - helm-lint
+      - single-cluster-e2e
+      - oidc-comprehensive-e2e
+      - ui-e2e
+      - multi-cluster-e2e
     permissions:
       contents: read
       packages: write
