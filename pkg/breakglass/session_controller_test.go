@@ -9619,9 +9619,9 @@ func TestTokenValidation_TerminalStatesAreInvalid(t *testing.T) {
 			escmanager := testEscalationLookup{Client: cli}
 			logger, _ := zap.NewDevelopment()
 			ctxSetup := func(c *gin.Context) {
-				c.Set("email", "bob@example.com")
-				c.Set("username", "bob")
-				c.Set("user_id", "bob@example.com")
+				c.Set("email", "alice@example.com")
+				c.Set("username", "alice")
+				c.Set("user_id", "alice@example.com")
 				c.Set("groups", []string{"system:authenticated"})
 				c.Next()
 			}
@@ -9688,6 +9688,38 @@ func TestTokenValidation_ExistingSessionIdentityErrorReturns401(t *testing.T) {
 
 	require.Equal(t, http.StatusUnauthorized, w.Code, "existing token session with unverifiable identity must return 401")
 	assert.Contains(t, w.Body.String(), "unable to verify user identity")
+}
+
+func TestTokenValidation_LookupFailureReturnsInternalError(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	first := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ambiguous-session", Namespace: "default"},
+	}
+	second := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ambiguous-session", Namespace: "other"},
+	}
+
+	cli := builder.WithObjects(first, second).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+	ctrl.identityProvider = ErrIdentityProvider{}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?token=ambiguous-session", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code, "ambiguous token lookup must not be masked as not found")
 }
 
 func TestTokenValidation_ExistingSessionRequiresReadAuthorization(t *testing.T) {
@@ -9820,4 +9852,65 @@ func TestTokenValidation_ExistingSessionAllowsAuthorizedReaders(t *testing.T) {
 			assert.Equal(t, tt.wantCanApprove, body.CanApprove)
 		})
 	}
+}
+
+func TestTokenValidation_ExistingSessionAllowsHistoricalApprover(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			Approvers: []string{"historical-approver@example.com"},
+		},
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-approvers", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"current-approver@example.com"}},
+		},
+	}
+
+	cli := builder.WithObjects(session, escalation).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "historical-approver@example.com")
+			c.Set("username", "historical-approver@example.com")
+			c.Set("user_id", "historical-approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?token=approved-session", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Valid         bool `json:"valid"`
+		AlreadyActive bool `json:"alreadyActive"`
+		CanApprove    bool `json:"canApprove"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	assert.True(t, body.Valid)
+	assert.True(t, body.AlreadyActive)
+	assert.False(t, body.CanApprove)
 }

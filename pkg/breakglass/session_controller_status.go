@@ -628,10 +628,15 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		// Try to load session by metadata.name (token is treated as session name)
 		ses, err := wc.sessionManager.GetBreakglassSessionByName(ctx, token)
 		if err != nil {
-			reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
-			c.JSON(http.StatusNotFound, struct {
-				Valid bool `json:"valid"`
-			}{Valid: false})
+			if apierrors.IsNotFound(err) {
+				reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
+				c.JSON(http.StatusNotFound, struct {
+					Valid bool `json:"valid"`
+				}{Valid: false})
+				return
+			}
+			reqLog.Errorw("Token validation: unable to load session", "tokenLen", len(token), "error", err)
+			apiresponses.RespondInternalError(c, "get session", err, reqLog)
 			return
 		}
 		pendingApproval := IsSessionPendingApproval(ses)
