@@ -24,8 +24,8 @@
     </div>
 
     <!-- Activation status badge -->
-    <div v-if="session.status?.state === 'WaitingForScheduledTime'" class="modal-pill tone-info">
-      <span aria-hidden="true">⏳</span> Pending activation
+    <div v-if="isAwaitingScheduledStart" class="modal-pill tone-info">
+      <span aria-hidden="true">⏳</span> Approved and awaiting scheduled start
     </div>
 
     <!-- Immediate session timing -->
@@ -39,8 +39,12 @@
       <div class="reason-text">{{ requestReason }}</div>
     </div>
 
+    <p v-if="isAwaitingScheduledStart" class="modal-state-note" data-testid="scheduled-activation-note">
+      This session has already been approved. It will activate automatically at the scheduled start time.
+    </p>
+
     <!-- Approver note input (used for both approval and rejection reasons) -->
-    <div data-testid="rejection-reason-input">
+    <div v-if="canReview" data-testid="rejection-reason-input">
       <scale-textarea
         label="Approver Note"
         data-testid="approval-reason-input"
@@ -51,13 +55,19 @@
       />
     </div>
 
-    <p v-if="isNoteRequired && !approverNote.trim()" :id="noteErrorId" class="approval-note-required" role="alert">
+    <p
+      v-if="canReview && isNoteRequired && !approverNote.trim()"
+      :id="noteErrorId"
+      class="approval-note-required"
+      role="alert"
+    >
       This field is required.
     </p>
 
     <div class="modal-actions">
       <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
       <scale-button
+        v-if="canReview"
         data-testid="reject-button"
         variant="danger"
         :disabled="isApproving || isRequiredNoteMissing"
@@ -66,6 +76,7 @@
         Reject
       </scale-button>
       <scale-button
+        v-if="canReview"
         data-testid="approve-button"
         :disabled="isApproving || isRequiredNoteMissing"
         @click="$emit('approve')"
@@ -79,6 +90,7 @@
 <script setup lang="ts">
 import { computed, useId } from "vue";
 import { formatDateTime, formatDurationRounded, formatEndTime } from "@/composables";
+import { getSessionState, normalizeState } from "@/composables/useSessionList";
 import type { SessionCR } from "@/model/breakglass";
 
 const noteErrorId = `approval-note-error-${useId()}`;
@@ -123,6 +135,11 @@ const approvalReason = computed(() => {
 
 const isNoteRequired = computed(() => approvalReason.value?.mandatory ?? false);
 const isRequiredNoteMissing = computed(() => isNoteRequired.value && !props.approverNote.trim());
+const normalizedSessionState = computed(() => normalizeState(getSessionState(props.session)));
+const isAwaitingScheduledStart = computed(
+  () => normalizedSessionState.value === "waitingforscheduledtime" || normalizedSessionState.value === "scheduled",
+);
+const canReview = computed(() => normalizedSessionState.value === "pending");
 
 const approvalReasonPlaceholder = computed(() => {
   return approvalReason.value?.description || "Optional approver note";

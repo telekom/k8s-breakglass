@@ -43,6 +43,11 @@ Approval and rejection REST requests may omit the optional JSON body. When a bod
 start is reached, but they still reserve a request slot. Duplicate request checks
 and session limits count them until they activate or expire.
 
+The review UI exposes approve/reject actions only while a session is `Pending`.
+`WaitingForScheduledTime` sessions are already approved and awaiting their
+scheduled activation time, so review cards and direct review modals show them
+without approval actions.
+
 ### Terminal States
 
 Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**, **IdleExpired**, **ApprovalTimeout**), it can NEVER return to an active state:

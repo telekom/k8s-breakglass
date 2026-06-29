@@ -249,17 +249,20 @@ describe("BreakglassSessionCard", () => {
       expect(wrapper.find("[data-testid='session-actions']").exists()).toBe(false);
     });
 
-    it("WaitingForScheduledTime session shows review button", () => {
+    it("waiting for scheduled time session does not expose approval actions", () => {
       const wrapper = mountCard({
         status: {
-          state: "WaitingForScheduledTime",
+          state: "Waiting For Scheduled Time",
           approvedAt: undefined,
           expiresAt: undefined,
           retainedUntil: new Date(Date.now() + 86400000).toISOString(),
         },
       });
-      const reviewBtn = wrapper.find("[data-testid='review-button']");
-      expect(reviewBtn.exists()).toBe(true);
+      expect(wrapper.find("[data-testid='session-actions']").exists()).toBe(false);
+      expect(wrapper.find("[data-testid='review-button']").exists()).toBe(false);
+      expect(wrapper.find("[data-testid='drop-button']").exists()).toBe(false);
+      expect(wrapper.find("[data-testid='cancel-button']").exists()).toBe(false);
+      expect(wrapper.find("[data-testid='timeline-status']").text()).toContain("Awaiting scheduled start");
     });
   });
 
