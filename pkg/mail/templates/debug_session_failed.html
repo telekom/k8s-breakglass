@@ -201,6 +201,15 @@
         <span class="detail-label">Session ID:</span>
         <span class="detail-value">{{.SessionID}}</span>
       </div>
+      {{if or .RequesterName .RequesterEmail}}
+      <div class="detail-row">
+        <span class="detail-label">Requester:</span>
+        <span class="detail-value">
+          {{if .RequesterName}}{{.RequesterName}}{{end}}
+          {{if .RequesterEmail}}<br><span style="color: #666;">{{.RequesterEmail}}</span>{{end}}
+        </span>
+      </div>
+      {{end}}
       <div class="detail-row">
         <span class="detail-label">Cluster:</span>
         <span class="detail-value">{{.Cluster}}</span>

@@ -915,6 +915,8 @@ func TestRenderDebugSessionFailed(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, result)
+	assert.Contains(t, result, "John Doe")
+	assert.Contains(t, result, "john.doe@example.com")
 	assert.Contains(t, result, "debug-session-fail")
 	assert.Contains(t, result, "quota exceeded")
 	assert.Contains(t, result, "prod-cluster-01")

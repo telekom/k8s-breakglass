@@ -525,11 +525,20 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 		return
 	}
 
-	recipients := []string{ds.Spec.RequestedBy}
+	requesterEmail := ds.Spec.RequestedByEmail
+	if requesterEmail == "" {
+		requesterEmail = ds.Spec.RequestedBy
+	}
+	recipients := []string{requesterEmail}
+
+	requesterName := ds.Spec.RequestedByDisplayName
+	if requesterName == "" {
+		requesterName = ds.Spec.RequestedBy
+	}
 
 	params := mail.DebugSessionFailedMailParams{
-		RequesterName:  ds.Spec.RequestedBy,
-		RequesterEmail: ds.Spec.RequestedBy,
+		RequesterName:  requesterName,
+		RequesterEmail: requesterEmail,
 		SessionID:      ds.Name,
 		Cluster:        ds.Spec.Cluster,
 		TemplateName:   ds.Spec.TemplateRef,

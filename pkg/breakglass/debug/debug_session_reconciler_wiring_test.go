@@ -79,7 +79,9 @@ func TestDebugSessionController_SendDebugSessionFailedEmail(t *testing.T) {
 	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil).
 		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com", false)
 
-	session := newTestDebugSession("debug-failed", "node-shell", "prod", "requester@example.com")
+	session := newTestDebugSession("debug-failed", "node-shell", "prod", "requester-id")
+	session.Spec.RequestedByEmail = "requester@example.com"
+	session.Spec.RequestedByDisplayName = "Requester Display"
 	controller.sendDebugSessionFailedEmail(session, "debug pod failed")
 
 	messages := mockMail.GetMessages()
@@ -88,4 +90,6 @@ func TestDebugSessionController_SendDebugSessionFailedEmail(t *testing.T) {
 	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
 	assert.Contains(t, messages[0].Subject, "Debug Session Failed: debug-failed")
 	assert.Contains(t, messages[0].Body, "https://breakglass.example.com/debug-sessions")
+	assert.Contains(t, messages[0].Body, "Requester Display")
+	assert.NotContains(t, messages[0].Body, "requester-id")
 }
