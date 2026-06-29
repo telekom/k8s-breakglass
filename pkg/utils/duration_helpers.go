@@ -66,7 +66,7 @@ func ParseDurationOrDefault(value string, defaultValue time.Duration, fieldName 
 		if log != nil {
 			log.Warnw("Non-positive "+fieldName+" in spec; falling back to default",
 				"value", value,
-				"parsedDuration", d,
+				"parsedDuration", d.String(),
 				"default", defaultValue.String())
 		}
 		return defaultValue
