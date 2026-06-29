@@ -139,6 +139,7 @@ onMounted(() => {
   applyTheme(theme.value);
   applyHighContrast(highContrast.value);
   if (typeof window === "undefined") return;
+  uiFlavour.value = getUIFlavour();
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
     if (highContrast.value || getStoredTheme()) {
@@ -160,6 +161,12 @@ onMounted(() => {
   if (!scaleMobileFlyoutDefined.value && typeof customElements !== "undefined" && "whenDefined" in customElements) {
     void customElements.whenDefined("scale-telekom-nav-flyout").then(() => {
       scaleMobileFlyoutDefined.value = true;
+    });
+  }
+  scaleAppShellDefined.value = isScaleAppShellDefined();
+  if (!scaleAppShellDefined.value && typeof customElements !== "undefined" && "whenDefined" in customElements) {
+    void customElements.whenDefined("scale-telekom-app-shell").then(() => {
+      scaleAppShellDefined.value = true;
     });
   }
 });
@@ -257,6 +264,12 @@ const profileMenuAriaLabel = computed(() => {
   if (groupsRef.value.length) tokens.push(`${groupsRef.value.length} groups`);
   return `${tokens.join(" – ")} menu`;
 });
+const uiFlavour = ref(getUIFlavour());
+const scaleAppShellDefined = ref(isScaleAppShellDefined());
+const appShellOwnsMainLandmark = computed(
+  () => scaleAppShellDefined.value && uiFlavour.value !== "oss" && uiFlavour.value !== "neutral",
+);
+const mainLandmarkRole = computed(() => (appShellOwnsMainLandmark.value ? undefined : "main"));
 
 const profileMenuCloseLabel = computed(() => `Close ${profileMenuLabel.value} menu`);
 
@@ -321,6 +334,15 @@ function closeMobileNav() {
 
 function isScaleMobileFlyoutDefined() {
   return typeof customElements !== "undefined" && customElements.get("scale-telekom-nav-flyout") != null;
+}
+
+function isScaleAppShellDefined() {
+  return typeof customElements !== "undefined" && customElements.get("scale-telekom-app-shell") != null;
+}
+
+function getUIFlavour() {
+  if (typeof document === "undefined") return "oss";
+  return document.documentElement.getAttribute("data-ui-flavour") ?? "oss";
 }
 
 function toggleMobileNav() {
@@ -662,7 +684,7 @@ watch(
         </div>
       </scale-telekom-header>
 
-      <div id="main" class="app-container" tabindex="-1">
+      <div id="main" class="app-container" :role="mainLandmarkRole" tabindex="-1">
         <h1 class="sr-only">{{ brandingTitle }}</h1>
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
