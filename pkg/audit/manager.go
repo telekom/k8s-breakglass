@@ -371,8 +371,12 @@ func (m *Manager) shouldSample(eventType EventType) bool {
 		return false // Always capture non-high-volume events
 	}
 
+	if m.config.SampleRate <= 0 {
+		return true
+	}
+
 	// Simple hash-based sampling using event timestamp nanoseconds
-	return float64(time.Now().UnixNano()%1000)/1000.0 > m.config.SampleRate
+	return float64(time.Now().UnixNano()%1000)/1000.0 >= m.config.SampleRate
 }
 
 // processQueue handles events from the async queue (single-event mode).

@@ -1123,6 +1123,24 @@ func TestManager_ShouldSample(t *testing.T) {
 		assert.Equal(t, int64(10), received)
 	})
 
+	t.Run("explicit zero sample rate drops all eligible high volume events", func(t *testing.T) {
+		sink := &testSink{name: "test"}
+		manager := NewManager(sink, ManagerConfig{
+			QueueSize:            1000,
+			WorkerCount:          1,
+			SampleRate:           0.0,
+			sampleRateConfigured: true,
+			HighVolumeEventTypes: []EventType{EventResourceGet},
+		}, logger)
+		defer func() {
+			_ = manager.Close()
+		}()
+
+		for i := 0; i < 100; i++ {
+			assert.True(t, manager.shouldSample(EventResourceGet))
+		}
+	})
+
 	t.Run("sample rate 0 samples all high volume events", func(t *testing.T) {
 		var received int64
 		sink := &testSink{
