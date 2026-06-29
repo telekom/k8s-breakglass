@@ -1351,11 +1351,18 @@ func TestValidateBreakglassSession_MalformedResources(t *testing.T) {
 				GrantedGroup: "   ",
 			},
 		}
-		// Note: Basic validation doesn't check for whitespace-only values
-		// This would need to be added if required
 		result := ValidateBreakglassSession(s)
-		// Current implementation considers non-empty strings as valid
-		assert.True(t, result.IsValid())
+		assert.False(t, result.IsValid())
+		assert.Len(t, result.Errors, 3)
+		
+		errMsgs := make([]string, 0, len(result.Errors))
+		for _, e := range result.Errors {
+			errMsgs = append(errMsgs, e.Error())
+		}
+		
+		assert.Contains(t, errMsgs, "spec.cluster: Required value: cluster is required")
+		assert.Contains(t, errMsgs, "spec.user: Required value: user is required")
+		assert.Contains(t, errMsgs, "spec.grantedGroup: Required value: grantedGroup is required")
 	})
 }
 
