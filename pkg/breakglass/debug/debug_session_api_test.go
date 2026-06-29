@@ -5745,6 +5745,54 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 		// API returns 404 "user is not a participant in this session"
 		assert.Equal(t, 404, w.Code)
 	})
+
+	t.Run("leave rejects unexpected body before participant lookup", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "charlie@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", strings.NewReader(`{"role":"viewer"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "request body must be empty")
+	})
 }
 
 // TestDebugSessionAPIController_HandleRenewDebugSession tests the handleRenewDebugSession handler

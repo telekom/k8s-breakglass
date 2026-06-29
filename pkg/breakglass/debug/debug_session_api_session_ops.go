@@ -606,6 +606,10 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	if rejectUnexpectedDebugActionBody(ctx) {
+		return
+	}
+
 	// Find the participant
 	username := currentUser.(string)
 	participantIndex := -1
@@ -631,9 +635,6 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	}
 	if isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot leave expired session")
-		return
-	}
-	if rejectUnexpectedDebugActionBody(ctx) {
 		return
 	}
 
