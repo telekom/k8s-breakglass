@@ -5451,6 +5451,118 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		assert.Equal(t, int32(1), updatedSession.Status.RenewalCount)
 	})
 
+	t.Run("renew authorizes email identity matches", func(t *testing.T) {
+		leftAt := metav1.NewTime(now.Add(-time.Minute))
+		tests := []struct {
+			name             string
+			username         string
+			email            string
+			requestedBy      string
+			requestedByEmail string
+			participants     []breakglassv1alpha1.DebugSessionParticipant
+			wantStatus       int
+			wantCount        int32
+			wantBody         string
+		}{
+			{
+				name:             "requester email can renew when username differs",
+				username:         "oidc-subject-alice",
+				email:            "alice@example.com",
+				requestedBy:      "legacy-alice-subject",
+				requestedByEmail: "alice@example.com",
+				wantStatus:       http.StatusOK,
+				wantCount:        1,
+			},
+			{
+				name:             "participant email can renew when username differs",
+				username:         "oidc-subject-bob",
+				email:            "bob@example.com",
+				requestedBy:      "owner-subject",
+				requestedByEmail: "owner@example.com",
+				participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "legacy-bob-subject", Email: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now},
+				},
+				wantStatus: http.StatusOK,
+				wantCount:  1,
+			},
+			{
+				name:             "viewer email cannot renew",
+				username:         "oidc-subject-viewer",
+				email:            "viewer@example.com",
+				requestedBy:      "owner-subject",
+				requestedByEmail: "owner@example.com",
+				participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "legacy-viewer-subject", Email: "viewer@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				},
+				wantStatus: http.StatusForbidden,
+				wantBody:   "only requester or active owner/participant roles can renew",
+			},
+			{
+				name:             "left participant email cannot renew",
+				username:         "oidc-subject-left",
+				email:            "left@example.com",
+				requestedBy:      "owner-subject",
+				requestedByEmail: "owner@example.com",
+				participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "legacy-left-subject", Email: "left@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now, LeftAt: &leftAt},
+				},
+				wantStatus: http.StatusForbidden,
+				wantBody:   "only requester or active owner/participant roles can renew",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				session := breakglassv1alpha1.DebugSession{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-session",
+						Namespace: "default",
+						Labels: map[string]string{
+							DebugSessionLabelKey: "test-session",
+						},
+					},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "production",
+						TemplateRef:      "standard-debug",
+						RequestedBy:      tt.requestedBy,
+						RequestedByEmail: tt.requestedByEmail,
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State:        breakglassv1alpha1.DebugSessionStateActive,
+						StartsAt:     &now,
+						ExpiresAt:    &expiresAt,
+						Participants: tt.participants,
+					},
+				}
+
+				fakeClient := fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithObjects(&session).
+					WithStatusSubresource(&session).
+					Build()
+
+				ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+				router := debugSessionAPITestRouter(t, ctrl, tt.username, tt.email, nil)
+
+				body := `{"extendBy":"1h"}`
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+
+				assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+				if tt.wantBody != "" {
+					assert.Contains(t, w.Body.String(), tt.wantBody)
+				}
+
+				var updatedSession breakglassv1alpha1.DebugSession
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantCount, updatedSession.Status.RenewalCount)
+			})
+		}
+	})
+
 	t.Run("renew requires active participant role", func(t *testing.T) {
 		leftAt := metav1.NewTime(now.Add(-time.Minute))
 		tests := []struct {

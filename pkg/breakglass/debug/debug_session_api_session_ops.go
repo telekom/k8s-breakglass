@@ -160,13 +160,11 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user for authorization check
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
-	username := currentUser.(string)
 
 	var req RenewDebugSessionRequest
 	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
@@ -205,7 +203,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	if !canRenewDebugSession(session, username) {
+	if !canRenewDebugSession(session, identity) {
 		apiresponses.RespondForbidden(ctx, "only requester or active owner/participant roles can renew")
 		return
 	}
@@ -290,12 +288,12 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	})
 }
 
-func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, username string) bool {
-	if session.Spec.RequestedBy == username {
+func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		return true
 	}
 	for _, participant := range session.Status.Participants {
-		if participant.User != username || participant.LeftAt != nil {
+		if participant.LeftAt != nil || !debugSessionIdentityMatches(identity, participant.User, participant.Email) {
 			continue
 		}
 		if participant.Role == breakglassv1alpha1.ParticipantRoleOwner ||
