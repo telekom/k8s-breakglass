@@ -1,11 +1,13 @@
 package v1alpha1
 
 import (
+	"context"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
@@ -78,4 +80,36 @@ func TestInitWebhookClient_OnlyOnce(t *testing.T) {
 	})
 
 	assert.Equal(t, 1, counter, "sync.Once should only execute the function once")
+}
+
+func TestInitWebhookReader_OnlyOnce(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	binding := &DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "first-reader-binding"},
+	}
+	firstReader := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(binding).
+		Build()
+	secondReader := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	originalReader := webhookReader
+	webhookReader = nil
+	webhookReaderOnce = sync.Once{}
+	defer func() {
+		webhookReader = originalReader
+		webhookReaderOnce = sync.Once{}
+	}()
+
+	InitWebhookReader(firstReader)
+	InitWebhookReader(secondReader)
+
+	bindings := &DebugSessionClusterBindingList{}
+	require.NoError(t, GetWebhookReader().List(context.Background(), bindings))
+	require.Len(t, bindings.Items, 1)
+	assert.Equal(t, "first-reader-binding", bindings.Items[0].Name)
 }

@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Deployment topologies**: Added `--enable-controllers` (`ENABLE_CONTROLLERS`) to isolate backend reconcilers, controller field indexes, cache invalidation handlers, and status updaters from component-specific pods. Lease creation is skipped whenever the effective role configuration does not need leader election, reducing RBAC requirements for webhook-only or frontend-only deployments.
 - **BreakglassSession validation**: `BreakglassSession` objects with whitespace-only `cluster`, `user`, or `grantedGroup` fields are now rejected during validation.
+- **DebugSessionClusterBinding collision admission**: Duplicate effective binding display names for the same template and cluster are now checked with a live API reader during admission, preventing cache lag from allowing conflicting bindings immediately after another binding is created.
 
 
 - **Frontend: share Multi-IDP contract types across model and service layers**: `frontend/src/services/multiIDP.ts` now imports and re-exports the canonical `IDPInfo` and `MultiIDPConfig` definitions from `frontend/src/model/multiIDP.ts`, and the frontend multi-IDP tests now exercise the real shared service/model contract instead of duplicating local interfaces.

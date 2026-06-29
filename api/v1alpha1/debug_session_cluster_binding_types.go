@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
@@ -445,6 +446,7 @@ func (b *DebugSessionClusterBinding) ValidateDelete(ctx context.Context, obj *De
 // SetupWebhookWithManager registers webhooks for DebugSessionClusterBinding.
 func (b *DebugSessionClusterBinding) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
+	InitWebhookReader(mgr.GetAPIReader())
 	return ctrl.NewWebhookManagedBy(mgr, &DebugSessionClusterBinding{}).
 		WithValidator(b).
 		Complete()
@@ -558,21 +560,28 @@ func GetEffectiveDisplayName(binding *DebugSessionClusterBinding, templateDispla
 // A collision occurs when the same template+cluster produces the same effective display name.
 // Returns a list of collisions found.
 func CheckNameCollisions(ctx context.Context, binding *DebugSessionClusterBinding) ([]NameCollision, error) {
-	client := GetWebhookClient()
-	if client == nil {
-		// No client available - skip collision check
+	bindingReader := GetWebhookReader()
+	if bindingReader == nil {
+		// No reader available - skip collision check
 		return nil, nil
 	}
 
-	// List all other bindings
+	// Bindings must be read live so admission does not miss freshly created
+	// bindings before the informer cache observes them.
 	bindingList := &DebugSessionClusterBindingList{}
-	if err := client.List(ctx, bindingList); err != nil {
+	if err := bindingReader.List(ctx, bindingList); err != nil {
 		return nil, err
 	}
 
-	// Get template information for computing effective names
+	// Templates change less frequently, so prefer the cached webhook client to
+	// avoid an additional live API request on every admission. Fall back to the
+	// binding reader when no cached client is configured.
+	var templateReader client.Reader = GetWebhookClient()
+	if templateReader == nil {
+		templateReader = bindingReader
+	}
 	templateList := &DebugSessionTemplateList{}
-	if err := client.List(ctx, templateList); err != nil {
+	if err := templateReader.List(ctx, templateList); err != nil {
 		return nil, err
 	}
 
