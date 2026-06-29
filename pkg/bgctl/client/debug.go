@@ -29,6 +29,7 @@ type DebugSessionListOptions struct {
 type DebugSessionSummary struct {
 	Name                 string                                   `json:"name"`
 	TemplateRef          string                                   `json:"templateRef"`
+	TargetNamespace      string                                   `json:"targetNamespace,omitempty"`
 	Cluster              string                                   `json:"cluster"`
 	RequestedBy          string                                   `json:"requestedBy"`
 	State                breakglassv1alpha1.DebugSessionState     `json:"state"`

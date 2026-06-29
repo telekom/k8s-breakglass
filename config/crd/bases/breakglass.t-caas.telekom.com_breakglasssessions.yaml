@@ -29,6 +29,10 @@ spec:
       jsonPath: .spec.cluster
       name: Cluster
       type: string
+    - description: The granted group for the session
+      jsonPath: .spec.grantedGroup
+      name: Granted Group
+      type: string
     - description: The expiration time of the session
       jsonPath: .status.expiresAt
       name: Expires At

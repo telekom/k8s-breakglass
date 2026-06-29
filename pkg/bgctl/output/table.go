@@ -13,14 +13,14 @@ import (
 
 func WriteSessionTable(w io.Writer, sessions []breakglassv1alpha1.BreakglassSession) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tUSER\tSTATE\tCREATED\tEXPIRES")
+	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tUSER\tGROUP\tSTATE\tCREATED\tEXPIRES")
 	for _, s := range sessions {
 		created := formatTime(s.CreationTimestamp.Time)
 		expires := "-"
 		if !s.Status.ExpiresAt.IsZero() {
 			expires = formatTime(s.Status.ExpiresAt.Time)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Spec.Cluster, s.Spec.User, string(s.Status.State), created, expires)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Spec.Cluster, s.Spec.User, s.Spec.GrantedGroup, string(s.Status.State), created, expires)
 	}
 	_ = tw.Flush()
 }
@@ -53,13 +53,13 @@ func WriteEscalationTable(w io.Writer, escs []breakglassv1alpha1.BreakglassEscal
 
 func WriteDebugSessionTable(w io.Writer, sessions []client.DebugSessionSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tREQUESTED_BY\tSTATE\tEXPIRES")
+	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tTEMPLATE\tTARGET_NS\tREQUESTED_BY\tSTATE\tEXPIRES")
 	for _, s := range sessions {
 		expires := "-"
 		if s.ExpiresAt != nil {
 			expires = formatTime(s.ExpiresAt.Time)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, string(s.State), expires)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.TemplateRef, s.TargetNamespace, s.RequestedBy, string(s.State), expires)
 	}
 	_ = tw.Flush()
 }
@@ -67,7 +67,7 @@ func WriteDebugSessionTable(w io.Writer, sessions []client.DebugSessionSummary) 
 // WriteDebugSessionTableWide outputs debug sessions in wide table format with all available fields.
 func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tTEMPLATE\tCLUSTER\tREQUESTED_BY\tSTATE\tSTARTS\tEXPIRES\tPARTICIPANTS\tALLOWED_PODS\tOPERATIONS")
+	_, _ = fmt.Fprintln(tw, "NAME\tTEMPLATE\tTARGET_NS\tCLUSTER\tREQUESTED_BY\tSTATE\tSTARTS\tEXPIRES\tPARTICIPANTS\tALLOWED_PODS\tOPERATIONS")
 	for _, s := range sessions {
 		starts := "-"
 		if s.StartsAt != nil {
@@ -78,7 +78,7 @@ func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSumma
 			expires = formatTime(s.ExpiresAt.Time)
 		}
 		ops := formatAllowedPodOperations(s.AllowedPodOperations)
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", s.Name, s.TemplateRef, s.Cluster, s.RequestedBy, string(s.State), starts, expires, s.Participants, s.AllowedPods, ops)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", s.Name, s.TemplateRef, s.TargetNamespace, s.Cluster, s.RequestedBy, string(s.State), starts, expires, s.Participants, s.AllowedPods, ops)
 	}
 	_ = tw.Flush()
 }
