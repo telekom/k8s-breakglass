@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,6 +18,8 @@ type ClusterConfigManager struct {
 	client client.Client
 	log    *zap.SugaredLogger
 }
+
+var errClusterConfigNameNotUnique = errors.New("clusterconfig name is not unique")
 
 // ClusterConfigManagerOption configures a ClusterConfigManager during construction.
 type ClusterConfigManagerOption func(*ClusterConfigManager)
@@ -78,7 +81,7 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 			for _, cfg := range matching {
 				namespaces = append(namespaces, cfg.Namespace)
 			}
-			return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
+			return nil, fmt.Errorf("%w: %q found in namespaces: %s", errClusterConfigNameNotUnique, name, strings.Join(namespaces, ","))
 		}
 	}
 
@@ -104,7 +107,7 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 		for _, cfg := range matching {
 			namespaces = append(namespaces, cfg.Namespace)
 		}
-		return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
+		return nil, fmt.Errorf("%w: %q found in namespaces: %s", errClusterConfigNameNotUnique, name, strings.Join(namespaces, ","))
 	}
 }
 

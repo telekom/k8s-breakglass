@@ -52,6 +52,7 @@ func TestGetClusterConfigByName(t *testing.T) {
 		got, err := mgr.GetClusterConfigByName(ctx, "my-cluster")
 		require.Error(t, err)
 		require.Nil(t, got)
+		require.ErrorIs(t, err, errClusterConfigNameNotUnique)
 		require.Contains(t, err.Error(), "is not unique")
 		require.Contains(t, err.Error(), "namespace1")
 		require.Contains(t, err.Error(), "namespace2")

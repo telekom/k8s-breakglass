@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -52,12 +53,19 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		if cc, cerr := wc.clusterConfigManager.GetClusterConfigByName(ctx, session.Spec.Cluster); cerr == nil && cc != nil {
 			baseBlockSelfApproval = cc.Spec.BlockSelfApproval
 			baseAllowedApproverDomains = cc.Spec.AllowedApproverDomains
-		} else if cerr != nil && !apierrors.IsNotFound(cerr) {
+		} else if cerr != nil && errors.Is(cerr, errClusterConfigNameNotUnique) {
 			reqLog.Warnw("Unable to resolve unique ClusterConfig for approval policy", "cluster", session.Spec.Cluster, "error", cerr)
 			return ApprovalCheckResult{
 				Allowed: false,
-				Reason:  ApprovalDenialNoMatchingEscalation,
+				Reason:  ApprovalDenialClusterApprovalPolicyAmbiguous,
 				Message: "Cluster approval policy is ambiguous",
+			}
+		} else if cerr != nil && !apierrors.IsNotFound(cerr) {
+			reqLog.Warnw("Unable to look up ClusterConfig for approval policy", "cluster", session.Spec.Cluster, "error", cerr)
+			return ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialClusterApprovalPolicyLookupFailed,
+				Message: "Cluster approval policy could not be resolved",
 			}
 		} else if cerr != nil {
 			reqLog.Debugw("No ClusterConfig found for approval policy, continuing with defaults", "cluster", session.Spec.Cluster, "error", cerr)

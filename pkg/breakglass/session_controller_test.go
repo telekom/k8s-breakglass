@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -80,6 +81,15 @@ var sessionIndexFunctions = map[string]client.IndexerFunc{
 	"metadata.name": func(o client.Object) []string {
 		return []string{o.GetName()}
 	},
+}
+
+type clusterConfigListErrorClient struct {
+	client.Client
+	err error
+}
+
+func (c clusterConfigListErrorClient) List(_ context.Context, _ client.ObjectList, _ ...client.ListOption) error {
+	return c.err
 }
 
 func TestDropK8sInternalFieldsSessionStripsMetadata(t *testing.T) {
@@ -2150,6 +2160,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 		name               string
 		setupEscalation    func() *breakglassv1alpha1.BreakglassEscalation
 		setupClusterConfig func() *breakglassv1alpha1.ClusterConfig
+		extraObjects       func() []client.Object
 		approverEmail      string
 		requesterEmail     string
 		expectedStatus     int
@@ -2169,6 +2180,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 				}
 			},
 			setupClusterConfig: nil,
+			extraObjects:       nil,
 			approverEmail:      "user@example.com",
 			requesterEmail:     "user@example.com", // Same user - self-approval
 			expectedStatus:     http.StatusForbidden,
@@ -2188,6 +2200,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 				}
 			},
 			setupClusterConfig: nil,
+			extraObjects:       nil,
 			approverEmail:      "approver@external.com",
 			requesterEmail:     "requester@example.com",
 			expectedStatus:     http.StatusForbidden,
@@ -2206,6 +2219,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 				}
 			},
 			setupClusterConfig: nil,
+			extraObjects:       nil,
 			approverEmail:      "random@example.com",
 			requesterEmail:     "requester@example.com",
 			expectedStatus:     http.StatusForbidden,
@@ -2225,10 +2239,40 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 				}
 			},
 			setupClusterConfig: nil,
+			extraObjects:       nil,
 			approverEmail:      "approver@example.com",
 			requesterEmail:     "requester@example.com",
 			expectedStatus:     http.StatusForbidden,
 			expectedReason:     "No matching escalation", // Session's grantedGroup="test-group" has no matching escalation
+		},
+		{
+			name: "ambiguous cluster approval policy returns 403 with specific message",
+			setupEscalation: func() *breakglassv1alpha1.BreakglassEscalation {
+				return &breakglassv1alpha1.BreakglassEscalation{
+					ObjectMeta: metav1.ObjectMeta{Name: "esc-ambiguous-cluster-policy", Namespace: "default"},
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+						EscalatedGroup: "test-group",
+						Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+					},
+				}
+			},
+			setupClusterConfig: nil,
+			extraObjects: func() []client.Object {
+				return []client.Object{
+					&breakglassv1alpha1.ClusterConfig{
+						ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "platform-a"},
+						Spec:       breakglassv1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"internal.example"}},
+					},
+					&breakglassv1alpha1.ClusterConfig{
+						ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "platform-b"},
+					},
+				}
+			},
+			approverEmail:  "approver@example.com",
+			requesterEmail: "requester@example.com",
+			expectedStatus: http.StatusForbidden,
+			expectedReason: "Cluster approval policy is ambiguous",
 		},
 	}
 
@@ -2244,6 +2288,9 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 
 			if tt.setupClusterConfig != nil {
 				builder.WithObjects(tt.setupClusterConfig())
+			}
+			if tt.extraObjects != nil {
+				builder.WithObjects(tt.extraObjects()...)
 			}
 
 			// Create a pending session
@@ -5108,6 +5155,54 @@ func TestClusterConfig_DuplicateNameFailsClosedForApprovalPolicy(t *testing.T) {
 	if len(sessions) != 0 {
 		t.Fatalf("expected no sessions visible when ClusterConfig name is ambiguous, got: %#v", sessions)
 	}
+}
+
+func TestClusterConfigLookupErrorUsesLookupFailedApprovalPolicyMessage(t *testing.T) {
+	pending := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "lookup-error-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "lookup-error-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "g-lookup",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "lookup-error-escalation", Namespace: "tenant-a"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"lookup-error-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "g-lookup",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(pending, esc).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("email", "approver@example.com")
+		c.Set("username", "approver")
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+	ctrl.clusterConfigManager = NewClusterConfigManager(clusterConfigListErrorClient{
+		Client: cli,
+		err:    errors.New("cache unavailable"),
+	})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/lookup-error-session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver")
+
+	result := ctrl.checkApprovalAuthorization(c, *pending)
+	require.False(t, result.Allowed)
+	require.Equal(t, ApprovalDenialClusterApprovalPolicyLookupFailed, result.Reason)
+	require.Contains(t, result.Message, "could not be resolved")
+	require.NotContains(t, result.Message, "ambiguous")
 }
 
 // Exhaustive permutations combining cluster/user/group with mine and state filters.

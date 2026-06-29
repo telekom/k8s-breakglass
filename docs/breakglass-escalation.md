@@ -329,8 +329,10 @@ If not specified, the cluster-level `blockSelfApproval` setting from the
 unique `ClusterConfig` with the requested cluster name is used. The
 `ClusterConfig` can live in a different namespace than the escalation. Set
 `blockSelfApproval` on the escalation only when that escalation needs to
-override the cluster-level default. Approval checks fail closed when the
-cluster name resolves to multiple `ClusterConfig` resources.
+override the cluster-level default. The same unique `ClusterConfig` lookup
+also supplies cluster-level `allowedApproverDomains` unless the escalation
+sets its own domain allowlist. Approval checks fail closed when the cluster
+name resolves to multiple `ClusterConfig` resources.
 
 ### Session Limits
 

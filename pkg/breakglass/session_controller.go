@@ -76,6 +76,10 @@ const (
 	ApprovalDenialNotAnApprover ApprovalDenialReason = "NOT_AN_APPROVER"
 	// ApprovalDenialNoMatchingEscalation indicates no escalation was found for the session's granted group.
 	ApprovalDenialNoMatchingEscalation ApprovalDenialReason = "NO_MATCHING_ESCALATION"
+	// ApprovalDenialClusterApprovalPolicyAmbiguous indicates the cluster approval policy could not be resolved safely.
+	ApprovalDenialClusterApprovalPolicyAmbiguous ApprovalDenialReason = "CLUSTER_APPROVAL_POLICY_AMBIGUOUS"
+	// ApprovalDenialClusterApprovalPolicyLookupFailed indicates the cluster approval policy lookup failed before uniqueness could be determined.
+	ApprovalDenialClusterApprovalPolicyLookupFailed ApprovalDenialReason = "CLUSTER_APPROVAL_POLICY_LOOKUP_FAILED"
 )
 
 // BreakglassSessionRequest is defined in clusteruser.go and includes an optional Reason field.
