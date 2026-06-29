@@ -300,21 +300,6 @@ kubectl apply -f ingress.yaml
 
 See [Ingress Configuration](ingress-configuration.md) for NGINX, Traefik, and HAProxy examples.
 
-### Option B: Gateway API
-
-If your cluster uses [Gateway API](https://gateway-api.sigs.k8s.io/), use the built-in kustomize component instead.
-
-> **Prerequisite**: Ensure Gateway API CRDs are installed before applying.
-> Run `kubectl get crd httproutes.gateway.networking.k8s.io` to verify.
-
-Add the component to your overlay:
-
-```yaml
-# In your kustomization.yaml
-components:
-  - ../../components/gateway-api
-```
-
 
 Verify DNS resolution:
 
