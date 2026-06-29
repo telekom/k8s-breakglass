@@ -24,6 +24,44 @@ jobs:
       prerelease: ${{ steps.classify.outputs.prerelease }}
       make_latest: ${{ steps.classify.outputs.make_latest }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Require tag on main branch
+        run: |
+          if ! git branch -r --contains HEAD | grep -q 'origin/main'; then
+            echo "::error::Tag ${GITHUB_REF_NAME} is not on the main branch. Refusing to release."
+            exit 1
+          fi
+
+      - name: Verify CI passed for commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA=${GITHUB_SHA}
+          echo "Checking CI status for commit $SHA"
+          sleep 5
+          
+          FAILURES=$(gh api repos/${{ github.repository }}/commits/$SHA/check-runs --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required") | .name')
+          if [ -n "$FAILURES" ]; then
+            echo "::error::CI checks failed for commit $SHA: $FAILURES"
+            exit 1
+          fi
+          
+          PENDING=$(gh api repos/${{ github.repository }}/commits/$SHA/check-runs --jq '.check_runs[] | select(.status == "in_progress" or .status == "queued") | .name')
+          if [ -n "$PENDING" ]; then
+            echo "::error::CI checks are still pending for commit $SHA. Please wait for them to finish before tagging."
+            exit 1
+          fi
+          
+          SUCCESS=$(gh api repos/${{ github.repository }}/commits/$SHA/check-runs --jq '.check_runs[] | select(.conclusion == "success") | .name')
+          if [ -z "$SUCCESS" ]; then
+            echo "::error::No successful CI checks found for commit $SHA."
+            exit 1
+          fi
+
       - name: Require version tag ref
         id: classify
         run: |
