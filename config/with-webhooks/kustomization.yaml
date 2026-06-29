@@ -3,5 +3,5 @@ kind: Kustomization
 
 # DEPRECATED: Webhooks are now enabled by default in config/base.
 # This target is maintained for backwards compatibility.
-bases:
-  - ../default
+resources:
+  - ../base
