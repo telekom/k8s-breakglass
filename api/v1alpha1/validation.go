@@ -234,13 +234,13 @@ func ValidateBreakglassSession(session *BreakglassSession) *ValidationResult {
 	specPath := field.NewPath("spec")
 
 	// Validate required fields
-	if session.Spec.Cluster == "" {
+	if strings.TrimSpace(session.Spec.Cluster) == "" {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("cluster"), "cluster is required"))
 	}
-	if session.Spec.User == "" {
+	if strings.TrimSpace(session.Spec.User) == "" {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("user"), "user is required"))
 	}
-	if session.Spec.GrantedGroup == "" {
+	if strings.TrimSpace(session.Spec.GrantedGroup) == "" {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("grantedGroup"), "grantedGroup is required"))
 	}
 
@@ -1191,15 +1191,15 @@ func ValidateBreakglassSessionForReconciler(session *BreakglassSession) *Validat
 	specPath := field.NewPath("spec")
 
 	// Validate required fields
-	if session.Spec.Cluster == "" {
+	if strings.TrimSpace(session.Spec.Cluster) == "" {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("cluster"), "cluster is required"))
 	}
 
-	if session.Spec.User == "" {
+	if strings.TrimSpace(session.Spec.User) == "" {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("user"), "user is required"))
 	}
 
-	if session.Spec.GrantedGroup == "" {
+	if strings.TrimSpace(session.Spec.GrantedGroup) == "" {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("grantedGroup"), "grantedGroup is required"))
 	}
 

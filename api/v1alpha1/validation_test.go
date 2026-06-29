@@ -1351,11 +1351,29 @@ func TestValidateBreakglassSession_MalformedResources(t *testing.T) {
 				GrantedGroup: "   ",
 			},
 		}
-		// Note: Basic validation doesn't check for whitespace-only values
-		// This would need to be added if required
 		result := ValidateBreakglassSession(s)
-		// Current implementation considers non-empty strings as valid
-		assert.True(t, result.IsValid())
+		assert.False(t, result.IsValid())
+		assert.Len(t, result.Errors, 3)
+
+		hasClusterErr := false
+		hasUserErr := false
+		hasGroupErr := false
+
+		for _, e := range result.Errors {
+			if e.Field == "spec.cluster" && e.Type == field.ErrorTypeRequired {
+				hasClusterErr = true
+			}
+			if e.Field == "spec.user" && e.Type == field.ErrorTypeRequired {
+				hasUserErr = true
+			}
+			if e.Field == "spec.grantedGroup" && e.Type == field.ErrorTypeRequired {
+				hasGroupErr = true
+			}
+		}
+
+		assert.True(t, hasClusterErr)
+		assert.True(t, hasUserErr)
+		assert.True(t, hasGroupErr)
 	})
 }
 
@@ -1973,6 +1991,22 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 // ==================== BreakglassSessionForReconciler Tests ====================
 
 func TestValidateBreakglassSessionForReconciler(t *testing.T) {
+	t.Run("session with whitespace-only values", func(t *testing.T) {
+		s := &BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "malformed",
+				Namespace: "test",
+			},
+			Spec: BreakglassSessionSpec{
+				Cluster:      "   ",
+				User:         "   ",
+				GrantedGroup: "   ",
+			},
+		}
+		result := ValidateBreakglassSessionForReconciler(s)
+		assert.False(t, result.IsValid())
+		assert.Len(t, result.Errors, 3)
+	})
 	t.Run("nil session", func(t *testing.T) {
 		result := ValidateBreakglassSessionForReconciler(nil)
 		assert.False(t, result.IsValid())
