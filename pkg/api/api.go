@@ -1250,7 +1250,9 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 		))
 		log.Infow("Session activity tracking enabled")
 	}
-	apiControllers = append(apiControllers, webhookCtrl)
+	if enableAPI {
+		apiControllers = append(apiControllers, webhookCtrl)
+	}
 	return apiControllers, webhookCtrl
 }
 
