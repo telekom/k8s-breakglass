@@ -73,6 +73,7 @@ const session = ref<DebugSessionDetailResponse | null>(null);
 const loading = ref(true);
 const error = ref("");
 let fetchRequestID = 0;
+let routeRefreshRequestID = 0;
 
 // Polling interval for refreshing session/pod state (10 seconds for active sessions)
 const POLL_INTERVAL_MS = 10000;
@@ -178,9 +179,11 @@ onMounted(() => {
 
 watch(sessionName, async (nextName, previousName) => {
   if (nextName === previousName) return;
+  const requestID = ++routeRefreshRequestID;
   stopPolling();
   session.value = null;
   await fetchSession();
+  if (requestID !== routeRefreshRequestID || nextName !== sessionName.value) return;
   startPolling();
 });
 
