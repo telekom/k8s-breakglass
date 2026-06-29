@@ -216,10 +216,10 @@ const canJoin = computed(
 const canTerminate = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
 const canRenew = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
 const canApprove = computed(
-  () => session.value?.status?.state === "PendingApproval" && session.value.canApprove === true,
+  () => session.value?.status?.state === "PendingApproval" && session.value?.canApprove === true,
 );
 const canReject = computed(
-  () => session.value?.status?.state === "PendingApproval" && session.value.canReject === true,
+  () => session.value?.status?.state === "PendingApproval" && session.value?.canReject === true,
 );
 
 // Check if kubectl-debug operations are available (kubectl-debug or hybrid mode, active session)
