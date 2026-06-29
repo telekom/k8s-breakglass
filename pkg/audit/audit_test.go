@@ -1104,7 +1104,7 @@ func TestManager_ShouldSample(t *testing.T) {
 		manager := NewManager(sink, ManagerConfig{
 			QueueSize:               1000,
 			WorkerCount:             1,
-			SampleRate:              0.0, // Sample everything that can be sampled
+			SampleRate:              0.0,                           // Sample everything that can be sampled
 			HighVolumeEventTypes:    []EventType{EventResourceGet}, // Would normally be dropped
 			AlwaysCaptureEventTypes: []EventType{EventResourceGet}, // But it's in always capture!
 		}, logger)
