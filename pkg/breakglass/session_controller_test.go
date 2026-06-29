@@ -2574,16 +2574,14 @@ func TestApprovalAuthorizationFallsBackToTargetGroupsWhenResolvedApproverMembers
 	require.True(t, ctrl.checkApprovalAuthorization(c, session).Allowed)
 }
 
-func TestApprovalAuthorizationDoesNotFallbackWhenResolvedApproverGroupIsEmpty(t *testing.T) {
+func TestApprovalAuthorizationDoesNotFallbackInLegacyModeWhenResolvedApproverGroupIsEmpty(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
-			Allowed:                              breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
-			EscalatedGroup:                       "breakglass-admin",
-			Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
-			AllowedIdentityProvidersForRequests:  []string{"request-idp"},
-			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
 		},
 		Status: breakglassv1alpha1.BreakglassEscalationStatus{
 			ApproverGroupMembers: map[string][]string{

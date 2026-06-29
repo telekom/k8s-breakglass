@@ -67,7 +67,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		if gerr != nil {
 			approverGroups = requestContextGroups
 			if len(approverGroups) == 0 {
-				reqLog.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
+				reqLog.Errorw("Failed to retrieve approver groups", "cluster", session.Spec.Cluster, "error", gerr)
 				return ApprovalCheckResult{
 					Allowed: false,
 					Reason:  ApprovalDenialUnauthenticated,
@@ -170,15 +170,13 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		fallbackApproverGroups := approverGroupsToCheck
 
 		if esc.Status.ApproverGroupMembers != nil {
-			if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
-				fallbackApproverGroups = nil
-			}
+			fallbackApproverGroups = nil
 			for _, g := range approverGroupsToCheck {
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
 					reqLog.Debugw("Using resolved approver group members from escalation status",
 						"escalation", esc.Name, "group", system.RedactGroupName(g), "memberCount", len(members))
-				} else if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+				} else {
 					fallbackApproverGroups = append(fallbackApproverGroups, g)
 				}
 			}
