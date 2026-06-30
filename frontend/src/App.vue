@@ -662,6 +662,7 @@ watch(
       </scale-telekom-header>
 
       <div id="main" class="app-container" role="main" tabindex="-1">
+        <h1 class="sr-only">{{ brandingTitle }}</h1>
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
