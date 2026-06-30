@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/leaderelection"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 )
 
@@ -426,7 +427,7 @@ type EscalationStatusUpdater struct {
 	K8sClient     client.Client
 	Resolver      breakglass.GroupMemberResolver
 	Interval      time.Duration
-	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
+	LeaderTracker *leaderelection.Tracker // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
 	EventRecorder events.EventRecorder
 	IDPLoader     *cfgpkg.IdentityProviderLoader // For multi-IDP group fetching
 }
@@ -437,21 +438,33 @@ func (u EscalationStatusUpdater) Start(ctx context.Context) {
 
 	log = log.With("component", "EscalationStatusUpdater")
 
-	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
-	if u.LeaderElected != nil {
-		log.Info("Escalation status updater waiting for leadership signal before starting...")
-		select {
-		case <-ctx.Done():
-			log.Infow("Escalation status updater stopping before acquiring leadership (context canceled)")
-			return
-		case <-u.LeaderElected:
-			log.Info("Leadership acquired - starting escalation status updater")
-		}
-	}
-
 	if u.Interval <= 0 {
 		u.Interval = 5 * time.Minute
 	}
+
+	for {
+		var leaderCtx context.Context
+		if u.LeaderTracker != nil {
+			log.Info("Escalation status updater waiting for leadership signal before starting...")
+			var err error
+			leaderCtx, err = u.LeaderTracker.AwaitLeadership(ctx)
+			if err != nil {
+				return
+			}
+			log.Info("Leadership acquired - starting escalation status updater")
+		} else {
+			leaderCtx = ctx
+		}
+
+		u.runLoop(leaderCtx, log)
+
+		if u.LeaderTracker == nil || ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func (u EscalationStatusUpdater) runLoop(ctx context.Context, log *zap.SugaredLogger) {
 	ticker := time.NewTicker(u.Interval)
 	defer ticker.Stop()
 	log.Infow("Starting escalation status updater", "interval", u.Interval.String())

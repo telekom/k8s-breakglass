@@ -9,6 +9,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/leaderelection"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
@@ -35,7 +36,7 @@ type CleanupRoutine struct {
 	MailService     MailEnqueuer    // Mail service for sending expiration notifications
 	BrandingName    string          // Branding name for email templates
 	DisableEmail    bool            // Whether to disable email notifications
-	LeaderElected   <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
+	LeaderTracker   *leaderelection.Tracker // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
 	ActivityTracker ActivityCleaner // Optional: prune orphaned entries during cleanup
 }
 
@@ -84,18 +85,29 @@ func getDebugSessionApprovalTimeout() time.Duration {
 }
 
 func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
-	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
-	if cr.LeaderElected != nil {
-		cr.Log.Info("Cleanup routine waiting for leadership signal before starting...")
-		select {
-		case <-ctx.Done():
-			cr.Log.Infow("Cert-controller's manager stopping before acquiring leadership (context cancelled)")
-			return
-		case <-cr.LeaderElected:
+	for {
+		var leaderCtx context.Context
+		if cr.LeaderTracker != nil {
+			cr.Log.Info("Cleanup routine waiting for leadership signal before starting...")
+			var err error
+			leaderCtx, err = cr.LeaderTracker.AwaitLeadership(ctx)
+			if err != nil {
+				return
+			}
 			cr.Log.Info("Leadership acquired - starting cleanup routine")
+		} else {
+			leaderCtx = ctx
+		}
+
+		cr.runLoop(leaderCtx)
+
+		if cr.LeaderTracker == nil || ctx.Err() != nil {
+			return
 		}
 	}
+}
 
+func (cr CleanupRoutine) runLoop(ctx context.Context) {
 	// run initial cleanup
 	cr.clean(ctx)
 

@@ -10,6 +10,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
+	"github.com/telekom/k8s-breakglass/pkg/leaderelection"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
@@ -32,7 +33,7 @@ type ClusterConfigChecker struct {
 	Client        client.Client
 	Interval      time.Duration
 	Recorder      events.EventRecorder
-	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
+	LeaderTracker *leaderelection.Tracker // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
 }
 
 const ClusterConfigCheckInterval = 10 * time.Minute
@@ -42,21 +43,33 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 	lg := ccc.Log
 	interval := ccc.Interval
 
-	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
-	if ccc.LeaderElected != nil {
-		lg.Info("Cluster config checker waiting for leadership signal before starting...")
-		select {
-		case <-ctx.Done():
-			lg.Info("Cluster config checker stopping before acquiring leadership (context cancelled)")
-			return
-		case <-ccc.LeaderElected:
-			lg.Info("Leadership acquired - starting cluster config checker")
-		}
-	}
-
 	if interval == 0 {
 		interval = ClusterConfigCheckInterval
 	}
+
+	for {
+		var leaderCtx context.Context
+		if ccc.LeaderTracker != nil {
+			lg.Info("Cluster config checker waiting for leadership signal before starting...")
+			var err error
+			leaderCtx, err = ccc.LeaderTracker.AwaitLeadership(ctx)
+			if err != nil {
+				return
+			}
+			lg.Info("Leadership acquired - starting cluster config checker")
+		} else {
+			leaderCtx = ctx
+		}
+
+		ccc.runLoop(leaderCtx, lg, interval)
+
+		if ccc.LeaderTracker == nil || ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func (ccc ClusterConfigChecker) runLoop(ctx context.Context, lg *zap.SugaredLogger, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

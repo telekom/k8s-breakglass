@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
+	"github.com/telekom/k8s-breakglass/pkg/leaderelection"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,14 +39,14 @@ type Manager struct {
 	path                               string
 	validatingWebhookConfigurationName string
 	certsReady                         chan struct{}
-	leaderElected                      <-chan struct{}
+	leaderTracker                      *leaderelection.Tracker
 	log                                *zap.SugaredLogger
 	managerFactory                     func(*runtime.Scheme) (ctrl.Manager, error)
 	rotatorAdder                       func(ctrl.Manager, *rotator.CertRotator) error
 }
 
 func NewManager(restConfig *rest.Config, name, namespace, path, validatingWebhookConfigurationName string,
-	certsReady chan struct{}, leaderElected <-chan struct{}, log *zap.SugaredLogger) *Manager {
+	certsReady chan struct{}, leaderTracker *leaderelection.Tracker, log *zap.SugaredLogger) *Manager {
 	if path == "" {
 		path = DefaultWebhookPath
 	}
@@ -61,7 +62,7 @@ func NewManager(restConfig *rest.Config, name, namespace, path, validatingWebhoo
 		path:                               path,
 		validatingWebhookConfigurationName: validatingWebhookConfigurationName,
 		certsReady:                         certsReady,
-		leaderElected:                      leaderElected,
+		leaderTracker:                      leaderTracker,
 		log:                                log.With("component", "CertControllerManager"),
 		rotatorAdder:                       rotator.AddRotator,
 	}
@@ -77,38 +78,46 @@ func (m *Manager) setupRotator(mgr ctrl.Manager) error {
 }
 
 func (m *Manager) Start(ctx context.Context, scheme *runtime.Scheme) error {
-	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
-	if m.leaderElected != nil {
-		m.log.Info("Cert-controller's manager waiting for leadership signal before starting...")
-		select {
-		case <-ctx.Done():
-			m.log.Infow("Cert-controller's manager stopping before acquiring leadership (context cancelled)")
-			return fmt.Errorf("context error: %w", ctx.Err())
-		case <-m.leaderElected:
+	for {
+		var leaderCtx context.Context
+		if m.leaderTracker != nil {
+			m.log.Info("Cert-controller's manager waiting for leadership signal before starting...")
+			var err error
+			leaderCtx, err = m.leaderTracker.AwaitLeadership(ctx)
+			if err != nil {
+				return fmt.Errorf("context error: %w", err)
+			}
 			m.log.Info("Leadership acquired - cert-controller's manager")
+		} else {
+			leaderCtx = ctx
+		}
+
+		m.log.Infow("Configuring cert-controller's manager")
+		// Create a manager for cert-controller
+		mgr, err := m.getManagerFactory()(scheme)
+		if err != nil {
+			return fmt.Errorf("failed to start cert-controller: %w", err)
+		}
+
+		m.log.Infow("Setting up cert-controller's rotator", "webhook-service-name", m.name, "namespace", m.namespace,
+			"webhook-cert-path", m.path, "webhook-validating-config-name", m.validatingWebhookConfigurationName)
+		if err := m.setupRotator(mgr); err != nil {
+			return fmt.Errorf("failed to setup cert-controller's rotator: %w", err)
+		}
+
+		m.log.Infow("Starting cert-controller's manager")
+		// Start the manager in a blocking call (in goroutine) that will also handle cache synchronization
+		if err := mgr.Start(leaderCtx); err != nil {
+			m.log.Errorw("cert-controller's manager failed to start or exited with error", "error", err)
+		}
+
+		// Avoid reusing closed channel
+		m.certsReady = nil
+
+		if m.leaderTracker == nil || ctx.Err() != nil {
+			return nil
 		}
 	}
-
-	m.log.Infow("Configuring cert-controller's manager")
-	// Create a manager for cert-controller
-	mgr, err := m.getManagerFactory()(scheme)
-	if err != nil {
-		return fmt.Errorf("failed to start cert-controller: %w", err)
-	}
-
-	m.log.Infow("Setting up cert-controller's rotator", "webhook-service-name", m.name, "namespace", m.namespace,
-		"webhook-cert-path", m.path, "webhook-validating-config-name", m.validatingWebhookConfigurationName)
-	if err := m.setupRotator(mgr); err != nil {
-		return fmt.Errorf("failed to setup cert-controller's rotator: %w", err)
-	}
-
-	m.log.Infow("Starting cert-controller's manager")
-	// Start the manager in a blocking call (in goroutine) that will also handle cache synchronization
-	if err := mgr.Start(ctx); err != nil {
-		return fmt.Errorf("cert-controller's manager failed to start or exited with error: %w", err)
-	}
-
-	return nil
 }
 
 func (m *Manager) newCertRotator() *rotator.CertRotator {

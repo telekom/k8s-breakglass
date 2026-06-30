@@ -310,14 +310,14 @@ func run() error {
 	}
 
 	// Create channels for leader election signal and background error propagation
-	leaderElectedCh := make(chan struct{})
+	leaderTracker := leaderelection.NewTracker()
 	errCh := make(chan error, 4) // buffer matches sender count: background, cert-manager, webhook-server, reconciler
 
 	var wg sync.WaitGroup
 	managerCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	startBackgroundRoutines(managerCtx, &wg, errCh, leaderElectedCh, &backgroundDeps{
+	startBackgroundRoutines(managerCtx, &wg, errCh, leaderTracker, &backgroundDeps{
 		cliConfig:         cliConfig,
 		cfg:               cfg,
 		log:               log,
@@ -340,7 +340,7 @@ func run() error {
 	certMgrErr := make(chan error, 1) // buffered so non-blocking send in startCertManagerIfNeeded is reliable
 	if cliConfig.EnableWebhooks {
 		log.Infow("Webhooks enabled via --enable-webhooks flag")
-		certsReady := startCertManagerIfNeeded(managerCtx, restConfig, &wg, errCh, certMgrErr, leaderElectedCh,
+		certsReady := startCertManagerIfNeeded(managerCtx, restConfig, &wg, errCh, certMgrErr, leaderTracker,
 			cliConfig, scheme, log)
 		if cliConfig.Webhook.CertGeneration {
 			if err := cert.Ensure(cliConfig.Webhook.CertPath, cliConfig.Webhook.CertName, certsReady, certMgrErr, log); err != nil {
@@ -605,7 +605,7 @@ type backgroundDeps struct {
 // cluster cache invalidation, escalation status updater, cluster config checker,
 // leader election, and the reconciler manager.
 func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error,
-	leaderElectedCh chan struct{}, deps *backgroundDeps,
+	leaderTracker *leaderelection.Tracker, deps *backgroundDeps,
 ) {
 	log := deps.log
 
@@ -620,7 +620,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 				// AuditService is stored so Manager() can be resolved lazily on each
 				// cleanup iteration, picking up the current manager after any reload.
 				AuditService:  deps.auditService,
-				LeaderElected: leaderElectedCh,
+				LeaderTracker: leaderTracker,
 				MailService:   deps.mailService,
 				BrandingName:  deps.cfg.Frontend.BrandingName,
 				DisableEmail:  deps.cliConfig.DisableEmail,
@@ -657,7 +657,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 				EventRecorder: deps.eventsRecorder,
 				IDPLoader:     deps.idpLoader,
 				Interval:      cli.ParseEscalationStatusUpdateInterval(deps.cliConfig.EscalationStatusUpdateInt, log),
-				LeaderElected: leaderElectedCh,
+				LeaderTracker: leaderTracker,
 			}.Start(ctx)
 		}()
 	} else {
@@ -676,7 +676,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 			defer wg.Done()
 			clusterconfig.ClusterConfigChecker{
 				Log: log, Client: deps.escalationManager.Client,
-				Recorder: deps.eventsRecorder, Interval: interval, LeaderElected: leaderElectedCh,
+				Recorder: deps.eventsRecorder, Interval: interval, LeaderTracker: leaderTracker,
 			}.Start(ctx)
 		}()
 	} else {
@@ -688,12 +688,12 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		leaseNamespace := resolveLeaseNamespace(deps.cliConfig)
 		wg.Add(1)
 		go func() {
-			leaderelection.Start(ctx, wg, &leaderElectedCh, deps.resourceLock,
+			leaderelection.Start(ctx, wg, leaderTracker, deps.resourceLock,
 				deps.hostname, deps.cliConfig.LeaderElectID, leaseNamespace, log)
 		}()
 	} else {
 		log.Infow("Leader election disabled via --enable-leader-election=false, background loops will run on all replicas")
-		close(leaderElectedCh)
+		leaderTracker.SetLeaderCtx(ctx)
 	}
 
 	// Reconciler manager stays running for shared manager services such as
@@ -713,7 +713,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 // certificate generation is enabled. Returns a certsReady channel (nil if not needed).
 // certMgrErr is used to propagate start failures to cert.Ensure(), which blocks on it.
 func startCertManagerIfNeeded(ctx context.Context, restConfig *rest.Config, wg *sync.WaitGroup, errCh chan<- error,
-	certMgrErr chan<- error, leaderElectedCh chan struct{}, cliConfig *cli.Config,
+	certMgrErr chan<- error, leaderTracker *leaderelection.Tracker, cliConfig *cli.Config,
 	scheme *runtime.Scheme, log *zap.SugaredLogger,
 ) chan struct{} {
 	if !cliConfig.Webhook.CertGeneration {
@@ -721,7 +721,7 @@ func startCertManagerIfNeeded(ctx context.Context, restConfig *rest.Config, wg *
 	}
 	certsReady := make(chan struct{})
 	certMgr := cert.NewManager(restConfig, cliConfig.Webhook.SvcName, cliConfig.BreakglassNamespace,
-		cliConfig.Webhook.CertPath, cliConfig.Webhook.ValidatingConfigName, certsReady, leaderElectedCh, log)
+		cliConfig.Webhook.CertPath, cliConfig.Webhook.ValidatingConfigName, certsReady, leaderTracker, log)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
