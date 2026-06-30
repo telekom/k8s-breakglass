@@ -2,7 +2,10 @@ package config
 
 import (
 	"context"
+	"encoding/pem"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -416,6 +419,44 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretKeyMissing(t *te
 	assert.Equal(t, "SecretKeyNotFound", condition.Reason)
 }
 
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretKeyEmpty(t *testing.T) {
+	scheme := newTestScheme(t)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kc-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": []byte("")},
+	}
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	reconciler := NewIdentityProviderReconciler(client, zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	}).withKeycloakHealthChecker(func(ctx context.Context, keycloak *breakglassv1alpha1.KeycloakGroupSync, clientSecret string) error {
+		t.Fatal("health checker must not be called when the secret value is empty")
+		return nil
+	})
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://kc.example.com",
+				Realm:    "realm",
+				ClientID: "client",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name:      "kc-secret",
+					Namespace: "default",
+					Key:       "value",
+				},
+			},
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "SecretKeyEmpty", condition.Reason)
+}
+
 func TestIdentityProviderReconciler_UpdateGroupSyncHealth_Healthy(t *testing.T) {
 	scheme := newTestScheme(t)
 	secret := &corev1.Secret{
@@ -425,6 +466,12 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_Healthy(t *testing.T) 
 	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
 
 	reconciler := NewIdentityProviderReconciler(client, zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	}).withKeycloakHealthChecker(func(ctx context.Context, keycloak *breakglassv1alpha1.KeycloakGroupSync, clientSecret string) error {
+		assert.Equal(t, "https://kc.example.com", keycloak.BaseURL)
+		assert.Equal(t, "realm", keycloak.Realm)
+		assert.Equal(t, "client", keycloak.ClientID)
+		assert.Equal(t, "secret", clientSecret)
 		return nil
 	})
 
@@ -449,6 +496,131 @@ func TestIdentityProviderReconciler_UpdateGroupSyncHealth_Healthy(t *testing.T) 
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionTrue, condition.Status)
 	assert.Equal(t, "GroupSyncOperational", condition.Reason)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_KeycloakAuthFailed(t *testing.T) {
+	scheme := newTestScheme(t)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kc-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": []byte("do-not-leak")},
+	}
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	reconciler := NewIdentityProviderReconciler(client, zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	}).withKeycloakHealthChecker(func(ctx context.Context, keycloak *breakglassv1alpha1.KeycloakGroupSync, clientSecret string) error {
+		assert.Equal(t, "do-not-leak", clientSecret)
+		return newKeycloakGroupSyncHealthError("KeycloakAuthenticationFailed", "Keycloak token request failed: 401 Unauthorized")
+	})
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://kc.example.com",
+				Realm:    "realm",
+				ClientID: "client",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name:      "kc-secret",
+					Namespace: "default",
+					Key:       "value",
+				},
+			},
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "KeycloakAuthenticationFailed", condition.Reason)
+	assert.Contains(t, condition.Message, "401 Unauthorized")
+	assert.NotContains(t, condition.Message, "do-not-leak")
+}
+
+func TestCheckKeycloakGroupSyncHealth_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/realms/realm/protocol/openid-connect/token", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		require.NoError(t, r.ParseForm())
+		assert.Equal(t, "client_credentials", r.Form.Get("grant_type"))
+		assert.Equal(t, "client", r.Form.Get("client_id"))
+		username, password, ok := r.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, "client", username)
+		assert.Equal(t, "secret", password)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"token","expires_in":300,"token_type":"Bearer"}`))
+	}))
+	defer server.Close()
+
+	err := checkKeycloakGroupSyncHealth(context.Background(), &breakglassv1alpha1.KeycloakGroupSync{
+		BaseURL:        server.URL,
+		Realm:          "realm",
+		ClientID:       "client",
+		RequestTimeout: "2s",
+	}, "secret")
+
+	require.NoError(t, err)
+}
+
+func TestCheckKeycloakGroupSyncHealth_AuthenticationFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	err := checkKeycloakGroupSyncHealth(context.Background(), &breakglassv1alpha1.KeycloakGroupSync{
+		BaseURL:  server.URL,
+		Realm:    "realm",
+		ClientID: "client",
+	}, "bad-secret")
+
+	require.Error(t, err)
+	var healthErr *keycloakGroupSyncHealthError
+	require.ErrorAs(t, err, &healthErr)
+	assert.Equal(t, "KeycloakAuthenticationFailed", healthErr.reason)
+	assert.NotContains(t, healthErr.Error(), "bad-secret")
+}
+
+func TestCheckKeycloakGroupSyncHealth_RequiresAccessToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"expires_in":300,"token_type":"Bearer"}`))
+	}))
+	defer server.Close()
+
+	err := checkKeycloakGroupSyncHealth(context.Background(), &breakglassv1alpha1.KeycloakGroupSync{
+		BaseURL:  server.URL,
+		Realm:    "realm",
+		ClientID: "client",
+	}, "secret")
+
+	require.Error(t, err)
+	var healthErr *keycloakGroupSyncHealthError
+	require.ErrorAs(t, err, &healthErr)
+	assert.Equal(t, "KeycloakTokenInvalid", healthErr.reason)
+}
+
+func TestCheckKeycloakGroupSyncHealth_UsesConfiguredCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"token","expires_in":300,"token_type":"Bearer"}`))
+	}))
+	defer server.Close()
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	require.NotEmpty(t, certPEM)
+
+	err := checkKeycloakGroupSyncHealth(context.Background(), &breakglassv1alpha1.KeycloakGroupSync{
+		BaseURL:              server.URL,
+		Realm:                "realm",
+		ClientID:             "client",
+		CertificateAuthority: string(certPEM),
+	}, "secret")
+
+	require.NoError(t, err)
 }
 
 func findConditionByType(conditions []metav1.Condition, conditionType string) *metav1.Condition {

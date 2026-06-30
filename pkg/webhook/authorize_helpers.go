@@ -192,7 +192,6 @@ func (wc *WebhookController) logSARAction(s *authorizeState) {
 		)
 	} else {
 		s.reqLog.Infow("SubjectAccessReview contains no resource or non-resource attributes")
-
 	}
 
 	// Extract issuer from SAR for multi-IDP session filtering
