@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -658,16 +659,25 @@ func TestKubernetesEventSinkUsesStableEventReason(t *testing.T) {
 	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.reason)
 	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.action)
 	assert.Contains(t, recorder.note, string(EventDebugSessionApprovalTimeout))
+
+	regarding, ok := recorder.regarding.(*metav1.PartialObjectMetadata)
+	require.True(t, ok)
+	assert.Equal(t, "breakglass.t-caas.telekom.com/v1alpha1", regarding.APIVersion)
+	assert.Equal(t, "DebugSession", regarding.Kind)
+	assert.Equal(t, "debug-session-1", regarding.Name)
+	assert.Equal(t, "breakglass-system", regarding.Namespace)
 }
 
 type capturingEventRecorder struct {
+	regarding runtime.Object
 	eventType string
 	reason    string
 	action    string
 	note      string
 }
 
-func (r *capturingEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, eventType, reason, action, note string, args ...interface{}) {
+func (r *capturingEventRecorder) Eventf(regarding runtime.Object, _ runtime.Object, eventType, reason, action, note string, args ...interface{}) {
+	r.regarding = regarding
 	r.eventType = eventType
 	r.reason = reason
 	r.action = action
