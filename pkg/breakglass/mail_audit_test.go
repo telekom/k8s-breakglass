@@ -119,7 +119,7 @@ func TestSendSessionExpiredEmail_HappyPath(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(true)
 
-	startTime := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	startTime := metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour))
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session-123",
@@ -163,7 +163,7 @@ func TestSendSessionExpiredEmail_ApprovalTimeout(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(true)
 
-	startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	startTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "timeout-session"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -292,8 +292,8 @@ func TestSendSessionActivatedEmail_HappyPath(t *testing.T) {
 		brandingName:   "Test Breakglass",
 	}
 
-	startTime := metav1.NewTime(time.Now())
-	expiresAt := metav1.NewTime(time.Now().Add(2 * time.Hour))
+	startTime := metav1.NewTime(time.Now().UTC())
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(2 * time.Hour))
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "scheduled-session",
@@ -401,7 +401,7 @@ func TestSendDebugSessionExpiredEmail_HappyPath(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	mockMail := NewMockMailEnqueuer(true)
 
-	startedAt := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	startedAt := metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour))
 	session := breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "debug-session-123",
@@ -488,7 +488,7 @@ func TestSendDebugSessionExpiredEmail_NilStartsAt(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "debug-session",
 			Namespace:         "breakglass",
-			CreationTimestamp: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+			CreationTimestamp: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           "staging",
@@ -524,7 +524,7 @@ func TestSendSessionExpiredEmail_EnqueueError(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 	mockMail.SetError(assert.AnError)
 
-	startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	startTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},

@@ -1177,8 +1177,8 @@ func TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter(
 	log := zap.NewNop().Sugar()
 
 	now := metav1.Now()
-	pastTime := metav1.NewTime(time.Now().Add(-24 * time.Hour))
-	futureTime := metav1.NewTime(time.Now().Add(24 * time.Hour))
+	pastTime := metav1.NewTime(time.Now().UTC().Add(-24 * time.Hour))
+	futureTime := metav1.NewTime(time.Now().UTC().Add(24 * time.Hour))
 
 	activeBinding := breakglassv1alpha1.DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1579,8 +1579,8 @@ func TestClusterBindingAPIController_bindingToResponse_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("handles binding with time constraints", func(t *testing.T) {
-		effectiveFrom := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		expiresAt := metav1.NewTime(time.Now().Add(24 * time.Hour))
+		effectiveFrom := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
+		expiresAt := metav1.NewTime(time.Now().UTC().Add(24 * time.Hour))
 
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{

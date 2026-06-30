@@ -66,7 +66,7 @@ func TestFindActiveSession(t *testing.T) {
 			},
 		},
 	}
-	leftAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	leftAt := metav1.NewTime(time.Now().UTC().Add(-5 * time.Minute))
 	leftParticipantSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "left-participant", Namespace: "default"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "owner@example.com"},

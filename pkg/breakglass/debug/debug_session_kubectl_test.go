@@ -648,8 +648,8 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 func TestKubectlDebugHandler_InjectEphemeralContainerPreservesLiveStatusFromStaleSession(t *testing.T) {
 	scheme := newKubectlTestScheme()
 	ctx := context.Background()
-	oldExpiry := metav1.NewTime(time.Now().Add(15 * time.Minute))
-	renewedExpiry := metav1.NewTime(time.Now().Add(45 * time.Minute))
+	oldExpiry := metav1.NewTime(time.Now().UTC().Add(15 * time.Minute))
+	renewedExpiry := metav1.NewTime(time.Now().UTC().Add(45 * time.Minute))
 
 	targetClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1018,8 +1018,8 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t *testing.T) {
 	scheme := newKubectlTestScheme()
 	ctx := context.Background()
-	oldExpiry := metav1.NewTime(time.Now().Add(15 * time.Minute))
-	renewedExpiry := metav1.NewTime(time.Now().Add(45 * time.Minute))
+	oldExpiry := metav1.NewTime(time.Now().UTC().Add(15 * time.Minute))
+	renewedExpiry := metav1.NewTime(time.Now().UTC().Add(45 * time.Minute))
 
 	targetClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1235,8 +1235,8 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSession(t *testing.T) {
 	scheme := newKubectlTestScheme()
 	ctx := context.Background()
-	oldExpiry := metav1.NewTime(time.Now().Add(15 * time.Minute))
-	renewedExpiry := metav1.NewTime(time.Now().Add(45 * time.Minute))
+	oldExpiry := metav1.NewTime(time.Now().UTC().Add(15 * time.Minute))
+	renewedExpiry := metav1.NewTime(time.Now().UTC().Add(45 * time.Minute))
 
 	targetClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1427,8 +1427,8 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 	})
 
 	t.Run("cleanup preserves live status from stale session", func(t *testing.T) {
-		oldExpiry := metav1.NewTime(time.Now().Add(15 * time.Minute))
-		renewedExpiry := metav1.NewTime(time.Now().Add(45 * time.Minute))
+		oldExpiry := metav1.NewTime(time.Now().UTC().Add(15 * time.Minute))
+		renewedExpiry := metav1.NewTime(time.Now().UTC().Add(45 * time.Minute))
 		ctx := context.Background()
 
 		targetClient := fake.NewClientBuilder().
