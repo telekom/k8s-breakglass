@@ -225,6 +225,9 @@ func newDebugSessionGetCommand() *cobra.Command {
 		Use:   "get NAME",
 		Short: "Get a debug session",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -350,6 +353,9 @@ func newDebugSessionJoinCommand() *cobra.Command {
 		Use:   "join NAME",
 		Short: "Join a debug session",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -367,6 +373,9 @@ func newDebugSessionJoinCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "viewer", "Role: participant|viewer")
+	_ = cmd.RegisterFlagCompletionFunc("role", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"participant", "viewer"}, cobra.ShellCompDirectiveNoFileComp
+	})
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
 	return cmd
 }
@@ -377,6 +386,9 @@ func newDebugSessionLeaveCommand() *cobra.Command {
 		Use:   "leave NAME",
 		Short: "Leave a debug session",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -406,6 +418,9 @@ func newDebugSessionRenewCommand() *cobra.Command {
 		Use:   "renew NAME",
 		Short: "Renew a debug session",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -435,6 +450,9 @@ func newDebugSessionTerminateCommand() *cobra.Command {
 		Use:   "terminate NAME",
 		Short: "Terminate a debug session",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -468,6 +486,9 @@ func newDebugSessionApproveCommand() *cobra.Command {
 		Use:   "approve NAME",
 		Short: "Approve a debug session",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -498,6 +519,9 @@ func newDebugSessionRejectCommand() *cobra.Command {
 		Use:   "reject NAME",
 		Short: "Reject a debug session",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -577,6 +601,9 @@ func newDebugTemplateGetCommand() *cobra.Command {
 		Use:   "get NAME",
 		Short: "Get a debug session template",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -753,6 +780,9 @@ func newDebugPodTemplateGetCommand() *cobra.Command {
 		Use:   "get NAME",
 		Short: "Get a debug pod template",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -795,6 +825,9 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 		Use:   "inject NAME",
 		Short: "Inject an ephemeral container",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -840,6 +873,9 @@ func newDebugKubectlCopyPodCommand() *cobra.Command {
 		Use:   "copy-pod NAME",
 		Short: "Create a debug copy of a pod",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -878,6 +914,9 @@ func newDebugKubectlNodeDebugCommand() *cobra.Command {
 		Use:   "node-debug SESSION",
 		Short: "Create a node debug pod",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
