@@ -18,6 +18,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -39,7 +40,7 @@ type QueuedSinkConfig struct {
 	WorkerCount int
 
 	// Batching config for underlying BatchSinks
-	BatchSize int
+	BatchSize    int
 	BatchTimeout time.Duration
 
 	// WriteTimeout is the timeout for writing to the underlying sink.
@@ -157,7 +158,7 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 		logger: logger.Named("queued-sink").With(zap.String("sink", sink.Name())),
 	}
 
-		batchSink, isBatchSink := sink.(BatchSink)
+	batchSink, isBatchSink := sink.(BatchSink)
 
 	// Start workers
 	for i := 0; i < cfg.WorkerCount; i++ {
@@ -258,11 +259,30 @@ func (qs *QueuedSink) processQueue(workerID int) {
 	}()
 
 	for event := range qs.queue {
+		// Wait if circuit is open
+		for qs.circuitOpen.Load() {
+			if qs.closed.Load() {
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
 		err := qs.sink.Write(ctx, event)
 		cancel()
 
 		if err != nil {
+			if errors.Is(err, ErrCircuitOpen) {
+				// Try to push it back into the queue if circuit opened during Write
+				go func(e *Event) {
+					select {
+					case qs.queue <- e:
+					default:
+					}
+				}(event)
+				continue
+			}
+
 			qs.failedEvents.Add(1)
 			fails := qs.consecutiveFails.Add(1)
 			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "write").Inc()
