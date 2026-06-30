@@ -585,7 +585,16 @@ func newDebugTemplateGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, template, output.FormatJSON, output.FormatYAML)
+			format := output.Format(rt.OutputFormat())
+			switch format {
+			case output.FormatJSON, output.FormatYAML:
+				return output.WriteObject(rt.Writer(), format, template)
+			case output.FormatTable, output.FormatWide:
+				output.WriteDebugTemplateTable(rt.Writer(), []client.DebugSessionTemplateSummary{*template})
+				return nil
+			default:
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
+			}
 		},
 	}
 	return cmd
@@ -761,7 +770,26 @@ func newDebugPodTemplateGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, template, output.FormatJSON, output.FormatYAML)
+			format := output.Format(rt.OutputFormat())
+			switch format {
+			case output.FormatJSON, output.FormatYAML:
+				return output.WriteObject(rt.Writer(), format, template)
+			case output.FormatTable, output.FormatWide:
+				var containersCount int
+				if template.Spec.Template != nil {
+					containersCount = len(template.Spec.Template.Spec.Containers)
+				}
+				summary := client.DebugPodTemplateSummary{
+					Name:        template.Name,
+					DisplayName: template.Spec.DisplayName,
+					Description: template.Spec.Description,
+					Containers:  containersCount,
+				}
+				output.WriteDebugPodTemplateTable(rt.Writer(), []client.DebugPodTemplateSummary{summary})
+				return nil
+			default:
+				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
+			}
 		},
 	}
 	return cmd
