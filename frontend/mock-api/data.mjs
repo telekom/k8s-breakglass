@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 export const CURRENT_USER_EMAIL = "mock.user@breakglass.dev";
 export const PARTNER_USER_EMAIL = "partner.user@breakglass.dev";
 export const MOCK_APPROVER_GROUPS = ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"];
+export const MOCK_CURRENT_USER_GROUPS = MOCK_APPROVER_GROUPS;
 
 // ============================================================================
 // DEBUG SESSION MOCK DATA
@@ -563,6 +564,20 @@ mockDebugPodTemplates.forEach((t) => debugPodTemplates.set(t.metadata.name, t));
 // Initialize debug session templates
 mockDebugSessionTemplates.forEach((t) => debugSessionTemplates.set(t.metadata.name, t));
 
+function currentUserCanActOnDebugApproval(templateRef, requestedByEmail) {
+  if (requestedByEmail === CURRENT_USER_EMAIL) return false;
+
+  const template = debugSessionTemplates.get(templateRef);
+  const spec = template?.spec;
+  if (!spec?.requiresApproval) return false;
+
+  const approverUsers = [...(spec.approverUsers || []), ...(spec.approvers || [])];
+  if (approverUsers.includes(CURRENT_USER_EMAIL)) return true;
+
+  const approverGroups = spec.approverGroups || [];
+  return approverGroups.some((group) => MOCK_CURRENT_USER_GROUPS.includes(group));
+}
+
 // Mock debug sessions
 function baseDebugSession({
   name,
@@ -597,8 +612,10 @@ function baseDebugSession({
         : undefined;
 
   return {
-    canApprove: canApprove ?? (state === "PendingApproval" && requestedByEmail !== CURRENT_USER_EMAIL),
-    canReject: canReject ?? (state === "PendingApproval" && requestedByEmail !== CURRENT_USER_EMAIL),
+    canApprove:
+      canApprove ?? (state === "PendingApproval" && currentUserCanActOnDebugApproval(templateRef, requestedByEmail)),
+    canReject:
+      canReject ?? (state === "PendingApproval" && currentUserCanActOnDebugApproval(templateRef, requestedByEmail)),
     metadata: {
       name,
       namespace: "breakglass-system",

@@ -541,8 +541,13 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 
 type debugSessionApprovalAuthorizer struct {
 	controller *DebugSessionAPIController
-	templates  map[string]*breakglassv1alpha1.DebugSessionTemplate
+	templates  map[string]debugSessionApprovalTemplateLookup
 	bindings   map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup
+}
+
+type debugSessionApprovalTemplateLookup struct {
+	template *breakglassv1alpha1.DebugSessionTemplate
+	err      error
 }
 
 type debugSessionApprovalBindingLookup struct {
@@ -553,7 +558,7 @@ type debugSessionApprovalBindingLookup struct {
 func (c *DebugSessionAPIController) newDebugSessionApprovalAuthorizer() *debugSessionApprovalAuthorizer {
 	return &debugSessionApprovalAuthorizer{
 		controller: c,
-		templates:  make(map[string]*breakglassv1alpha1.DebugSessionTemplate),
+		templates:  make(map[string]debugSessionApprovalTemplateLookup),
 		bindings:   make(map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup),
 	}
 }
@@ -665,14 +670,15 @@ func (c *DebugSessionAPIController) checkApproverIdentityAuthorization(approvers
 }
 
 func (a *debugSessionApprovalAuthorizer) getTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugSessionTemplate, error) {
-	if template, ok := a.templates[name]; ok {
-		return template, nil
+	if lookup, ok := a.templates[name]; ok {
+		return lookup.template, lookup.err
 	}
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	if err := a.controller.reader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+		a.templates[name] = debugSessionApprovalTemplateLookup{err: err}
 		return nil, err
 	}
-	a.templates[name] = template
+	a.templates[name] = debugSessionApprovalTemplateLookup{template: template}
 	return template, nil
 }
 

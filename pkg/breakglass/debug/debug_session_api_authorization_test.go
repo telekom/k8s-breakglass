@@ -604,6 +604,52 @@ func TestCanActOnDebugSessionApproval_CachesBindingApprovers(t *testing.T) {
 	require.Equal(t, 1, countingClient.gets["binding:breakglass/prod-binding"])
 }
 
+func TestCanActOnDebugSessionApproval_CachesMissingTemplate(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		Build()
+	countingClient := &debugSessionReadCountingClient{
+		Client: baseClient,
+		gets:   map[string]int{},
+	}
+	ctrl := NewDebugSessionAPIController(logger, countingClient, nil, nil)
+	authorizer := ctrl.newDebugSessionApprovalAuthorizer()
+
+	sessionA := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "missing-template",
+			RequestedBy: "alice@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+	sessionB := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-b"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "missing-template",
+			RequestedBy: "bob@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{
+		username: "approver@example.com",
+	}, authorizer)
+	require.False(t, result)
+
+	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{
+		username: "approver@example.com",
+	}, authorizer)
+	require.False(t, result)
+
+	require.Equal(t, 1, countingClient.gets["template:missing-template"])
+}
+
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {
 	// When session has ResolvedTemplate, use that instead of fetching
 
