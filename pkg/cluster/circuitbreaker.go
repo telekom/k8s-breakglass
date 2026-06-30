@@ -223,7 +223,9 @@ func (cb *clusterBreaker) RecordSuccess(epoch int64) {
 	metrics.ClusterCircuitBreakerSuccesses.WithLabelValues(cb.name).Inc()
 	metrics.ClusterCircuitBreakerConsecutiveFailures.WithLabelValues(cb.name).Set(0)
 
-	if cb.generation.Load() != epoch { return }
+	if cb.generation.Load() != epoch {
+		return
+	}
 	if CircuitState(cb.state.Load()) == CircuitHalfOpen {
 		cb.mu.Lock()
 		// Re-check under lock to avoid TOCTOU race on state transitions
@@ -245,7 +247,9 @@ func (cb *clusterBreaker) RecordFailure(epoch int64, err error) {
 	if cb.untracked {
 		return // sentinel breaker — no metrics or state transitions
 	}
-	if cb.generation.Load() != epoch { return }
+	if cb.generation.Load() != epoch {
+		return
+	}
 	if !IsTransientError(err) {
 		// Non-transient errors (auth, not-found) should not trip the breaker
 		return

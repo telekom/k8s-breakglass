@@ -992,7 +992,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	target := targetURL.String()
 	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target_scheme", targetURL.Scheme, "target_host", targetURL.Host, "target_path", targetURL.Path)
 
-	client, err := s.newOIDCProxyHTTPClient(targetURL.Scheme == "https")
+	client, err := s.newOIDCProxyHTTPClient(targetURL.Scheme == "https", targetAuthority)
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_client_error", "error", err)
 		recordOIDCProxyFailure("tls_configuration_error", start)
@@ -1098,7 +1098,7 @@ const (
 	tlsModeCustomCA = "custom_ca"
 )
 
-func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) {
+func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool, targetAuthority *url.URL) (*http.Client, error) {
 	transport := &http.Transport{}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 
@@ -1107,29 +1107,55 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		return client, nil
 	}
 
-	s.idpMutex.RLock()
-	idpCfg := s.idpConfig
-	s.idpMutex.RUnlock()
-	if idpCfg == nil {
-		return nil, fmt.Errorf("identity provider not loaded")
+	var idpName string
+	var authorityURL string
+	var insecureSkipVerify bool
+	var certAuthority string
+
+	found := false
+	if s.idpReconciler != nil && targetAuthority != nil {
+		targetAuthStr := targetAuthority.String()
+		for _, idp := range s.idpReconciler.GetCachedIdentityProviders() {
+			if idp.Spec.OIDC.Authority == targetAuthStr {
+				idpName = idp.Name
+				authorityURL = idp.Spec.OIDC.Authority
+				insecureSkipVerify = idp.Spec.OIDC.InsecureSkipVerify
+				certAuthority = idp.Spec.OIDC.CertificateAuthority
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		s.idpMutex.RLock()
+		idpCfg := s.idpConfig
+		s.idpMutex.RUnlock()
+		if idpCfg == nil {
+			return nil, fmt.Errorf("identity provider not loaded")
+		}
+		idpName = idpCfg.Name
+		authorityURL = idpCfg.Authority
+		insecureSkipVerify = idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify)
+		certAuthority = idpCfg.CertificateAuthority
 	}
 
 	mode := tlsModeSystemCA
 	var tlsConfig *tls.Config
 
-	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
+	if insecureSkipVerify {
 		s.log.Sugar().Warnw("refusing insecure TLS verification for identity provider",
-			"idpName", idpCfg.Name,
-			"authority", idpCfg.Authority,
+			"idpName", idpName,
+			"authority", authorityURL,
 			"remediation", "configure certificateAuthority for private or self-signed identity provider certificates")
-		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpCfg.Name)
+		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpName)
 	}
 
 	switch {
-	case idpCfg.CertificateAuthority != "":
+	case certAuthority != "":
 		roots := x509.NewCertPool()
-		if ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
-			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpCfg.Name)
+		if ok := roots.AppendCertsFromPEM([]byte(certAuthority)); !ok {
+			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpName)
 		}
 		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 		mode = tlsModeCustomCA
