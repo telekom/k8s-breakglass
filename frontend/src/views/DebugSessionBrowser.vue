@@ -228,7 +228,6 @@ function onStateToggle(state: string, event: Event) {
 
     <div class="debug-toolbar ui-toolbar" data-testid="debug-session-toolbar">
       <div class="ui-toolbar-field">
-        <label for="debug-session-search" class="sr-only">Search debug sessions</label>
         <scale-text-field
           id="debug-session-search"
           data-testid="debug-session-search-input"

@@ -296,7 +296,6 @@ async function onDrop(bg: Breakglass) {
     <div v-else-if="state.breakglasses.length > 0">
       <div class="breakglass-toolbar" data-testid="breakglass-toolbar">
         <div class="breakglass-toolbar__field">
-          <label for="breakglass-search" class="sr-only">Search escalations</label>
           <scale-text-field
             id="breakglass-search"
             data-testid="escalation-search"
