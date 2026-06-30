@@ -24,7 +24,7 @@
     "lib": ["DOM", "ES2019"],
     "esModuleInterop": true,
     "types": ["vitest/globals", "node"],
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": true
   },
   "references": [
     {
