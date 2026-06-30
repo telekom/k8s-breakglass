@@ -836,20 +836,18 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	resolvedBinding, bindingSelectionErr := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
-	if bindingSelectionErr != nil {
-		reqLog.Warnw("Requested binding is not valid for debug session",
+	selectedBinding, err := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
+	if err != nil {
+		// BindingRef is either empty or was normalized and used to build allowedResult above.
+		reqLog.Errorw("Validated debug session binding could not be selected",
 			"bindingRef", req.BindingRef,
 			"cluster", req.Cluster,
 			"templateRef", req.TemplateRef,
-			"error", bindingSelectionErr)
-		if !isDebugSessionRequesterAllowedByAnySource(template, allowedResult.AllBindings, currentUserStr, userEmail, userGroups) {
-			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
-			return
-		}
-		apiresponses.RespondBadRequest(ctx, bindingSelectionErr.Error())
+			"error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to select debug session binding")
 		return
 	}
+	resolvedBinding = selectedBinding
 
 	if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, resolvedBinding), currentUserStr, userEmail, userGroups) {
 		reqLog.Warnw("User is not allowed to request debug session",
@@ -1294,24 +1292,6 @@ func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllo
 			if matchPattern(allowedGroup, userGroup) {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func isDebugSessionRequesterAllowedByAnySource(
-	template *breakglassv1alpha1.DebugSessionTemplate,
-	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
-	username,
-	email string,
-	userGroups []string,
-) bool {
-	if template != nil && isDebugSessionRequesterAllowed(template.Spec.Allowed, username, email, userGroups) {
-		return true
-	}
-	for i := range bindings {
-		if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &bindings[i]), username, email, userGroups) {
-			return true
 		}
 	}
 	return false

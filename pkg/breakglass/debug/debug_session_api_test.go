@@ -7317,41 +7317,6 @@ func TestMatchPattern_RealClusterPatterns(t *testing.T) {
 	}
 }
 
-func TestIsDebugSessionRequesterAllowedByAnySourceFallsBackToTemplateAllowlist(t *testing.T) {
-	template := &breakglassv1alpha1.DebugSessionTemplate{
-		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
-				Users: []string{"ops@example.com"},
-			},
-		},
-	}
-	bindings := []breakglassv1alpha1.DebugSessionClusterBinding{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "fallback-binding", Namespace: "breakglass"},
-			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
-				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"},
-			},
-		},
-	}
-
-	assert.False(t, isDebugSessionRequesterAllowedByAnySource(
-		template,
-		bindings,
-		"alice@example.com",
-		"alice@example.com",
-		[]string{"sre"},
-	))
-
-	bindings[0].Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"sre"}}
-	assert.True(t, isDebugSessionRequesterAllowedByAnySource(
-		template,
-		bindings,
-		"alice@example.com",
-		"alice@example.com",
-		[]string{"sre"},
-	))
-}
-
 // TestIsClusterAllowedByTemplateOrBinding tests the combined template + binding cluster validation
 func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 	log := zap.NewNop().Sugar()
