@@ -366,7 +366,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	t.Run("name tie-breaker — same state and timestamp", func(t *testing.T) {
 		// When two sessions have the same state priority and creation timestamp,
 		// the one with the lexicographically smaller name is kept.
-		ts := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+		ts := metav1.NewTime(time.Now().UTC().Add(-10 * time.Minute))
 		sA := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "aaa-session",

@@ -63,9 +63,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-2 * time.Hour)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(-1 * time.Hour)), // Already past
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)), // Already past
 			},
 		}
 
@@ -115,9 +115,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-30 * time.Minute)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-30 * time.Minute)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(30 * time.Minute)), // Still in future
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(30 * time.Minute)), // Still in future
 			},
 		}
 
@@ -153,9 +153,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(-30 * time.Second)),
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(-30 * time.Second)),
 			},
 		}
 
@@ -193,9 +193,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(30 * time.Second)),
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(30 * time.Second)),
 			},
 		}
 
@@ -232,7 +232,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt: metav1.NewTime(time.Now().Add(-30 * time.Minute)),
+				ApprovedAt: metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute)),
 				ExpiresAt:  metav1.Time{}, // Zero value
 			},
 		}
@@ -269,7 +269,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStatePending,
-				ExpiresAt: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+				ExpiresAt: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 			},
 		}
 
@@ -306,9 +306,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-3 * time.Hour)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-3 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-3 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-3 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 			},
 		}
 
@@ -324,9 +324,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-30 * time.Minute)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-30 * time.Minute)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(2 * time.Hour)),
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(2 * time.Hour)),
 			},
 		}
 
@@ -373,7 +373,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:       breakglassv1alpha1.SessionStateExpired,
 				ReasonEnded: "timeExpired",
-				ExpiresAt:   metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+				ExpiresAt:   metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
 			},
 		}
 
@@ -411,9 +411,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(720 * time.Hour)), // 30 days
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(720 * time.Hour)), // 30 days
 			},
 		}
 
@@ -465,9 +465,9 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-2 * time.Hour)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 			},
 		}
 
@@ -540,7 +540,7 @@ func TestIsSessionExpiredEdgeCases(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,
-				ExpiresAt: metav1.NewTime(time.Now().Add(-1 * time.Minute)),
+				ExpiresAt: metav1.NewTime(time.Now().UTC().Add(-1 * time.Minute)),
 				// ActualStartTime is zero-valued — should still expire via ExpiresAt
 			},
 		}
@@ -552,7 +552,7 @@ func TestIsSessionExpiredEdgeCases(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,
-				ExpiresAt: metav1.NewTime(time.Now().Add(30 * time.Second)),
+				ExpiresAt: metav1.NewTime(time.Now().UTC().Add(30 * time.Second)),
 			},
 		}
 		assert.False(t, IsSessionExpired(session),
@@ -563,7 +563,7 @@ func TestIsSessionExpiredEdgeCases(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,
-				ExpiresAt: metav1.NewTime(time.Now().Add(-7 * 24 * time.Hour)), // a week ago
+				ExpiresAt: metav1.NewTime(time.Now().UTC().Add(-7 * 24 * time.Hour)), // a week ago
 			},
 		}
 		assert.True(t, IsSessionExpired(session),
@@ -574,7 +574,7 @@ func TestIsSessionExpiredEdgeCases(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,
-				ExpiresAt: metav1.NewTime(time.Now().Add(365 * 24 * time.Hour)), // 1 year from now
+				ExpiresAt: metav1.NewTime(time.Now().UTC().Add(365 * 24 * time.Hour)), // 1 year from now
 			},
 		}
 		assert.False(t, IsSessionExpired(session),
@@ -594,7 +594,7 @@ func TestIsSessionExpiredEdgeCases(t *testing.T) {
 			session := breakglassv1alpha1.BreakglassSession{
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:     state,
-					ExpiresAt: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+					ExpiresAt: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 				},
 			}
 			assert.False(t, IsSessionExpired(session),

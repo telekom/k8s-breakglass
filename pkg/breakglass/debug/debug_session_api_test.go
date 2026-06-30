@@ -4691,7 +4691,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 	})
 
 	t.Run("terminate active expired session is rejected", func(t *testing.T) {
-		expiresAt := metav1.NewTime(time.Now().Add(-time.Hour))
+		expiresAt := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -5410,7 +5410,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	})
 
 	t.Run("leave active expired session is rejected", func(t *testing.T) {
-		expiresAt := metav1.NewTime(time.Now().Add(-time.Hour))
+		expiresAt := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -5466,7 +5466,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	})
 
 	t.Run("leave expired session hides lifecycle details from non participant", func(t *testing.T) {
-		expiresAt := metav1.NewTime(time.Now().Add(-time.Hour))
+		expiresAt := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -6341,7 +6341,7 @@ func TestConvertSelectorTerms(t *testing.T) {
 func TestCheckBindingSessionLimits(t *testing.T) {
 	ctx := context.Background()
 	scheme := testScheme()
-	pastExpiry := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	pastExpiry := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 
 	tests := []struct {
 		name             string
