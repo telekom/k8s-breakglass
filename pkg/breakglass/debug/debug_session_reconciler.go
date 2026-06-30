@@ -121,13 +121,13 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	if err := c.client.Get(ctx, req.NamespacedName, ds); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Debug("DebugSession not found, ignoring")
-			
+
 			if metrics.DebugSessionParticipants != nil {
 				metrics.DebugSessionParticipants.DeletePartialMatch(map[string]string{"session": req.Name})
 				metrics.DebugSessionPodRestarts.DeletePartialMatch(map[string]string{"session": req.Name})
 				metrics.DebugSessionPodFailures.DeletePartialMatch(map[string]string{"session": req.Name})
 			}
-			
+
 			return ctrl.Result{}, nil
 		}
 		log.Errorw("Failed to get DebugSession", "error", err)

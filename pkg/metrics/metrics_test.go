@@ -193,13 +193,13 @@ func TestWebhookMetrics(t *testing.T) {
 		}
 	})
 
-	t.Run("SAR decisions by action", func(t *testing.T) {
-		labels := []string{cluster, "get", "core", "pods", "default", "", "allowed", ""}
-		before := testutil.ToFloat64(WebhookSARDecisionsByAction.WithLabelValues(labels...))
-		WebhookSARDecisionsByAction.WithLabelValues(labels...).Inc()
-		after := testutil.ToFloat64(WebhookSARDecisionsByAction.WithLabelValues(labels...))
+	t.Run("SAR decisions", func(t *testing.T) {
+		labels := []string{cluster, "allowed", ""}
+		before := testutil.ToFloat64(WebhookSARDecisions.WithLabelValues(labels...))
+		WebhookSARDecisions.WithLabelValues(labels...).Inc()
+		after := testutil.ToFloat64(WebhookSARDecisions.WithLabelValues(labels...))
 		if after != before+1 {
-			t.Fatalf("expected WebhookSARDecisionsByAction to increment")
+			t.Fatalf("expected WebhookSARDecisions to increment")
 		}
 	})
 }

@@ -95,10 +95,6 @@ var (
 	// Structured SAR request metric keyed by action components. Be careful with
 	// cardinality; we intentionally omit object name from labels to reduce
 	// cardinality while still capturing the exact request action.
-	WebhookSARRequestsByAction = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "breakglass_webhook_sar_requests_by_action_total",
-		Help: "Total number of incoming SAR requests grouped by action components",
-	}, []string{"cluster", "verb", "api_group", "resource", "namespace", "subresource"})
 	WebhookSARAllowed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_sar_allowed_total",
 		Help: "Total number of SAR requests allowed by the webhook",
@@ -108,10 +104,10 @@ var (
 		Help: "Total number of SAR requests denied by the webhook",
 	}, []string{"cluster"})
 	// Decision metric keyed by action components and decision outcome (allowed/denied)
-	WebhookSARDecisionsByAction = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "breakglass_webhook_sar_decisions_by_action_total",
-		Help: "Counts of SAR decisions (allowed/denied) grouped by action components",
-	}, []string{"cluster", "verb", "api_group", "resource", "namespace", "subresource", "decision", "deny_source"})
+	WebhookSARDecisions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_webhook_sar_decisions_total",
+		Help: "Counts of SAR decisions (allowed/denied) grouped by cluster and source",
+	}, []string{"cluster", "decision", "deny_source"})
 	WebhookSessionSARsAllowed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_allowed_total",
 		Help: "Total number of session SAR checks that returned allowed",
@@ -617,10 +613,10 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(WebhookSARRequests)
 	ctrlmetrics.Registry.MustRegister(WebhookSARDuration)
 	ctrlmetrics.Registry.MustRegister(WebhookSARPhaseDuration)
-	ctrlmetrics.Registry.MustRegister(WebhookSARRequestsByAction)
+
 	ctrlmetrics.Registry.MustRegister(WebhookSARAllowed)
 	ctrlmetrics.Registry.MustRegister(WebhookSARDenied)
-	ctrlmetrics.Registry.MustRegister(WebhookSARDecisionsByAction)
+	ctrlmetrics.Registry.MustRegister(WebhookSARDecisions)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsAllowed)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsDenied)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARErrors)

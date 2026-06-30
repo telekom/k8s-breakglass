@@ -304,8 +304,8 @@ func TestHandleAuthorize_MetricsSourceForRBACAllow(t *testing.T) {
 	controller := SetupController(nil)
 	controller.canDoFn = alwaysCanDo
 
-	metrics.WebhookSARDecisionsByAction.Reset()
-	defer metrics.WebhookSARDecisionsByAction.Reset()
+	metrics.WebhookSARDecisions.Reset()
+	defer metrics.WebhookSARDecisions.Reset()
 
 	engine := gin.New()
 	_ = controller.Register(engine.Group(""))
@@ -327,24 +327,14 @@ func TestHandleAuthorize_MetricsSourceForRBACAllow(t *testing.T) {
 		t.Fatalf("expected allowed response for RBAC path")
 	}
 
-	rbacCount := testutil.ToFloat64(metrics.WebhookSARDecisionsByAction.WithLabelValues(
+	rbacCount := testutil.ToFloat64(metrics.WebhookSARDecisions.WithLabelValues(
 		testGroupData.Clustername,
-		sar.Spec.ResourceAttributes.Verb,
-		sar.Spec.ResourceAttributes.Group,
-		sar.Spec.ResourceAttributes.Resource,
-		sar.Spec.ResourceAttributes.Namespace,
-		sar.Spec.ResourceAttributes.Subresource,
 		"allowed",
 		"rbac",
 	))
 
-	sessionCount := testutil.ToFloat64(metrics.WebhookSARDecisionsByAction.WithLabelValues(
+	sessionCount := testutil.ToFloat64(metrics.WebhookSARDecisions.WithLabelValues(
 		testGroupData.Clustername,
-		sar.Spec.ResourceAttributes.Verb,
-		sar.Spec.ResourceAttributes.Group,
-		sar.Spec.ResourceAttributes.Resource,
-		sar.Spec.ResourceAttributes.Namespace,
-		sar.Spec.ResourceAttributes.Subresource,
 		"allowed",
 		"session",
 	))
