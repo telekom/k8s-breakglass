@@ -278,10 +278,11 @@ func TestEscalationGetCommand_YAML(t *testing.T) {
 	require.NoError(t, err)
 	outStr := buf.String()
 	assert.Contains(t, outStr, "test-escalation-1")
-	assert.Contains(t, outStr, "escalatedgroup: admin")
+	assert.Contains(t, outStr, "admin")
+	assert.Contains(t, outStr, "ESCALATED_GROUP")
 }
 
-func TestEscalationGetCommand_TableCoercedToYAML(t *testing.T) {
+func TestEscalationGetCommand_TableOutputsTable(t *testing.T) {
 	server := setupMockEscalationServer(t)
 	defer server.Close()
 
@@ -303,10 +304,11 @@ func TestEscalationGetCommand_TableCoercedToYAML(t *testing.T) {
 	require.NoError(t, err)
 	outStr := buf.String()
 	assert.Contains(t, outStr, "test-escalation-1")
-	assert.Contains(t, outStr, "escalatedgroup: admin")
+	assert.Contains(t, outStr, "admin")
+	assert.Contains(t, outStr, "ESCALATED_GROUP")
 }
 
-func TestEscalationGetCommand_WideCoercedToYAML(t *testing.T) {
+func TestEscalationGetCommand_WideOutputsTable(t *testing.T) {
 	server := setupMockEscalationServer(t)
 	defer server.Close()
 
@@ -328,7 +330,8 @@ func TestEscalationGetCommand_WideCoercedToYAML(t *testing.T) {
 	require.NoError(t, err)
 	outStr := buf.String()
 	assert.Contains(t, outStr, "test-escalation-1")
-	assert.Contains(t, outStr, "escalatedgroup: admin")
+	assert.Contains(t, outStr, "admin")
+	assert.Contains(t, outStr, "ESCALATED_GROUP")
 }
 
 func TestEscalationGetCommand_UnknownFormatError(t *testing.T) {
