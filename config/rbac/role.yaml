@@ -61,15 +61,15 @@ rules:
   resources:
   - auditconfigs
   - breakglassescalations
+  - debugpodtemplates
+  - debugsessionclusterbindings
+  - debugsessiontemplates
+  - denypolicies
   - identityproviders
   - mailproviders
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - breakglass.t-caas.telekom.com
@@ -124,17 +124,6 @@ rules:
   - list
   - patch
   - update
-  - watch
-- apiGroups:
-  - breakglass.t-caas.telekom.com
-  resources:
-  - debugpodtemplates
-  - debugsessionclusterbindings
-  - debugsessiontemplates
-  - denypolicies
-  verbs:
-  - get
-  - list
   - watch
 - apiGroups:
   - coordination.k8s.io
