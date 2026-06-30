@@ -526,6 +526,35 @@ export default class AuthService {
     return this.userManager.signinRedirect({ state: resolveState(state) });
   }
 
+  
+  public async handleSilentSigninCallback() {
+    if (this.mockMode) return;
+
+    const candidateManagers: UserManager[] = [this.userManager];
+
+    try {
+      const multiIDP = await getMultiIDPConfig();
+      for (const idp of multiIDP.identityProviders) {
+        if (!idp.enabled) continue;
+        const manager = this.buildUserManager("/api/oidc/authority", idp.oidcClientID || "k8s-breakglass");
+        candidateManagers.push(manager);
+      }
+    } catch (err) {
+      debug("AuthService", "Failed to fetch multiIDP config during silent renew", err);
+    }
+
+    let lastError: Error | undefined;
+    for (const manager of candidateManagers) {
+      try {
+        await manager.signinSilentCallback();
+        return;
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+    throw lastError || new Error("All managers failed silent renew callback");
+  }
+
   public getIdentityProviderName(): string | undefined {
     return this.currentIDPName;
   }

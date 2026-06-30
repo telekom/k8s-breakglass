@@ -218,7 +218,7 @@ async function initializeSilentRenew() {
   }
   const auth = new AuthService(config);
   try {
-    await auth.userManager.signinSilentCallback();
+    await auth.handleSilentSigninCallback();
     logger.info("SilentRenew", "Silent renew callback completed successfully");
   } catch (error) {
     logger.error("SilentRenew", "Silent renew callback failed", error);
