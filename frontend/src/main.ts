@@ -8,7 +8,7 @@ import { AuthKey } from "@/keys";
 import getConfig from "@/services/config";
 import { BrandingKey } from "@/keys";
 import type Config from "@/model/config";
-import { exposeDebugControls, debug } from "@/services/logger";
+import { debug } from "@/services/logger";
 import logger from "@/services/logger";
 import { pushError } from "@/services/toast";
 
@@ -25,7 +25,6 @@ logger.info("App", "Application starting", {
   baseUrl: import.meta.env.BASE_URL,
 });
 
-exposeDebugControls();
 
 function cacheRuntimeConfig(config: Config) {
   try {
