@@ -819,3 +819,49 @@ func TestDebugSessionWatchCommand_ShowFullRespectsOutputFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestDebugSessionRenewCommand_Table(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/api/debugSessions/debug-session-1/renew" {
+			now := time.Now()
+			startsAt := metav1.NewTime(now)
+			expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
+			session := breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-1"},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					Cluster: "cluster-a",
+					TemplateRef: "template-1",
+				},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStateActive,
+					StartsAt: &startsAt,
+					ExpiresAt: &expiresAt,
+				},
+			}
+			_ = json.NewEncoder(w).Encode(session)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "session", "renew", "debug-session-1", "--extend-by", "30m",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	outStr := buf.String()
+	assert.Contains(t, outStr, "NAME")
+	assert.Contains(t, outStr, "debug-session-1")
+}
