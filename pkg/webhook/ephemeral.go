@@ -27,6 +27,10 @@ type DebugSessionHandler interface {
 }
 
 // EphemeralContainerWebhook handles admission of ephemeral containers
+type contextKey string
+
+const clusterContextKey contextKey = "cluster"
+
 type EphemeralContainerWebhook struct {
 	Client       client.Client
 	Decoder      admission.Decoder
@@ -58,9 +62,18 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 	}
 
 	user := req.UserInfo.Username
-	// Use explicit cluster from context if available, otherwise wildcard (empty)
-	// For Phase 1 we rely on finding *any* active session for the user
+	// Use explicit cluster from context if available, otherwise fail closed
 	cluster := ""
+	if val := ctx.Value(clusterContextKey); val != nil {
+		if c, ok := val.(string); ok {
+			cluster = c
+		}
+	}
+
+	if cluster == "" {
+		w.Log.Warnw("Cluster identity cannot be determined for ephemeral container validation", "user", user)
+		return admission.Denied("cluster identity cannot be determined for ephemeral container validation")
+	}
 
 	session, err := w.DebugHandler.FindActiveSession(ctx, user, cluster)
 	if err != nil {
