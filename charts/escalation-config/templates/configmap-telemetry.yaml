@@ -1,3 +1,7 @@
+{{- /* 
+This ConfigMap provides OpenTelemetry configuration.
+It is intentionally not auto-mounted. Operators must mount it into the controller Deployment manually.
+*/ -}}
 {{- if .Values.cluster.telemetry }}
 {{- if .Values.cluster.telemetry.enabled }}
 apiVersion: v1
