@@ -50,19 +50,11 @@
         data-testid="approval-reason-input"
         :value="approverNote"
         :placeholder="approvalReasonPlaceholder"
-        :aria-describedby="isNoteRequired && !approverNote.trim() ? noteErrorId : undefined"
+        :invalid="isNoteRequired && !approverNote.trim()"
+        helper-text-invalid="This field is required."
         @scale-change="handleNoteChange"
       />
     </div>
-
-    <p
-      v-if="canReview && isNoteRequired && !approverNote.trim()"
-      :id="noteErrorId"
-      class="approval-note-required"
-      role="alert"
-    >
-      This field is required.
-    </p>
 
     <div class="modal-actions">
       <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
