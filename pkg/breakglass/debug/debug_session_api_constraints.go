@@ -184,16 +184,14 @@ func (c *DebugSessionAPIController) mergeNamespaceConstraints(
 		merged.DefaultNamespace = bindingNC.DefaultNamespace
 	}
 
-	// AllowedNamespaces: keep template filters as the advertised outer boundary.
-	// Runtime validation also evaluates binding filters separately, producing an
-	// effective intersection without attempting to encode glob intersections.
+	// AllowedNamespaces: binding filters are the option-specific boundary shown
+	// to clients. Runtime validation still evaluates both template and binding
+	// filters separately, so bindings cannot widen the template boundary.
 	if merged.AllowedNamespaces == nil || merged.AllowedNamespaces.IsEmpty() {
 		merged.AllowedNamespaces = nil
 	}
 	if bindingNC.AllowedNamespaces != nil && !bindingNC.AllowedNamespaces.IsEmpty() {
-		if merged.AllowedNamespaces == nil || merged.AllowedNamespaces.IsEmpty() {
-			merged.AllowedNamespaces = bindingNC.AllowedNamespaces.DeepCopy()
-		}
+		merged.AllowedNamespaces = bindingNC.AllowedNamespaces.DeepCopy()
 	}
 
 	// DeniedNamespaces: binding can add denies, never remove template denies.
@@ -300,6 +298,9 @@ func matchDeniedNamespaceFilter(namespace string, filter *breakglassv1alpha1.Nam
 		if matchPattern(pattern, namespace) {
 			return true
 		}
+	}
+	if filter.HasSelectorTerms() {
+		return true
 	}
 	return false
 }

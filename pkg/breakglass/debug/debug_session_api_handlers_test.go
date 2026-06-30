@@ -2238,7 +2238,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
-	t.Run("does not treat selector-only denied filter as matching every namespace", func(t *testing.T) {
+	t.Run("rejects selector-only denied filters when namespace labels are unavailable", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
@@ -2252,10 +2252,10 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+		_, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
 
-		require.NoError(t, err)
-		assert.Equal(t, "debug-ns", ns)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
 	t.Run("binding cannot enable template user namespaces", func(t *testing.T) {
@@ -2342,6 +2342,39 @@ func TestResolveTargetNamespace(t *testing.T) {
 		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+	})
+
+	t.Run("binding allowed namespace filter is surfaced in response constraints", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-response-patterns"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"safe-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "response-binding",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"safe-team-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		response := ctrl.resolveNamespaceConstraints(template, binding)
+
+		require.NotNil(t, response)
+		assert.Equal(t, []string{"safe-team-*"}, response.AllowedPatterns)
 	})
 
 	// =========================================================================
