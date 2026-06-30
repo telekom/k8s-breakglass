@@ -395,7 +395,7 @@ func TestStart_ActualExecution(t *testing.T) {
 	wg.Add(1)
 
 	// Start the actual leader election function
-	go Start(ctx, &wg, &leaderElectedCh, resourceLock, hostname, leaseName, namespace, log)
+	go Start(ctx, &wg, &leaderElectedCh, resourceLock, hostname, leaseName, namespace, log, nil)
 
 	// Wait for leadership acquisition or timeout
 	select {

@@ -609,34 +609,6 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 ) {
 	log := deps.log
 
-	// Cleanup routine (optional)
-	if deps.cliConfig.EnableCleanup {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cr := breakglass.CleanupRoutine{
-				Log:     log,
-				Manager: deps.sessionManager,
-				// AuditService is stored so Manager() can be resolved lazily on each
-				// cleanup iteration, picking up the current manager after any reload.
-				AuditService:  deps.auditService,
-				LeaderElected: leaderElectedCh,
-				MailService:   deps.mailService,
-				BrandingName:  deps.cfg.Frontend.BrandingName,
-				DisableEmail:  deps.cliConfig.DisableEmail,
-			}
-			// Plumb the activity tracker from the webhook controller so the
-			// cleanup routine can prune orphaned entries.
-			if at := deps.webhookCtrl.ActivityTrackerCleaner(); at != nil {
-				cr.ActivityTracker = at
-			}
-			cr.CleanupRoutine(ctx)
-		}()
-		log.Infow("Cleanup routine enabled")
-	} else {
-		log.Infow("Cleanup routine disabled via --enable-cleanup=false")
-	}
-
 	if deps.cliConfig.EnableControllers {
 		if err := cluster.RegisterInvalidationHandlers(ctx, deps.reconcilerMgr, deps.ccProvider, log); err != nil {
 			log.Warnw("Failed to register cluster cache invalidation handlers", "error", err)
@@ -645,42 +617,57 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		log.Infow("Cache invalidation handlers disabled via --enable-controllers=false")
 	}
 
-	if deps.cliConfig.EnableControllers {
-		// Escalation status updater with EventRecorder and IDPLoader
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			escalation.EscalationStatusUpdater{
-				Log:           log,
-				K8sClient:     deps.escalationManager.Client,
-				Resolver:      deps.escalationManager.GetResolver(),
-				EventRecorder: deps.eventsRecorder,
-				IDPLoader:     deps.idpLoader,
-				Interval:      cli.ParseEscalationStatusUpdateInterval(deps.cliConfig.EscalationStatusUpdateInt, log),
-				LeaderElected: leaderElectedCh,
-			}.Start(ctx)
-		}()
-	} else {
-		log.Infow("Escalation status updater disabled via --enable-controllers=false")
-	}
-
-	if deps.cliConfig.EnableControllers {
-		// ClusterConfig checker: validates referenced kubeconfig secrets contain the expected key
-		intervalStr := deps.cliConfig.ClusterConfigCheckInterval
-		if intervalStr == "" && deps.cfg.Kubernetes.ClusterConfigCheckInterval != "" {
-			intervalStr = deps.cfg.Kubernetes.ClusterConfigCheckInterval
+	startLoops := func(leaderCtx context.Context) {
+		if deps.cliConfig.EnableCleanup {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cr := breakglass.CleanupRoutine{
+					Log:           log,
+					Manager:       deps.sessionManager,
+					AuditService:  deps.auditService,
+					LeaderElected: nil,
+					MailService:   deps.mailService,
+					BrandingName:  deps.cfg.Frontend.BrandingName,
+					DisableEmail:  deps.cliConfig.DisableEmail,
+				}
+				if at := deps.webhookCtrl.ActivityTrackerCleaner(); at != nil {
+					cr.ActivityTracker = at
+				}
+				cr.CleanupRoutine(leaderCtx)
+			}()
+			log.Infow("Cleanup routine started")
 		}
-		interval := cli.ParseClusterConfigCheckInterval(intervalStr, log)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			clusterconfig.ClusterConfigChecker{
-				Log: log, Client: deps.escalationManager.Client,
-				Recorder: deps.eventsRecorder, Interval: interval, LeaderElected: leaderElectedCh,
-			}.Start(ctx)
-		}()
-	} else {
-		log.Infow("ClusterConfig checker disabled via --enable-controllers=false")
+
+		if deps.cliConfig.EnableControllers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				escalation.EscalationStatusUpdater{
+					Log:           log,
+					K8sClient:     deps.escalationManager.Client,
+					Resolver:      deps.escalationManager.GetResolver(),
+					EventRecorder: deps.eventsRecorder,
+					IDPLoader:     deps.idpLoader,
+					Interval:      cli.ParseEscalationStatusUpdateInterval(deps.cliConfig.EscalationStatusUpdateInt, log),
+					LeaderElected: nil,
+				}.Start(leaderCtx)
+			}()
+
+			intervalStr := deps.cliConfig.ClusterConfigCheckInterval
+			if intervalStr == "" && deps.cfg.Kubernetes.ClusterConfigCheckInterval != "" {
+				intervalStr = deps.cfg.Kubernetes.ClusterConfigCheckInterval
+			}
+			interval := cli.ParseClusterConfigCheckInterval(intervalStr, log)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				clusterconfig.ClusterConfigChecker{
+					Log: log, Client: deps.escalationManager.Client,
+					Recorder: deps.eventsRecorder, Interval: interval, LeaderElected: nil,
+				}.Start(leaderCtx)
+			}()
+		}
 	}
 
 	// Leader election
@@ -689,11 +676,12 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		wg.Add(1)
 		go func() {
 			leaderelection.Start(ctx, wg, &leaderElectedCh, deps.resourceLock,
-				deps.hostname, deps.cliConfig.LeaderElectID, leaseNamespace, log)
+				deps.hostname, deps.cliConfig.LeaderElectID, leaseNamespace, log, startLoops)
 		}()
 	} else {
 		log.Infow("Leader election disabled via --enable-leader-election=false, background loops will run on all replicas")
 		close(leaderElectedCh)
+		startLoops(ctx)
 	}
 
 	// Reconciler manager stays running for shared manager services such as
