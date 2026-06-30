@@ -631,7 +631,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			return
 		}
 		pendingApproval := IsSessionPendingApproval(ses)
-		approvalTimedOut := ses.Status.State == breakglassv1alpha1.SessionStatePending && !pendingApproval && !ses.Status.TimeoutAt.IsZero()
+		approvalTimedOut := IsSessionApprovalTimedOut(ses)
 		canApprove := pendingApproval && wc.isSessionApprover(c, ses)
 		alreadyActive := IsSessionActive(ses) && !approvalTimedOut
 		valid := true

@@ -4261,12 +4261,15 @@ func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 
-	approvalMeta := body["approvalMeta"].(map[string]any)
+	approvalMetaRaw, ok := body["approvalMeta"]
+	require.Truef(t, ok, "response body missing approvalMeta: %#v", body)
+	approvalMeta, ok := approvalMetaRaw.(map[string]any)
+	require.Truef(t, ok, "approvalMeta must be a JSON object, got %T: %#v", approvalMetaRaw, approvalMetaRaw)
 	require.Equal(t, "Pending", approvalMeta["sessionState"])
 	require.Equal(t, "This session has timed out waiting for approval", approvalMeta["stateMessage"])
-	require.True(t, approvalMeta["isApprover"].(bool), "approver should keep read access to stale pending sessions")
-	require.False(t, approvalMeta["canApprove"].(bool), "timed-out pending sessions must not be approvable")
-	require.False(t, approvalMeta["canReject"].(bool), "timed-out pending sessions must not be rejectable")
+	require.Equal(t, true, approvalMeta["isApprover"], "approver should keep read access to stale pending sessions")
+	require.Equal(t, false, approvalMeta["canApprove"], "timed-out pending sessions must not be approvable")
+	require.Equal(t, false, approvalMeta["canReject"], "timed-out pending sessions must not be rejectable")
 }
 
 // Fake identity provider that returns an error for GetEmail to exercise error paths
