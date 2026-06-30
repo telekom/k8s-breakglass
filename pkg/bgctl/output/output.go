@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"io"
 
-	"gopkg.in/yaml.v3"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
+	"gopkg.in/yaml.v3"
 )
 
 type Format string
@@ -87,7 +87,7 @@ func WriteObject(w io.Writer, format Format, obj any) error {
 				Name:        v.Name,
 				DisplayName: v.Spec.DisplayName,
 				Description: v.Spec.Description,
-				Containers:  func() int {
+				Containers: func() int {
 					if v.Spec.Template != nil {
 						return len(v.Spec.Template.Spec.Containers)
 					}
@@ -97,7 +97,7 @@ func WriteObject(w io.Writer, format Format, obj any) error {
 			WriteDebugPodTemplateTable(w, []client.DebugPodTemplateSummary{summary})
 			return nil
 		case map[string]interface{}:
-			fmt.Fprintln(w, "Operation completed successfully.")
+			_, _ = fmt.Fprintln(w, "Operation completed successfully.")
 			return nil
 		}
 		if format == FormatTable {
