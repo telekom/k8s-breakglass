@@ -33,7 +33,9 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 
 	// Collect approver emails
 	var approverEmails []string
-	if template.Spec.Approvers != nil {
+	if binding != nil && binding.Spec.Approvers != nil {
+		approverEmails = append(approverEmails, binding.Spec.Approvers.Users...)
+	} else if template.Spec.Approvers != nil {
 		approverEmails = append(approverEmails, template.Spec.Approvers.Users...)
 	}
 
@@ -268,7 +270,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 		RequestedDuration: session.Spec.RequestedDuration,
 		Reason:            session.Spec.Reason,
 		RequestedAt:       session.CreationTimestamp.Format(time.RFC3339),
-		RequiresApproval:  template.Spec.Approvers != nil && len(template.Spec.Approvers.Users) > 0,
+		RequiresApproval:  isApprovalRequired(template, binding),
 		URL:               fmt.Sprintf("%s/debug-sessions/%s", c.baseURL, session.Name),
 		BrandingName:      c.brandingName,
 	}
@@ -824,4 +826,14 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	)
 
 	return result
+}
+
+func isApprovalRequired(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+	if binding != nil && binding.Spec.Approvers != nil {
+		return len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0
+	}
+	if template.Spec.Approvers != nil {
+		return len(template.Spec.Approvers.Users) > 0 || len(template.Spec.Approvers.Groups) > 0
+	}
+	return false
 }
