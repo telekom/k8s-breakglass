@@ -105,7 +105,7 @@ jobs:
           cache: true
       - name: Validate CRDs (offline schema + envtest API server)
         run: make validate-crds
-      - name: Validate e2e fixtures against Go validation rules
+      - name: Run e2e helper unit tests and validate fixtures
         run: make validate-fixtures
 
   npm-audit:

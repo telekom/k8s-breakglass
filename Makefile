@@ -113,10 +113,10 @@ validate-crds: manifests setup-envtest ## Validate CRD schemas offline and again
 	@echo "CRD validation passed"
 
 .PHONY: validate-fixtures
-validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass Go validation.
-	@echo "Validating e2e fixture files..."
-	go test ./e2e/helpers/... -run TestFixturesAreValid -v -count=1
-	@echo "Fixture validation passed"
+validate-fixtures: manifests ## Run e2e helper unit tests and validate fixtures.
+	@echo "Running e2e helper tests and validating fixtures..."
+	go test ./e2e/helpers/...  -v -count=1
+	@echo "e2e helper tests and fixture validation passed"
 
 .PHONY: verify
 verify: fmt vet lint-strict test verify-release-provenance vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
