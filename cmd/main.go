@@ -50,7 +50,7 @@ import (
 // RBAC markers for resources managed by non-reconciler components (cleanup, API handlers, etc.)
 // These are collected here so `make manifests` generates the complete RBAC role.
 
-// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglasssessions,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglasssessions,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglasssessions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglasssessions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=get;list;watch
