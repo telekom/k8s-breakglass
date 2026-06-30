@@ -299,7 +299,10 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+	}
 
+	now := metav1.Now()
 	latest.Status.LastHealthCheck = &now
 	latest.Status.LastSendError = ""
 
@@ -380,6 +383,10 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 	}
 
 	latest.Status.LastSendError = healthErr.Error()
+
+	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
+		metav1.Condition{
+			Type:               string(breakglassv1alpha1.MailProviderConditionReady),
 			Status:             metav1.ConditionFalse,
 			Reason:             "HealthCheckFailed",
 			Message:            fmt.Sprintf("Health check failed: %v", healthErr),

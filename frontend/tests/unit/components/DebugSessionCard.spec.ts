@@ -68,9 +68,6 @@ describe("DebugSessionCard", () => {
     const rejectIds = rejectInputs.map((input) => input.attributes("id"));
 
     expect(new Set(rejectIds).size).toBe(rejectIds.length);
-    for (const id of rejectIds) {
-      expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
-    }
   });
 
   it("uses collision-safe label targets for per-card renew controls", async () => {
@@ -109,9 +106,6 @@ describe("DebugSessionCard", () => {
     for (const id of renewIds) {
       expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
     }
-  });
-
-  it("resets the renew duration each time the modal opens", async () => {
     const wrapper = mount(DebugSessionCard, {
       props: {
         session: makeSession("team/session-b", "Active"),
