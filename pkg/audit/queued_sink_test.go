@@ -142,7 +142,7 @@ func TestQueuedSink_QueueOverflow(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		event := &Event{
 			ID:   "flood-" + string(rune('0'+i)),
-			Type: EventSessionRequested,
+			Type: EventResourceList, // Use a non-sensitive event type to test dropping
 		}
 		_ = qs.Write(ctx, event)
 	}
@@ -314,4 +314,37 @@ func TestQueuedSink_Name(t *testing.T) {
 	defer func() { _ = qs.Close() }()
 
 	assert.Equal(t, "test-sink", qs.Name())
+}
+
+func TestQueuedSink_QueueOverflow_Sensitive(t *testing.T) {
+	logger := zap.NewNop()
+	mock := newQueuedMockSink("slow-sink")
+	mock.writeDelay = 10 * time.Millisecond // Slow writes
+
+	cfg := QueuedSinkConfig{
+		QueueSize:   2, // Small queue
+		WorkerCount: 1, // Only one worker
+		DropOnFull:  true,
+	}
+
+	qs := NewQueuedSink(mock, cfg, logger)
+	defer func() { _ = qs.Close() }()
+
+	// Flood the queue with sensitive events
+	ctx := context.Background()
+	for i := 0; i < 10; i++ {
+		event := &Event{
+			ID:   "flood-" + string(rune('0'+i)),
+			Type: EventSessionRequested, // Sensitive event
+		}
+		err := qs.Write(ctx, event)
+		require.NoError(t, err)
+	}
+
+	// Wait for queue to drain
+	time.Sleep(200 * time.Millisecond)
+
+	// Since sensitive events fall back to direct write, none should be dropped
+	assert.Equal(t, int64(0), qs.Health().DroppedEvents, "Sensitive events should not be dropped")
+	assert.Equal(t, 10, mock.EventCount(), "All sensitive events should have been written")
 }
