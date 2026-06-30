@@ -838,6 +838,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 
 	// 2. Check if allowed by any binding that references this template
 	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	sortDebugSessionClusterBindings(applicableBindings)
 	c.log.Debugw("Found bindings for template",
 		"template", template.Name,
 		"applicableBindingsCount", len(applicableBindings),

@@ -741,6 +741,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			respondBindingBadRequest("bindingRef must use namespace/name format")
 			return
 		}
+		req.BindingRef = fmt.Sprintf("%s/%s", bindingNamespace, bindingName)
 
 		resolvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
 		if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: bindingName, Namespace: bindingNamespace}, resolvedBinding); err != nil {
@@ -1248,14 +1249,17 @@ func isValidDebugSessionState(val string) bool {
 }
 
 func parseDebugSessionBindingRef(bindingRef string) (string, string, bool) {
+	bindingRef = strings.TrimSpace(bindingRef)
 	if strings.Count(bindingRef, "/") != 1 {
 		return "", "", false
 	}
 	parts := strings.SplitN(bindingRef, "/", 2)
-	if parts[0] == "" || parts[1] == "" {
+	namespace := strings.TrimSpace(parts[0])
+	name := strings.TrimSpace(parts[1])
+	if namespace == "" || name == "" {
 		return "", "", false
 	}
-	return parts[0], parts[1], true
+	return namespace, name, true
 }
 
 func debugSessionBindingRefLogValue(binding *breakglassv1alpha1.DebugSessionClusterBinding) string {

@@ -7376,6 +7376,31 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 			expectSource:  "binding:team-ns/dev-binding",
 		},
 		{
+			name: "multiple matching bindings use stable namespace name precedence",
+			template: &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "template-stable"},
+			},
+			clusterName: "dev-cluster",
+			bindings: []breakglassv1alpha1.DebugSessionClusterBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "z-binding", Namespace: "team-b"},
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-stable"},
+						Clusters:    []string{"dev-cluster"},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "a-binding", Namespace: "team-a"},
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-stable"},
+						Clusters:    []string{"dev-cluster"},
+					},
+				},
+			},
+			expectAllowed: true,
+			expectSource:  "binding:team-a/a-binding",
+		},
+		{
 			name: "binding references wrong template",
 			template: &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "template1"},

@@ -153,10 +153,10 @@ func TestValidateRequestedDebugSessionDuration_IgnoresInvalidConfiguredMaxDurati
 
 func TestSelectEffectiveDebugSessionBinding_DefaultsToFirstApplicableBinding(t *testing.T) {
 	first := breakglassv1alpha1.DebugSessionClusterBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "z-last", Namespace: "default"},
 	}
 	second := breakglassv1alpha1.DebugSessionClusterBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "a-first", Namespace: "default"},
 	}
 	result := ClusterAllowedResult{
 		Allowed:     true,
@@ -167,5 +167,29 @@ func TestSelectEffectiveDebugSessionBinding_DefaultsToFirstApplicableBinding(t *
 
 	require.NoError(t, err)
 	require.NotNil(t, binding)
-	assert.Equal(t, "first", binding.Name)
+	assert.Equal(t, "a-first", binding.Name)
+}
+
+func TestSelectEffectiveDebugSessionBinding_TrimsExplicitBindingRef(t *testing.T) {
+	binding := breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "ops-binding", Namespace: "breakglass"},
+	}
+	result := ClusterAllowedResult{
+		Allowed:     true,
+		AllBindings: []breakglassv1alpha1.DebugSessionClusterBinding{binding},
+	}
+
+	selected, err := selectEffectiveDebugSessionBinding(" breakglass/ops-binding ", result)
+
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, "ops-binding", selected.Name)
+}
+
+func TestParseDebugSessionBindingRefTrimsWhitespace(t *testing.T) {
+	namespace, name, ok := parseDebugSessionBindingRef(" breakglass / ops-binding ")
+
+	require.True(t, ok)
+	assert.Equal(t, "breakglass", namespace)
+	assert.Equal(t, "ops-binding", name)
 }
