@@ -3,8 +3,9 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"github.com/spf13/cobra"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 func confirmAction(cmd *cobra.Command, rt *runtimeState, action, resourceName string, yes bool) error {
@@ -15,7 +16,7 @@ func confirmAction(cmd *cobra.Command, rt *runtimeState, action, resourceName st
 		return fmt.Errorf("confirmation required: run with --yes or omit --non-interactive or unset BGCTL_NON_INTERACTIVE")
 	}
 
-	fmt.Fprintf(rt.writer, "Are you sure you want to %s %s? [y/N]: ", action, resourceName)
+	_, _ = fmt.Fprintf(rt.writer, "Are you sure you want to %s %s? [y/N]: ", action, resourceName)
 	reader := bufio.NewReader(cmd.InOrStdin())
 	response, err := reader.ReadString('\n')
 	if err != nil {

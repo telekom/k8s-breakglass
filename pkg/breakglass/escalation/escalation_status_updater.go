@@ -710,7 +710,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 						"Failed to fetch group %s for escalation %s/%s: %v",
 						system.RedactGroupName(g), escalation.Namespace, escalation.Name, err)
 				}
-				
+
 				if escalation.Status.IDPGroupMemberships != nil {
 					if cachedIDP, ok := escalation.Status.IDPGroupMemberships[idpName]; ok {
 						if cachedMembers, ok := cachedIDP[g]; ok {
