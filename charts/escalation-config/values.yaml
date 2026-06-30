@@ -163,43 +163,6 @@ cluster:
   blockSelfApproval: false
   allowedApproverDomains: []
 
-  # ==========================================
-  # OpenTelemetry / Tracing Configuration
-  # ==========================================
-  # Configures distributed tracing via OpenTelemetry.
-  # When enabled, a ConfigMap is created that can be mounted by the controller
-  # deployment to supply the telemetry section of config.yaml.
-  telemetry:
-    # enabled enables OpenTelemetry tracing. Default: false.
-    enabled: false
-    # exporter selects the trace exporter: "otlp", "stdout", or "none".
-    exporter: "otlp"
-    # endpoint is the OTLP collector address (e.g. "otel-collector.monitoring:4317").
-    endpoint: ""
-    # insecure disables TLS for the OTLP exporter connection.
-    insecure: false
-    # samplingRate is 0.0-1.0 controlling the fraction of traces sampled.
-    samplingRate: 1.0
-
-  # ==========================================
-  # Circuit Breaker Configuration
-  # ==========================================
-  # Circuit breaker for spoke cluster communication.
-  # When enabled, clusters that become unreachable are marked as degraded and
-  # requests are rejected immediately instead of blocking on TCP timeout.
-  # See docs/circuit-breaker.md for details.
-  circuitBreaker:
-    # enabled enables circuit breaker protection. Default: false (opt-in).
-    enabled: false
-    # failureThreshold is consecutive failures before opening the circuit.
-    failureThreshold: 3
-    # successThreshold is consecutive successes in half-open state before closing.
-    successThreshold: 2
-    # openDuration is how long to wait before probing a tripped circuit.
-    openDuration: "30s"
-    # halfOpenMaxRequests is the max concurrent requests in half-open state.
-    halfOpenMaxRequests: 1
-
 escalations: []
   # - name: sample-escalation
   #   allowed:

@@ -1,675 +1,1084 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Breakglass Escalation Config Helm Values",
-  "description": "JSON Schema for the breakglass escalation-config Helm chart values.",
-  "type": "object",
-  "required": ["cluster"],
   "additionalProperties": false,
+  "description": "JSON Schema for the breakglass escalation-config Helm chart values.",
   "properties": {
     "cluster": {
-      "type": "object",
       "description": "Cluster configuration for the breakglass controller.",
-      "required": ["clusterID", "tenant", "environment"],
       "properties": {
-        "clusterID": {
-          "type": "string",
-          "description": "Unique identifier for this cluster.",
-          "minLength": 1,
-          "maxLength": 63
-        },
-        "tenant": {
-          "type": "string",
-          "description": "Tenant name for the cluster.",
-          "minLength": 1
-        },
-        "environment": {
-          "type": "string",
-          "description": "Environment name (e.g. development, staging, production).",
-          "minLength": 1
-        },
-        "site": {
-          "type": "string",
-          "description": "Optional site identifier."
-        },
-        "location": {
-          "type": "string",
-          "description": "Optional location identifier."
+        "allowedApproverDomains": {
+          "description": "Email domains allowed for approvers.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "authType": {
-          "type": "string",
           "description": "Authentication type: Kubeconfig (default) or OIDC.",
-          "enum": ["Kubeconfig", "OIDC"]
-        },
-        "kubeconfigSecretRef": {
-          "type": "object",
-          "description": "Reference to a Secret containing the cluster kubeconfig.",
-          "required": ["name", "namespace"],
-          "properties": {
-            "name": { "type": "string" },
-            "namespace": { "type": "string" },
-            "key": {
-              "type": "string",
-              "description": "Key in the Secret data (defaults to 'value')."
-            }
-          }
-        },
-        "oidcAuth": {
-          "type": "object",
-          "description": "Direct OIDC authentication configuration.",
-          "properties": {
-            "issuerURL": { "type": "string", "format": "uri" },
-            "clientID": { "type": "string" },
-            "server": { "type": "string", "format": "uri" },
-            "clientSecretRef": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "namespace": { "type": "string" },
-                "key": { "type": "string" }
-              }
-            },
-            "caSecretRef": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "namespace": { "type": "string" },
-                "key": { "type": "string" }
-              }
-            },
-            "audience": { "type": "string" },
-            "scopes": {
-              "type": "array",
-              "items": { "type": "string" }
-            },
-            "insecureSkipTLSVerify": { "type": "boolean", "default": false },
-            "tokenExchange": {
-              "type": "object",
-              "properties": {
-                "enabled": { "type": "boolean" },
-                "subjectTokenSecretRef": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "namespace": { "type": "string" },
-                    "key": { "type": "string" }
-                  }
-                },
-                "resource": { "type": "string" }
-              }
-            }
-          }
-        },
-        "oidcFromIdentityProvider": {
-          "type": "object",
-          "description": "OIDC configuration from an existing IdentityProvider resource.",
-          "properties": {
-            "name": { "type": "string" },
-            "server": { "type": "string", "format": "uri" },
-            "clientID": { "type": "string" },
-            "clientSecretRef": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "namespace": { "type": "string" }
-              }
-            },
-            "caSecretRef": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "namespace": { "type": "string" }
-              }
-            },
-            "insecureSkipTLSVerify": { "type": "boolean", "default": false }
-          }
-        },
-        "identityProviderRefs": {
-          "type": "array",
-          "description": "Restrict which IdentityProviders can authenticate for this cluster.",
-          "items": { "type": "string" }
-        },
-        "userIdentifierClaim": {
-          "type": "string",
-          "description": "OIDC claim for username extraction.",
-          "enum": ["email", "preferred_username", "sub"]
-        },
-        "qps": {
-          "type": "integer",
-          "description": "Client rate limiting: queries per second.",
-          "minimum": 1
-        },
-        "burst": {
-          "type": "integer",
-          "description": "Client rate limiting: burst size.",
-          "minimum": 1
-        },
-        "mailProvider": {
-          "type": "string",
-          "description": "MailProvider CR name for cluster notifications."
+          "enum": [
+            "Kubeconfig",
+            "OIDC"
+          ],
+          "type": "string"
         },
         "blockSelfApproval": {
-          "type": "boolean",
+          "default": false,
           "description": "Prevent users from approving their own sessions.",
-          "default": false
+          "type": "boolean"
         },
-        "allowedApproverDomains": {
-          "type": "array",
-          "description": "Email domains allowed for approvers.",
-          "items": { "type": "string" }
+        "burst": {
+          "description": "Client rate limiting: burst size.",
+          "minimum": 1,
+          "type": "integer"
         },
-        "telemetry": {
-          "type": "object",
-          "description": "OpenTelemetry tracing configuration.",
+        "clusterID": {
+          "description": "Unique identifier for this cluster.",
+          "maxLength": 63,
+          "minLength": 1,
+          "type": "string"
+        },
+        "environment": {
+          "description": "Environment name (e.g. development, staging, production).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "identityProviderRefs": {
+          "description": "Restrict which IdentityProviders can authenticate for this cluster.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kubeconfigSecretRef": {
+          "description": "Reference to a Secret containing the cluster kubeconfig.",
           "properties": {
-            "enabled": { "type": "boolean", "default": false },
-            "exporter": {
-              "type": "string",
-              "enum": ["otlp", "stdout", "none"],
-              "default": "otlp"
+            "key": {
+              "description": "Key in the Secret data (defaults to 'value').",
+              "type": "string"
             },
-            "endpoint": { "type": "string" },
-            "insecure": { "type": "boolean", "default": false },
-            "samplingRate": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1,
-              "default": 1.0
+            "name": {
+              "type": "string"
+            },
+            "namespace": {
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "name",
+            "namespace"
+          ],
+          "type": "object"
         },
-        "circuitBreaker": {
-          "type": "object",
-          "description": "Circuit breaker for spoke cluster communication.",
+        "location": {
+          "description": "Optional location identifier.",
+          "type": "string"
+        },
+        "mailProvider": {
+          "description": "MailProvider CR name for cluster notifications.",
+          "type": "string"
+        },
+        "oidcAuth": {
+          "description": "Direct OIDC authentication configuration.",
           "properties": {
-            "enabled": { "type": "boolean", "default": false },
-            "failureThreshold": { "type": "integer", "minimum": 1, "default": 3 },
-            "successThreshold": { "type": "integer", "minimum": 1, "default": 2 },
-            "openDuration": { "type": "string", "default": "30s" },
-            "halfOpenMaxRequests": { "type": "integer", "minimum": 1, "default": 1 }
-          }
-        }
-      }
-    },
-    "escalations": {
-      "type": "array",
-      "description": "List of BreakglassEscalation resources to create.",
-      "default": [],
-      "items": {
-        "type": "object",
-        "required": ["escalatedGroup"],
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Escalation resource name. Defaults to escalation-<index> if omitted."
-          },
-          "allowed": {
-            "type": "object",
-            "properties": {
-              "clusters": {
-                "type": "array",
-                "items": { "type": "string" }
-              },
-              "groups": {
-                "type": "array",
-                "items": { "type": "string" }
-              }
-            }
-          },
-          "escalatedGroup": {
-            "type": "string",
-            "description": "Kubernetes group assigned during escalation."
-          },
-          "approvers": {
-            "type": "object",
-            "properties": {
-              "groups": {
-                "type": "array",
-                "items": { "type": "string" }
-              },
-              "users": {
-                "type": "array",
-                "items": { "type": "string" }
-              },
-              "hiddenFromUI": {
-                "type": "array",
-                "items": { "type": "string" }
-              }
-            }
-          },
-          "clusterConfigRefs": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "denyPolicyRefs": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "maxValidFor": { "type": "string" },
-          "retainFor": { "type": "string" },
-          "approvalTimeout": { "type": "string" },
-          "idleTimeout": { "type": "string" },
-          "sessionLimitsOverride": {
-            "type": "object",
-            "properties": {
-              "unlimited": { "type": "boolean" },
-              "maxActiveSessionsPerUser": { "type": "integer", "minimum": 1 },
-              "maxActiveSessionsTotal": { "type": "integer", "minimum": 1 }
-            }
-          },
-          "requestReason": {
-            "type": "object",
-            "properties": {
-              "mandatory": { "type": "boolean" },
-              "description": { "type": "string" },
-              "minLength": { "type": "integer" },
-              "maxLength": { "type": "integer" },
-              "suggestedReasons": {
-                "type": "array",
-                "items": { "type": "string" }
-              }
-            }
-          },
-          "approvalReason": {
-            "type": "object",
-            "properties": {
-              "mandatory": { "type": "boolean" },
-              "mandatoryForRejection": { "type": "boolean" },
-              "description": { "type": "string" },
-              "minLength": { "type": "integer" },
-              "maxLength": { "type": "integer" }
-            }
-          },
-          "allowedApproverDomains": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "blockSelfApproval": { "type": "boolean" },
-          "disableNotifications": { "type": "boolean" },
-          "notificationExclusions": {
-            "type": "object",
-            "properties": {
-              "users": { "type": "array", "items": { "type": "string" } },
-              "groups": { "type": "array", "items": { "type": "string" } }
-            }
-          },
-          "mailProvider": { "type": "string" },
-          "allowedIdentityProviders": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "allowedIdentityProvidersForRequests": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "allowedIdentityProvidersForApprovers": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "podSecurityOverrides": {
-            "type": "object",
-            "properties": {
-              "enabled": { "type": "boolean" },
-              "maxAllowedScore": { "type": "integer" },
-              "exemptFactors": { "type": "array", "items": { "type": "string" } },
-              "namespaceScope": {
-                "type": "object",
-                "properties": {
-                  "patterns": { "type": "array", "items": { "type": "string" } }
-                }
-              },
-              "requireApproval": { "type": "boolean" },
-              "approvers": {
-                "type": "object",
-                "properties": {
-                  "groups": { "type": "array", "items": { "type": "string" } },
-                  "users": { "type": "array", "items": { "type": "string" } }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "debugSessionBindings": {
-      "type": "array",
-      "description": "List of DebugSessionClusterBinding resources to create.",
-      "default": [],
-      "items": {
-        "type": "object",
-        "required": ["name"],
-        "properties": {
-          "name": { "type": "string" },
-          "displayName": { "type": "string" },
-          "description": { "type": "string" },
-          "templateRef": {
-            "type": "object",
-            "properties": {
-              "name": { "type": "string" }
-            }
-          },
-          "templateSelector": {
-            "type": "object",
-            "properties": {
-              "matchLabels": {
-                "type": "object",
-                "additionalProperties": { "type": "string" }
-              }
-            }
-          },
-          "displayNamePrefix": { "type": "string" },
-          "clusters": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "clusterSelector": {
-            "type": "object",
-            "properties": {
-              "matchLabels": {
-                "type": "object",
-                "additionalProperties": { "type": "string" }
-              }
-            }
-          },
-          "allowed": {
-            "type": "object",
-            "properties": {
-              "groups": { "type": "array", "items": { "type": "string" } },
-              "users": { "type": "array", "items": { "type": "string" } }
-            }
-          },
-          "approvers": {
-            "type": "object",
-            "properties": {
-              "groups": { "type": "array", "items": { "type": "string" } },
-              "users": { "type": "array", "items": { "type": "string" } },
-              "autoApproveFor": {
-                "type": "object",
-                "properties": {
-                  "groups": { "type": "array", "items": { "type": "string" } },
-                  "clusters": { "type": "array", "items": { "type": "string" } }
-                }
-              }
-            }
-          },
-          "schedulingConstraints": {
-            "type": "object",
-            "properties": {
-              "nodeSelector": {
-                "type": "object",
-                "additionalProperties": { "type": "string" }
-              },
-              "tolerations": { "type": "array" },
-              "topologySpreadConstraints": { "type": "array" },
-              "deniedNodes": { "type": "array", "items": { "type": "string" } },
-              "deniedNodeLabels": {
-                "type": "object",
-                "additionalProperties": { "type": "string" }
-              }
-            }
-          },
-          "constraints": {
-            "type": "object",
-            "properties": {
-              "maxDuration": { "type": "string" },
-              "defaultDuration": { "type": "string" },
-              "allowRenewal": { "type": "boolean" },
-              "maxRenewals": { "type": "integer" },
-              "maxConcurrentSessions": { "type": "integer" }
-            }
-          },
-          "namespaceConstraints": {
-            "type": "object",
-            "properties": {
-              "defaultNamespace": { "type": "string" },
-              "allowUserNamespace": { "type": "boolean" },
-              "createIfNotExists": { "type": "boolean" },
-              "allowedNamespaces": {
-                "type": "object",
-                "properties": {
-                  "patterns": { "type": "array", "items": { "type": "string" } }
-                }
-              }
-            }
-          },
-          "impersonation": {
-            "type": "object",
-            "properties": {
-              "serviceAccountRef": {
-                "type": "object",
-                "properties": {
-                  "name": { "type": "string" },
-                  "namespace": { "type": "string" }
-                }
-              }
-            }
-          },
-          "requiredAuxiliaryResourceCategories": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "auxiliaryResourceOverrides": {
-            "type": "object",
-            "additionalProperties": { "type": "boolean" }
-          },
-          "notification": {
-            "type": "object",
-            "properties": {
-              "enabled": { "type": "boolean" },
-              "notifyOnRequest": { "type": "boolean" },
-              "notifyOnApproval": { "type": "boolean" },
-              "notifyOnExpiry": { "type": "boolean" },
-              "notifyOnTermination": { "type": "boolean" },
-              "additionalRecipients": { "type": "array", "items": { "type": "string" } },
-              "excludedRecipients": {
-                "type": "object",
-                "properties": {
-                  "users": { "type": "array", "items": { "type": "string" } },
-                  "groups": { "type": "array", "items": { "type": "string" } }
-                }
-              }
-            }
-          },
-          "requestReason": {
-            "type": "object",
-            "properties": {
-              "mandatory": { "type": "boolean" },
-              "minLength": { "type": "integer" },
-              "maxLength": { "type": "integer" },
-              "description": { "type": "string" },
-              "suggestedReasons": { "type": "array", "items": { "type": "string" } }
-            }
-          },
-          "approvalReason": {
-            "type": "object",
-            "properties": {
-              "mandatory": { "type": "boolean" },
-              "mandatoryForRejection": { "type": "boolean" },
-              "minLength": { "type": "integer" },
-              "description": { "type": "string" }
-            }
-          },
-          "allowedPodOperations": {
-            "type": "object",
-            "properties": {
-              "exec": { "type": "boolean" },
-              "attach": { "type": "boolean" },
-              "logs": { "type": "boolean" },
-              "portForward": { "type": "boolean" }
-            }
-          },
-          "maxActiveSessionsPerUser": { "type": "integer", "minimum": 1 },
-          "maxActiveSessionsTotal": { "type": "integer", "minimum": 1 },
-          "priority": { "type": "integer" },
-          "effectiveFrom": { "type": "string", "format": "date-time" },
-          "expiresAt": { "type": "string", "format": "date-time" },
-          "disabled": { "type": "boolean" },
-          "hidden": { "type": "boolean" },
-          "labels": {
-            "type": "object",
-            "additionalProperties": { "type": "string" }
-          },
-          "annotations": {
-            "type": "object",
-            "additionalProperties": { "type": "string" }
-          }
-        }
-      }
-    },
-    "networkPolicy": {
-      "type": "object",
-      "description": "NetworkPolicy for the breakglass controller pods.",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "Create a NetworkPolicy with default deny-all ingress and explicit allow rules.",
-          "default": false
-        },
-        "apiPort": {
-          "type": "integer",
-          "description": "Container port for the HTTP API and frontend.",
-          "default": 8080,
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "metricsPort": {
-          "type": "integer",
-          "description": "Container port for Prometheus metrics.",
-          "default": 8081,
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "webhookMetricsPort": {
-          "type": "integer",
-          "description": "Container port for webhook metrics.",
-          "default": 8083,
-          "minimum": 0,
-          "maximum": 65535
-        },
-        "webhookPort": {
-          "type": "integer",
-          "description": "Container port for the Kubernetes authorization webhook.",
-          "default": 9443,
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "healthPort": {
-          "type": "integer",
-          "description": "Container port for liveness and readiness probes.",
-          "default": 8082,
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "ingressNamespaceSelector": {
-          "type": "object",
-          "description": "Namespace label selector restricting ingress on the API port. Empty allows all namespaces.",
-          "additionalProperties": { "type": "string" }
-        },
-        "metricsNamespaceSelector": {
-          "type": "object",
-          "description": "Namespace label selector restricting ingress on the metrics port. Empty allows all namespaces.",
-          "additionalProperties": { "type": "string" }
-        },
-        "additionalIngressRules": {
-          "type": "array",
-          "description": "Additional custom NetworkPolicy ingress rules appended to the defaults.",
-          "items": { "type": "object" },
-          "default": []
-        }
-      }
-    },
-    "denyPolicies": {
-      "type": "array",
-      "description": "List of DenyPolicy resources to create.",
-      "default": [],
-      "items": {
-        "type": "object",
-        "required": ["name"],
-        "properties": {
-          "name": { "type": "string" },
-          "appliesTo": {
-            "type": "object",
-            "properties": {
-              "clusters": { "type": "array", "items": { "type": "string" } },
-              "tenants": { "type": "array", "items": { "type": "string" } }
-            }
-          },
-          "rules": {
-            "type": "array",
-            "items": {
-              "type": "object",
+            "audience": {
+              "type": "string"
+            },
+            "caSecretRef": {
               "properties": {
-                "verbs": { "type": "array", "items": { "type": "string" } },
-                "apiGroups": { "type": "array", "items": { "type": "string" } },
-                "resources": { "type": "array", "items": { "type": "string" } },
-                "namespaces": {
-                  "type": "object",
-                  "properties": {
-                    "patterns": { "type": "array", "items": { "type": "string" } }
-                  }
-                }
-              }
-            }
-          },
-          "podSecurityRules": {
-            "type": "object",
-            "properties": {
-              "appliesTo": {
-                "type": "object",
-                "properties": {
-                  "subresources": { "type": "array", "items": { "type": "string" } }
-                }
-              },
-              "riskFactors": {
-                "type": "object",
-                "properties": {
-                  "hostNetwork": { "type": "integer" },
-                  "hostPID": { "type": "integer" },
-                  "hostIPC": { "type": "integer" },
-                  "privilegedContainer": { "type": "integer" },
-                  "hostPathWritable": { "type": "integer" },
-                  "hostPathReadOnly": { "type": "integer" },
-                  "runAsRoot": { "type": "integer" },
-                  "capabilities": {
-                    "type": "object",
-                    "additionalProperties": { "type": "integer" },
-                    "description": "Maps Linux capability names to risk scores."
-                  }
+                "key": {
+                  "type": "string"
                 },
-                "additionalProperties": false
-              },
-              "thresholds": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "maxScore": { "type": "integer" },
-                    "action": { "type": "string", "enum": ["allow", "warn", "deny"] },
-                    "reason": { "type": "string" }
-                  }
+                "name": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
                 }
               },
-              "blockFactors": { "type": "array", "items": { "type": "string" } },
-              "exemptions": {
-                "type": "object",
-                "properties": {
-                  "namespaces": {
-                    "type": "object",
-                    "properties": {
-                      "patterns": { "type": "array", "items": { "type": "string" } }
+              "type": "object"
+            },
+            "clientID": {
+              "type": "string"
+            },
+            "clientSecretRef": {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "insecureSkipTLSVerify": {
+              "default": false,
+              "type": "boolean"
+            },
+            "issuerURL": {
+              "format": "uri",
+              "type": "string"
+            },
+            "scopes": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "server": {
+              "format": "uri",
+              "type": "string"
+            },
+            "tokenExchange": {
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "resource": {
+                  "type": "string"
+                },
+                "subjectTokenSecretRef": {
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "namespace": {
+                      "type": "string"
                     }
                   },
-                  "podLabels": {
-                    "type": "object",
-                    "additionalProperties": { "type": "string" }
-                  }
+                  "type": "object"
                 }
               },
-              "failMode": { "type": "string", "enum": ["open", "closed"] }
+              "type": "object"
             }
           },
-          "precedence": { "type": "integer", "default": 100 }
+          "type": "object"
+        },
+        "oidcFromIdentityProvider": {
+          "description": "OIDC configuration from an existing IdentityProvider resource.",
+          "properties": {
+            "caSecretRef": {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "clientID": {
+              "type": "string"
+            },
+            "clientSecretRef": {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "insecureSkipTLSVerify": {
+              "default": false,
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "server": {
+              "format": "uri",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "qps": {
+          "description": "Client rate limiting: queries per second.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "site": {
+          "description": "Optional site identifier.",
+          "type": "string"
+        },
+        "tenant": {
+          "description": "Tenant name for the cluster.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "userIdentifierClaim": {
+          "description": "OIDC claim for username extraction.",
+          "enum": [
+            "email",
+            "preferred_username",
+            "sub"
+          ],
+          "type": "string"
         }
-      }
+      },
+      "required": [
+        "clusterID",
+        "tenant",
+        "environment"
+      ],
+      "type": "object"
+    },
+    "debugSessionBindings": {
+      "default": [],
+      "description": "List of DebugSessionClusterBinding resources to create.",
+      "items": {
+        "properties": {
+          "allowed": {
+            "properties": {
+              "groups": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "users": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "allowedPodOperations": {
+            "properties": {
+              "attach": {
+                "type": "boolean"
+              },
+              "exec": {
+                "type": "boolean"
+              },
+              "logs": {
+                "type": "boolean"
+              },
+              "portForward": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "annotations": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "approvalReason": {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "mandatory": {
+                "type": "boolean"
+              },
+              "mandatoryForRejection": {
+                "type": "boolean"
+              },
+              "minLength": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "approvers": {
+            "properties": {
+              "autoApproveFor": {
+                "properties": {
+                  "clusters": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "groups": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "groups": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "users": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "auxiliaryResourceOverrides": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object"
+          },
+          "clusterSelector": {
+            "properties": {
+              "matchLabels": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "clusters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "constraints": {
+            "properties": {
+              "allowRenewal": {
+                "type": "boolean"
+              },
+              "defaultDuration": {
+                "type": "string"
+              },
+              "maxConcurrentSessions": {
+                "type": "integer"
+              },
+              "maxDuration": {
+                "type": "string"
+              },
+              "maxRenewals": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "description": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "displayNamePrefix": {
+            "type": "string"
+          },
+          "effectiveFrom": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "impersonation": {
+            "properties": {
+              "serviceAccountRef": {
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "maxActiveSessionsPerUser": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxActiveSessionsTotal": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespaceConstraints": {
+            "properties": {
+              "allowUserNamespace": {
+                "type": "boolean"
+              },
+              "allowedNamespaces": {
+                "properties": {
+                  "patterns": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "createIfNotExists": {
+                "type": "boolean"
+              },
+              "defaultNamespace": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "notification": {
+            "properties": {
+              "additionalRecipients": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "excludedRecipients": {
+                "properties": {
+                  "groups": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "users": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "notifyOnApproval": {
+                "type": "boolean"
+              },
+              "notifyOnExpiry": {
+                "type": "boolean"
+              },
+              "notifyOnRequest": {
+                "type": "boolean"
+              },
+              "notifyOnTermination": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "requestReason": {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "mandatory": {
+                "type": "boolean"
+              },
+              "maxLength": {
+                "type": "integer"
+              },
+              "minLength": {
+                "type": "integer"
+              },
+              "suggestedReasons": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "requiredAuxiliaryResourceCategories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "schedulingConstraints": {
+            "properties": {
+              "deniedNodeLabels": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "deniedNodes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "nodeSelector": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "tolerations": {
+                "type": "array"
+              },
+              "topologySpreadConstraints": {
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "templateRef": {
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "templateSelector": {
+            "properties": {
+              "matchLabels": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "denyPolicies": {
+      "default": [],
+      "description": "List of DenyPolicy resources to create.",
+      "items": {
+        "properties": {
+          "appliesTo": {
+            "properties": {
+              "clusters": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tenants": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "podSecurityRules": {
+            "properties": {
+              "appliesTo": {
+                "properties": {
+                  "subresources": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "blockFactors": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "exemptions": {
+                "properties": {
+                  "namespaces": {
+                    "properties": {
+                      "patterns": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "podLabels": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "failMode": {
+                "enum": [
+                  "open",
+                  "closed"
+                ],
+                "type": "string"
+              },
+              "riskFactors": {
+                "additionalProperties": false,
+                "properties": {
+                  "capabilities": {
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Maps Linux capability names to risk scores.",
+                    "type": "object"
+                  },
+                  "hostIPC": {
+                    "type": "integer"
+                  },
+                  "hostNetwork": {
+                    "type": "integer"
+                  },
+                  "hostPID": {
+                    "type": "integer"
+                  },
+                  "hostPathReadOnly": {
+                    "type": "integer"
+                  },
+                  "hostPathWritable": {
+                    "type": "integer"
+                  },
+                  "privilegedContainer": {
+                    "type": "integer"
+                  },
+                  "runAsRoot": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "thresholds": {
+                "items": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "allow",
+                        "warn",
+                        "deny"
+                      ],
+                      "type": "string"
+                    },
+                    "maxScore": {
+                      "type": "integer"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "precedence": {
+            "default": 100,
+            "type": "integer"
+          },
+          "rules": {
+            "items": {
+              "properties": {
+                "apiGroups": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "namespaces": {
+                  "properties": {
+                    "patterns": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "resources": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "verbs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "escalations": {
+      "default": [],
+      "description": "List of BreakglassEscalation resources to create.",
+      "items": {
+        "properties": {
+          "allowed": {
+            "properties": {
+              "clusters": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "groups": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "allowedApproverDomains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "allowedIdentityProviders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "allowedIdentityProvidersForApprovers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "allowedIdentityProvidersForRequests": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "approvalReason": {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "mandatory": {
+                "type": "boolean"
+              },
+              "mandatoryForRejection": {
+                "type": "boolean"
+              },
+              "maxLength": {
+                "type": "integer"
+              },
+              "minLength": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "approvalTimeout": {
+            "type": "string"
+          },
+          "approvers": {
+            "properties": {
+              "groups": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "hiddenFromUI": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "users": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "blockSelfApproval": {
+            "type": "boolean"
+          },
+          "clusterConfigRefs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "denyPolicyRefs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "disableNotifications": {
+            "type": "boolean"
+          },
+          "escalatedGroup": {
+            "description": "Kubernetes group assigned during escalation.",
+            "type": "string"
+          },
+          "idleTimeout": {
+            "type": "string"
+          },
+          "mailProvider": {
+            "type": "string"
+          },
+          "maxValidFor": {
+            "type": "string"
+          },
+          "name": {
+            "description": "Escalation resource name. Defaults to escalation-\u003cindex\u003e if omitted.",
+            "type": "string"
+          },
+          "notificationExclusions": {
+            "properties": {
+              "groups": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "users": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "podSecurityOverrides": {
+            "properties": {
+              "approvers": {
+                "properties": {
+                  "groups": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "users": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "exemptFactors": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "maxAllowedScore": {
+                "type": "integer"
+              },
+              "namespaceScope": {
+                "properties": {
+                  "patterns": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "requireApproval": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "requestReason": {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "mandatory": {
+                "type": "boolean"
+              },
+              "maxLength": {
+                "type": "integer"
+              },
+              "minLength": {
+                "type": "integer"
+              },
+              "suggestedReasons": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "retainFor": {
+            "type": "string"
+          },
+          "sessionLimitsOverride": {
+            "properties": {
+              "maxActiveSessionsPerUser": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "maxActiveSessionsTotal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "unlimited": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "escalatedGroup"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "networkPolicy": {
+      "description": "NetworkPolicy for the breakglass controller pods.",
+      "properties": {
+        "additionalIngressRules": {
+          "default": [],
+          "description": "Additional custom NetworkPolicy ingress rules appended to the defaults.",
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "apiPort": {
+          "default": 8080,
+          "description": "Container port for the HTTP API and frontend.",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Create a NetworkPolicy with default deny-all ingress and explicit allow rules.",
+          "type": "boolean"
+        },
+        "healthPort": {
+          "default": 8082,
+          "description": "Container port for liveness and readiness probes.",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ingressNamespaceSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Namespace label selector restricting ingress on the API port. Empty allows all namespaces.",
+          "type": "object"
+        },
+        "metricsNamespaceSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Namespace label selector restricting ingress on the metrics port. Empty allows all namespaces.",
+          "type": "object"
+        },
+        "metricsPort": {
+          "default": 8081,
+          "description": "Container port for Prometheus metrics.",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "webhookMetricsPort": {
+          "default": 8083,
+          "description": "Container port for webhook metrics.",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "webhookPort": {
+          "default": 9443,
+          "description": "Container port for the Kubernetes authorization webhook.",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
     }
-  }
+  },
+  "required": [
+    "cluster"
+  ],
+  "title": "Breakglass Escalation Config Helm Values",
+  "type": "object"
 }
