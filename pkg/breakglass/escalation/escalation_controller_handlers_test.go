@@ -17,6 +17,18 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+func decodeEscalationListEnvelope(t *testing.T, w *httptest.ResponseRecorder) []breakglassv1alpha1.BreakglassEscalation {
+	t.Helper()
+	var envelope struct {
+		Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+		Total int                                        `json:"total"`
+	}
+	if err := json.NewDecoder(w.Result().Body).Decode(&envelope); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	return envelope.Items
+}
+
 // TestHandleGetEscalations_ReturnsEscalationsForTokenGroups
 //
 // Purpose:
@@ -83,10 +95,7 @@ func TestHandleGetEscalations_ReturnsEscalationsForTokenGroups(t *testing.T) {
 		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
 	}
 
-	var out []breakglassv1alpha1.BreakglassEscalation
-	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	out := decodeEscalationListEnvelope(t, w)
 
 	// Only esc1 should be returned because the token groups include system:authenticated
 	if len(out) != 1 {
@@ -165,10 +174,7 @@ func TestHandleGetEscalations_HidesEscalationsForUnreadyClusterConfig(t *testing
 		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
 	}
 
-	var out []breakglassv1alpha1.BreakglassEscalation
-	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	out := decodeEscalationListEnvelope(t, w)
 	if len(out) != 1 {
 		t.Fatalf("expected only ready escalation, got %#v", out)
 	}
@@ -244,10 +250,7 @@ func TestHandleGetEscalations_ClusterFilterGlobUsesClusterConfigReadiness(t *tes
 				t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
 			}
 
-			var out []breakglassv1alpha1.BreakglassEscalation
-			if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
+			out := decodeEscalationListEnvelope(t, w)
 			if len(out) != tt.wantCount {
 				t.Fatalf("expected %d escalations, got %#v", tt.wantCount, out)
 			}
@@ -314,10 +317,7 @@ func TestHandleGetEscalations_HidesEscalationsForDuplicateClusterConfigNames(t *
 		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
 	}
 
-	var out []breakglassv1alpha1.BreakglassEscalation
-	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	out := decodeEscalationListEnvelope(t, w)
 	if len(out) != 0 {
 		t.Fatalf("expected duplicate cluster config name to hide escalation, got %#v", out)
 	}
