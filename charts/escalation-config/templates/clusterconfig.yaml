@@ -3,6 +3,8 @@ kind: ClusterConfig
 metadata:
   name: {{ required "cluster.clusterID is required" .Values.cluster.clusterID | trunc 63 | trimSuffix "-" | quote }}
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "escalation-config.labels" . | nindent 4 }}
 spec:
   clusterID: {{ .Values.cluster.clusterID | quote }}
   tenant: {{ .Values.cluster.tenant | quote }}

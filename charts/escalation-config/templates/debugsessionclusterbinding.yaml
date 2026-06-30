@@ -7,8 +7,9 @@ kind: DebugSessionClusterBinding
 metadata:
   name: {{ required "debugSessionBindings[].name is required" $binding.name | trunc 63 | trimSuffix "-" }}
   namespace: {{ $.Release.Namespace }}
-  {{- if $binding.labels }}
   labels:
+    {{- include "escalation-config.labels" $ | nindent 4 }}
+  {{- if $binding.labels }}
 {{ toYaml $binding.labels | indent 4 }}
   {{- end }}
   {{- if $binding.annotations }}

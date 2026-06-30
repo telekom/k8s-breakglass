@@ -3,8 +3,9 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DenyPolicy
 metadata:
   name: {{ required "denyPolicies[].name is required" $policy.name | trunc 63 | trimSuffix "-" }}
-  {{- if $policy.labels }}
   labels:
+    {{- include "escalation-config.labels" $ | nindent 4 }}
+  {{- if $policy.labels }}
 {{ toYaml $policy.labels | indent 4 }}
   {{- end }}
   {{- if $policy.annotations }}
