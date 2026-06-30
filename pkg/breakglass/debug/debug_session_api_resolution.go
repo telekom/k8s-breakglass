@@ -114,7 +114,9 @@ func (c *DebugSessionAPIController) resolveSchedulingOptions(template *breakglas
 	return response
 }
 
-// resolveNamespaceConstraints resolves the restrictive effective namespace constraints.
+// resolveNamespaceConstraints builds API-visible namespace constraint hints.
+// Runtime validation still checks template and binding constraints separately;
+// response allow filters are only surfaced when they are safe static hints.
 func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *NamespaceConstraintsResponse {
 	var bindingConstraints *breakglassv1alpha1.NamespaceConstraints
 	if binding != nil {
@@ -123,6 +125,13 @@ func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *breakg
 	nc := c.mergeNamespaceConstraints(template.Spec.NamespaceConstraints, bindingConstraints)
 	if nc == nil {
 		return nil
+	}
+	if template.Spec.NamespaceConstraints != nil && bindingConstraints != nil {
+		nc = nc.DeepCopy()
+		nc.AllowedNamespaces = mergeAllowedNamespaceFiltersForResponse(
+			template.Spec.NamespaceConstraints.AllowedNamespaces,
+			bindingConstraints.AllowedNamespaces,
+		)
 	}
 
 	response := &NamespaceConstraintsResponse{

@@ -3,6 +3,7 @@ package debug
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -200,6 +201,67 @@ func (c *DebugSessionAPIController) mergeNamespaceConstraints(
 	}
 
 	return merged
+}
+
+func mergeAllowedNamespaceFiltersForResponse(
+	templateFilter, bindingFilter *breakglassv1alpha1.NamespaceFilter,
+) *breakglassv1alpha1.NamespaceFilter {
+	if templateFilter == nil || templateFilter.IsEmpty() {
+		if bindingFilter == nil || bindingFilter.IsEmpty() {
+			return nil
+		}
+		return bindingFilter.DeepCopy()
+	}
+	if bindingFilter == nil || bindingFilter.IsEmpty() {
+		return templateFilter.DeepCopy()
+	}
+
+	merged := &breakglassv1alpha1.NamespaceFilter{}
+	for _, pattern := range bindingFilter.Patterns {
+		if namespacePatternSubsetOfAny(pattern, templateFilter.Patterns) {
+			merged.Patterns = append(merged.Patterns, pattern)
+		}
+	}
+	if merged.IsEmpty() {
+		return nil
+	}
+	return merged
+}
+
+func namespacePatternSubsetOfAny(pattern string, allowedPatterns []string) bool {
+	for _, allowed := range allowedPatterns {
+		if namespacePatternSubsetOf(pattern, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func namespacePatternSubsetOf(pattern, allowedPattern string) bool {
+	if allowedPattern == "*" || pattern == allowedPattern {
+		return true
+	}
+	if !namespacePatternHasGlob(pattern) {
+		return matchPattern(allowedPattern, pattern)
+	}
+	allowedPrefix, allowedOK := namespaceTrailingStarPrefix(allowedPattern)
+	patternPrefix, patternOK := namespaceTrailingStarPrefix(pattern)
+	return allowedOK && patternOK && strings.HasPrefix(patternPrefix, allowedPrefix)
+}
+
+func namespacePatternHasGlob(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?[")
+}
+
+func namespaceTrailingStarPrefix(pattern string) (string, bool) {
+	if strings.Count(pattern, "*") != 1 || !strings.HasSuffix(pattern, "*") {
+		return "", false
+	}
+	prefix := strings.TrimSuffix(pattern, "*")
+	if strings.ContainsAny(prefix, "?[") {
+		return "", false
+	}
+	return prefix, true
 }
 
 func namespaceAllowedByConstraintFilters(namespace string, constraints *breakglassv1alpha1.NamespaceConstraints) bool {

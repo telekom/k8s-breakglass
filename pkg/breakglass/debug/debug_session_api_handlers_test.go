@@ -2403,6 +2403,42 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Equal(t, []string{"safe-team-*"}, response.AllowedPatterns)
 	})
 
+	t.Run("binding response does not widen template allowed namespace hints", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-response-intersection"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"debug-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "response-binding-widening",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"team-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		response := ctrl.resolveNamespaceConstraints(template, binding)
+
+		require.NotNil(t, response)
+		assert.Empty(t, response.AllowedPatterns)
+		_, err := ctrl.resolveTargetNamespace(template, "team-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+	})
+
 	// =========================================================================
 	// Additional binding override tests - comprehensive edge cases
 	// =========================================================================

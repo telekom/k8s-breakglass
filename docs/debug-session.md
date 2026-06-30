@@ -929,14 +929,14 @@ When a user creates a debug session:
 1. **No namespace specified**: Uses `defaultNamespace` from constraints
 2. **Namespace specified + `allowUserNamespace: false`**: Request rejected
 3. **Namespace specified + `allowUserNamespace: true`**: 
-   - Validated against `allowedNamespaces` patterns/selectors
-   - Validated against `deniedNamespaces` (deny takes precedence)
+   - Validated against `allowedNamespaces` name patterns. Selector terms may be returned to clients when they can be represented safely, but a create request that only supplies a namespace name is not accepted by selector-only allow rules unless an allowed name pattern also matches.
+   - Validated against `deniedNamespaces` name patterns (deny takes precedence). Selector terms are not treated as global name matches in the name-only validation path.
    - If a `DebugSessionClusterBinding` is selected, the namespace must satisfy both the template constraints and the binding constraints
 4. **Namespace doesn't exist**: 
    - `createIfNotExists: true`: Creates namespace with `namespaceLabels`
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
-The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace selectors and cluster state.
+The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace constraints and cluster state.
 Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read.
 
 ### Example: Team-Isolated Debug Namespaces
