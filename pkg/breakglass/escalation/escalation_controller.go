@@ -191,7 +191,8 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	}
 
 	reqLog.Debugw("Returning escalations response (filtered, hidden groups removed)", "responseCount", len(response))
-	c.JSON(http.StatusOK, dropK8sInternalFieldsEscalationList(response))
+	items := dropK8sInternalFieldsEscalationList(response)
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
 }
 
 func (*BreakglassEscalationController) BasePath() string {
