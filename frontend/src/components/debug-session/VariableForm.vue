@@ -457,12 +457,21 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             {{ variable.displayName || variable.name }}
             <span v-if="variable.required" class="required-marker">*</span>
           </label>
-          <p v-if="getHelperText(variable)" class="multi-select-description">{{ getHelperText(variable) }}</p>
+          <p v-if="getHelperText(variable)" :id="`multi-desc-${variable.name}`" class="multi-select-description">
+            {{ getHelperText(variable) }}
+          </p>
           <div
             class="multi-select-options"
             role="group"
             :aria-labelledby="`multi-label-${variable.name}`"
-            :aria-describedby="getError(variable.name) ? `multi-error-${variable.name}` : undefined"
+            :aria-describedby="
+              [
+                getHelperText(variable) ? `multi-desc-${variable.name}` : '',
+                getError(variable.name) ? `multi-error-${variable.name}` : '',
+              ]
+                .filter(Boolean)
+                .join(' ') || undefined
+            "
             :data-testid="`input-${variable.name}`"
           >
             <scale-checkbox
@@ -597,12 +606,21 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
               {{ variable.displayName || variable.name }}
               <span v-if="variable.required" class="required-marker">*</span>
             </label>
-            <p v-if="getHelperText(variable)" class="multi-select-description">{{ getHelperText(variable) }}</p>
+            <p v-if="getHelperText(variable)" :id="`adv-multi-desc-${variable.name}`" class="multi-select-description">
+              {{ getHelperText(variable) }}
+            </p>
             <div
               class="multi-select-options"
               role="group"
               :aria-labelledby="`adv-multi-label-${variable.name}`"
-              :aria-describedby="getError(variable.name) ? `adv-multi-error-${variable.name}` : undefined"
+              :aria-describedby="
+                [
+                  getHelperText(variable) ? `adv-multi-desc-${variable.name}` : '',
+                  getError(variable.name) ? `adv-multi-error-${variable.name}` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              "
               :data-testid="`input-${variable.name}`"
             >
               <scale-checkbox
