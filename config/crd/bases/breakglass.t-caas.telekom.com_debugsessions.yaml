@@ -193,6 +193,7 @@ spec:
                 description: |-
                   requestedDuration is the desired session duration (e.g., "2h").
                   Must not exceed the template's maxDuration constraint.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               resolvedSchedulingConstraints:
                 description: |-
@@ -2773,6 +2774,7 @@ spec:
                         default: 1h
                         description: defaultDuration is the default session duration
                           if not specified.
+                        pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                         type: string
                       maxConcurrentSessions:
                         default: 2
@@ -2783,6 +2785,7 @@ spec:
                       maxDuration:
                         default: 4h
                         description: maxDuration is the maximum allowed session duration.
+                        pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                         type: string
                       maxRenewals:
                         description: |-
@@ -3410,6 +3413,7 @@ spec:
                             default: 2h
                             description: ttl specifies how long copied pods live before
                               auto-deletion.
+                            pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                             type: string
                         type: object
                     type: object

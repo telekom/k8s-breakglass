@@ -143,6 +143,7 @@ spec:
                 default: 1h
                 description: maxValidFor is the maximum amount of time the session
                   will be active for after it is approved.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               requestReason:
                 description: |-
@@ -168,6 +169,7 @@ spec:
                 default: 720h
                 description: retainFor is the amount of time to wait before removing
                   the session object after it was expired.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               scheduledStartTime:
                 description: |-

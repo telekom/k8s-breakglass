@@ -105,6 +105,7 @@ type DebugSessionSpec struct {
 	// requestedDuration is the desired session duration (e.g., "2h").
 	// Must not exceed the template's maxDuration constraint.
 	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	RequestedDuration string `json:"requestedDuration,omitempty"`
 
 	// reason explains why the debug session is needed.

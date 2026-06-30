@@ -278,6 +278,29 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "cluster")
 	})
 
+	t.Run("invalid retainFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.RetainFor = "invalid"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
+	})
+
+	t.Run("valid retainFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.RetainFor = "2h"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid())
+	})
+
+	t.Run("invalid maxValidFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.MaxValidFor = "invalid"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
+	})
+
 	t.Run("missing user", func(t *testing.T) {
 		s := validSession()
 		s.Spec.User = ""
@@ -1794,6 +1817,43 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 				Mode: DebugSessionModeWorkload,
 				PodTemplateRef: &DebugPodTemplateReference{
 					Name: "pod-template",
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("invalid podCopy TTL", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeKubectlDebug,
+				KubectlDebug: &KubectlDebugConfig{
+					PodCopy: &PodCopyConfig{
+						TTL: "invalid",
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "ttl")
+	})
+
+	t.Run("valid podCopy TTL", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeKubectlDebug,
+				KubectlDebug: &KubectlDebugConfig{
+					PodCopy: &PodCopyConfig{
+						TTL: "2h",
+					},
 				},
 			},
 		}
