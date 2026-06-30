@@ -85,7 +85,8 @@ function normalizeMultiIDPConfig(value: unknown): MultiIDPConfig {
  * 1. List of enabled IDPs for dropdown rendering
  * 2. Escalation→IDP mappings for authorization enforcement
  *
- * @returns MultiIDPConfig with IDPs and escalation mappings, or empty defaults on error
+ * @returns MultiIDPConfig with IDPs and escalation mappings
+ * @throws {Error} if fetching the multi-IDP configuration fails
  */
 export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
   try {

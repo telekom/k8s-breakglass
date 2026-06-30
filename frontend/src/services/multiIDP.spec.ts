@@ -20,11 +20,13 @@ vi.mock("@/services/logger", () => ({
 
 const mockedAxios = axios as unknown as { get: Mock };
 const mockedLogError = logError as Mock;
+const mockedHandleAxiosError = handleAxiosError as Mock;
 
 describe("multiIDP service", () => {
   beforeEach(() => {
     mockedAxios.get.mockReset();
     mockedLogError.mockReset();
+    mockedHandleAxiosError.mockReset();
   });
 
   it("fetches multi-IDP config from the API", async () => {
