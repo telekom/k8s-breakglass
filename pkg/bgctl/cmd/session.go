@@ -368,13 +368,17 @@ func newSessionRejectCommand() *cobra.Command {
 }
 
 func newSessionWithdrawCommand() *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   "withdraw NAME",
 		Short: "Withdraw your pending session",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
+				return err
+			}
+			if err := confirmAction(cmd, rt, "withdraw", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)
@@ -393,16 +397,22 @@ func newSessionWithdrawCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm destruction")
+	return cmd
 }
 
 func newSessionDropCommand() *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   "drop NAME",
 		Short: "Drop an approved session",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
+				return err
+			}
+			if err := confirmAction(cmd, rt, "drop", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)
@@ -421,16 +431,22 @@ func newSessionDropCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm destruction")
+	return cmd
 }
 
 func newSessionCancelCommand() *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   "cancel NAME",
 		Short: "Cancel a session as approver",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
+				return err
+			}
+			if err := confirmAction(cmd, rt, "cancel", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)
@@ -449,4 +465,6 @@ func newSessionCancelCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm destruction")
+	return cmd
 }
