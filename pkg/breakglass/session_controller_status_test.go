@@ -3,9 +3,10 @@ package breakglass
 import (
 	"context"
 	"testing"
+
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap/zaptest"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -16,7 +17,7 @@ func TestCheckSessionLimits_MissingIDP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	
+
 	wc := &BreakglassSessionController{
 		sessionManager: &SessionManager{
 			Client: fakeClient,

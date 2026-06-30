@@ -84,6 +84,7 @@ type DenyRule struct {
 	// subresources (e.g. status). If empty matches none (only main resource). Use "*" for any.
 	// +optional
 	// +kubebuilder:validation:MaxItems=20
+	// +kubebuilder:validation:MaxItems=20
 	Subresources []string `json:"subresources,omitempty"`
 }
 
@@ -128,6 +129,7 @@ type PodSecurityRules struct {
 type PodSecurityScope struct {
 	// subresources to evaluate. If empty, defaults to ["exec", "attach", "portforward"].
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	Subresources []string `json:"subresources,omitempty"`
 }
 
