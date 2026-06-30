@@ -73,7 +73,7 @@ func newEscalationGetCommand() *cobra.Command {
 				return output.WriteObject(rt.Writer(), format, esc)
 			case output.FormatTable, output.FormatWide:
 				// No table formatter for single escalation — fall back to YAML
-				return output.WriteObject(rt.Writer(), output.FormatYAML, esc)
+				return output.WriteObject(rt.Writer(), format, esc)
 			default:
 				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
