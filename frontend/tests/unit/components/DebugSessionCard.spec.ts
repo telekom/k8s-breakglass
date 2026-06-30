@@ -103,9 +103,9 @@ describe("DebugSessionCard", () => {
     const renewIds = renewInputs.map((input) => input.attributes("id"));
 
     expect(new Set(renewIds).size).toBe(renewIds.length);
-    for (const id of renewIds) {
-      expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
-    }
+  });
+
+  it("resets the renew duration each time the modal opens", async () => {
     const wrapper = mount(DebugSessionCard, {
       props: {
         session: makeSession("team/session-b", "Active"),

@@ -1071,7 +1071,11 @@ func isValidTokenEndpointURL(tokenURL string) bool {
 	if err != nil {
 		return false
 	}
-	if u.Scheme != "https" || u.Host == "" {
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return false
+	}
+	if u.Scheme == "http" && !strings.HasPrefix(u.Host, "127.0.0.1:") && !strings.HasPrefix(u.Host, "localhost:") && u.Host != "127.0.0.1" && u.Host != "localhost" {
+		// Only allow HTTP for local loopback testing
 		return false
 	}
 	if u.Fragment != "" || u.User != nil {

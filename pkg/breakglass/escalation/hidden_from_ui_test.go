@@ -76,30 +76,30 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 	}
 
 	// Parse response
-	var escList []breakglassv1alpha1.BreakglassEscalation
-	err := json.Unmarshal(w.Body.Bytes(), &escList)
-	require.NoError(t, err)
+	var resp struct { Items []breakglassv1alpha1.BreakglassEscalation `json:"items"` }
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err, "body: %s", w.Body.String())
 
-	if len(escList) != 1 {
-		t.Fatalf("expected 1 escalation, got %d", len(escList))
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 escalation, got %d", len(resp.Items))
 	}
 
-	resp := escList[0]
+	item := resp.Items[0]
 
 	// Verify hidden groups are removed
-	for _, group := range resp.Spec.Approvers.Groups {
+	for _, group := range item.Spec.Approvers.Groups {
 		if group == "flm-on-duty" || group == "on-call" {
 			t.Fatalf("hidden group should be removed from response: %s", group)
 		}
 	}
 
 	// Verify visible group is present
-	if len(resp.Spec.Approvers.Groups) != 1 || resp.Spec.Approvers.Groups[0] != "security-team" {
-		t.Fatalf("expected only visible group 'security-team', got: %v", resp.Spec.Approvers.Groups)
+	if len(item.Spec.Approvers.Groups) != 1 || item.Spec.Approvers.Groups[0] != "security-team" {
+		t.Fatalf("expected only visible group 'security-team', got: %v", item.Spec.Approvers.Groups)
 	}
 
 	// Verify HiddenFromUI field is removed from response
-	if len(resp.Spec.Approvers.HiddenFromUI) > 0 {
-		t.Fatalf("HiddenFromUI field should be removed from response, got: %v", resp.Spec.Approvers.HiddenFromUI)
+	if len(item.Spec.Approvers.HiddenFromUI) > 0 {
+		t.Fatalf("HiddenFromUI field should be removed from response, got: %v", item.Spec.Approvers.HiddenFromUI)
 	}
 }
