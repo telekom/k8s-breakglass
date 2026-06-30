@@ -1005,8 +1005,22 @@ current-context: test
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	// 3) Force the canonical breaker to CircuitOpen
 	canonicalKey := cacheKey(cc.Namespace, cc.Name)
+	epoch, err := p.AllowCluster("test-cluster")
+	require.NoError(t, err)
+	p.RecordFailureAtEpoch("test-cluster", epoch, context.DeadlineExceeded)
+	p.RecordSuccessAtEpoch("test-cluster", epoch)
+	p.RecordFailure("test-cluster", context.DeadlineExceeded)
+	p.RecordSuccess("test-cluster")
+
+	p.circuitBreakers.mu.RLock()
+	_, canonicalTracked := p.circuitBreakers.breakers[canonicalKey]
+	_, bareTracked := p.circuitBreakers.breakers["test-cluster"]
+	p.circuitBreakers.mu.RUnlock()
+	assert.True(t, canonicalTracked, "manual circuit breaker helpers should use the canonical key")
+	assert.False(t, bareTracked, "manual circuit breaker helpers must not create a duplicate bare-name breaker")
+
+	// 3) Force the canonical breaker to CircuitOpen
 	cb := p.circuitBreakers.Get(canonicalKey)
 	require.NotNil(t, cb)
 	cb.mu.Lock()

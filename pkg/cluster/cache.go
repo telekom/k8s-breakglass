@@ -823,6 +823,19 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 	}
 }
 
+func (p *ClientProvider) canonicalBreakerKey(clusterName string) string {
+	if ns, name, ok := splitNamespacedName(clusterName); ok {
+		return cacheKey(ns, name)
+	}
+	p.mu.RLock()
+	canonical, ok := p.bareToCanonical[clusterName]
+	p.mu.RUnlock()
+	if ok {
+		return canonical
+	}
+	return clusterName
+}
+
 // AllowCluster checks whether a non-HTTP operation may start and returns the
 // circuit breaker epoch that must be passed to RecordSuccessAtEpoch or
 // RecordFailureAtEpoch when that operation completes.
@@ -830,7 +843,7 @@ func (p *ClientProvider) AllowCluster(clusterName string) (int64, error) {
 	if p.circuitBreakers == nil || !p.circuitBreakers.IsEnabled() {
 		return 0, nil
 	}
-	return p.circuitBreakers.Get(clusterName).Allow()
+	return p.circuitBreakers.Get(p.canonicalBreakerKey(clusterName)).Allow()
 }
 
 // RecordSuccessAtEpoch notifies the circuit breaker that an operation admitted
@@ -838,7 +851,7 @@ func (p *ClientProvider) AllowCluster(clusterName string) (int64, error) {
 // an open/half-open transition cannot corrupt the current state.
 func (p *ClientProvider) RecordSuccessAtEpoch(clusterName string, epoch int64) {
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
-		p.circuitBreakers.Get(clusterName).RecordSuccess(epoch)
+		p.circuitBreakers.Get(p.canonicalBreakerKey(clusterName)).RecordSuccess(epoch)
 	}
 }
 
@@ -847,7 +860,7 @@ func (p *ClientProvider) RecordSuccessAtEpoch(clusterName string, epoch int64) {
 // open/half-open transition cannot corrupt the current state.
 func (p *ClientProvider) RecordFailureAtEpoch(clusterName string, epoch int64, err error) {
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
-		p.circuitBreakers.Get(clusterName).RecordFailure(epoch, err)
+		p.circuitBreakers.Get(p.canonicalBreakerKey(clusterName)).RecordFailure(epoch, err)
 	}
 }
 
@@ -857,7 +870,7 @@ func (p *ClientProvider) RecordFailureAtEpoch(clusterName string, epoch int64, e
 // clusterName should be the canonical "namespace/name" key.
 func (p *ClientProvider) RecordSuccess(clusterName string) {
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
-		cb := p.circuitBreakers.Get(clusterName)
+		cb := p.circuitBreakers.Get(p.canonicalBreakerKey(clusterName))
 		cb.RecordSuccess(cb.Generation())
 	}
 }
@@ -869,7 +882,7 @@ func (p *ClientProvider) RecordSuccess(clusterName string) {
 // clusterName should be the canonical "namespace/name" key.
 func (p *ClientProvider) RecordFailure(clusterName string, err error) {
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
-		cb := p.circuitBreakers.Get(clusterName)
+		cb := p.circuitBreakers.Get(p.canonicalBreakerKey(clusterName))
 		cb.RecordFailure(cb.Generation(), err)
 	}
 }
