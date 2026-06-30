@@ -1103,7 +1103,6 @@ func tokenEndpointHostMatchesIssuer(tokenURL, issuerURL string) bool {
 	return tPort == iPort
 }
 
-
 // getClientSecret retrieves the client secret from the referenced secret
 func (p *OIDCTokenProvider) getClientSecret(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig) (string, error) {
 	if oidc.ClientSecretRef == nil {

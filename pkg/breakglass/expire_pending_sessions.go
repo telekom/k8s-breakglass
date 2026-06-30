@@ -58,4 +58,5 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 		}
 	}
 }
+
 // Fixes issue #944

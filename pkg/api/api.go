@@ -737,7 +737,7 @@ type IdentityProviderResponse struct {
 	// Type is the provider type (e.g., "OIDC", "Keycloak", "LDAP", "AzureAD")
 	Type string `json:"type"`
 	// Authority is the OIDC or OAuth authority URL (exposed to frontend for browser flows)
-	Authority string `json:"authority"`
+	Authority       string `json:"authority"`
 	DirectAuthority string `json:"directAuthority,omitempty"`
 	// ClientID is the OIDC or OAuth client ID
 	ClientID string `json:"clientId"`
@@ -845,10 +845,10 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 
 	// Build response with only non-secret fields
 	resp := IdentityProviderResponse{
-		Type:      idpCfg.Type,
-		Authority: frontendAuthority,
+		Type:            idpCfg.Type,
+		Authority:       frontendAuthority,
 		DirectAuthority: idpCfg.Authority,
-		ClientID:  idpCfg.ClientID,
+		ClientID:        idpCfg.ClientID,
 	}
 
 	// If Keycloak is configured, expose only non-secret metadata
