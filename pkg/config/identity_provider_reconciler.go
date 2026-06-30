@@ -158,7 +158,7 @@ func (r *IdentityProviderReconciler) withKeycloakHealthChecker(fn keycloakGroupS
 	return r
 }
 
-// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders,verbs=get;list;watch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch

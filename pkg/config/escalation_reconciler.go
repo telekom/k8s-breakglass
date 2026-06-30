@@ -71,7 +71,7 @@ func NewEscalationReconciler(
 	}
 }
 
-// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglassescalations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglassescalations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglassescalations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglassescalations/finalizers,verbs=update
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=get;list;watch
