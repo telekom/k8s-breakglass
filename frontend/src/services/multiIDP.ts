@@ -1,5 +1,5 @@
 import axios from "axios";
-import { debug, error as logError } from "@/services/logger";
+import { debug, handleAxiosError } from "@/services/logger";
 import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 
 /**
@@ -85,7 +85,8 @@ function normalizeMultiIDPConfig(value: unknown): MultiIDPConfig {
  * 1. List of enabled IDPs for dropdown rendering
  * 2. Escalation→IDP mappings for authorization enforcement
  *
- * @returns MultiIDPConfig with IDPs and escalation mappings, or empty defaults on error
+ * @returns MultiIDPConfig with IDPs and escalation mappings
+ * @throws {Error} if fetching the multi-IDP configuration fails
  */
 export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
   try {
@@ -103,9 +104,8 @@ export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
     });
     return config;
   } catch (err) {
-    logError("MultiIDPService", "Failed to fetch multi-IDP configuration", err);
-    // Return empty config so UI can gracefully handle missing data
-    return emptyMultiIDPConfig();
+    handleAxiosError("MultiIDPService", err, "Failed to fetch multi-IDP configuration");
+    throw err;
   }
 }
 
