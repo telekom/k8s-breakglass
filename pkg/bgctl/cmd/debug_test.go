@@ -253,9 +253,13 @@ func setupMockDebugServer(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(debugSessions)
 		case r.URL.Path == "/api/debugSessions/templates":
 			_ = json.NewEncoder(w).Encode(templates)
-		case r.URL.Path == "/api/debugSessions/templates/template-1/clusters":
+		case r.URL.Path == "/api/debugSessions/templates/template-1":
+				_ = json.NewEncoder(w).Encode(templates.Templates[0])
+			case r.URL.Path == "/api/debugSessions/templates/template-1/clusters":
 			_ = json.NewEncoder(w).Encode(templateClusters)
-		case r.URL.Path == "/api/debugSessions/podTemplates":
+		case r.URL.Path == "/api/debugSessions/podTemplates/pod-template-1":
+				_ = json.NewEncoder(w).Encode(breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Name: "pod-template-1"}})
+			case r.URL.Path == "/api/debugSessions/podTemplates":
 			_ = json.NewEncoder(w).Encode(podTemplates)
 		default:
 			http.NotFound(w, r)
@@ -818,4 +822,54 @@ func TestDebugSessionWatchCommand_ShowFullRespectsOutputFormat(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDebugTemplateGetCommand_Table(t *testing.T) {
+	server := setupMockDebugServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "template", "get", "template-1",
+		"-o", "table",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	outStr := buf.String()
+	assert.Contains(t, outStr, "NAME")
+	assert.Contains(t, outStr, "template-1")
+}
+
+func TestDebugPodTemplateGetCommand_Table(t *testing.T) {
+	server := setupMockDebugServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "pod-template", "get", "pod-template-1",
+		"-o", "table",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	outStr := buf.String()
+	assert.Contains(t, outStr, "NAME")
+	assert.Contains(t, outStr, "pod-template-1")
 }
