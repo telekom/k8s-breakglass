@@ -275,8 +275,8 @@ $(ENVTEST): $(LOCALBIN)
 
 .PHONY: helm-validate
 helm-validate: ## Validate Helm chart syntax and templates for escalation-config
-	helm lint charts/escalation-config --strict
-	helm template escalation-config charts/escalation-config > /dev/null
+	helm lint charts/escalation-config --strict --values charts/escalation-config/ci/test-values.yaml
+	helm template escalation-config charts/escalation-config --values charts/escalation-config/ci/test-values.yaml > /dev/null
 	@echo "Helm chart validation passed"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist

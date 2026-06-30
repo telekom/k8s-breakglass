@@ -59,7 +59,7 @@ cluster:
   # authType: Kubeconfig
   kubeconfigSecretRef:
     name: ""
-    namespace: default
+    namespace: ""
     # key: value  # Optional, defaults to "value" for Cluster API compatibility
   
   # ==========================================

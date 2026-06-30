@@ -376,10 +376,10 @@ jobs:
           version: v4.2.2
       - name: Lint Helm charts
         run: |
-          helm lint charts/escalation-config
+          helm lint charts/escalation-config --values charts/escalation-config/ci/test-values.yaml
       - name: Template validation
         run: |
-          helm template test-release charts/escalation-config --debug
+          helm template test-release charts/escalation-config --values charts/escalation-config/ci/test-values.yaml --debug
 
   build-image:
     name: Build Image
