@@ -177,7 +177,12 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 		)
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).
 		WithObjects(objects...)
 	if interceptFuncs != nil {
 		builder.WithInterceptorFuncs(*interceptFuncs)

@@ -79,7 +79,12 @@ var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 
 // Test that when RBAC check (canDoFn) allows the request, the webhook returns allowed=true
 func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -128,7 +133,12 @@ func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 }
 
 func TestHandleAuthorize_BodyTooLarge(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -164,7 +174,12 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -230,7 +245,12 @@ func TestHandleAuthorize_EscalationDiscoveryUsesSARGroups(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -302,7 +322,12 @@ func TestHandleAuthorize_ImpersonationError_TreatedAsDenied(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -402,7 +427,12 @@ func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -474,7 +504,12 @@ func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -549,7 +584,12 @@ func TestHandleAuthorize_NoIDPRestriction_HappyPath(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -792,7 +832,12 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 			objs = append(objs, &idps[i])
 		}
 
-		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		}).WithObjects(objs...).Build()
 		escalMgr := &escalation.EscalationManager{Client: cli}
 
 		boolPtr := func(v bool) *bool { return &v }
@@ -834,7 +879,12 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 				objs = append(objs, &tt.idps[i])
 			}
 
-			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objs...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
@@ -1000,7 +1050,12 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 				objs = append(objs, &tt.idps[i])
 			}
 
-			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objs...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
@@ -1023,7 +1078,12 @@ func TestIsRequestFromAllowedIDP_FailClosed(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	// Create a fake client that returns an error on List
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 
 	// Wrap the client with an interceptor that forces List to fail
 	errorClient := &listErrorClient{Client: cli}
@@ -1524,7 +1584,12 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				objs = append(objs, &tt.debugSessions[i])
 			}
 
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objs...)
 			for k, fn := range debugSessionIndexFnsWebhook {
 				builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
 			}
@@ -1815,7 +1880,12 @@ func TestSummarizeAction(t *testing.T) {
 // TestNewWebhookController tests the NewWebhookController constructor
 func TestNewWebhookController(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 	denyEval := policy.NewEvaluator(cli, logger.Sugar())
@@ -1863,7 +1933,12 @@ func TestWebhookController_Handlers(t *testing.T) {
 // TestWebhookController_Register tests the Register method
 func TestWebhookController_Register(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -1906,7 +1981,12 @@ func containsString(s, substr string) bool {
 // TestWebhookController_SetCanDoFn tests setting custom canDoFn
 func TestWebhookController_SetCanDoFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -1939,7 +2019,12 @@ func TestWebhookController_SetCanDoFn(t *testing.T) {
 // TestWebhookController_SetPodFetchFn tests setting custom podFetchFn
 func TestWebhookController_SetPodFetchFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -1972,7 +2057,12 @@ func TestWebhookController_SetPodFetchFn(t *testing.T) {
 // TestWebhookController_FetchPodFromCluster_WithFn tests fetchPodFromCluster with injected function
 func TestWebhookController_FetchPodFromCluster_WithFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -2013,7 +2103,12 @@ func TestWebhookController_FetchPodFromCluster_WithFn(t *testing.T) {
 // TestWebhookController_FetchPodFromCluster_NilProvider tests fetchPodFromCluster without provider
 func TestWebhookController_FetchPodFromCluster_NilProvider(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -2259,7 +2354,12 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 				objects = append(objects, esc)
 			}
 
-			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objects...).Build()
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objects...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
@@ -2427,7 +2527,12 @@ func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(denyPol)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(denyPol)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -2691,7 +2796,12 @@ func TestEmitPodSecurityAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			})
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2811,7 +2921,12 @@ func TestEmitAccessDecisionAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			})
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2902,7 +3017,12 @@ func TestEmitPolicyDenialAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			})
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2930,7 +3050,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	t.Run("uses injected podFetchFn when available", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2968,7 +3093,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	})
 
 	t.Run("returns error when pod not found via injected function", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2988,7 +3118,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	})
 
 	t.Run("returns error when ccProvider is nil", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3007,7 +3142,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	})
 
 	t.Run("fetches pod with various container configurations", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3057,7 +3197,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	t.Run("uses injected namespaceLabelsFetchFn when available", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3091,7 +3236,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	})
 
 	t.Run("returns error when namespace not found", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3111,7 +3261,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	})
 
 	t.Run("returns error when ccProvider is nil", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3130,7 +3285,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	})
 
 	t.Run("fetches labels with various configurations", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3185,7 +3345,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 // TestSetPodFetchFn tests the SetPodFetchFn method
 func TestSetPodFetchFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3220,7 +3385,12 @@ func TestSetPodFetchFn(t *testing.T) {
 // TestSetNamespaceLabelsFetchFn tests the SetNamespaceLabelsFetchFn method
 func TestSetNamespaceLabelsFetchFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3315,7 +3485,12 @@ func TestEmitAuditWithResourceAndNonResourceAttributes(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	ctx := context.Background()
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3396,7 +3571,12 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	ctx := context.Background()
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}

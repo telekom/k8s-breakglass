@@ -15,7 +15,7 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 14
+const ExpectedIndexCount = 15
 
 // registeredIndexes tracks which indexes have been successfully registered.
 // Uses sync.Map because RegisterCommonFieldIndexes may be called concurrently
@@ -219,6 +219,16 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
+	if err := register("IdentityProvider", "spec.issuer", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok && idp != nil && idp.Spec.Issuer != "" {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
