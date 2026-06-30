@@ -22,7 +22,7 @@ func getKubeConfig(contextName string) (*rest.Config, error) {
 		}
 		return restConfig, nil
 	}
-	
+
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
 		return nil, fmt.Errorf("get default kubernetes config: %w", err)
