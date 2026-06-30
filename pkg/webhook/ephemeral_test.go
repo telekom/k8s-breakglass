@@ -419,7 +419,8 @@ func TestEphemeralContainerWebhook_Handle(t *testing.T) {
 				},
 			}
 
-			resp := webhook.Handle(context.Background(), req)
+			ctx := context.WithValue(context.Background(), clusterContextKey, "test-cluster")
+			resp := webhook.Handle(ctx, req)
 
 			if tt.expectAllowed {
 				require.True(t, resp.Allowed, "expected allowed=true, got result: %+v", resp.Result)

@@ -1,6 +1,8 @@
 package webhook
 
 import (
+	"net/http"
+
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -146,14 +148,26 @@ func Setup(
 
 		// Register ephemeral container webhook
 		log.Infof("Registering ephemeral container webhook at /validate-ephemeral-containers")
-		mgr.GetWebhookServer().Register("/validate-ephemeral-containers", &webhookserver.Admission{
+		admissionHandler := &webhookserver.Admission{
 			Handler: &EphemeralContainerWebhook{
 				Client:       mgr.GetClient(),
 				Log:          log,
 				Decoder:      admission.NewDecoder(mgr.GetScheme()),
 				DebugHandler: debug.NewKubectlDebugHandler(mgr.GetClient(), nil),
 			},
-		})
+		}
+
+		mgr.GetWebhookServer().Register("/validate-ephemeral-containers", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			cluster := r.URL.Query().Get("cluster")
+			if cluster == "" {
+				cluster = strings.TrimPrefix(r.URL.Path, "/validate-ephemeral-containers/")
+				if cluster == "/validate-ephemeral-containers" {
+					cluster = ""
+				}
+			}
+			ctx := context.WithValue(r.Context(), clusterContextKey, cluster)
+			admissionHandler.ServeHTTP(w, r.WithContext(ctx))
+		}))
 	} else {
 		log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 	}
