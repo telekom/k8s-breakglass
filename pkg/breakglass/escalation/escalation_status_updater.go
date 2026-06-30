@@ -35,6 +35,7 @@ type KeycloakGroupMemberResolver struct {
 	cache     *kcCache
 	token     string
 	tokenTime time.Time
+	tokenExpiresAt time.Time
 	tokenLock sync.RWMutex
 }
 
@@ -125,10 +126,11 @@ func (k *KeycloakGroupMemberResolver) getToken(ctx context.Context) (string, err
 
 	// Check cached token
 	k.tokenLock.RLock()
-	if k.token != "" && time.Now().Before(k.tokenTime.Add(5*time.Minute)) {
+	// Leave a small buffer (e.g. 10 seconds) before actual expiry
+	if k.token != "" && time.Now().Add(10*time.Second).Before(k.tokenExpiresAt) {
 		defer k.tokenLock.RUnlock()
 		if k.log != nil {
-			k.log.Debugw("Using cached token", "expiresIn", time.Until(k.tokenTime.Add(5*time.Minute)).Seconds())
+			k.log.Debugw("Using cached token", "expiresIn", time.Until(k.tokenExpiresAt).Seconds())
 		}
 		return k.token, nil
 	}
@@ -165,6 +167,12 @@ func (k *KeycloakGroupMemberResolver) getToken(ctx context.Context) (string, err
 	k.tokenLock.Lock()
 	k.token = token.AccessToken
 	k.tokenTime = time.Now()
+	// ExpiresIn is in seconds. Fallback to 5 minutes if missing or 0.
+	expiresIn := 300
+	if token.ExpiresIn > 0 {
+		expiresIn = token.ExpiresIn
+	}
+	k.tokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
 	k.tokenLock.Unlock()
 
 	if k.log != nil {
