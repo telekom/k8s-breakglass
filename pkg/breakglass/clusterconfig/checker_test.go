@@ -100,7 +100,7 @@ func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	defer func() { RestConfigFromKubeConfig = old }()
 	// stub CheckClusterReachable to return error
 	oldCheck := CheckClusterReachable
-	CheckClusterReachable = func(cfg *rest.Config) error { return errors.New("timeout") }
+	CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return errors.New("timeout") }
 	defer func() { CheckClusterReachable = oldCheck }()
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background(), checker.Log)
@@ -129,7 +129,7 @@ func TestClusterConfigChecker_SuccessfulValidation(t *testing.T) {
 	defer func() { RestConfigFromKubeConfig = old }()
 	// stub CheckClusterReachable to return success
 	oldCheck := CheckClusterReachable
-	CheckClusterReachable = func(cfg *rest.Config) error { return nil }
+	CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return nil }
 	defer func() { CheckClusterReachable = oldCheck }()
 
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
@@ -174,7 +174,7 @@ func TestClusterConfigChecker_StatusUpdatePersisted(t *testing.T) {
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return &rest.Config{}, nil }
 	defer func() { RestConfigFromKubeConfig = old }()
 	oldCheck := CheckClusterReachable
-	CheckClusterReachable = func(cfg *rest.Config) error { return nil }
+	CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return nil }
 	defer func() { CheckClusterReachable = oldCheck }()
 
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
@@ -232,7 +232,7 @@ func TestClusterConfigChecker_TransitionFromFailToSuccess(t *testing.T) {
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return &rest.Config{}, nil }
 	defer func() { RestConfigFromKubeConfig = old }()
 	oldCheck := CheckClusterReachable
-	CheckClusterReachable = func(cfg *rest.Config) error { return nil }
+	CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return nil }
 	defer func() { CheckClusterReachable = oldCheck }()
 
 	// Second check - should now succeed
@@ -299,7 +299,7 @@ func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return &rest.Config{}, nil }
 	defer func() { RestConfigFromKubeConfig = old }()
 	oldCheck := CheckClusterReachable
-	CheckClusterReachable = func(cfg *rest.Config) error { return nil }
+	CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return nil }
 	defer func() { CheckClusterReachable = oldCheck }()
 
 	// Start checker in goroutine with short timeout context
