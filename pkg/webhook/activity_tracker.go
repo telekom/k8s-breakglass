@@ -50,6 +50,9 @@ type activityEntry struct {
 	// namespace and name of the session
 	namespace string
 	name      string
+	// uid is the Kubernetes UID of the session at recording time.
+	// Used to detect session identity changes (delete+recreate with same name).
+	uid types.UID
 	// lastSeen is the most recent activity time
 	lastSeen time.Time
 	// count is the number of requests since last flush
@@ -138,7 +141,7 @@ func NewActivityTracker(c client.Client, opts ...ActivityTrackerOption) *Activit
 // This method is safe for concurrent use and does not block on API calls.
 // If the tracker has reached maxEntries, new sessions are silently dropped
 // to prevent unbounded memory growth.
-func (at *ActivityTracker) RecordActivity(namespace, name string, ts time.Time) {
+func (at *ActivityTracker) RecordActivity(namespace, name string, uid types.UID, ts time.Time) {
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 
 	at.mu.Lock()
@@ -170,12 +173,24 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, ts time.Time) 
 		at.entries[key] = &activityEntry{
 			namespace: namespace,
 			name:      name,
+			uid:       uid,
 			lastSeen:  ts,
 			count:     1,
 		}
 		metrics.SessionActivityBufferSize.Set(float64(len(at.entries)))
 		return
 	}
+
+	// If the UID changed, the old session was deleted and a new one created
+	// with the same name. Reset the entry to avoid cross-contamination.
+	if entry.uid != uid {
+		entry.uid = uid
+		entry.count = 1
+		entry.lastSeen = ts
+		entry.retries = 0
+		return
+	}
+
 	if ts.After(entry.lastSeen) {
 		entry.lastSeen = ts
 	}
@@ -338,6 +353,12 @@ func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.
 				return nil
 			}
 			return err
+		}
+
+		// Guard against name reuse: if the session was deleted and recreated
+		// with the same name, the UID will differ. Discard stale entries.
+		if entry.uid != "" && session.UID != entry.uid {
+			return nil
 		}
 
 		// Only update active sessions — skip terminal states
