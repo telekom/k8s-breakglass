@@ -279,6 +279,15 @@ func TestIsSessionRetained_TimeVariants(t *testing.T) {
 
 // TestIsSessionValid tests the IsSessionValid function
 func TestIsSessionValid(t *testing.T) {
+	t.Run("empty state is invalid", func(t *testing.T) {
+		session := breakglassv1alpha1.BreakglassSession{
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: "",
+			},
+		}
+		assert.False(t, IsSessionValid(session))
+		assert.False(t, IsSessionActive(session))
+	})
 	now := time.Now()
 
 	tests := []struct {
