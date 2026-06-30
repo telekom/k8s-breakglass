@@ -40,7 +40,7 @@ type MailProviderReconciler struct {
 	OnMailProviderChange func(providerName string)
 }
 
-// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=mailproviders,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=mailproviders,verbs=get;list;watch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=mailproviders/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=mailproviders/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
