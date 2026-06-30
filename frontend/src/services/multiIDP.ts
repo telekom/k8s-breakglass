@@ -1,5 +1,5 @@
 import axios from "axios";
-import { debug, error as logError } from "@/services/logger";
+import { debug, handleAxiosError } from "@/services/logger";
 import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 
 /**
@@ -103,9 +103,8 @@ export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
     });
     return config;
   } catch (err) {
-    logError("MultiIDPService", "Failed to fetch multi-IDP configuration", err);
-    // Return empty config so UI can gracefully handle missing data
-    return emptyMultiIDPConfig();
+    handleAxiosError("MultiIDPService", err, "Failed to fetch multi-IDP configuration");
+    throw err;
   }
 }
 

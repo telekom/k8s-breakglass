@@ -1,7 +1,7 @@
 import { vi, type Mock } from "vitest";
 import axios from "axios";
 import { getMultiIDPConfig, getAllowedIDPsForEscalation, isIDPAllowedForEscalation } from "./multiIDP";
-import { error as logError } from "@/services/logger";
+import { error as logError, handleAxiosError } from "@/services/logger";
 import type { MultiIDPConfig } from "@/model/multiIDP";
 
 vi.mock("axios", () => ({
@@ -15,6 +15,7 @@ vi.mock("@/services/logger", () => ({
   __esModule: true,
   debug: vi.fn(),
   error: vi.fn(),
+  handleAxiosError: vi.fn(),
 }));
 
 const mockedAxios = axios as unknown as { get: Mock };
@@ -39,17 +40,12 @@ describe("multiIDP service", () => {
     expect(result).toEqual(config);
   });
 
-  it("returns empty defaults and logs errors when fetching fails", async () => {
-    mockedAxios.get.mockRejectedValueOnce(new Error("boom"));
+  it("rethrows and handles errors when fetching fails", async () => {
+    const error = new Error("boom");
+    mockedAxios.get.mockRejectedValueOnce(error);
 
-    const result = await getMultiIDPConfig();
-
-    expect(result).toEqual({ identityProviders: [], escalationIDPMapping: {} });
-    expect(mockedLogError).toHaveBeenCalledWith(
-      "MultiIDPService",
-      "Failed to fetch multi-IDP configuration",
-      expect.any(Error),
-    );
+    await expect(getMultiIDPConfig()).rejects.toThrow("boom");
+    expect(handleAxiosError).toHaveBeenCalledWith("MultiIDPService", error, "Failed to fetch multi-IDP configuration");
   });
 
   it("normalizes malformed multi-IDP config payloads", async () => {
