@@ -3,7 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"os"
+	"github.com/spf13/cobra"
 	"strings"
 )
 
