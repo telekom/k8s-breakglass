@@ -25,7 +25,9 @@ logger.info("App", "Application starting", {
   baseUrl: import.meta.env.BASE_URL,
 });
 
-exposeDebugControls();
+if (import.meta.env.DEV) {
+  exposeDebugControls();
+}
 
 function cacheRuntimeConfig(config: Config) {
   try {

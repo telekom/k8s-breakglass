@@ -21,7 +21,7 @@ const user = useUser();
 const authenticated = computed(() => Boolean(user.value && !user.value?.expired));
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
-const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
+const showDebugPanel = import.meta.env.DEV === true;
 
 const route = useRoute();
 const router = useRouter();
