@@ -206,11 +206,18 @@ func (p *ClientProvider) GetInNamespace(ctx context.Context, namespace, name str
 // Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
 // as this function may modify p.data when caching results.
 func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	var found *breakglassv1alpha1.ClusterConfig
 	// First, try to find a cached entry by scanning for any namespace with this name
 	for _, cfg := range p.data {
 		if cfg != nil && cfg.Name == name {
-			return cfg, nil
+			if found != nil {
+				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q in cache", name)
+			}
+			found = cfg
 		}
+	}
+	if found != nil {
+		return found, nil
 	}
 
 	// Namespace not provided: preserve legacy behavior and list across namespaces
@@ -220,11 +227,16 @@ func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name 
 	}
 	for _, item := range list.Items {
 		if item.Name == name {
-			// copy loop variable before taking address
+			if found != nil {
+				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q across namespaces", name)
+			}
 			cp := item
-			p.data[cacheKey(cp.Namespace, cp.Name)] = &cp
-			return &cp, nil
+			found = &cp
 		}
+	}
+	if found != nil {
+		p.data[cacheKey(found.Namespace, found.Name)] = found
+		return found, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrClusterConfigNotFound, name)
 }
