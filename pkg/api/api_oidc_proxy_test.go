@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -15,8 +16,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestOIDCProxyPathValidation tests that invalid proxy paths are rejected to prevent SSRF and path traversal attacks
@@ -159,32 +164,34 @@ func TestValidateOIDCProxyPath(t *testing.T) {
 func TestSelectOIDCProxyAuthority(t *testing.T) {
 	defaultURL, err := url.Parse("https://default.example.com")
 	require.NoError(t, err)
+	logger := zaptest.NewLogger(t)
 	server := &Server{
 		oidcAuthority: defaultURL,
+		log:           logger,
 		idpConfig: &config.IdentityProviderConfig{
 			Authority: defaultURL.String(),
 		},
 	}
 
 	t.Run("returns clone for default", func(t *testing.T) {
-		selected, err := server.selectOIDCProxyAuthority("")
+		selected, err := server.selectOIDCProxyAuthority(context.Background(), "")
 		require.NoError(t, err)
 		require.Equal(t, defaultURL.String(), selected.String())
 		require.True(t, defaultURL != selected)
 	})
 
 	t.Run("rejects invalid header", func(t *testing.T) {
-		_, err := server.selectOIDCProxyAuthority("::::")
+		_, err := server.selectOIDCProxyAuthority(context.Background(), "::::")
 		require.ErrorIs(t, err, errInvalidAuthorityHeader)
 	})
 
 	t.Run("rejects unknown authority", func(t *testing.T) {
-		_, err := server.selectOIDCProxyAuthority("https://unknown.example.com")
+		_, err := server.selectOIDCProxyAuthority(context.Background(), "https://unknown.example.com")
 		require.ErrorIs(t, err, errUnknownOIDCAuthority)
 	})
 
 	t.Run("accepts known authority", func(t *testing.T) {
-		selected, err := server.selectOIDCProxyAuthority(defaultURL.String())
+		selected, err := server.selectOIDCProxyAuthority(context.Background(), defaultURL.String())
 		require.NoError(t, err)
 		require.Equal(t, defaultURL.String(), selected.String())
 	})
@@ -809,7 +816,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				Authority: "https://keycloak.example.com",
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true, "")
+		client, err := server.newOIDCProxyHTTPClient(context.Background(), true, "")
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)
 		require.NotNil(t, transport.TLSClientConfig)
@@ -825,7 +832,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				InsecureSkipVerify: true,
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true, "")
+		client, err := server.newOIDCProxyHTTPClient(context.Background(), true, "")
 		require.Error(t, err)
 		assert.Nil(t, client)
 		assert.Contains(t, err.Error(), "configure certificateAuthority")
@@ -841,7 +848,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				InsecureSkipVerify:   true,
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true, "")
+		client, err := server.newOIDCProxyHTTPClient(context.Background(), true, "")
 		require.Error(t, err)
 		assert.Nil(t, client)
 		assert.Contains(t, err.Error(), "insecureSkipVerify is not supported")
@@ -856,7 +863,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				CertificateAuthority: testCertificatePEM(t),
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true, "")
+		client, err := server.newOIDCProxyHTTPClient(context.Background(), true, "")
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)
 		require.NotNil(t, transport.TLSClientConfig)
@@ -871,11 +878,60 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				Authority: "https://keycloak.example.com",
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(false, "")
+		client, err := server.newOIDCProxyHTTPClient(context.Background(), false, "")
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)
 		assert.Nil(t, transport.TLSClientConfig)
 	})
+}
+
+func TestHandleOIDCProxyUsesSelectedIdentityProviderCA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+	var upstream *httptest.Server
+	upstream = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/.well-known/openid-configuration", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"issuer":"` + upstream.URL + `"}`))
+	}))
+	defer upstream.Close()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	customIDP := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority:            upstream.URL,
+				ClientID:             "breakglass-ui",
+				CertificateAuthority: certificatePEMForTLSServer(t, upstream),
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(customIDP).Build()
+	defaultAuthority, err := url.Parse("https://default.example.com")
+	require.NoError(t, err)
+	server := &Server{
+		log:           logger,
+		oidcAuthority: defaultAuthority,
+		idpConfig: &config.IdentityProviderConfig{
+			Name:      "default-idp",
+			Authority: defaultAuthority.String(),
+		},
+		idpReconciler: config.NewIdentityProviderReconciler(fakeClient, logger.Sugar(), nil),
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/oidc/authority/.well-known/openid-configuration", nil)
+	req.Header.Set("X-OIDC-Authority", upstream.URL)
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	c.Params = gin.Params{{Key: "proxyPath", Value: "/.well-known/openid-configuration"}}
+
+	server.handleOIDCProxy(c)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), upstream.URL)
 }
 
 func testCertificatePEM(t *testing.T) string {
@@ -884,6 +940,12 @@ func testCertificatePEM(t *testing.T) string {
 	cert := server.Certificate()
 	server.Close()
 	block := &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}
+	return string(pem.EncodeToMemory(block))
+}
+
+func certificatePEMForTLSServer(t *testing.T, server *httptest.Server) string {
+	t.Helper()
+	block := &pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}
 	return string(pem.EncodeToMemory(block))
 }
 
@@ -1023,7 +1085,7 @@ func TestIsKnownIDPAuthority(t *testing.T) {
 			oidcAuthority: authority,
 		}
 
-		assert.True(t, server.isKnownIDPAuthority("https://keycloak.example.com"))
+		assert.True(t, server.isKnownIDPAuthority(context.Background(), "https://keycloak.example.com"))
 	})
 
 	t.Run("returns false for non-matching authority without IDP reconciler", func(t *testing.T) {
@@ -1033,7 +1095,7 @@ func TestIsKnownIDPAuthority(t *testing.T) {
 			oidcAuthority: authority,
 		}
 
-		assert.False(t, server.isKnownIDPAuthority("https://other.example.com"))
+		assert.False(t, server.isKnownIDPAuthority(context.Background(), "https://other.example.com"))
 	})
 
 	t.Run("returns false when oidcAuthority is nil", func(t *testing.T) {
@@ -1041,7 +1103,7 @@ func TestIsKnownIDPAuthority(t *testing.T) {
 			log: logger,
 		}
 
-		assert.False(t, server.isKnownIDPAuthority("https://keycloak.example.com"))
+		assert.False(t, server.isKnownIDPAuthority(context.Background(), "https://keycloak.example.com"))
 	})
 }
 
