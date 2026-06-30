@@ -84,62 +84,54 @@ export default class BreakglassSessionService {
     }
   }
 
-  public async approveReview(review: BreakglassSessionRequest) {
-    // RESTful: POST /breakglassSessions/:name/approve
-    if (!review.name) throw new Error("Missing session name for approve");
+  private async postSessionAction(
+    review: BreakglassSessionRequest,
+    action: string,
+    errorMessage: string,
+    body: Record<string, string> = {},
+  ) {
+    if (!review.name) throw new Error(`Missing session name for ${action}`);
     try {
-      const body: Record<string, string> = {};
-      if (review.reason && review.reason.trim().length > 0) body.reason = review.reason;
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/approve`, body);
+      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/${action}`, body);
     } catch (e) {
-      handleAxiosError("BreakglassSessionService.approveReview", e, "Failed to approve session");
+      handleAxiosError(`BreakglassSessionService.${action}`, e, errorMessage);
       throw e;
     }
+  }
+
+  private static buildReasonBody(review: BreakglassSessionRequest): Record<string, string> {
+    const body: Record<string, string> = {};
+    if (review.reason && review.reason.trim().length > 0) body.reason = review.reason;
+    return body;
+  }
+
+  public async approveReview(review: BreakglassSessionRequest) {
+    return this.postSessionAction(
+      review,
+      "approve",
+      "Failed to approve session",
+      BreakglassSessionService.buildReasonBody(review),
+    );
   }
 
   public async rejectReview(review: BreakglassSessionRequest) {
-    // RESTful: POST /breakglassSessions/:name/reject
-    if (!review.name) throw new Error("Missing session name for reject");
-    try {
-      const body: Record<string, string> = {};
-      if (review.reason && review.reason.trim().length > 0) body.reason = review.reason;
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/reject`, body);
-    } catch (e) {
-      handleAxiosError("BreakglassSessionService.rejectReview", e, "Failed to reject session");
-      throw e;
-    }
+    return this.postSessionAction(
+      review,
+      "reject",
+      "Failed to reject session",
+      BreakglassSessionService.buildReasonBody(review),
+    );
   }
 
   public async withdrawSession(review: BreakglassSessionRequest) {
-    // RESTful: POST /breakglassSessions/:name/withdraw
-    if (!review.name) throw new Error("Missing session name for withdraw");
-    try {
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/withdraw`, {});
-    } catch (e) {
-      handleAxiosError("BreakglassSessionService.withdrawSession", e, "Failed to withdraw session");
-      throw e;
-    }
+    return this.postSessionAction(review, "withdraw", "Failed to withdraw session");
   }
 
   public async dropSession(review: BreakglassSessionRequest) {
-    // RESTful: POST /breakglassSessions/:name/drop
-    if (!review.name) throw new Error("Missing session name for drop");
-    try {
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/drop`, {});
-    } catch (e) {
-      handleAxiosError("BreakglassSessionService.dropSession", e, "Failed to drop session");
-      throw e;
-    }
+    return this.postSessionAction(review, "drop", "Failed to drop session");
   }
 
   public async cancelSession(review: BreakglassSessionRequest) {
-    // RESTful: POST /breakglassSessions/:name/cancel (approver cancels running session)
-    if (!review.name) throw new Error("Missing session name for cancel");
-    try {
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/cancel`, {});
-    } catch (e) {
-      handleAxiosError("BreakglassSessionService.cancelSession", e, "Failed to cancel session");
-      throw e;
-    }
+    return this.postSessionAction(review, "cancel", "Failed to cancel session");
   }
 }
