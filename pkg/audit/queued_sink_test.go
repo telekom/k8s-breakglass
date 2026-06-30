@@ -396,7 +396,7 @@ func TestQueuedSink_CircuitBreaker_Sensitive(t *testing.T) {
 		ID:   "sensitive-1",
 		Type: EventSessionRequested, // Sensitive
 	}
-	
+
 	// Write should fall back to direct sync write because circuit is open
 	err := qs.Write(ctx, event)
 	require.NoError(t, err)
