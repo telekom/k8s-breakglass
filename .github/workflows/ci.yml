@@ -107,6 +107,8 @@ jobs:
         run: make validate-crds
       - name: Validate e2e fixtures against Go validation rules
         run: make validate-fixtures
+      - name: Test e2e helpers
+        run: go test ./e2e/helpers/... -v -count=1
 
   npm-audit:
     name: Frontend Security Audit
