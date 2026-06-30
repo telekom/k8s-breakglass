@@ -309,7 +309,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		latest.SetCondition(condition)
+			return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	latest.Status.ObservedGeneration = idp.Status.ObservedGeneration
 
