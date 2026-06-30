@@ -499,7 +499,8 @@ watch(
 
         <div slot="functions" class="header-functions-container">
           <div class="theme-utilities">
-            <button
+            <scale-button
+              variant="ghost"
               type="button"
               :class="['theme-toggle-button', { 'theme-dark': isDarkThemePreference }]"
               :title="themeToggleTitle"
@@ -508,9 +509,10 @@ watch(
               @click="toggleTheme"
             >
               <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
-            </button>
+            </scale-button>
 
-            <button
+            <scale-button
+              variant="ghost"
               type="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
               :title="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
@@ -523,7 +525,7 @@ watch(
               @click="toggleHighContrast"
             >
               <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
-            </button>
+            </scale-button>
           </div>
 
           <scale-telekom-nav-list
@@ -554,8 +556,9 @@ watch(
             </scale-telekom-nav-item>
 
             <scale-telekom-nav-item v-if="authenticated" class="mobile-nav-item">
-              <button
+              <scale-button
                 id="mobile-nav-trigger"
+                variant="ghost"
                 type="button"
                 class="mobile-nav-trigger"
                 :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
@@ -564,7 +567,7 @@ watch(
                 @click="toggleMobileNav"
               >
                 <scale-icon-action-menu decorative></scale-icon-action-menu>
-              </button>
+              </scale-button>
               <scale-telekom-nav-flyout
                 id="mobile-nav-flyout"
                 ref="mobileNavFlyoutRef"
@@ -587,7 +590,8 @@ watch(
                       {{ item.label }}
                     </a>
                     <div class="mobile-nav-fallback__utilities">
-                      <button
+                      <scale-button
+                        variant="ghost"
                         type="button"
                         class="mobile-util-btn"
                         :aria-pressed="theme === 'dark'"
@@ -598,8 +602,9 @@ watch(
                           :decorative="true"
                         ></scale-icon-action-light-dark-mode>
                         <span>{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
-                      </button>
-                      <button
+                      </scale-button>
+                      <scale-button
+                        variant="ghost"
                         type="button"
                         :class="['mobile-util-btn', { active: highContrast }]"
                         :aria-pressed="highContrast"
@@ -607,7 +612,7 @@ watch(
                       >
                         <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
                         <span>High Contrast</span>
-                      </button>
+                      </scale-button>
                     </div>
                   </nav>
                 </scale-telekom-mobile-flyout-canvas>
@@ -630,11 +635,17 @@ watch(
                   {{ item.label }}
                 </a>
                 <div class="mobile-nav-fallback__utilities">
-                  <button type="button" class="mobile-util-btn" :aria-pressed="theme === 'dark'" @click="toggleTheme">
+                  <scale-button
+                    variant="ghost"
+                    class="mobile-util-btn"
+                    :aria-pressed="theme === 'dark'"
+                    @click="toggleTheme"
+                  >
                     <scale-icon-action-light-dark-mode size="24" :decorative="true"></scale-icon-action-light-dark-mode>
                     <span>{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
-                  </button>
-                  <button
+                  </scale-button>
+                  <scale-button
+                    variant="ghost"
                     type="button"
                     :class="['mobile-util-btn', { active: highContrast }]"
                     :aria-pressed="highContrast"
@@ -642,7 +653,7 @@ watch(
                   >
                     <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
                     <span>High Contrast</span>
-                  </button>
+                  </scale-button>
                 </div>
               </nav>
             </scale-telekom-nav-item>
