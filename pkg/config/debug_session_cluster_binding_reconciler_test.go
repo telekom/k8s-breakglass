@@ -766,7 +766,7 @@ func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testin
 
 func TestDebugSessionClusterBindingReconciler_TemplateDependencyChanged(t *testing.T) {
 	readyTrue := metav1.Condition{
-		Type:               DebugSessionTemplateConditionReady,
+		Type:               string(breakglassv1alpha1.DebugSessionTemplateConditionReady),
 		Status:             metav1.ConditionTrue,
 		Reason:             "Ready",
 		Message:            "template is ready",
