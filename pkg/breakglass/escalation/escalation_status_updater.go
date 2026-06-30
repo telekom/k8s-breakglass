@@ -29,14 +29,14 @@ const (
 
 // KeycloakGroupMemberResolver uses GoCloak client to fetch group members from Keycloak admin API.
 type KeycloakGroupMemberResolver struct {
-	log       *zap.SugaredLogger
-	cfg       cfgpkg.KeycloakRuntimeConfig
-	gocloak   *gocloak.GoCloak
-	cache     *kcCache
-	token     string
-	tokenTime time.Time
+	log            *zap.SugaredLogger
+	cfg            cfgpkg.KeycloakRuntimeConfig
+	gocloak        *gocloak.GoCloak
+	cache          *kcCache
+	token          string
+	tokenTime      time.Time
 	tokenExpiresAt time.Time
-	tokenLock sync.RWMutex
+	tokenLock      sync.RWMutex
 }
 
 type noopGroupMemberResolver struct{}

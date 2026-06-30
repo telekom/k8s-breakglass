@@ -301,7 +301,7 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 		)
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
-		now := metav1.Now()
+	now := metav1.Now()
 	latest.Status.LastHealthCheck = &now
 	latest.Status.LastSendError = ""
 

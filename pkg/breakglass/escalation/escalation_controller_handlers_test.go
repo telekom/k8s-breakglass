@@ -21,7 +21,7 @@ func decodeEscalationListEnvelope(t *testing.T, w *httptest.ResponseRecorder) []
 	t.Helper()
 	var envelope struct {
 		Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
-		Total int                                        `json:"total"`
+		Total int                                       `json:"total"`
 	}
 	if err := json.NewDecoder(w.Result().Body).Decode(&envelope); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
