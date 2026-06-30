@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"reflect"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -594,12 +595,30 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
-	// Use shared validation function for consistent validation between webhooks and reconcilers
+	var allErrs field.ErrorList
+
+	// Spec immutability
+	if !reflect.DeepEqual(oldObj.Spec, newObj.Spec) {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec"), "DebugSession spec is immutable after creation"))
+	}
+
+	// Status timestamp monotonicity
+	if oldObj.Status.StartsAt != nil && newObj.Status.StartsAt == nil {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status", "startsAt"), newObj.Status.StartsAt, "cannot clear an existing startsAt timestamp"))
+	}
+	if oldObj.Status.ExpiresAt != nil && newObj.Status.ExpiresAt == nil {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status", "expiresAt"), newObj.Status.ExpiresAt, "cannot clear an existing expiresAt timestamp"))
+	}
+
 	result := ValidateDebugSession(newObj)
-	if result.IsValid() {
+	if !result.IsValid() {
+		allErrs = append(allErrs, result.Errors...)
+	}
+
+	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, allErrs)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
