@@ -89,7 +89,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 			ses.SetCondition(metav1.Condition{
 				Type:               string(breakglassv1alpha1.SessionConditionTypeSessionExpired),
 				Status:             metav1.ConditionTrue,
-				LastTransitionTime: metav1.Now(),
+				LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 				Reason:             "MissingScheduledStartTime",
 				Message:            "Session expired: WaitingForScheduledTime with no ScheduledStartTime set",
 			})
@@ -117,13 +117,13 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 
 		// Transition to Approved state
 		ses.Status.State = breakglassv1alpha1.SessionStateApproved
-		ses.Status.ActualStartTime = metav1.Now()
+		ses.Status.ActualStartTime = metav1.NewTime(time.Now().UTC())
 
 		// Add condition for audit trail
 		ses.SetCondition(metav1.Condition{
 			Type:               "ScheduledStartTimeReached",
 			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 			Reason:             "ActivationTriggered",
 			Message:            "Session activated at scheduled start time",
 		})

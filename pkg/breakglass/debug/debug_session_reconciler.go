@@ -383,7 +383,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 
 	// Calculate expiration
 	duration := c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding))
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	expiresAt := metav1.NewTime(now.Add(duration))
 
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
@@ -503,7 +503,7 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 		Cluster:        ds.Spec.Cluster,
 		TemplateName:   ds.Spec.TemplateRef,
 		Namespace:      ds.Namespace,
-		FailedAt:       time.Now().Format(time.RFC3339),
+		FailedAt:       time.Now().UTC().Format(time.RFC3339),
 		FailureReason:  reason,
 		URL:            fmt.Sprintf("%s/debug-sessions", c.baseURL),
 		BrandingName:   c.brandingName,

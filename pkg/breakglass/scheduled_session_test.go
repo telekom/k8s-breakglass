@@ -134,7 +134,7 @@ func TestIsSessionValidNotValidBeforeScheduledTime(t *testing.T) {
 	session.Spec.ScheduledStartTime = &metav1.Time{Time: pastTime}
 	session.Status.State = breakglassv1alpha1.SessionStateApproved
 	session.Status.ActualStartTime = metav1.Now()
-	session.Status.ExpiresAt = metav1.NewTime(time.Now().Add(55 * time.Minute))
+	session.Status.ExpiresAt = metav1.NewTime(time.Now().UTC().Add(55 * time.Minute))
 
 	// After activation: should be valid
 	if !IsSessionValid(*session) {
@@ -159,7 +159,7 @@ func TestIsSessionValidWithoutScheduledTime(t *testing.T) {
 			State:           breakglassv1alpha1.SessionStateApproved,
 			ApprovedAt:      metav1.Now(),
 			ActualStartTime: metav1.Now(),
-			ExpiresAt:       metav1.NewTime(time.Now().Add(1 * time.Hour)),
+			ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 		},
 	}
 
@@ -196,7 +196,7 @@ func TestWaitingForScheduledTimeStateNotValid(t *testing.T) {
 	}
 
 	// Even if ExpiresAt is valid (hasn't expired)
-	session.Status.ExpiresAt = metav1.NewTime(time.Now().Add(2 * time.Hour))
+	session.Status.ExpiresAt = metav1.NewTime(time.Now().UTC().Add(2 * time.Hour))
 	if IsSessionValid(*session) {
 		t.Error("Session in WaitingForScheduledTime state should not be valid even with valid ExpiresAt")
 	}

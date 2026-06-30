@@ -395,7 +395,7 @@ func IsBindingActive(binding *breakglassv1alpha1.DebugSessionClusterBinding) boo
 		return false
 	}
 
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 
 	// Check if binding has expired
 	if binding.Spec.ExpiresAt != nil && binding.Spec.ExpiresAt.Before(&now) {

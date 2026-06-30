@@ -425,7 +425,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 
 		// Create session with CreationTimestamp sufficiently in the past to exceed the timeout
 		session := newTestDebugSession("timeout-session", "test-template", "production", "user@example.com")
-		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * timeout))
+		session.CreationTimestamp = metav1.NewTime(time.Now().UTC().Add(-2 * timeout))
 		session.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 			Required: true,
@@ -466,7 +466,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		timeout := breakglass.DebugSessionApprovalTimeout
 
 		session := newTestDebugSession("pending-session", "test-template", "production", "user@example.com")
-		session.CreationTimestamp = metav1.NewTime(time.Now().Add(-timeout / 4))
+		session.CreationTimestamp = metav1.NewTime(time.Now().UTC().Add(-timeout / 4))
 		session.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 			Required: true,
@@ -572,8 +572,8 @@ func TestDebugSessionReconciler_ExpirationHandling(t *testing.T) {
 	scheme := testScheme()
 
 	t.Run("session expires", func(t *testing.T) {
-		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		startTime := metav1.NewTime(time.Now().Add(-3 * time.Hour))
+		pastTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
+		startTime := metav1.NewTime(time.Now().UTC().Add(-3 * time.Hour))
 
 		session := newTestDebugSession("expired-session", "test-template", "test-cluster", "user@example.com")
 		session.Status.State = breakglassv1alpha1.DebugSessionStateActive

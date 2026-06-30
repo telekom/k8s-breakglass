@@ -576,7 +576,7 @@ func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, templ
 	// Update active session count
 	if incrementActive {
 		currentTemplate.Status.ActiveSessionCount++
-		now := metav1.Now()
+		now := metav1.NewTime(time.Now().UTC())
 		currentTemplate.Status.LastUsedAt = &now
 	} else {
 		if currentTemplate.Status.ActiveSessionCount > 0 {

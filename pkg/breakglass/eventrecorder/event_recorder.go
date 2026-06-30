@@ -109,7 +109,7 @@ func (r *K8sEventRecorder) Eventf(regarding runtime.Object, related runtime.Obje
 		Action:              action,
 		ReportingController: r.Source.Component,
 		ReportingInstance:   reportingInstance,
-		EventTime:           metav1.MicroTime{Time: time.Now()},
+		EventTime:           metav1.MicroTime{Time: time.Now().UTC()},
 		// NOTE: Do NOT set deprecated fields (DeprecatedSource, DeprecatedFirstTimestamp,
 		// DeprecatedLastTimestamp, DeprecatedCount) - events.k8s.io/v1 API rejects them
 	}

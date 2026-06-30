@@ -739,12 +739,12 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	}
 
 	bs.Status = breakglassv1alpha1.BreakglassSessionStatus{
-		TimeoutAt: metav1.NewTime(time.Now().Add(approvalTimeout)), // Approval timeout
+		TimeoutAt: metav1.NewTime(time.Now().UTC().Add(approvalTimeout)), // Approval timeout
 		State:     breakglassv1alpha1.SessionStatePending,
 		Conditions: []metav1.Condition{{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeIdle),
 			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 			Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            fmt.Sprintf("User %q requested session.", params.username),
 		}},

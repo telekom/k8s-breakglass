@@ -295,7 +295,7 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 
 	event := &audit.Event{
 		Type:      eventType,
-		Timestamp: time.Now(),
+		Timestamp: time.Now().UTC(),
 		Actor: audit.Actor{
 			User:   user,
 			Groups: nil, // Groups not available in this context

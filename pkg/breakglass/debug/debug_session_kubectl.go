@@ -262,7 +262,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	}
 
 	// Track the injected container in session status
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	injectedContainer := breakglassv1alpha1.EphemeralContainerRef{
 		PodName:       podName,
 		Namespace:     namespace,
@@ -410,10 +410,10 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	if err != nil {
 		ttlDuration = 2 * time.Hour
 	}
-	expiresAt := metav1.NewTime(time.Now().Add(ttlDuration))
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(ttlDuration))
 
 	// Track the copied pod in session status
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	copiedPod := breakglassv1alpha1.CopiedPodRef{
 		OriginalPod:       originalPodName,
 		OriginalNamespace: originalNamespace,

@@ -178,7 +178,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	case breakglassv1alpha1.SessionConditionTypeApproved:
 		// Clear any previous rejection timestamp so the approved state is canonical.
 		bs.Status.RejectedAt = metav1.Time{}
-		bs.Status.ApprovedAt = metav1.Now()
+		bs.Status.ApprovedAt = metav1.NewTime(time.Now().UTC())
 
 		// Determine expiry based on session spec MaxValidFor if provided, otherwise use default
 		validFor := ParseMaxValidFor(bs.Spec, reqLog)
@@ -203,7 +203,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		} else {
 			// Immediate session: activate now (original behavior)
 			bs.Status.State = breakglassv1alpha1.SessionStateApproved
-			bs.Status.ActualStartTime = metav1.Now() // For consistency
+			bs.Status.ActualStartTime = metav1.NewTime(time.Now().UTC()) // For consistency
 			// Calculate expiry from approval time.
 			bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(validFor))
 			bs.Status.RetainedUntil = metav1.Time{}
@@ -227,13 +227,13 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	case breakglassv1alpha1.SessionConditionTypeRejected:
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		// Only set state and rejection-specific timestamp.
-		bs.Status.RejectedAt = metav1.Now()
+		bs.Status.RejectedAt = metav1.NewTime(time.Now().UTC())
 		bs.Status.State = breakglassv1alpha1.SessionStateRejected
 		bs.Status.ReasonEnded = "rejected"
 
 		// Set RetainedUntil for rejected sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 		// record approver (rejector)
 		rejectorEmail, _ := wc.identityProvider.GetEmail(c)
@@ -259,7 +259,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	bs.SetCondition(metav1.Condition{
 		Type:               string(sesCondition),
 		Status:             metav1.ConditionTrue,
-		LastTransitionTime: metav1.Now(),
+		LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 		Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 		Message:            fmt.Sprintf("User %q set session to %s", username, sesCondition),
 	})

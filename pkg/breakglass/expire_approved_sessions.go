@@ -35,7 +35,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 					current.SetCondition(metav1.Condition{
 						Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 						Status:             metav1.ConditionTrue,
-						LastTransitionTime: metav1.Now(),
+						LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 						Reason:             "ExpiredByTime",
 						Message:            "Session expired because its ExpiresAt has been reached.",
 					})
@@ -84,7 +84,7 @@ func (wc *BreakglassSessionController) sendSessionExpiredEmail(session breakglas
 		Username:         session.Spec.User,
 		SessionID:        session.Name,
 		StartedAt:        session.Status.ActualStartTime.Time.Format("2006-01-02 15:04:05 UTC"),
-		ExpiredAt:        time.Now().Format("2006-01-02 15:04:05 UTC"),
+		ExpiredAt:        time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		ExpirationReason: reasonText,
 		BrandingName:     wc.config.Frontend.BrandingName,
 	}

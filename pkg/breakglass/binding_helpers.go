@@ -17,6 +17,8 @@ limitations under the License.
 package breakglass
 
 import (
+	"time"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -32,7 +34,7 @@ func IsBindingActive(binding *breakglassv1alpha1.DebugSessionClusterBinding) boo
 		return false
 	}
 
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 
 	// Check if binding has expired
 	if binding.Spec.ExpiresAt != nil && binding.Spec.ExpiresAt.Before(&now) {

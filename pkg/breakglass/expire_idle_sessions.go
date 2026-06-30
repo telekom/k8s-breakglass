@@ -104,7 +104,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 		ses.SetCondition(newIdleCondition(idleSince, ses.Spec.IdleTimeout))
 		ses.Status.ReasonEnded = "idleTimeout"
 		retainFor := ParseRetainFor(ses.Spec, wc.log)
-		ses.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+		ses.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 		// Ensure we have correct metadata for the API update.
 		// Re-validate idle condition after refetch to avoid TOCTOU race where
@@ -242,7 +242,7 @@ func newIdleCondition(idleSince time.Duration, idleTimeout string) metav1.Condit
 	return metav1.Condition{
 		Type:               string(breakglassv1alpha1.SessionConditionTypeIdle),
 		Status:             metav1.ConditionTrue,
-		LastTransitionTime: metav1.Now(),
+		LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 		Reason:             "IdleTimeout",
 		Message:            fmt.Sprintf("Session expired after %s of inactivity (idle timeout: %s).", idleSince.Round(time.Second), idleTimeout),
 	}

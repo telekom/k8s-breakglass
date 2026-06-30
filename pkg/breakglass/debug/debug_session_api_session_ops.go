@@ -133,7 +133,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	}
 
 	// Add participant
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	session.Status.Participants = append(session.Status.Participants, breakglassv1alpha1.DebugSessionParticipant{
 		User:        username,
 		Email:       userEmail,
@@ -465,7 +465,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 
 	// Mark as approved
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	if session.Status.Approval == nil {
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
 	}
@@ -557,7 +557,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	}
 
 	// Mark as rejected
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	if session.Status.Approval == nil {
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
 	}
@@ -643,7 +643,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	session.Status.Participants[participantIndex].LeftAt = &now
 
 	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {

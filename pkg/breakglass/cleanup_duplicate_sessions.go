@@ -7,6 +7,7 @@ package breakglass
 import (
 	"context"
 	"sort"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/system"
@@ -173,7 +174,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 			}
 
 			// Capture a single "now" for consistent terminal metadata and condition timestamps.
-			now := metav1.Now()
+			now := metav1.NewTime(time.Now().UTC())
 
 			// Populate terminal-state timestamps that the rest of the system expects.
 			if targetState == breakglassv1alpha1.SessionStateWithdrawn {

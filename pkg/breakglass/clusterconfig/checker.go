@@ -514,7 +514,7 @@ func (ccc ClusterConfigChecker) setCondition(ctx context.Context, cc *breakglass
 		return err
 	}
 
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 	condition := metav1.Condition{
 		Type:               string(condType),
 		Status:             status,
@@ -728,7 +728,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *break
 	}
 
 	// update status with conditions
-	now := metav1.Now()
+	now := metav1.NewTime(time.Now().UTC())
 
 	// Update condition with typed constant
 	condition := metav1.Condition{

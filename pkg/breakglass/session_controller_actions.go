@@ -57,7 +57,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	// Set status to Withdrawn
 	// IMPORTANT: Do NOT clear existing timestamps (ApprovedAt, ExpiresAt, etc.)
 	// We want to preserve history. Only set state and withdrawal-specific timestamp.
-	bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
+	bs.Status.WithdrawnAt = metav1.NewTime(time.Now().UTC()) // Record when withdrawn
 	bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 	// short reason for UI
 	bs.Status.ReasonEnded = "withdrawn"
@@ -67,12 +67,12 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 
 	// Set RetainedUntil for withdrawn sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
-	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+	bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 	bs.SetCondition(metav1.Condition{
 		Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
 		Status:             metav1.ConditionTrue,
-		LastTransitionTime: metav1.Now(),
+		LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 		Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 		Message:            "Session withdrawn by requester",
 	})
@@ -137,12 +137,12 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		!bs.Status.ApprovedAt.IsZero() {
 		// Approved session dropped - transition to Expired
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-		bs.Status.ExpiresAt = metav1.NewTime(time.Now())
+		bs.Status.ExpiresAt = metav1.NewTime(time.Now().UTC())
 		bs.Status.State = breakglassv1alpha1.SessionStateExpired
 		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 			Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            "Session dropped by owner",
 		})
@@ -150,23 +150,23 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 
 		// Set RetainedUntil for expired sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 	} else {
 		// Pending or other state -> behave like withdraw
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-		bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
+		bs.Status.WithdrawnAt = metav1.NewTime(time.Now().UTC()) // Record when withdrawn
 		bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 		bs.Status.Approver = ""
 		bs.Status.Approvers = nil
 
 		// Set RetainedUntil for withdrawn sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
 			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 			Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            "Session dropped by owner",
 		})
@@ -224,12 +224,12 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 
 	// Transition to expired immediately
 	// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-	bs.Status.ExpiresAt = metav1.NewTime(time.Now())
+	bs.Status.ExpiresAt = metav1.NewTime(time.Now().UTC())
 	bs.Status.State = breakglassv1alpha1.SessionStateExpired
 
 	// Set RetainedUntil for expired sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
-	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+	bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 	// record approver who canceled
 	approverEmail, _ := wc.identityProvider.GetEmail(c)
@@ -242,7 +242,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	bs.SetCondition(metav1.Condition{
 		Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 		Status:             metav1.ConditionTrue,
-		LastTransitionTime: metav1.Now(),
+		LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 		Reason:             string(breakglassv1alpha1.SessionConditionReasonEditedByApprover),
 		Message:            "Session canceled by approver",
 	})
@@ -380,7 +380,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 	scheduledStartTimeStr := ""
 	calculatedExpiresAtStr := ""
 	formattedDurationStr := ""
-	requestedAtStr := time.Now().Format("2006-01-02 15:04:05 MST")
+	requestedAtStr := time.Now().UTC().Format("2006-01-02 15:04:05") + " UTC"
 
 	if bs.Spec.ScheduledStartTime != nil {
 		scheduledStartTimeStr = bs.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05 MST")
@@ -403,12 +403,12 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 		if bs.Spec.MaxValidFor != "" {
 			if d, err := breakglassv1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				formattedDurationStr = formatDuration(d)
-				calculatedExpiresAtStr = time.Now().Add(d).Format("2006-01-02 15:04:05 MST")
+				calculatedExpiresAtStr = time.Now().UTC().Add(d).Format("2006-01-02 15:04:05") + " UTC"
 			}
 		} else {
 			// Default to 1 hour
 			formattedDurationStr = "1 hour"
-			calculatedExpiresAtStr = time.Now().Add(1 * time.Hour).Format("2006-01-02 15:04:05 MST")
+			calculatedExpiresAtStr = time.Now().UTC().Add(1 * time.Hour).Format("2006-01-02 15:04:05") + " UTC"
 		}
 	}
 

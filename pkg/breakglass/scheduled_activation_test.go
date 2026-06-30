@@ -62,7 +62,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 				ApprovedAt: metav1.NewTime(scheduledTime.Add(-30 * time.Minute)),
-				ExpiresAt:  metav1.NewTime(time.Now().Add(1 * time.Hour)),
+				ExpiresAt:  metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 			},
 		}
 
@@ -109,7 +109,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
-				ApprovedAt: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+				ApprovedAt: metav1.NewTime(time.Now().UTC().Add(-10 * time.Minute)),
 				ExpiresAt:  metav1.NewTime(futureTime.Add(1 * time.Hour)),
 			},
 		}
@@ -145,7 +145,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
-				ApprovedAt: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+				ApprovedAt: metav1.NewTime(time.Now().UTC().Add(-10 * time.Minute)),
 			},
 		}
 
@@ -192,7 +192,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
-				ApprovedAt: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+				ApprovedAt: metav1.NewTime(time.Now().UTC().Add(-10 * time.Minute)),
 			},
 		}
 
@@ -231,7 +231,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 				ApprovedAt: metav1.NewTime(pastTime.Add(-1 * time.Hour)),
-				ExpiresAt:  metav1.NewTime(time.Now().Add(2 * time.Hour)),
+				ExpiresAt:  metav1.NewTime(time.Now().UTC().Add(2 * time.Hour)),
 			},
 		}
 
@@ -248,7 +248,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
-				ApprovedAt: metav1.NewTime(time.Now().Add(-30 * time.Minute)),
+				ApprovedAt: metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute)),
 				ExpiresAt:  metav1.NewTime(futureTime.Add(1 * time.Hour)),
 			},
 		}
@@ -294,7 +294,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 				ApprovedAt: metav1.NewTime(justPast.Add(-1 * time.Hour)),
-				ExpiresAt:  metav1.NewTime(time.Now().Add(1 * time.Hour)),
+				ExpiresAt:  metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 			},
 		}
 
@@ -342,9 +342,9 @@ func TestActivateScheduledSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:           breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt:      metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ActualStartTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().Add(1 * time.Hour)),
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 			},
 		}
 
@@ -381,7 +381,7 @@ func TestActivateScheduledSessions(t *testing.T) {
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 				ApprovedAt: metav1.NewTime(farPast.Add(-1 * time.Hour)),
-				ExpiresAt:  metav1.NewTime(time.Now().Add(1 * time.Hour)),
+				ExpiresAt:  metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 			},
 		}
 

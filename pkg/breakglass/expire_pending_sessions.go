@@ -20,7 +20,7 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 	for _, ses := range sessions {
 		if IsSessionApprovalTimedOut(ses) {
 			wc.log.Infow("Expiring pending session due to approval timeout", "session", ses.Name)
-			now := time.Now()
+			now := time.Now().UTC()
 			updated, applied, err := wc.updateSessionStatusIfCurrent(
 				context.Background(),
 				ses,
@@ -34,7 +34,7 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 					current.SetCondition(metav1.Condition{
 						Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 						Status:             metav1.ConditionTrue,
-						LastTransitionTime: metav1.Now(),
+						LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 						Reason:             "ApprovalTimeout",
 						Message:            "Session approval timed out.",
 					})

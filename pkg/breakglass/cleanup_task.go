@@ -439,7 +439,7 @@ func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds breakglassv1alpha1
 		TemplateName:   ds.Spec.TemplateRef,
 		Namespace:      ds.Namespace,
 		StartedAt:      startedAt,
-		ExpiredAt:      time.Now().Format("2006-01-02 15:04:05 UTC"),
+		ExpiredAt:      time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		Duration:       duration,
 		BrandingName:   routine.BrandingName,
 	}
