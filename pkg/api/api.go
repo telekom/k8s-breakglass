@@ -738,6 +738,7 @@ type IdentityProviderResponse struct {
 	Type string `json:"type"`
 	// Authority is the OIDC or OAuth authority URL (exposed to frontend for browser flows)
 	Authority string `json:"authority"`
+	DirectAuthority string `json:"directAuthority,omitempty"`
 	// ClientID is the OIDC or OAuth client ID
 	ClientID string `json:"clientId"`
 	// KeycloakMetadata contains Keycloak-specific non-secret configuration if applicable
@@ -836,10 +837,17 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 		return
 	}
 
+	// Expose a frontend-facing OIDC authority that points at the server-side proxy
+	frontendAuthority := idpCfg.Authority
+	if s.oidcAuthority != nil {
+		frontendAuthority = "/api/oidc/authority"
+	}
+
 	// Build response with only non-secret fields
 	resp := IdentityProviderResponse{
 		Type:      idpCfg.Type,
-		Authority: idpCfg.Authority,
+		Authority: frontendAuthority,
+		DirectAuthority: idpCfg.Authority,
 		ClientID:  idpCfg.ClientID,
 	}
 
