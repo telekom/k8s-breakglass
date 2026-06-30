@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	clientleaderelection "k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
@@ -420,5 +421,53 @@ func TestStart_ActualExecution(t *testing.T) {
 		t.Log("Leader election shut down cleanly")
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for leader election shutdown")
+	}
+}
+
+type fakeLeaderElectorRunner func(context.Context)
+
+func (f fakeLeaderElectorRunner) Run(ctx context.Context) {
+	f(ctx)
+}
+
+func TestRunLoopRetriesAfterLeadershipLoss(t *testing.T) {
+	log := zaptest.NewLogger(t).Sugar()
+	leaderElectedCh := make(chan struct{})
+	startedCount := 0
+	callbacks := newLeaderCallbacks(&leaderElectedCh, "test-host", log, func(context.Context) {
+		startedCount++
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	factoryCount := 0
+	factory := func(callbacks clientleaderelection.LeaderCallbacks) (leaderElectorRunner, error) {
+		factoryCount++
+		runNumber := factoryCount
+		return fakeLeaderElectorRunner(func(ctx context.Context) {
+			switch runNumber {
+			case 1:
+				leaderCtx, stopLeading := context.WithCancel(ctx)
+				callbacks.OnStartedLeading(leaderCtx)
+				stopLeading()
+				callbacks.OnStoppedLeading()
+			case 2:
+				callbacks.OnStartedLeading(ctx)
+				cancel()
+			default:
+				t.Fatalf("unexpected leader election run %d", runNumber)
+			}
+		}), nil
+	}
+
+	runLoop(ctx, "test-lease", "test-namespace", "test-host", log, callbacks, factory)
+
+	assert.Equal(t, 2, factoryCount, "leader election should retry after a lost leadership epoch")
+	assert.Equal(t, 2, startedCount, "background loops should start for each acquired leadership epoch")
+	select {
+	case <-leaderElectedCh:
+	default:
+		t.Fatal("latest leader election channel should be closed after leadership is reacquired")
 	}
 }
