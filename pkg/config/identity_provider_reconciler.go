@@ -2,9 +2,14 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
+	"github.com/Nerzal/gocloak/v13"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -48,6 +53,26 @@ type IdentityProviderReconciler struct {
 	onError func(ctx context.Context, err error)
 	// resyncPeriod defines the full list reconciliation interval (default 10m)
 	resyncPeriod time.Duration
+	// keycloakHealthChecker verifies that the configured group sync client can authenticate.
+	keycloakHealthChecker keycloakGroupSyncHealthChecker
+}
+
+type keycloakGroupSyncHealthChecker func(ctx context.Context, keycloak *breakglassv1alpha1.KeycloakGroupSync, clientSecret string) error
+
+type keycloakGroupSyncHealthError struct {
+	reason  string
+	message string
+}
+
+func (e *keycloakGroupSyncHealthError) Error() string {
+	return e.message
+}
+
+func newKeycloakGroupSyncHealthError(reason, format string, args ...interface{}) error {
+	return &keycloakGroupSyncHealthError{
+		reason:  reason,
+		message: fmt.Sprintf(format, args...),
+	}
 }
 
 // NewIdentityProviderReconciler creates a new controller-runtime reconciler for IdentityProvider
@@ -60,10 +85,11 @@ func NewIdentityProviderReconciler(
 		logger = zap.NewNop().Sugar()
 	}
 	return &IdentityProviderReconciler{
-		client:       kubeClient,
-		logger:       logger,
-		onReload:     reloadFn,
-		resyncPeriod: 10 * time.Minute, // Full list resync every 10 minutes
+		client:                kubeClient,
+		logger:                logger,
+		onReload:              reloadFn,
+		resyncPeriod:          10 * time.Minute, // Full list resync every 10 minutes
+		keycloakHealthChecker: checkKeycloakGroupSyncHealth,
 	}
 }
 
@@ -124,6 +150,11 @@ func (r *IdentityProviderReconciler) WithEventRecorder(recorder events.EventReco
 // WithResyncPeriod sets the resync period for full list reconciliation
 func (r *IdentityProviderReconciler) WithResyncPeriod(period time.Duration) *IdentityProviderReconciler {
 	r.resyncPeriod = period
+	return r
+}
+
+func (r *IdentityProviderReconciler) withKeycloakHealthChecker(fn keycloakGroupSyncHealthChecker) *IdentityProviderReconciler {
+	r.keycloakHealthChecker = fn
 	return r
 }
 
@@ -360,6 +391,77 @@ func (r *IdentityProviderReconciler) applyStatus(ctx context.Context, idp *break
 	return ssa.ApplyIdentityProviderStatus(ctx, r.client, idp)
 }
 
+func checkKeycloakGroupSyncHealth(ctx context.Context, keycloak *breakglassv1alpha1.KeycloakGroupSync, clientSecret string) error {
+	if keycloak == nil {
+		return newKeycloakGroupSyncHealthError("KeycloakMissing", "Keycloak configuration is missing")
+	}
+	if keycloak.InsecureSkipVerify {
+		return newKeycloakGroupSyncHealthError("KeycloakTLSConfigRejected", "insecureSkipVerify is not supported for Keycloak group synchronization")
+	}
+
+	timeout := 10 * time.Second
+	if keycloak.RequestTimeout != "" {
+		parsed, err := breakglassv1alpha1.ParseDuration(keycloak.RequestTimeout)
+		if err != nil || parsed <= 0 {
+			return newKeycloakGroupSyncHealthError("KeycloakRequestTimeoutInvalid", "invalid Keycloak requestTimeout %q", keycloak.RequestTimeout)
+		}
+		timeout = parsed
+	}
+
+	gc := gocloak.NewClient(keycloak.BaseURL)
+	restyClient := gc.RestyClient()
+	restyClient.SetTimeout(timeout)
+
+	tlsConfig, err := keycloakGroupSyncTLSConfig(keycloak)
+	if err != nil {
+		return err
+	}
+	restyClient.SetTLSClientConfig(tlsConfig)
+
+	token, err := gc.GetToken(ctx, keycloak.Realm, gocloak.TokenOptions{
+		ClientID:     &keycloak.ClientID,
+		ClientSecret: &clientSecret,
+		GrantType:    gocloak.StringP("client_credentials"),
+	})
+	if err != nil {
+		return newKeycloakGroupSyncHealthError(keycloakTokenFailureReason(err), "Keycloak token request failed: %v", err)
+	}
+	if token == nil || token.AccessToken == "" {
+		return newKeycloakGroupSyncHealthError("KeycloakTokenInvalid", "Keycloak token response did not contain an access token")
+	}
+	return nil
+}
+
+func keycloakGroupSyncTLSConfig(keycloak *breakglassv1alpha1.KeycloakGroupSync) (*tls.Config, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if keycloak.CertificateAuthority == "" {
+		return tlsConfig, nil
+	}
+
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if ok := rootCAs.AppendCertsFromPEM([]byte(keycloak.CertificateAuthority)); !ok {
+		return nil, newKeycloakGroupSyncHealthError("KeycloakTLSConfigInvalid", "failed to parse Keycloak certificateAuthority")
+	}
+	tlsConfig.RootCAs = rootCAs
+	return tlsConfig, nil
+}
+
+func keycloakTokenFailureReason(err error) string {
+	var apiErr *gocloak.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Code {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return "KeycloakAuthenticationFailed"
+		default:
+			return "KeycloakHealthCheckFailed"
+		}
+	}
+	return "KeycloakHealthCheckFailed"
+}
+
 // updateGroupSyncHealth checks the health of the group sync provider (if configured)
 // and updates the conditions accordingly. It also emits events on health status changes.
 func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, idp *breakglassv1alpha1.IdentityProvider) {
@@ -495,7 +597,8 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 	if secretDataKey == "" {
 		secretDataKey = "value" // Default key if not specified
 	}
-	if _, exists := secret.Data[secretDataKey]; !exists {
+	clientSecret, exists := secret.Data[secretDataKey]
+	if !exists {
 		idp.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
 			Status:             metav1.ConditionFalse,
@@ -514,6 +617,56 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 				"Keycloak client secret key '%s' not found in secret '%s'",
 				secretDataKey, secretRef.Name)
 		}
+		return
+	}
+	if len(clientSecret) == 0 {
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "SecretKeyEmpty",
+			Message: fmt.Sprintf("Keycloak client secret key '%s' in secret '%s' is empty",
+				secretDataKey, secretRef.Name),
+		})
+
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncSecretKeyEmpty", "GroupSyncSecretKeyEmpty",
+				"Keycloak client secret key '%s' in secret '%s' is empty",
+				secretDataKey, secretRef.Name)
+		}
+		return
+	}
+
+	healthChecker := r.keycloakHealthChecker
+	if healthChecker == nil {
+		healthChecker = checkKeycloakGroupSyncHealth
+	}
+	if err := healthChecker(ctx, idp.Spec.Keycloak, string(clientSecret)); err != nil {
+		reason := "KeycloakHealthCheckFailed"
+		var healthErr *keycloakGroupSyncHealthError
+		if errors.As(err, &healthErr) && healthErr.reason != "" {
+			reason = healthErr.reason
+		}
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             reason,
+			Message:            fmt.Sprintf("Keycloak group sync health check failed: %v", err),
+		})
+
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncKeycloakHealthCheckFailed", "GroupSyncKeycloakHealthCheckFailed",
+				"Keycloak group sync health check failed: %v", err)
+		}
+		r.logger.Warnw("group sync provider health check failed",
+			"name", idp.Name, "provider", idp.Spec.GroupSyncProvider, "reason", reason, "error", err)
 		return
 	}
 
