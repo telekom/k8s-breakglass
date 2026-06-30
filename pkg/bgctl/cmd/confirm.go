@@ -16,7 +16,9 @@ func confirmAction(cmd *cobra.Command, rt *runtimeState, action, resourceName st
 		return fmt.Errorf("confirmation required: run with --yes or omit --non-interactive or unset BGCTL_NON_INTERACTIVE")
 	}
 
-	_, _ = fmt.Fprintf(rt.writer, "Are you sure you want to %s %s? [y/N]: ", action, resourceName)
+	if _, err := fmt.Fprintf(rt.writer, "Are you sure you want to %s %s? [y/N]: ", action, resourceName); err != nil {
+		return fmt.Errorf("failed to write prompt: %w", err)
+	}
 	reader := bufio.NewReader(cmd.InOrStdin())
 	response, err := reader.ReadString('\n')
 	if err != nil {

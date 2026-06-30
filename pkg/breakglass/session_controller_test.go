@@ -2803,6 +2803,98 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	}
 }
 
+func TestApproverCancelScheduledSession(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	// escalation with approver
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-cancel-sched"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "g",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@e.com"}},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		if c.Request.Method == http.MethodPost {
+			if strings.Contains(c.Request.URL.String(), "/approve") || strings.Contains(c.Request.URL.String(), "/cancel") {
+				c.Set("email", "approver@e.com")
+			} else {
+				c.Set("email", "user@e.com")
+			}
+		} else {
+			c.Set("email", "user@e.com")
+		}
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	future := time.Now().Add(10 * time.Minute)
+	reqData := BreakglassSessionRequest{Clustername: "c", Username: "user@e.com", GroupName: "g", ScheduledStartTime: future.Format(time.RFC3339)}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("failed to create scheduled session, status: %d", w.Result().StatusCode)
+	}
+
+	created := breakglassv1alpha1.BreakglassSession{}
+	json.NewDecoder(w.Result().Body).Decode(&created)
+	name := created.Name
+
+	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions/"+name+"/approve", nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected approve to succeed, got %d", w.Result().StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions/"+name+"/cancel", nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected cancel to succeed for approver, got %d", w.Result().StatusCode)
+	}
+
+	canceled := breakglassv1alpha1.BreakglassSession{}
+	json.NewDecoder(w.Result().Body).Decode(&canceled)
+	if canceled.Status.State != breakglassv1alpha1.SessionStateExpired {
+		t.Fatalf("expected expired session after cancel, got state=%s", canceled.Status.State)
+	}
+
+	engine = gin.New()
+	ctrl = NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("email", "not-approver@e.com")
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions/"+name+"/cancel", nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusForbidden {
+		t.Fatalf("expected cancel by non-approver to be Forbidden, got %d", w.Result().StatusCode)
+	}
+}
+
 func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
