@@ -2238,11 +2238,32 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
-	t.Run("rejects selector-only denied filters when namespace labels are unavailable", func(t *testing.T) {
+	t.Run("rejects selector-only allowed filters when namespace labels are unavailable", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+							{MatchLabels: map[string]string{"debug-enabled": "true"}},
+						},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		_, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+	})
+
+	t.Run("does not treat denied namespace selector terms as global name matches", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"kube-*"},
 						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
 							{MatchLabels: map[string]string{"environment": "production"}},
 						},
@@ -2252,7 +2273,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		_, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+
+		require.NoError(t, err)
+		assert.Equal(t, "debug-ns", ns)
+
+		_, err = ctrl.resolveTargetNamespace(template, "kube-system", nil)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")

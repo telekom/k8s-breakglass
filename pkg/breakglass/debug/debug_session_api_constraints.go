@@ -233,7 +233,7 @@ func validateNamespaceConstraintFilters(namespace string, constraints *breakglas
 		return fmt.Errorf("namespace '%s' is not in the allowed namespaces", namespace)
 	}
 	if constraints.DeniedNamespaces != nil && !constraints.DeniedNamespaces.IsEmpty() &&
-		matchDeniedNamespaceFilter(namespace, constraints.DeniedNamespaces) {
+		matchNamespaceFilter(namespace, constraints.DeniedNamespaces) {
 		return fmt.Errorf("namespace '%s' is explicitly denied", namespace)
 	}
 	return nil
@@ -266,42 +266,20 @@ func mergeNamespaceFilters(
 	return merged
 }
 
-// matchNamespaceFilter checks if a namespace matches a NamespaceFilter.
-// Only evaluates patterns; label selector matching requires runtime access to namespaces.
+// matchNamespaceFilter checks if a namespace name matches a NamespaceFilter.
+// Selector terms require namespace labels and are ignored by this name-only
+// validation path.
 func matchNamespaceFilter(namespace string, filter *breakglassv1alpha1.NamespaceFilter) bool {
 	if filter == nil || filter.IsEmpty() {
 		return false
 	}
 
-	// Check patterns
 	for _, pattern := range filter.Patterns {
 		if matchPattern(pattern, namespace) {
 			return true
 		}
 	}
 
-	// Note: SelectorTerms require runtime namespace label access
-	// For now, if only selector terms are specified, we allow it
-	// (actual validation happens at deployment time)
-	if len(filter.Patterns) == 0 && filter.HasSelectorTerms() {
-		return true // Defer to runtime validation
-	}
-
-	return false
-}
-
-func matchDeniedNamespaceFilter(namespace string, filter *breakglassv1alpha1.NamespaceFilter) bool {
-	if filter == nil || filter.IsEmpty() {
-		return false
-	}
-	for _, pattern := range filter.Patterns {
-		if matchPattern(pattern, namespace) {
-			return true
-		}
-	}
-	if filter.HasSelectorTerms() {
-		return true
-	}
 	return false
 }
 
