@@ -1052,8 +1052,57 @@ func (p *OIDCTokenProvider) discoverTokenEndpoint(ctx context.Context, oidc *bre
 		return "", fmt.Errorf("OIDC discovery missing token_endpoint")
 	}
 
+	// Validate the discovered token_endpoint to prevent SSRF and token leakage
+	if !isValidTokenEndpointURL(discovery.TokenEndpoint) {
+		return "", fmt.Errorf("OIDC discovery returned invalid token_endpoint: %s", discovery.TokenEndpoint)
+	}
+	if !tokenEndpointHostMatchesIssuer(discovery.TokenEndpoint, oidc.IssuerURL) {
+		return "", fmt.Errorf("OIDC discovery returned token_endpoint with mismatched host: %s (expected origin matching %s)", discovery.TokenEndpoint, oidc.IssuerURL)
+	}
+
 	return discovery.TokenEndpoint, nil
 }
+
+func isValidTokenEndpointURL(tokenURL string) bool {
+	if len(tokenURL) == 0 || len(tokenURL) > 512 {
+		return false
+	}
+	u, err := url.Parse(tokenURL)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return false
+	}
+	if u.Fragment != "" || u.User != nil {
+		return false
+	}
+	return true
+}
+
+func tokenEndpointHostMatchesIssuer(tokenURL, issuerURL string) bool {
+	tURL, err := url.Parse(tokenURL)
+	if err != nil {
+		return false
+	}
+	iURL, err := url.Parse(issuerURL)
+	if err != nil || !iURL.IsAbs() {
+		return false
+	}
+	if !strings.EqualFold(tURL.Hostname(), iURL.Hostname()) {
+		return false
+	}
+	tPort := tURL.Port()
+	if tPort == "" && tURL.Scheme == "https" {
+		tPort = "443"
+	}
+	iPort := iURL.Port()
+	if iPort == "" && iURL.Scheme == "https" {
+		iPort = "443"
+	}
+	return tPort == iPort
+}
+
 
 // getClientSecret retrieves the client secret from the referenced secret
 func (p *OIDCTokenProvider) getClientSecret(ctx context.Context, oidc *breakglassv1alpha1.OIDCAuthConfig) (string, error) {
