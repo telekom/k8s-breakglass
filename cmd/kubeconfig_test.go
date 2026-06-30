@@ -20,10 +20,10 @@ func TestGetKubeConfig(t *testing.T) {
 	config.CurrentContext = "default-ctx"
 	config.Contexts["default-ctx"] = &api.Context{Cluster: "default-cluster", AuthInfo: "default-user"}
 	config.Contexts["custom-ctx"] = &api.Context{Cluster: "custom-cluster", AuthInfo: "custom-user"}
-	
+
 	config.Clusters["default-cluster"] = &api.Cluster{Server: "https://default"}
 	config.Clusters["custom-cluster"] = &api.Cluster{Server: "https://custom"}
-	
+
 	config.AuthInfos["default-user"] = &api.AuthInfo{Token: "default"}
 	config.AuthInfos["custom-user"] = &api.AuthInfo{Token: "custom"}
 
