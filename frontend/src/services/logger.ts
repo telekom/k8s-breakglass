@@ -99,15 +99,6 @@ export function toggleDebugLogging(source = "manual toggle") {
   setDebugLoggingEnabled(!debugEnabled, source);
 }
 
-export function exposeDebugControls() {
-  if (typeof window === "undefined") return;
-  const w = window as unknown as Record<string, unknown>;
-  w.breakglassDebug = {
-    enable: () => setDebugLoggingEnabled(true, "window helper"),
-    disable: () => setDebugLoggingEnabled(false, "window helper"),
-    toggle: () => toggleDebugLogging("window helper toggle"),
-    status: () => isDebugLoggingEnabled(),
-  };
   if (debugEnabled) {
     announceDebugStatus("initial load");
   }
@@ -199,7 +190,7 @@ export default {
   action,
   stateChange,
   handleAxiosError,
-  exposeDebugControls,
+
   setDebugLoggingEnabled,
   toggleDebugLogging,
   isDebugLoggingEnabled,

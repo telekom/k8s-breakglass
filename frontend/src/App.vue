@@ -21,7 +21,7 @@ const user = useUser();
 const authenticated = computed(() => Boolean(user.value && !user.value?.expired));
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
-const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
+const showDebugPanel = import.meta.env.DEV === true;
 
 const route = useRoute();
 const router = useRouter();
@@ -351,8 +351,6 @@ async function refreshGroups() {
     const at = await auth?.getAccessToken();
     if (at) {
       const decoded = decodeJwt(at);
-      debug("App", "refreshGroups: Decoded access token keys:", Object.keys(decoded));
-      debug("App", "refreshGroups: Full decoded access token:", decoded);
 
       // Extract groups from various possible locations
       const realmAccess = decoded?.realm_access as Record<string, unknown> | undefined;
