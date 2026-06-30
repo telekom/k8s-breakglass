@@ -132,6 +132,29 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		})
 	}
 
+	// Preserve allowed pods for ephemeral containers injected into existing pods
+	// (these pods don't have the debug session label)
+	if ds.Status.KubectlDebugStatus != nil {
+		for _, ec := range ds.Status.KubectlDebugStatus.EphemeralContainersInjected {
+			found := false
+			for _, ap := range allowedPods {
+				if ap.Namespace == ec.Namespace && ap.Name == ec.PodName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				// Find it in the old allowedPods to preserve its state
+				for _, oldAP := range ds.Status.AllowedPods {
+					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName {
+						allowedPods = append(allowedPods, oldAP)
+						break
+					}
+				}
+			}
+		}
+	}
+
 	ds.Status.AllowedPods = allowedPods
 	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 }
