@@ -378,7 +378,7 @@ func newSessionWithdrawCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := confirmAction(rt, "withdrawcommand", args[0], yes); err != nil {
+			if err := confirmAction(cmd, rt, "withdraw", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)
@@ -412,7 +412,7 @@ func newSessionDropCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := confirmAction(rt, "dropcommand", args[0], yes); err != nil {
+			if err := confirmAction(cmd, rt, "drop", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)
@@ -446,7 +446,7 @@ func newSessionCancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := confirmAction(rt, "cancelcommand", args[0], yes); err != nil {
+			if err := confirmAction(cmd, rt, "cancel", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)

@@ -440,7 +440,7 @@ func newDebugSessionTerminateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := confirmAction(rt, "terminate", args[0], yes); err != nil {
+			if err := confirmAction(cmd, rt, "terminate", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)
