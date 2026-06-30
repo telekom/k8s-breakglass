@@ -39,7 +39,7 @@ type QueuedSinkConfig struct {
 	WorkerCount int
 
 	// Batching config for underlying BatchSinks
-	BatchSize int
+	BatchSize    int
 	BatchTimeout time.Duration
 
 	// WriteTimeout is the timeout for writing to the underlying sink.
@@ -157,7 +157,7 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 		logger: logger.Named("queued-sink").With(zap.String("sink", sink.Name())),
 	}
 
-		batchSink, isBatchSink := sink.(BatchSink)
+	batchSink, isBatchSink := sink.(BatchSink)
 
 	// Start workers
 	for i := 0; i < cfg.WorkerCount; i++ {
