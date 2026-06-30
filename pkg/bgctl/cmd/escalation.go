@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/output"
 )
 
@@ -72,8 +73,8 @@ func newEscalationGetCommand() *cobra.Command {
 			case output.FormatJSON, output.FormatYAML:
 				return output.WriteObject(rt.Writer(), format, esc)
 			case output.FormatTable, output.FormatWide:
-				// No table formatter for single escalation — fall back to YAML
-				return output.WriteObject(rt.Writer(), output.FormatYAML, esc)
+				output.WriteEscalationTable(rt.Writer(), []breakglassv1alpha1.BreakglassEscalation{*esc})
+				return nil
 			default:
 				return unsupportedOutputFormatError(format, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 			}
