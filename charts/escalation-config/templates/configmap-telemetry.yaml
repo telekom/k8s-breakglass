@@ -1,4 +1,4 @@
-{{- /* 
+{{- /*
 This ConfigMap provides OpenTelemetry configuration.
 It is intentionally not auto-mounted. Operators must mount it into the controller Deployment manually.
 */ -}}
