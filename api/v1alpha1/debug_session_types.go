@@ -19,6 +19,9 @@ package v1alpha1
 import (
 	"context"
 
+	"fmt"
+	"reflect"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -594,12 +597,67 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
+	var allErrs field.ErrorList
+
+	if !reflect.DeepEqual(newObj.Spec, oldObj.Spec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
+	}
+
+	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(newObj)
-	if result.IsValid() {
+	if !result.IsValid() {
+		allErrs = append(allErrs, result.Errors...)
+	}
+
+	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, allErrs)
+}
+
+func validateTimeMonotonicity(errs field.ErrorList, path *field.Path, oldTime, newTime *metav1.Time, name string) field.ErrorList {
+	if oldTime != nil && !oldTime.IsZero() {
+		if newTime == nil || newTime.IsZero() {
+			errs = append(errs, field.Invalid(
+				path.Child(name),
+				nil,
+				name+" must not be cleared once set",
+			))
+		} else if newTime.Time.Before(oldTime.Time) {
+			errs = append(errs, field.Invalid(
+				path.Child(name),
+				newTime.Time,
+				fmt.Sprintf("%s must not move backwards (was %s)", name, oldTime.Time.Format("2006-01-02T15:04:05Z")),
+			))
+		}
+	}
+	return errs
+}
+
+func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) field.ErrorList {
+	var errs field.ErrorList
+	statusPath := field.NewPath("status")
+
+	errs = validateTimeMonotonicity(errs, statusPath, oldObj.Status.StartsAt, newObj.Status.StartsAt, "startsAt")
+	errs = validateTimeMonotonicity(errs, statusPath, oldObj.Status.ExpiresAt, newObj.Status.ExpiresAt, "expiresAt")
+
+	if oldObj.Status.Approval != nil {
+		if newObj.Status.Approval == nil {
+			errs = append(errs, field.Invalid(
+				statusPath.Child("approval"),
+				nil,
+				"approval must not be cleared once set",
+			))
+		} else {
+			approvalPath := statusPath.Child("approval")
+			errs = validateTimeMonotonicity(errs, approvalPath, oldObj.Status.Approval.ApprovedAt, newObj.Status.Approval.ApprovedAt, "approvedAt")
+			errs = validateTimeMonotonicity(errs, approvalPath, oldObj.Status.Approval.RejectedAt, newObj.Status.Approval.RejectedAt, "rejectedAt")
+		}
+	}
+
+	return errs
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
