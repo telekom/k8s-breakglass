@@ -430,6 +430,7 @@ func newDebugSessionRenewCommand() *cobra.Command {
 
 func newDebugSessionTerminateCommand() *cobra.Command {
 	var namespace string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "terminate NAME",
 		Short: "Terminate a debug session",
@@ -437,6 +438,9 @@ func newDebugSessionTerminateCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
+				return err
+			}
+			if err := confirmAction(rt, "terminate", args[0], yes); err != nil {
 				return err
 			}
 			apiClient, err := buildClient(context.Background(), rt)
@@ -451,6 +455,7 @@ func newDebugSessionTerminateCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm destruction")
 	return cmd
 }
 
