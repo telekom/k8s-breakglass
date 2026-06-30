@@ -37,8 +37,8 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 		},
 	}
 
-	// Create a test OIDC authority URL
-	keycloakURL, err := url.Parse("https://keycloak.example.com")
+	// Create a test OIDC authority URL matching the loaded identity provider.
+	keycloakURL, err := url.Parse("https://keycloak.example.com/auth/realms/master")
 	require.NoError(t, err)
 
 	auth := &AuthHandler{} // Mock auth handler
@@ -48,7 +48,7 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority: "https://keycloak.example.com/auth/realms/master",
+			Authority: keycloakURL.String(),
 		},
 	}
 
