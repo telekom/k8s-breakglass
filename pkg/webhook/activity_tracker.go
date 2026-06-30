@@ -146,13 +146,26 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, ts time.Time) 
 
 	entry, exists := at.entries[key]
 	if !exists {
-		// Cap the map size to prevent unbounded growth
+		// Cap the map size to prevent unbounded growth.
+		// Instead of dropping the new session (which might never get an initial activity record
+		// and thus evade idle expiry), evict the oldest entry in the map.
 		if len(at.entries) >= maxEntries {
-			at.log.Warnw("ActivityTracker at capacity, dropping new entry",
+			var oldestKey types.NamespacedName
+			var oldestTime time.Time
+			first := true
+			for k, e := range at.entries {
+				if first || e.lastSeen.Before(oldestTime) {
+					oldestKey = k
+					oldestTime = e.lastSeen
+					first = false
+				}
+			}
+			at.log.Warnw("ActivityTracker at capacity, evicting oldest entry to make room",
 				"maxEntries", maxEntries,
-				"session", key.String())
+				"evicted", oldestKey.String(),
+				"newSession", key.String())
+			delete(at.entries, oldestKey)
 			metrics.SessionActivityDropped.Inc()
-			return
 		}
 		at.entries[key] = &activityEntry{
 			namespace: namespace,
