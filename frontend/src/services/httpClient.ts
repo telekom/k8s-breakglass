@@ -32,7 +32,7 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
       if (options?.enableDevTokenLogging && import.meta.env.DEV) {
         try {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore - dev flag injected via window
+          
           if (typeof window !== "undefined" && (window.__DEV_TOKEN_LOG === true || window.__DEV_TOKEN_LOG === "true")) {
             const authHeader = headers.get("Authorization");
             const tokenLength =

@@ -115,7 +115,7 @@ async function initializeApp() {
     // Use neutral variant. Stylesheet imports are side-effect only; types not provided.
     await import("@telekom/scale-components-neutral/dist/scale-components/scale-components.css");
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore loader lacks types in neutral package version
+    
     const { defineCustomElements, applyPolyfills } = await import("@telekom/scale-components-neutral/loader");
     if (typeof applyPolyfills === "function") {
       await applyPolyfills().then(() => defineCustomElements(window));
