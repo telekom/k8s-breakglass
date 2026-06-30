@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
@@ -31,7 +32,7 @@ func TestConfirmAction(t *testing.T) {
 		err := confirmAction(cmd, rt, "drop", "session", false)
 		assert.ErrorContains(t, err, "canceled")
 	})
-	
+
 	t.Run("proceeds on y input", func(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetIn(strings.NewReader("y\n"))

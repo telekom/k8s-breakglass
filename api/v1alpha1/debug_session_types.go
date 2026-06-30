@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"reflect"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -593,12 +594,24 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
+	var allErrs field.ErrorList
+
+	// Enforce immutability of Spec
+	if !reflect.DeepEqual(newObj.Spec, oldObj.Spec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
+	}
+
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(newObj)
-	if result.IsValid() {
-		return nil, nil
+	allErrs = append(allErrs, result.Errors...)
+
+	// Monotonic enforcement
+	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+
+	if len(allErrs) == 0 {
+		return result.Warnings, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
+	return result.Warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, allErrs)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
