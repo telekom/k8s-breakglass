@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed VAP manifests to match v1alpha1 CRD schema changes (#990)
+
+### Fixed
 
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
 ### Fixed
