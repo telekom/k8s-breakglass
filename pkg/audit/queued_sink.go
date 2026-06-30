@@ -197,10 +197,20 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 				qs.consecutiveFails.Store(0)
 			}
 		} else {
-			// Circuit still open, drop event
+			// Circuit still open
+			if IsSensitiveEvent(event.Type) {
+				// Synchronous fallback for sensitive events
+				qs.logger.Warn("circuit open but event is sensitive, attempting synchronous write",
+					zap.String("sink", qs.sink.Name()),
+					zap.String("event_type", string(event.Type)))
+				ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+				defer cancel()
+				return qs.sink.Write(ctx, event)
+			}
+			// Non-sensitive event: drop silently
 			qs.droppedEvents.Add(1)
 			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open").Inc()
-			return nil // Don't return error - just drop silently
+			return nil
 		}
 	}
 
@@ -209,7 +219,17 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 	case qs.queue <- event:
 		return nil
 	default:
-		// Queue is full - drop event
+		// Queue is full
+		if IsSensitiveEvent(event.Type) {
+			// Synchronous fallback for sensitive events
+			qs.logger.Warn("queue full but event is sensitive, attempting synchronous write",
+				zap.String("sink", qs.sink.Name()),
+				zap.String("event_type", string(event.Type)))
+			ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+			defer cancel()
+			return qs.sink.Write(ctx, event)
+		}
+		// Non-sensitive event: drop
 		qs.droppedEvents.Add(1)
 		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
 		if !qs.config.DropOnFull {
@@ -218,7 +238,7 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 				zap.String("event_type", string(event.Type)),
 				zap.String("event_id", event.ID))
 		}
-		return nil // Don't return error - just drop silently
+		return nil
 	}
 }
 
