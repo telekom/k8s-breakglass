@@ -630,6 +630,13 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 				members, err := u.Resolver.Members(ctx, g)
 				if err != nil {
 					log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "group", system.RedactGroupName(g), "error", err)
+					if escalation.Status.IDPGroupMemberships != nil {
+						if cachedIDP, ok := escalation.Status.IDPGroupMemberships[""]; ok {
+							if cachedMembers, ok := cachedIDP[g]; ok {
+								groupMembers[g] = cachedMembers
+							}
+						}
+					}
 					continue
 				}
 				groupMembers[g] = normalizeMembers(members)
@@ -702,6 +709,16 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 					u.EventRecorder.Eventf(idp, nil, "Warning", "GroupFetchFailed", "GroupFetchFailed",
 						"Failed to fetch group %s for escalation %s/%s: %v",
 						system.RedactGroupName(g), escalation.Namespace, escalation.Name, err)
+				}
+				
+				if escalation.Status.IDPGroupMemberships != nil {
+					if cachedIDP, ok := escalation.Status.IDPGroupMemberships[idpName]; ok {
+						if cachedMembers, ok := cachedIDP[g]; ok {
+							idpGroupMembers[g] = cachedMembers
+							log.Infow("Retaining previously cached group members due to fetch error",
+								"escalation", escalation.Name, "idp", idpName, "group", system.RedactGroupName(g), "count", len(cachedMembers))
+						}
+					}
 				}
 				continue
 			}
