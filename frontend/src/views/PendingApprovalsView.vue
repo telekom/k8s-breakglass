@@ -10,7 +10,6 @@
     <!-- Filter and Sort Controls -->
     <div class="approvals-toolbar ui-toolbar" data-testid="approvals-toolbar">
       <div class="approvals-toolbar__control ui-toolbar-field">
-        <label for="sort-select" class="sr-only">Sort by</label>
         <scale-dropdown-select
           id="sort-select"
           data-testid="sort-select"
@@ -25,7 +24,6 @@
       </div>
 
       <div class="approvals-toolbar__control ui-toolbar-field">
-        <label for="urgency-filter" class="sr-only">Urgency</label>
         <scale-dropdown-select
           id="urgency-filter"
           data-testid="urgency-filter"

@@ -245,7 +245,6 @@ function openRenewModal() {
     >
       <div class="modal-content">
         <p>Provide a reason for rejecting this debug session request.</p>
-        <label :for="rejectReasonId" class="sr-only">Rejection Reason</label>
         <scale-text-field
           :id="rejectReasonId"
           v-model="rejectReason"
@@ -280,7 +279,6 @@ function openRenewModal() {
     >
       <div class="modal-content">
         <p>Extend the duration of this debug session.</p>
-        <label :for="renewDurationId" class="sr-only">Extend By</label>
         <scale-dropdown-select
           :id="renewDurationId"
           :value="renewDuration"
