@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"reflect"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -596,10 +597,60 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(newObj)
+
+	// Enforce immutability of Spec
+	if !reflect.DeepEqual(newObj.Spec, oldObj.Spec) {
+		result.Errors = append(result.Errors, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
+	}
+
+	// Validate status monotonic fields
+	result.Errors = append(result.Errors, validateDebugSessionMonotonicFields(oldObj, newObj)...)
+
 	if result.IsValid() {
 		return nil, nil
 	}
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
+}
+
+func validateDebugSessionMonotonicFields(oldObj, newObj *DebugSession) field.ErrorList {
+	var errs field.ErrorList
+	statusPath := field.NewPath("status")
+
+	if oldObj.Status.StartsAt != nil && !oldObj.Status.StartsAt.IsZero() {
+		if newObj.Status.StartsAt == nil || newObj.Status.StartsAt.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("startsAt"), nil, "startsAt must not be cleared once set"))
+		} else if newObj.Status.StartsAt.Before(oldObj.Status.StartsAt) {
+			errs = append(errs, field.Invalid(statusPath.Child("startsAt"), newObj.Status.StartsAt, "startsAt cannot be moved backwards"))
+		}
+	}
+
+	if oldObj.Status.ExpiresAt != nil && !oldObj.Status.ExpiresAt.IsZero() {
+		if newObj.Status.ExpiresAt == nil || newObj.Status.ExpiresAt.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), nil, "expiresAt must not be cleared once set"))
+		} else if newObj.Status.ExpiresAt.Before(oldObj.Status.ExpiresAt) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newObj.Status.ExpiresAt, "expiresAt cannot be moved backwards"))
+		}
+	}
+
+	if oldObj.Status.Approval != nil && newObj.Status.Approval != nil {
+		if oldObj.Status.Approval.ApprovedAt != nil && !oldObj.Status.Approval.ApprovedAt.IsZero() {
+			if newObj.Status.Approval.ApprovedAt == nil || newObj.Status.Approval.ApprovedAt.IsZero() {
+				errs = append(errs, field.Invalid(statusPath.Child("approval").Child("approvedAt"), nil, "approvedAt must not be cleared once set"))
+			} else if newObj.Status.Approval.ApprovedAt.Before(oldObj.Status.Approval.ApprovedAt) {
+				errs = append(errs, field.Invalid(statusPath.Child("approval").Child("approvedAt"), newObj.Status.Approval.ApprovedAt, "approvedAt cannot be moved backwards"))
+			}
+		}
+
+		if oldObj.Status.Approval.RejectedAt != nil && !oldObj.Status.Approval.RejectedAt.IsZero() {
+			if newObj.Status.Approval.RejectedAt == nil || newObj.Status.Approval.RejectedAt.IsZero() {
+				errs = append(errs, field.Invalid(statusPath.Child("approval").Child("rejectedAt"), nil, "rejectedAt must not be cleared once set"))
+			} else if newObj.Status.Approval.RejectedAt.Before(oldObj.Status.Approval.RejectedAt) {
+				errs = append(errs, field.Invalid(statusPath.Child("approval").Child("rejectedAt"), newObj.Status.Approval.RejectedAt, "rejectedAt cannot be moved backwards"))
+			}
+		}
+	}
+
+	return errs
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
