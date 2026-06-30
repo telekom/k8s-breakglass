@@ -1058,7 +1058,7 @@ func (wc *WebhookController) recordSessionActivity(sessions []breakglassv1alpha1
 	// map lookup unnecessary overhead for the common case.
 	for i := range sessions {
 		if sessions[i].Name == sessionName {
-			wc.activityTracker.RecordActivity(sessions[i].Namespace, sessions[i].Name, time.Now())
+			wc.activityTracker.RecordActivity(sessions[i].Namespace, sessions[i].Name, sessions[i].UID, time.Now())
 			return
 		}
 	}
