@@ -992,7 +992,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	target := targetURL.String()
 	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target_scheme", targetURL.Scheme, "target_host", targetURL.Host, "target_path", targetURL.Path)
 
-	client, err := s.newOIDCProxyHTTPClient(targetURL.Scheme == "https")
+	client, err := s.newOIDCProxyHTTPClient(targetURL.Scheme == "https", targetAuthority.String())
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_client_error", "error", err)
 		recordOIDCProxyFailure("tls_configuration_error", start)
@@ -1098,7 +1098,7 @@ const (
 	tlsModeCustomCA = "custom_ca"
 )
 
-func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) {
+func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool, authority string) (*http.Client, error) {
 	transport := &http.Transport{}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 

@@ -809,7 +809,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				Authority: "https://keycloak.example.com",
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true)
+		client, err := server.newOIDCProxyHTTPClient(true, "")
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)
 		require.NotNil(t, transport.TLSClientConfig)
@@ -825,7 +825,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				InsecureSkipVerify: true,
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true)
+		client, err := server.newOIDCProxyHTTPClient(true, "")
 		require.Error(t, err)
 		assert.Nil(t, client)
 		assert.Contains(t, err.Error(), "configure certificateAuthority")
@@ -841,7 +841,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				InsecureSkipVerify:   true,
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true)
+		client, err := server.newOIDCProxyHTTPClient(true, "")
 		require.Error(t, err)
 		assert.Nil(t, client)
 		assert.Contains(t, err.Error(), "insecureSkipVerify is not supported")
@@ -856,7 +856,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				CertificateAuthority: testCertificatePEM(t),
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(true)
+		client, err := server.newOIDCProxyHTTPClient(true, "")
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)
 		require.NotNil(t, transport.TLSClientConfig)
@@ -871,7 +871,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 				Authority: "https://keycloak.example.com",
 			},
 		}
-		client, err := server.newOIDCProxyHTTPClient(false)
+		client, err := server.newOIDCProxyHTTPClient(false, "")
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)
 		assert.Nil(t, transport.TLSClientConfig)
