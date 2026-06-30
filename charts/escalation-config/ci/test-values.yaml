@@ -1,0 +1,7 @@
+cluster:
+  clusterID: test-cluster
+  tenant: test-tenant
+  environment: testing
+  kubeconfigSecretRef:
+    name: test-secret
+    namespace: breakglass-system

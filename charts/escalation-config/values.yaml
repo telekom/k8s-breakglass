@@ -41,9 +41,9 @@ networkPolicy:
   additionalIngressRules: []
 
 cluster:
-  clusterID: tenant-b-virtual-test
-  tenant: tenant-b
-  environment: development
+  clusterID: ""
+  tenant: ""
+  environment: ""
   # Optional cluster identification fields
   # site: eu-west
   # location: eu-west-1
@@ -58,8 +58,8 @@ cluster:
   # Default: Kubeconfig authentication
   # authType: Kubeconfig
   kubeconfigSecretRef:
-    name: tenant-b-admin
-    namespace: default
+    name: ""
+    namespace: ""
     # key: value  # Optional, defaults to "value" for Cluster API compatibility
   
   # ==========================================
