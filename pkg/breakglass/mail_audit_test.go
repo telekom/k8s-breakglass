@@ -292,7 +292,7 @@ func TestSendSessionActivatedEmail_HappyPath(t *testing.T) {
 		brandingName:   "Test Breakglass",
 	}
 
-	startTime := metav1.NewTime(time.Now())
+	startTime := metav1.NewTime(time.Now().UTC())
 	expiresAt := metav1.NewTime(time.Now().Add(2 * time.Hour))
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{

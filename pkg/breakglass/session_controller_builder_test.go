@@ -324,7 +324,7 @@ func TestSendSessionRejectionEmail_NoMailAvailable(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:       "approver@example.com",
-			RejectedAt:     metav1.NewTime(time.Now()),
+			RejectedAt:     metav1.NewTime(time.Now().UTC()),
 			ApprovalReason: "Test rejection reason",
 		},
 	}
@@ -365,7 +365,7 @@ func TestSendSessionRejectionEmail_WithMailService(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:       "approver@example.com",
-			RejectedAt:     metav1.NewTime(time.Now()),
+			RejectedAt:     metav1.NewTime(time.Now().UTC()),
 			ApprovalReason: "Test rejection reason",
 		},
 	}
@@ -408,7 +408,7 @@ func TestSendSessionRejectionEmail_WithMailServiceDisabled(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			Approver:       "approver@example.com",
-			RejectedAt:     metav1.NewTime(time.Now()),
+			RejectedAt:     metav1.NewTime(time.Now().UTC()),
 			ApprovalReason: "Test rejection reason",
 		},
 	}
