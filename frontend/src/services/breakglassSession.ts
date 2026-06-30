@@ -8,7 +8,16 @@ import type { BreakglassSessionRequest } from "@/model/breakglassSession";
 import type { SessionCR } from "@/model/breakglass";
 
 function normalizeSessionList(value: unknown): SessionCR[] {
-  return Array.isArray(value) ? (value as SessionCR[]) : [];
+  if (Array.isArray(value)) {
+    return value as SessionCR[];
+  }
+  if (value && typeof value === "object") {
+    const items = (value as { items?: unknown }).items;
+    if (Array.isArray(items)) {
+      return items as SessionCR[];
+    }
+  }
+  return [];
 }
 
 export default class BreakglassSessionService {
