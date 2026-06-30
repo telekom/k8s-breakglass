@@ -137,8 +137,8 @@ The `state` parameter in list/filter operations supports filtering by session st
 
 - `all` - Disable state filtering
 - `pending` - Sessions awaiting approval
-- `approved` - Active sessions granting privileges
-- `active` - Currently valid sessions (`Approved` and not expired)
+- `approved` - Sessions whose recorded `status.state` is `Approved`
+- `active` - Currently valid approved sessions according to scheduled-start and expiry checks
 - `waiting`, `waitingforscheduledtime`, `scheduled` - Sessions waiting for their scheduled start time
 - `rejected` - Rejected by approver (terminal)
 - `withdrawn` - Withdrawn by requester (terminal)

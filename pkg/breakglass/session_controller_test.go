@@ -5882,10 +5882,11 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g1"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired, ExpiresAt: metav1.NewTime(now.Add(-time.Hour))},
 	}
+	lastActivity := metav1.NewTime(now.Add(-time.Hour))
 	s7 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s7"},
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c2", User: "u2@example.com", GrantedGroup: "g2"},
-		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateIdleExpired, LastActivity: &metav1.Time{Time: now.Add(-time.Hour)}},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateIdleExpired, LastActivity: &lastActivity},
 	}
 
 	cli := builder.WithObjects(s1, s2, s3, s4, s5, s6, s7).Build()
