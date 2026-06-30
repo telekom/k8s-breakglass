@@ -38,6 +38,10 @@ type QueuedSinkConfig struct {
 	// Default: 2
 	WorkerCount int
 
+	// Batching config for underlying BatchSinks
+	BatchSize int
+	BatchTimeout time.Duration
+
 	// WriteTimeout is the timeout for writing to the underlying sink.
 	// Default: 5s
 	WriteTimeout time.Duration
@@ -62,6 +66,8 @@ func DefaultQueuedSinkConfig() QueuedSinkConfig {
 	return QueuedSinkConfig{
 		QueueSize:               10000,
 		WorkerCount:             2,
+		BatchSize:               100,
+		BatchTimeout:            100 * time.Millisecond,
 		WriteTimeout:            5 * time.Second,
 		DropOnFull:              true,
 		CircuitBreakerThreshold: 5,
@@ -137,6 +143,12 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 	if cfg.CircuitBreakerResetTime <= 0 {
 		cfg.CircuitBreakerResetTime = 30 * time.Second
 	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = 100
+	}
+	if cfg.BatchTimeout <= 0 {
+		cfg.BatchTimeout = 100 * time.Millisecond
+	}
 
 	qs := &QueuedSink{
 		sink:   sink,
@@ -145,10 +157,16 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 		logger: logger.Named("queued-sink").With(zap.String("sink", sink.Name())),
 	}
 
+		batchSink, isBatchSink := sink.(BatchSink)
+
 	// Start workers
 	for i := 0; i < cfg.WorkerCount; i++ {
 		qs.wg.Add(1)
-		go qs.processQueue(i)
+		if isBatchSink {
+			go qs.processBatchQueue(i, batchSink)
+		} else {
+			go qs.processQueue(i)
+		}
 	}
 
 	qs.logger.Info("queued sink started",
@@ -381,4 +399,103 @@ func (ims *IsolatedMultiSink) IsHealthy() bool {
 		}
 	}
 	return true
+}
+
+// processBatchQueue handles events from the async queue using batch writes.
+func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
+	defer qs.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			qs.logger.Error("panic in audit batch queue worker recovered",
+				zap.Int("worker", workerID),
+				zap.Any("panic", r))
+			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "panic").Inc()
+			qs.wg.Add(1)
+			go qs.processBatchQueue(workerID, batchSink)
+		}
+	}()
+
+	batch := make([]*Event, 0, qs.config.BatchSize)
+	ticker := time.NewTicker(qs.config.BatchTimeout)
+	defer ticker.Stop()
+
+	flushBatch := func() {
+		if len(batch) == 0 {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+		err := batchSink.WriteBatch(ctx, batch)
+		cancel()
+
+		if err != nil {
+			qs.failedEvents.Add(int64(len(batch)))
+			fails := qs.consecutiveFails.Add(1)
+			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "batch_write").Add(float64(len(batch)))
+
+			qs.mu.Lock()
+			qs.lastError = err.Error()
+			qs.lastErrorTime = time.Now()
+			qs.mu.Unlock()
+
+			qs.logger.Error("failed to write audit batch",
+				zap.Int("worker", workerID),
+				zap.Int("batch_size", len(batch)),
+				zap.String("error", err.Error()),
+				zap.Int32("consecutive_fails", fails))
+
+			if int(fails) >= qs.config.CircuitBreakerThreshold {
+				if qs.circuitOpen.CompareAndSwap(false, true) {
+					qs.lastResetAttempt.Store(time.Now().Unix())
+					qs.logger.Warn("circuit breaker opened for sink",
+						zap.String("sink", qs.sink.Name()),
+						zap.Int32("consecutive_fails", fails))
+				}
+			}
+		} else {
+			qs.processedEvents.Add(int64(len(batch)))
+			qs.consecutiveFails.Store(0)
+			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(len(batch)))
+
+			qs.mu.Lock()
+			qs.lastSuccessTime = time.Now()
+			qs.mu.Unlock()
+		}
+
+		batch = batch[:0] // Reset batch
+	}
+
+	for {
+		select {
+		case event, ok := <-qs.queue:
+			if !ok {
+				flushBatch()
+				return
+			}
+			batch = append(batch, event)
+			if len(batch) >= qs.config.BatchSize {
+				flushBatch()
+			}
+		case <-ticker.C:
+			flushBatch()
+		}
+	}
+}
+
+// WriteBatch enqueues multiple events for async processing (non-blocking).
+func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
+	for _, event := range events {
+		if err := qs.Write(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteBatch broadcasts the batch to all queued sinks (non-blocking).
+func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) error {
+	for _, qs := range ims.sinks {
+		_ = qs.WriteBatch(ctx, events)
+	}
+	return nil
 }
