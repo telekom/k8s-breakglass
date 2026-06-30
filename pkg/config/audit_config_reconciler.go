@@ -248,16 +248,6 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		"configNames", configNames,
 		"totalSinks", totalSinks)
 
-	// Send success event to each valid config
-	for _, cfg := range allConfigs.Items {
-		if cfg.Spec.Enabled && r.isConfigInList(cfg.Name, validConfigs) {
-			if r.recorder != nil {
-				r.recorder.Eventf(&cfg, nil, corev1.EventTypeNormal, "Reconciled", "Reconciled",
-					"AuditConfig %s reconciled successfully (aggregated with %d other configs)", cfg.Name, len(validConfigs)-1)
-			}
-		}
-	}
-
 	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
 	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
 }

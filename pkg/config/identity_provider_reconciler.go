@@ -309,12 +309,6 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		if r.recorder != nil {
-			eventIdp := latest.DeepCopy()
-			eventIdp.SetNamespace("")
-			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
-				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
-		}
 		return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
 	}
 

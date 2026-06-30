@@ -299,10 +299,6 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		if r.Recorder != nil {
-			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
-				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
-		}
 		return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
@@ -384,10 +380,6 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		if r.Recorder != nil {
-			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
-				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
-		}
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
@@ -454,10 +446,6 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		if r.Recorder != nil {
-			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
-				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
-		}
 		return reconcile.Result{}, nil
 	}
 
