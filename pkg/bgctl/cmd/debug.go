@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/output"
 )
@@ -238,7 +239,7 @@ func newDebugSessionGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -323,7 +324,7 @@ Use --set to provide values for template extraDeployVariables:
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&templateRef, "template", "", "Debug session template name")
@@ -363,7 +364,7 @@ func newDebugSessionJoinCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "viewer", "Role: participant|viewer")
@@ -390,7 +391,7 @@ func newDebugSessionLeaveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -419,7 +420,7 @@ func newDebugSessionRenewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&extendBy, "extend-by", "", "Extend duration by (e.g. 30m)")
@@ -447,7 +448,7 @@ func newDebugSessionTerminateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
@@ -476,7 +477,7 @@ func newDebugSessionApproveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Approval reason")
@@ -506,7 +507,7 @@ func newDebugSessionRejectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML)
+			return writeDebugSessionSingle(rt, session)
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "Rejection reason")
@@ -893,4 +894,31 @@ func newDebugKubectlNodeDebugCommand() *cobra.Command {
 	cmd.Flags().StringVar(&hintNS, "session-namespace", "", "Debug session namespace hint")
 	_ = cmd.MarkFlagRequired("node")
 	return cmd
+}
+
+func writeDebugSessionSingle(rt *runtimeState, session *breakglassv1alpha1.DebugSession) error {
+	format := output.Format(rt.OutputFormat())
+	if format == output.FormatTable || format == output.FormatWide {
+		summary := client.DebugSessionSummary{
+			Name:                 session.Name,
+			TemplateRef:          session.Spec.TemplateRef,
+			TargetNamespace:      session.Spec.TargetNamespace,
+			Cluster:              session.Spec.Cluster,
+			RequestedBy:          session.Spec.RequestedBy,
+			State:                session.Status.State,
+			StatusMessage:        session.Status.Message,
+			StartsAt:             session.Status.StartsAt,
+			ExpiresAt:            session.Status.ExpiresAt,
+			Participants:         len(session.Status.Participants),
+			AllowedPods:          len(session.Status.AllowedPods),
+			AllowedPodOperations: session.Status.AllowedPodOperations,
+		}
+		if format == output.FormatWide {
+			output.WriteDebugSessionTableWide(rt.Writer(), []client.DebugSessionSummary{summary})
+		} else {
+			output.WriteDebugSessionTable(rt.Writer(), []client.DebugSessionSummary{summary})
+		}
+		return nil
+	}
+	return writeRuntimeObject(rt, session, output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML)
 }
