@@ -129,12 +129,12 @@ func TestAuditConfigReconciler_Reconcile_ValidConfig(t *testing.T) {
 	assert.True(t, reloadCalled)
 	assert.Equal(t, time.Minute, result.RequeueAfter)
 
-	// Check event was recorded
+	// No periodic event should be emitted on successful reconciliation
 	select {
 	case event := <-recorder.Events:
-		assert.Contains(t, event, "Reconciled")
+		t.Errorf("Expected no event on periodic reconcile, got: %s", event)
 	default:
-		t.Error("Expected event to be recorded")
+		// OK — no event emitted
 	}
 }
 
