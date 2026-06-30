@@ -78,7 +78,7 @@ spec:
     - expression: >-
         !has(object.spec.allowedIdentityProviders) ||
         object.spec.allowedIdentityProviders.size() == 0 ||
-        (!has(object.spec.forRequests) || !has(object.spec.forRequests.identityProviders) || object.spec.forRequests.identityProviders.size() == 0) &&
-        (!has(object.spec.forApprovers) || !has(object.spec.forApprovers.identityProviders) || object.spec.forApprovers.identityProviders.size() == 0)
-      message: "allowedIdentityProviders cannot be used together with forRequests.identityProviders or forApprovers.identityProviders"
+        (!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) &&
+        (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)
+      message: "allowedIdentityProviders cannot be used together with allowedIdentityProvidersForRequests or allowedIdentityProvidersForApprovers"
       reason: Invalid

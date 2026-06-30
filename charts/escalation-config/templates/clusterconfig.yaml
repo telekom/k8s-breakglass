@@ -1,6 +1,8 @@
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
+  labels:
+    {{- include "escalation-config.labels" $ | nindent 4 }}
   name: {{ required "cluster.clusterID is required" .Values.cluster.clusterID | trunc 63 | trimSuffix "-" | quote }}
   namespace: {{ .Release.Namespace }}
 spec:

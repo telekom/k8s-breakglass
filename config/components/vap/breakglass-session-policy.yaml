@@ -54,8 +54,8 @@ spec:
 
     # Reason must be at least 10 characters
     - expression: >-
-        has(oldSelf) || object.spec.reason.size() >= 10
-      message: "spec.reason must be at least 10 characters"
+        has(oldSelf) || object.spec.requestReason.size() >= 10
+      message: "spec.requestReason must be at least 10 characters"
       reason: Invalid
 
     # --- UPDATE-only validations ---
@@ -77,7 +77,7 @@ spec:
         oldSelf.status.state == "" ||
         oldSelf.status.state == object.status.state ||
         (oldSelf.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) ||
-        (oldSelf.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn"]) ||
-        (oldSelf.status.state == "Approved" && object.status.state in ["Expired"])
+        (oldSelf.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) ||
+        (oldSelf.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])
       message: "invalid state transition"
       reason: Invalid
