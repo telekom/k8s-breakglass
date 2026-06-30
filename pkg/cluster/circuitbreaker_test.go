@@ -123,6 +123,28 @@ func TestClusterBreaker_OpenToHalfOpen(t *testing.T) {
 	assert.Equal(t, CircuitHalfOpen, cb.State())
 }
 
+func TestClusterBreaker_AllowReturnsHalfOpenGeneration(t *testing.T) {
+	cfg := testConfig()
+	cfg.FailureThreshold = 1
+	cfg.OpenDuration = 50 * time.Millisecond
+	cb := newClusterBreaker("test-cluster", cfg, testLogger())
+
+	cb.RecordFailure(cb.Generation(), fmt.Errorf("connection refused"))
+	openGeneration := cb.Generation()
+	require.Equal(t, CircuitOpen, cb.State())
+
+	var probeGeneration int64
+	require.Eventually(t, func() bool {
+		var err error
+		probeGeneration, err = cb.Allow()
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+
+	require.Equal(t, CircuitHalfOpen, cb.State())
+	assert.Greater(t, probeGeneration, openGeneration)
+	assert.Equal(t, cb.Generation(), probeGeneration)
+}
+
 func TestClusterBreaker_HalfOpenToClosed(t *testing.T) {
 	cfg := testConfig()
 	cfg.FailureThreshold = 1
@@ -168,6 +190,24 @@ func TestClusterBreaker_HalfOpenToOpen(t *testing.T) {
 	// Failure in half-open should trip back to open
 	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
+}
+
+func TestClusterBreaker_StaleSuccessDoesNotMutateStats(t *testing.T) {
+	cfg := testConfig()
+	cfg.FailureThreshold = 1
+	cb := newClusterBreaker("test-cluster", cfg, testLogger())
+
+	staleGeneration := cb.Generation()
+	cb.RecordFailure(staleGeneration, fmt.Errorf("connection refused"))
+	require.Equal(t, CircuitOpen, cb.State())
+	require.NotEqual(t, staleGeneration, cb.Generation())
+
+	cb.RecordSuccess(staleGeneration)
+
+	stats := cb.Stats()
+	assert.Equal(t, int64(0), stats.TotalSuccesses)
+	assert.Equal(t, int64(0), stats.ConsecutiveSuccs)
+	assert.Equal(t, int64(1), stats.TotalRequests)
 }
 
 func TestClusterBreaker_HalfOpenMaxRequests(t *testing.T) {

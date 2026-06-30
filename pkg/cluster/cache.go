@@ -823,6 +823,34 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 	}
 }
 
+// AllowCluster checks whether a non-HTTP operation may start and returns the
+// circuit breaker epoch that must be passed to RecordSuccessAtEpoch or
+// RecordFailureAtEpoch when that operation completes.
+func (p *ClientProvider) AllowCluster(clusterName string) (int64, error) {
+	if p.circuitBreakers == nil || !p.circuitBreakers.IsEnabled() {
+		return 0, nil
+	}
+	return p.circuitBreakers.Get(clusterName).Allow()
+}
+
+// RecordSuccessAtEpoch notifies the circuit breaker that an operation admitted
+// by AllowCluster succeeded. Stale epochs are ignored so requests started before
+// an open/half-open transition cannot corrupt the current state.
+func (p *ClientProvider) RecordSuccessAtEpoch(clusterName string, epoch int64) {
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		p.circuitBreakers.Get(clusterName).RecordSuccess(epoch)
+	}
+}
+
+// RecordFailureAtEpoch notifies the circuit breaker that an operation admitted
+// by AllowCluster failed. Stale epochs are ignored so requests started before an
+// open/half-open transition cannot corrupt the current state.
+func (p *ClientProvider) RecordFailureAtEpoch(clusterName string, epoch int64, err error) {
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		p.circuitBreakers.Get(clusterName).RecordFailure(epoch, err)
+	}
+}
+
 // RecordSuccess notifies the circuit breaker that a call to the named cluster succeeded.
 // The circuit breaker transport automatically records outcomes for every HTTP request,
 // so this method is only needed for non-HTTP operations (e.g., watch setup, informer startup).

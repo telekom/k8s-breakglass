@@ -529,33 +529,63 @@ export default class AuthService {
     return this.userManager.signinRedirect({ state: resolveState(state) });
   }
 
-  
   public async handleSilentSigninCallback() {
     if (this.mockMode) return;
 
-    const candidateManagers: UserManager[] = [this.userManager];
+    const preferredIdpName = isBrowser ? sessionStorage.getItem("oidc_idp_name") || undefined : undefined;
+    const directAuthority = getCurrentDirectAuthority();
 
-    try {
-      const multiIDP = await getMultiIDPConfig();
-      for (const idp of multiIDP.identityProviders) {
-        if (!idp.enabled) continue;
-        const manager = this.buildUserManager("/api/oidc/authority", idp.oidcClientID || "k8s-breakglass");
-        candidateManagers.push(manager);
+    if (preferredIdpName || directAuthority) {
+      const manager = await this.resolveSilentCallbackManager(preferredIdpName, directAuthority);
+      if (directAuthority) {
+        setCurrentDirectAuthority(directAuthority);
       }
-    } catch (err) {
-      debug("AuthService", "Failed to fetch multiIDP config during silent renew", err);
+      await manager.signinSilentCallback();
+      return;
     }
 
-    let lastError: Error | undefined;
-    for (const manager of candidateManagers) {
-      try {
-        await manager.signinSilentCallback();
-        return;
-      } catch (err) {
-        lastError = err as Error;
+    await this.userManager.signinSilentCallback();
+  }
+
+  private async resolveSilentCallbackManager(
+    preferredIdpName: string | undefined,
+    directAuthority: string | undefined,
+  ): Promise<UserManager> {
+    if (preferredIdpName) {
+      const cached = this.idpManagers.get(preferredIdpName);
+      if (cached) {
+        return cached.manager;
       }
     }
-    throw lastError || new Error("All managers failed silent renew callback");
+
+    if (directAuthority) {
+      for (const cached of this.idpManagers.values()) {
+        if (cached.directAuthority === directAuthority) {
+          return cached.manager;
+        }
+      }
+    }
+
+    const multiIDP = await getMultiIDPConfig();
+    const idp = multiIDP.identityProviders.find((candidate: IDPInfo) => {
+      if (!candidate.enabled || !candidate.oidcAuthority) {
+        return false;
+      }
+      if (preferredIdpName && candidate.name === preferredIdpName) {
+        return true;
+      }
+      return !!directAuthority && candidate.oidcAuthority === directAuthority;
+    });
+    if (!idp?.oidcAuthority) {
+      throw new Error("Failed to process silent renew callback: no matching identity provider found");
+    }
+
+    return this.getOrCreateUserManagerForIDP(
+      idp.name,
+      "/api/oidc/authority",
+      idp.oidcClientID || "k8s-breakglass",
+      idp.oidcAuthority,
+    );
   }
 
   public getIdentityProviderName(): string | undefined {
@@ -883,9 +913,14 @@ export default class AuthService {
           expiresAt: loadedUser.expires_at,
           expiresIn: loadedUser.expires_in,
         });
-        void this.stripAndStoreRefreshToken(manager, loadedUser).then((sanitizedUser) => {
-          user.value = sanitizedUser;
-        });
+        void this.stripAndStoreRefreshToken(manager, loadedUser)
+          .then((sanitizedUser) => {
+            user.value = sanitizedUser;
+          })
+          .catch((error) => {
+            logError("AuthService", "Failed to store sanitized OIDC user", { error });
+            user.value = loadedUser;
+          });
       });
     }
 

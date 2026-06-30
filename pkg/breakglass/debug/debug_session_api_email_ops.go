@@ -31,18 +31,21 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 		return
 	}
 
-	// Collect approver emails
-	var approverEmails []string
-	if binding != nil && binding.Spec.Approvers != nil {
-		approverEmails = append(approverEmails, binding.Spec.Approvers.Users...)
-	} else if template.Spec.Approvers != nil {
-		approverEmails = append(approverEmails, template.Spec.Approvers.Users...)
+	approvers := effectiveDebugSessionApprovers(template, binding)
+	if approvers == nil {
+		c.log.Debugw("No approvers configured for debug session template, skipping request email", "session", session.Name, "template", debugSessionTemplateName(template))
+		return
+	}
+	if debugSessionAutoApproveMatches(approvers.AutoApproveFor, session.Spec.Cluster, session.Spec.UserGroups) {
+		c.log.Debugw("Debug session request is auto-approved, skipping approver request email", "session", session.Name)
+		return
 	}
 
+	approverEmails := append([]string(nil), approvers.Users...)
 	approverEmails = buildNotificationRecipients(approverEmails, notificationCfg)
 
 	if len(approverEmails) == 0 {
-		c.log.Debugw("No approvers configured for debug session template, skipping request email", "session", session.Name, "template", template.Name)
+		c.log.Debugw("No email recipients configured for debug session approvers, skipping request email", "session", session.Name, "template", debugSessionTemplateName(template))
 		return
 	}
 
@@ -270,7 +273,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 		RequestedDuration: session.Spec.RequestedDuration,
 		Reason:            session.Spec.Reason,
 		RequestedAt:       session.CreationTimestamp.Format(time.RFC3339),
-		RequiresApproval:  isApprovalRequired(template, binding),
+		RequiresApproval:  isApprovalRequiredForSession(session, template, binding),
 		URL:               fmt.Sprintf("%s/debug-sessions/%s", c.baseURL, session.Name),
 		BrandingName:      c.brandingName,
 	}
@@ -828,12 +831,20 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	return result
 }
 
-func isApprovalRequired(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
-	if binding != nil && binding.Spec.Approvers != nil {
-		return len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0
+func isApprovalRequiredForSession(session *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+	approvers := effectiveDebugSessionApprovers(template, binding)
+	if approvers == nil {
+		return false
 	}
-	if template.Spec.Approvers != nil {
-		return len(template.Spec.Approvers.Users) > 0 || len(template.Spec.Approvers.Groups) > 0
+	if session != nil && debugSessionAutoApproveMatches(approvers.AutoApproveFor, session.Spec.Cluster, session.Spec.UserGroups) {
+		return false
 	}
-	return false
+	return true
+}
+
+func debugSessionTemplateName(template *breakglassv1alpha1.DebugSessionTemplate) string {
+	if template == nil {
+		return ""
+	}
+	return template.Name
 }

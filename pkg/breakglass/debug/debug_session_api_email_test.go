@@ -482,6 +482,126 @@ func TestSendDebugSessionRequestEmail_EmptyApproversList(t *testing.T) {
 	assert.Empty(t, messages, "no email should be sent when approvers list is empty")
 }
 
+func TestSendDebugSessionRequestEmail_EmptyBindingFallsBackToTemplateApprovers(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com")
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-session",
+			CreationTimestamp: metav1.Now(),
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:           "production",
+			TemplateRef:       "template",
+			RequestedBy:       "requester@example.com",
+			RequestedDuration: "1h",
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"template-approver@example.com"},
+			},
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{},
+		},
+	}
+
+	ctrl.sendDebugSessionRequestEmail(context.Background(), session, template, binding)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"template-approver@example.com"}, messages[0].Recipients)
+}
+
+func TestSendDebugSessionRequestEmail_GroupOnlyApproversUseAdditionalRecipients(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com")
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "group-only-session",
+			CreationTimestamp: metav1.Now(),
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:           "production",
+			TemplateRef:       "template",
+			RequestedBy:       "requester@example.com",
+			RequestedDuration: "1h",
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Groups: []string{"sre-approvers"},
+			},
+			Notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:              true,
+				NotifyOnRequest:      true,
+				AdditionalRecipients: []string{"sre-oncall@example.com"},
+			},
+		},
+	}
+
+	ctrl.sendDebugSessionRequestEmail(context.Background(), session, template, nil)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"sre-oncall@example.com"}, messages[0].Recipients)
+}
+
+func TestSendDebugSessionRequestEmail_AutoApprovedSessionSkipsApproverRequest(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com")
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "auto-approved-session",
+			CreationTimestamp: metav1.Now(),
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:           "production",
+			TemplateRef:       "template",
+			RequestedBy:       "requester@example.com",
+			RequestedDuration: "1h",
+			UserGroups:        []string{"sre-team"},
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"approver@example.com"},
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
+					Groups: []string{"sre-team"},
+				},
+			},
+		},
+	}
+
+	ctrl.sendDebugSessionRequestEmail(context.Background(), session, template, nil)
+
+	assert.Empty(t, mockMail.GetMessages())
+}
+
 func TestSendDebugSessionRequestEmail_DisabledEmail(t *testing.T) {
 	// Tests that no email is sent when email is disabled
 
@@ -571,4 +691,47 @@ func TestSendDebugSessionRequestEmail_EnqueueError(t *testing.T) {
 	ctx := context.Background()
 	// Should not panic despite error
 	ctrl.sendDebugSessionRequestEmail(ctx, session, template, nil)
+}
+
+func TestSendDebugSessionCreatedEmail_AutoApprovedSessionDoesNotRequireApproval(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com")
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "auto-approved-session",
+			Namespace:         "breakglass",
+			CreationTimestamp: metav1.Now(),
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:           "production",
+			TemplateRef:       "template",
+			RequestedBy:       "requester@example.com",
+			RequestedByEmail:  "requester@example.com",
+			RequestedDuration: "1h",
+			UserGroups:        []string{"sre-team"},
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"approver@example.com"},
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
+					Groups: []string{"sre-team"},
+				},
+			},
+		},
+	}
+
+	ctrl.sendDebugSessionCreatedEmail(context.Background(), session, template, nil)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Contains(t, messages[0].Body, "does not require approval")
+	assert.NotContains(t, messages[0].Body, "requires approval before it becomes active")
 }

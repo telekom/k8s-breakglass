@@ -379,6 +379,57 @@ describe("AuthService", () => {
     });
   });
 
+  describe("handleSilentSigninCallback()", () => {
+    it("uses the persisted IDP manager without trying the default manager first", async () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      sessionStorage.setItem("oidc_direct_authority", "https://direct.corp");
+      mockedGetMultiIDPConfig.mockResolvedValue({
+        identityProviders: [
+          {
+            name: "corp",
+            displayName: "Corporate",
+            issuer: "https://corp",
+            enabled: true,
+            oidcAuthority: "https://direct.corp",
+            oidcClientID: "corp-ui",
+          },
+        ],
+        escalationIDPMapping: {},
+      } as MultiIDPConfig);
+
+      const defaultCallback = vi
+        .spyOn(authService.userManager, "signinSilentCallback")
+        .mockRejectedValue(new Error("default manager must not process IDP callback"));
+      const idpManager = {
+        signinSilentCallback: vi.fn().mockResolvedValue(null),
+        settings: { authority: "/api/oidc/authority", client_id: "corp-ui" },
+        events: {},
+      };
+      const managerSpy = vi
+        .spyOn(
+          authService as unknown as { getOrCreateUserManagerForIDP: () => unknown },
+          "getOrCreateUserManagerForIDP",
+        )
+        .mockReturnValue(idpManager);
+
+      await authService.handleSilentSigninCallback();
+
+      expect(defaultCallback).not.toHaveBeenCalled();
+      expect(managerSpy).toHaveBeenCalledWith("corp", "/api/oidc/authority", "corp-ui", "https://direct.corp");
+      expect(idpManager.signinSilentCallback).toHaveBeenCalledTimes(1);
+      expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct.corp");
+    });
+
+    it("uses the default manager when no IDP hint is persisted", async () => {
+      const defaultCallback = vi.spyOn(authService.userManager, "signinSilentCallback").mockResolvedValue(undefined);
+
+      await authService.handleSilentSigninCallback();
+
+      expect(defaultCallback).toHaveBeenCalledTimes(1);
+      expect(mockedGetMultiIDPConfig).not.toHaveBeenCalled();
+    });
+  });
+
   describe("logout()", () => {
     it("should call userManager.signoutRedirect", async () => {
       const signoutSpy = vi.spyOn(authService.userManager, "signoutRedirect").mockResolvedValue(undefined);

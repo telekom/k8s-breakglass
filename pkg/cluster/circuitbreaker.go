@@ -180,8 +180,9 @@ func (cb *clusterBreaker) Allow() (int64, error) {
 			if ok && time.Since(lastChange) >= cb.config.OpenDuration {
 				cb.transitionToLocked(CircuitHalfOpen)
 				cb.halfOpenRequests.Add(1) // count this probe request
+				probeGeneration := cb.generation.Load()
 				cb.mu.Unlock()
-				return gen, nil
+				return probeGeneration, nil
 			}
 			cb.mu.Unlock()
 			cb.totalRejections.Add(1)
@@ -215,6 +216,9 @@ func (cb *clusterBreaker) RecordSuccess(epoch int64) {
 	if cb.untracked {
 		return // sentinel breaker — no metrics or state transitions
 	}
+	if cb.generation.Load() != epoch {
+		return
+	}
 	cb.totalSuccesses.Add(1)
 	cb.totalRequests.Add(1)
 	cb.consecutiveFails.Store(0)
@@ -223,13 +227,10 @@ func (cb *clusterBreaker) RecordSuccess(epoch int64) {
 	metrics.ClusterCircuitBreakerSuccesses.WithLabelValues(cb.name).Inc()
 	metrics.ClusterCircuitBreakerConsecutiveFailures.WithLabelValues(cb.name).Set(0)
 
-	if cb.generation.Load() != epoch {
-		return
-	}
 	if CircuitState(cb.state.Load()) == CircuitHalfOpen {
 		cb.mu.Lock()
 		// Re-check under lock to avoid TOCTOU race on state transitions
-		if CircuitState(cb.state.Load()) == CircuitHalfOpen {
+		if CircuitState(cb.state.Load()) == CircuitHalfOpen && cb.generation.Load() == epoch {
 			cb.halfOpenRequests.Add(-1)
 			// Re-read counter under lock to avoid stale threshold check
 			if int(cb.consecutiveSuccs.Load()) >= cb.config.SuccessThreshold {

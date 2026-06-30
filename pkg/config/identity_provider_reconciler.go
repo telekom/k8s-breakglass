@@ -312,6 +312,15 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
+	if latest.Generation != idp.Generation {
+		r.logger.Debugw("IdentityProvider spec changed during reconcile, skipping stale status update",
+			"name", req.Name,
+			"preparedGeneration", idp.Generation,
+			"latestGeneration", latest.Generation,
+		)
+		return reconcile.Result{Requeue: true}, nil
+	}
+
 	// Merge our prepared conditions onto the latest version
 	// This preserves any updates from other controllers while applying our changes
 	for _, condition := range idp.Status.Conditions {

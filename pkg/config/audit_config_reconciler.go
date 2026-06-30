@@ -212,7 +212,8 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 	r.activeConfigs = validConfigs
 	r.configMutex.Unlock()
 
-	// Call reload callback with ALL valid configs
+	// Call reload callback with ALL valid configs. audit.Service.ReloadMultiple
+	// records successful reload metrics; the reconciler records callback failures.
 	if r.onReloadMultiple != nil {
 		if err := r.onReloadMultiple(ctx, validConfigs); err != nil {
 			r.logger.Errorw("Failed to reload audit configuration with aggregated configs",
@@ -231,7 +232,7 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 					}
 				}
 			}
-			metrics.AuditConfigReloads.WithLabelValues("reload_failed").Inc()
+			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
 			return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 		}
 	}
