@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"reflect"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -593,16 +594,57 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
-	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugSession(newObj)
-	if result.IsValid() {
-		return nil, nil
+func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) field.ErrorList {
+	var errs field.ErrorList
+	statusPath := field.NewPath("status")
+
+	checkTime := func(oldT, newT *metav1.Time, path *field.Path) {
+		if oldT != nil && !oldT.IsZero() {
+			if newT == nil || newT.IsZero() {
+				errs = append(errs, field.Invalid(path, nil, "timestamp must not be cleared once set"))
+			} else if newT.Time.Before(oldT.Time) {
+				errs = append(errs, field.Invalid(path, newT.Time, "timestamp must not move backwards"))
+			}
+		}
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
+
+	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
+	checkTime(oldObj.Status.ExpiresAt, newObj.Status.ExpiresAt, statusPath.Child("expiresAt"))
+
+	if oldObj.Status.Approval != nil {
+		if newObj.Status.Approval == nil {
+			if (oldObj.Status.Approval.ApprovedAt != nil && !oldObj.Status.Approval.ApprovedAt.IsZero()) ||
+				(oldObj.Status.Approval.RejectedAt != nil && !oldObj.Status.Approval.RejectedAt.IsZero()) {
+				errs = append(errs, field.Invalid(statusPath.Child("approval"), nil, "approval must not be cleared once set"))
+			}
+		} else {
+			checkTime(oldObj.Status.Approval.ApprovedAt, newObj.Status.Approval.ApprovedAt, statusPath.Child("approval").Child("approvedAt"))
+			checkTime(oldObj.Status.Approval.RejectedAt, newObj.Status.Approval.RejectedAt, statusPath.Child("approval").Child("rejectedAt"))
+		}
+	}
+
+	return errs
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
+func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
+	var allErrs field.ErrorList
+
+	if !reflect.DeepEqual(newObj.Spec, oldObj.Spec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
+	}
+
+	result := ValidateDebugSession(newObj)
+	if !result.IsValid() {
+		allErrs = append(allErrs, result.Errors...)
+	}
+
+	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+
+	if len(allErrs) == 0 {
+		return nil, nil
+	}
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, allErrs)
+}
 func (ds *DebugSession) ValidateDelete(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	return nil, nil
 }
