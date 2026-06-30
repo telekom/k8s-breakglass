@@ -408,7 +408,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 		} else {
 			// Default to 1 hour
 			formattedDurationStr = "1 hour"
-			calculatedExpiresAtStr = time.Now().UTC().Add(1 * time.Hour).Format("2006-01-02 15:04:05") + " UTC"
+			calculatedExpiresAtStr = time.Now().UTC().Add(1*time.Hour).Format("2006-01-02 15:04:05") + " UTC"
 		}
 	}
 
