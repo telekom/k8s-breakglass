@@ -71,6 +71,9 @@ func WriteObject(w io.Writer, format Format, obj any) error {
 				WriteDebugSessionTable(w, []client.DebugSessionSummary{summary})
 			}
 			return nil
+		case *client.DebugSessionTemplateSummary:
+			WriteDebugTemplateTable(w, []client.DebugSessionTemplateSummary{*v})
+			return nil
 		case *breakglassv1alpha1.DebugSessionTemplate:
 			summary := client.DebugSessionTemplateSummary{
 				Name:                 v.Name,
@@ -97,8 +100,8 @@ func WriteObject(w io.Writer, format Format, obj any) error {
 			WriteDebugPodTemplateTable(w, []client.DebugPodTemplateSummary{summary})
 			return nil
 		case map[string]interface{}:
-			_, _ = fmt.Fprintln(w, "Operation completed successfully.")
-			return nil
+			_, err := fmt.Fprintln(w, "Operation completed successfully.")
+			return err
 		}
 		if format == FormatTable {
 			return fmt.Errorf("table format requires a specific formatter for type %T", obj)
