@@ -217,7 +217,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	}
 
 	// Only allow cancellation of active/approved sessions
-	if bs.Status.State != breakglassv1alpha1.SessionStateApproved || bs.Status.ApprovedAt.IsZero() {
+	if (bs.Status.State != breakglassv1alpha1.SessionStateApproved && bs.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime) || bs.Status.ApprovedAt.IsZero() {
 		apiresponses.RespondBadRequest(c, "Session is not active/approved and cannot be canceled by approver")
 		return
 	}
