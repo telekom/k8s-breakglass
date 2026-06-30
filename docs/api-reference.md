@@ -795,6 +795,8 @@ GET /api/oidc/authority/protocol/openid-connect/certs
 
 Proxies requests to the configured OIDC authority, allowing the browser to fetch OIDC metadata through the breakglass server origin.
 
+In multi-IDP deployments, clients may send `X-OIDC-Authority` with the exact authority URL of an enabled `IdentityProvider`. The proxy only accepts configured authorities and uses the selected provider's `spec.oidc.certificateAuthority` for upstream TLS validation.
+
 ### Metrics Discovery
 
 The `/api/metrics` endpoint is a discovery/helper endpoint that returns a JSON pointer to the actual Prometheus metrics endpoint, which is served by controller-runtime on a separate port. It does not serve Prometheus metrics directly.

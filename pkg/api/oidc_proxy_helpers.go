@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"strings"
@@ -135,7 +136,7 @@ func buildOIDCProxyTargetURL(base *url.URL, normalizedPath, proxyPath string) (*
 	return targetURL, nil
 }
 
-func (s *Server) selectOIDCProxyAuthority(headerValue string) (*url.URL, error) {
+func (s *Server) selectOIDCProxyAuthority(ctx context.Context, headerValue string) (*url.URL, error) {
 	if headerValue == "" {
 		return cloneURL(s.oidcAuthority), nil
 	}
@@ -147,7 +148,7 @@ func (s *Server) selectOIDCProxyAuthority(headerValue string) (*url.URL, error) 
 	if scheme != "http" && scheme != "https" {
 		return nil, errInvalidAuthorityHeader
 	}
-	if !s.isKnownIDPAuthority(headerValue) {
+	if !s.isKnownIDPAuthority(ctx, headerValue) {
 		return nil, errUnknownOIDCAuthority
 	}
 	return parsed, nil
