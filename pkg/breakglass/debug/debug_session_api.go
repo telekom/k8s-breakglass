@@ -714,7 +714,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				return isDebugSessionRequesterAllowed(template.Spec.Allowed, currentUserStr, userEmail, userGroups)
 			}
 			for i := range bindings {
-				if isDebugSessionRequesterAllowed(bindings[i].Spec.Allowed, currentUserStr, userEmail, userGroups) {
+				if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &bindings[i]), currentUserStr, userEmail, userGroups) {
 					return true
 				}
 			}
@@ -1310,7 +1310,7 @@ func isDebugSessionRequesterAllowedByAnySource(
 		return true
 	}
 	for i := range bindings {
-		if isDebugSessionRequesterAllowed(bindings[i].Spec.Allowed, username, email, userGroups) {
+		if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &bindings[i]), username, email, userGroups) {
 			return true
 		}
 	}

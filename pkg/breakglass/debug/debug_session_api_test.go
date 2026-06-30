@@ -4508,6 +4508,53 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.NotContains(t, w.Body.String(), "binding")
 	})
 
+	t.Run("create session hides nil-allowed explicit binding details from template-denied requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "selection-detail-template-fallback-debug"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"ops@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "staging-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "selection-detail-template-fallback-debug"},
+				Clusters:    []string{"staging"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"selection-detail-template-fallback-debug","cluster":"production","bindingRef":"breakglass/staging-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "binding")
+	})
+
 	t.Run("create session without authentication", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -7268,6 +7315,41 @@ func TestMatchPattern_RealClusterPatterns(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "pattern=%q cluster=%q reason=%s", tt.pattern, clusterName, tt.reason)
 		})
 	}
+}
+
+func TestIsDebugSessionRequesterAllowedByAnySourceFallsBackToTemplateAllowlist(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				Users: []string{"ops@example.com"},
+			},
+		},
+	}
+	bindings := []breakglassv1alpha1.DebugSessionClusterBinding{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "fallback-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"},
+			},
+		},
+	}
+
+	assert.False(t, isDebugSessionRequesterAllowedByAnySource(
+		template,
+		bindings,
+		"alice@example.com",
+		"alice@example.com",
+		[]string{"sre"},
+	))
+
+	bindings[0].Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"sre"}}
+	assert.True(t, isDebugSessionRequesterAllowedByAnySource(
+		template,
+		bindings,
+		"alice@example.com",
+		"alice@example.com",
+		[]string{"sre"},
+	))
 }
 
 // TestIsClusterAllowedByTemplateOrBinding tests the combined template + binding cluster validation
