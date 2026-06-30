@@ -12,6 +12,16 @@ function isDevRuntime(): boolean {
     typeof globalThis !== "undefined"
       ? (globalThis as unknown as Record<string, Record<string, Record<string, string>>>)?.process?.env?.NODE_ENV
       : undefined;
+  if (nodeEnv === "production") {
+    return false;
+  }
+  const viteEnv = import.meta.env;
+  if (typeof viteEnv?.PROD === "boolean") {
+    return !viteEnv.PROD;
+  }
+  if (typeof viteEnv?.MODE === "string") {
+    return viteEnv.MODE !== "production";
+  }
   if (typeof nodeEnv === "string") {
     return nodeEnv !== "production";
   }
@@ -35,6 +45,7 @@ function parseBooleanFlag(value: string | null | undefined): boolean | null {
 }
 
 function readStoredDebugFlag(): boolean | null {
+  if (!isDevRuntime()) return null;
   if (typeof window === "undefined" || !window.localStorage) return null;
   try {
     const stored = window.localStorage.getItem(DEBUG_STORAGE_KEY);
@@ -46,6 +57,7 @@ function readStoredDebugFlag(): boolean | null {
 }
 
 function persistDebugFlag(enabled: boolean) {
+  if (!isDevRuntime()) return;
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
     window.localStorage.setItem(DEBUG_STORAGE_KEY, String(enabled));
@@ -55,6 +67,7 @@ function persistDebugFlag(enabled: boolean) {
 }
 
 function readQueryDebugFlag(): boolean | null {
+  if (!isDevRuntime()) return null;
   if (typeof window === "undefined") return null;
   try {
     const params = new URLSearchParams(window.location.search);
@@ -98,7 +111,6 @@ export function setDebugLoggingEnabled(enabled: boolean, source = "manual") {
 export function toggleDebugLogging(source = "manual toggle") {
   setDebugLoggingEnabled(!debugEnabled, source);
 }
-
 
 export function debug(tag: string, ...args: unknown[]) {
   if (!debugEnabled) return;

@@ -62,6 +62,10 @@ describe("AuthService", () => {
     it("should enable automatic silent renew", () => {
       expect(authService.userManager.settings.automaticSilentRenew).toBe(true);
     });
+
+    it("does not request offline_access refresh-token scope", () => {
+      expect(authService.userManager.settings.scope).toBe("openid profile email");
+    });
   });
 
   describe("getUser()", () => {
@@ -289,6 +293,38 @@ describe("AuthService", () => {
       expect(authService.isPersistentSessionEnabled()).toBe(false);
       localStorage.setItem(TOKEN_PERSISTENCE_KEY, "persistent");
       expect(authService.isPersistentSessionEnabled()).toBe(true);
+    });
+  });
+
+  describe("trySilentRenew()", () => {
+    it("removes stale refresh tokens from stored users before silent renew", async () => {
+      const mockUser = new User({
+        profile: {
+          email: "test@example.com",
+          sub: "12345",
+          iss: "https://example.com",
+          aud: "test-client",
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          iat: Math.floor(Date.now() / 1000),
+        },
+        session_state: "",
+        access_token: "access-token",
+        token_type: "Bearer",
+        userState: null,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        refresh_token: "stale-refresh-token",
+      });
+
+      const getUserSpy = vi.spyOn(authService.userManager, "getUser").mockResolvedValue(mockUser);
+      const storeUserSpy = vi.spyOn(authService.userManager, "storeUser").mockResolvedValue(undefined);
+      const signinSilentSpy = vi.spyOn(authService.userManager, "signinSilent").mockResolvedValue(null);
+
+      await authService.trySilentRenew();
+
+      expect(getUserSpy).toHaveBeenCalled();
+      expect(storeUserSpy).toHaveBeenCalledWith(expect.objectContaining({ access_token: "access-token" }));
+      expect(storeUserSpy.mock.calls[0]?.[0]?.refresh_token).toBeUndefined();
+      expect(signinSilentSpy).toHaveBeenCalled();
     });
   });
 

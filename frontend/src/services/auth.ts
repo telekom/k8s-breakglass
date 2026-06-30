@@ -171,10 +171,6 @@ function getOIDCStorage(): Storage {
   if (!isBrowser) {
     return fallbackStorage;
   }
-  const prefersPersistent = getTokenPersistenceMode() === "persistent";
-  if (prefersPersistent && typeof window.localStorage !== "undefined") {
-    return window.localStorage;
-  }
   return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
 }
 
@@ -329,9 +325,9 @@ export default class AuthService {
     this.userManager = this.buildUserManager(config.oidcAuthority, config.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
     // Store the initialization promise so callers can await it
-    this.ready = this.userManager.getUser().then((u) => {
+    this.ready = this.userManager.getUser().then(async (u) => {
       if (u) {
-        user.value = u;
+        user.value = await this.stripAndStoreRefreshToken(this.userManager, u);
       }
     });
   }
@@ -427,7 +423,8 @@ export default class AuthService {
     if (this.mockMode) {
       return this.mockUser;
     }
-    return this.userManager.getUser();
+    const data = await this.userManager.getUser();
+    return data ? this.stripAndStoreRefreshToken(this.userManager, data) : null;
   }
 
   public async login(state?: State): Promise<void> {
@@ -623,9 +620,8 @@ export default class AuthService {
    * This can be called manually if the automatic silent renew failed.
    *
    * Strategy:
-   * 1. First try signinSilent() which uses iframe by default
-   * 2. If iframe fails (e.g., CSP frame-ancestors blocks it), try using refresh_token directly
-   *    via signinSilent with silentRequestTimeoutInSeconds set low to fail fast
+   * 1. Remove any stale refresh token from previously persisted user state
+   * 2. Try signinSilent(), which falls back to iframe flow when no refresh token is present
    */
   public async trySilentRenew(): Promise<boolean> {
     if (this.mockMode) {
@@ -639,23 +635,24 @@ export default class AuthService {
       warn("AuthService", "No user found for silent renew");
       return false;
     }
+    await this.stripAndStoreRefreshToken(this.userManager, currentUser);
 
     try {
-      debug("AuthService", "Attempting silent renew (iframe method)");
+      debug("AuthService", "Attempting silent renew without refresh-token fallback");
       const renewedUser = await this.userManager.signinSilent();
       if (renewedUser) {
-        debug("AuthService", "Silent renew successful (iframe)", {
+        const sanitizedUser = await this.stripAndStoreRefreshToken(this.userManager, renewedUser);
+        debug("AuthService", "Silent renew successful", {
           email: renewedUser.profile?.email,
           expiresAt: renewedUser.expires_at,
         });
-        user.value = renewedUser;
+        user.value = sanitizedUser;
         return true;
       }
       warn("AuthService", "Silent renew returned no user");
       return false;
     } catch (iframeError) {
-      // iframe method failed - likely CSP blocking
-      warn("AuthService", "Silent renew via iframe failed, trying refresh token fallback", iframeError);
+      warn("AuthService", "Silent renew failed; user must re-authenticate", iframeError);
       return false;
     }
   }
@@ -774,6 +771,9 @@ export default class AuthService {
         }
 
         const result = await candidate.manager.signinCallback();
+        if (result instanceof User) {
+          await this.stripAndStoreRefreshToken(candidate.manager, result);
+        }
         debug("AuthService", "Successfully processed signin callback with manager", {
           authority: candidate.manager.settings.authority,
           directAuthority,
@@ -883,7 +883,9 @@ export default class AuthService {
           expiresAt: loadedUser.expires_at,
           expiresIn: loadedUser.expires_in,
         });
-        user.value = loadedUser;
+        void this.stripAndStoreRefreshToken(manager, loadedUser).then((sanitizedUser) => {
+          user.value = sanitizedUser;
+        });
       });
     }
 
@@ -939,13 +941,24 @@ export default class AuthService {
     this.idpManagers.clear();
     this.userManager = this.buildUserManager(this.baseConfig.oidcAuthority, this.baseConfig.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
-    this.userManager.getUser().then((u) => {
+    this.userManager.getUser().then(async (u) => {
       if (u) {
-        user.value = u;
+        user.value = await this.stripAndStoreRefreshToken(this.userManager, u);
       } else {
         user.value = undefined;
       }
     });
+  }
+
+  private async stripAndStoreRefreshToken(manager: UserManager, loadedUser: User): Promise<User> {
+    if (!loadedUser.refresh_token) {
+      return loadedUser;
+    }
+
+    delete loadedUser.refresh_token;
+    await manager.storeUser(loadedUser);
+    warn("AuthService", "Removed refresh token from persisted OIDC user state");
+    return loadedUser;
   }
 }
 

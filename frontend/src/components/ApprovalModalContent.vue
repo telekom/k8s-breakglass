@@ -89,8 +89,6 @@ import { formatDateTime, formatDurationRounded, formatEndTime } from "@/composab
 import { getSessionState, normalizeState } from "@/composables/useSessionList";
 import type { SessionCR } from "@/model/breakglass";
 
-const noteErrorId = `approval-note-error-${useId()}`;
-
 const props = defineProps<{
   session: SessionCR;
   approverNote: string;
@@ -103,6 +101,8 @@ const emit = defineEmits<{
   (e: "reject"): void;
   (e: "cancel"): void;
 }>();
+
+const noteErrorId = useId();
 
 // Type-safe access to session properties
 const sessionSpec = computed(() => props.session.spec as Record<string, unknown> | undefined);

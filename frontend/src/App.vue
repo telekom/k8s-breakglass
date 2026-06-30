@@ -355,12 +355,14 @@ async function refreshGroups() {
       // Extract groups from various possible locations
       const realmAccess = decoded?.realm_access as Record<string, unknown> | undefined;
       let g: unknown = decoded?.groups || decoded?.group || realmAccess?.roles || [];
-      debug("App", "refreshGroups: Extracted groups from token:", g);
+      debug("App", "refreshGroups: Extracted groups from token", {
+        groupsCount: Array.isArray(g) ? g.length : typeof g === "string" ? 1 : 0,
+      });
 
       if (typeof g === "string") g = [g];
       if (Array.isArray(g)) groupsRef.value = g as string[];
       else groupsRef.value = [];
-      debug("App", "refreshGroups: Final groups from access token:", groupsRef.value);
+      debug("App", "refreshGroups: Final groups from access token", { groupsCount: groupsRef.value.length });
 
       // Also extract IDP info from token if available
       if (decoded?.iss) {
@@ -377,16 +379,17 @@ async function refreshGroups() {
   // Fallback to user profile claims
   const claims: Record<string, unknown> = (user.value?.profile as Record<string, unknown>) || {};
   debug("App", "refreshGroups: User profile available:", !!user.value?.profile);
-  debug("App", "refreshGroups: User profile keys:", Object.keys(claims));
-  debug("App", "refreshGroups: User profile claims:", claims);
+  debug("App", "refreshGroups: User profile claim keys:", Object.keys(claims));
 
   const claimsRealmAccess = claims["realm_access"] as Record<string, unknown> | undefined;
   let g: unknown = claims["groups"] || claims["group"] || claimsRealmAccess?.roles || [];
-  debug("App", "refreshGroups: Extracted groups from user profile:", g);
+  debug("App", "refreshGroups: Extracted groups from user profile", {
+    groupsCount: Array.isArray(g) ? g.length : typeof g === "string" ? 1 : 0,
+  });
 
   if (typeof g === "string") g = [g];
   groupsRef.value = Array.isArray(g) ? g : [];
-  debug("App", "refreshGroups: Final groups from user profile:", groupsRef.value);
+  debug("App", "refreshGroups: Final groups from user profile", { groupsCount: groupsRef.value.length });
 }
 
 onMounted(refreshGroups);

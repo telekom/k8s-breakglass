@@ -25,7 +25,6 @@ logger.info("App", "Application starting", {
   baseUrl: import.meta.env.BASE_URL,
 });
 
-
 function cacheRuntimeConfig(config: Config) {
   try {
     sessionStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));

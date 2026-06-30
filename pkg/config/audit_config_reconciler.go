@@ -491,12 +491,3 @@ func (r *AuditConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithEventFilter(specChangePredicate).
 		Complete(r)
 }
-
-func (r *AuditConfigReconciler) isConfigInList(name string, list []*breakglassv1alpha1.AuditConfig) bool {
-	for _, c := range list {
-		if c.Name == name {
-			return true
-		}
-	}
-	return false
-}
