@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 
@@ -231,7 +232,16 @@ func run() error {
 	}
 	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, MailProvider, DenyPolicy")
 
-	restConfig, err := ctrl.GetConfig()
+	var restConfig *rest.Config
+	if cfg.Kubernetes.Context != "" {
+		log.Infow("using specified kubeconfig context", "context", cfg.Kubernetes.Context)
+		loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+		configOverrides := &clientcmd.ConfigOverrides{CurrentContext: cfg.Kubernetes.Context}
+		kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+		restConfig, err = kubeConfig.ClientConfig()
+	} else {
+		restConfig, err = ctrl.GetConfig()
+	}
 	if err != nil {
 		return fmt.Errorf("get kubernetes config: %w", err)
 	}
