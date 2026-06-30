@@ -278,7 +278,6 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "cluster")
 	})
 
-
 	t.Run("invalid retainFor", func(t *testing.T) {
 		s := validSession()
 		s.Spec.RetainFor = "invalid"
@@ -1824,7 +1823,6 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
 	})
-
 
 	t.Run("invalid podCopy TTL", func(t *testing.T) {
 		template := &DebugSessionTemplate{
