@@ -295,7 +295,23 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	p.mu.RLock()
 	cached, ok := p.rest[cacheLookupKey]
 	if cacheLookupKey != "" && ok && now.Before(cached.expiresAt) {
+		canonicalKey := cacheLookupKey
+		if parsedNamespace == "" {
+			if mapped, mappedOk := p.bareToCanonical[cacheLookupKey]; mappedOk {
+				canonicalKey = mapped
+			}
+		}
 		p.mu.RUnlock()
+
+		if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() && !cbChecked {
+			cb := p.circuitBreakers.Get(canonicalKey)
+			if cb.IsDefinitelyOpen() {
+				cb.totalRejections.Add(1)
+				metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
+				return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, canonicalKey)
+			}
+		}
+
 		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
 		return cached.config, nil
 	}

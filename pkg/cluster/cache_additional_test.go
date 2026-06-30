@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -945,4 +946,75 @@ func TestGetRESTConfig_ConcurrentAccess_ExpiredCache(t *testing.T) {
 	refreshFetches := secretFetchCount.Load()
 	assert.Equal(t, int32(1), refreshFetches,
 		"cache refresh should trigger exactly one fetch; got %d (race condition on expiry)", refreshFetches)
+}
+
+func TestCircuitBreakerGateOnCacheHit_BareName(t *testing.T) {
+	// 1) Enable circuit breakers
+	config := ClusterCircuitBreakerConfig{
+		Enabled:             true,
+		FailureThreshold:    3,
+		OpenDuration:        1 * time.Minute,
+		HalfOpenMaxRequests: 1,
+	}
+
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "test-ns",
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeKubeconfig,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{
+				Name:      "test-secret",
+				Namespace: "test-ns",
+			},
+		},
+	}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-secret",
+			Namespace: "test-ns",
+		},
+		Data: map[string][]byte{
+			"value": []byte(`
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://test
+  name: test
+contexts:
+- context:
+    cluster: test
+    user: test
+  name: test
+current-context: test
+`),
+		},
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cc, sec).Build()
+	p := NewClientProviderWithCircuitBreaker(client, zap.NewNop().Sugar(), config)
+
+	// 2) Call GetRESTConfig with a bare name to populate the alias cache + bareToCanonical mapping
+	cfg, err := p.GetRESTConfig(context.Background(), "test-cluster")
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// 3) Force the canonical breaker to CircuitOpen
+	canonicalKey := cacheKey(cc.Namespace, cc.Name)
+	cb := p.circuitBreakers.Get(canonicalKey)
+	require.NotNil(t, cb)
+	cb.mu.Lock()
+	cb.transitionToLocked(CircuitOpen)
+	cb.mu.Unlock()
+
+	// 4) Call GetRESTConfig again with the bare name and assert it returns ErrCircuitOpen even on cache hit
+	cfg2, err2 := p.GetRESTConfig(context.Background(), "test-cluster")
+	assert.ErrorIs(t, err2, ErrCircuitOpen)
+	assert.Nil(t, cfg2)
 }
