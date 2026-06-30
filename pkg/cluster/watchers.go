@@ -65,8 +65,12 @@ func RegisterInvalidationHandlers(ctx context.Context, mgr ctrl.Manager, provide
 	}
 	if _, err := secretInformer.AddEventHandler(clientcache.ResourceEventHandlerFuncs{
 		UpdateFunc: func(oldObj, newObj interface{}) {
+			oldSec := extractSecret(oldObj)
 			sec := extractSecret(newObj)
 			if sec == nil {
+				return
+			}
+			if oldSec != nil && oldSec.ResourceVersion == sec.ResourceVersion {
 				return
 			}
 			// Check kubeconfig secrets
