@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"path/filepath"
+
 	"context"
 	"errors"
 	"fmt"
@@ -550,9 +552,17 @@ func validateSessionIdentityProviderAuthorization(
 		// Check if escalation's clusters include this session's cluster
 		clusterMatches := false
 		for _, allowedCluster := range esc.Spec.Allowed.Clusters {
-			if allowedCluster == sessionCluster {
+			if matched, _ := filepath.Match(allowedCluster, sessionCluster); matched || allowedCluster == sessionCluster {
 				clusterMatches = true
 				break
+			}
+		}
+		if !clusterMatches {
+			for _, ref := range esc.Spec.ClusterConfigRefs {
+				if matched, _ := filepath.Match(ref, sessionCluster); matched || ref == sessionCluster {
+					clusterMatches = true
+					break
+				}
 			}
 		}
 
