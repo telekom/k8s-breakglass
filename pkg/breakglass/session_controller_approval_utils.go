@@ -349,6 +349,9 @@ func IsSessionTerminalState(state breakglassv1alpha1.BreakglassSessionState) boo
 }
 
 func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Status.State == "" {
+		return false
+	}
 	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
 	// Even if timestamps suggest validity, terminal states are never valid.
 	if IsSessionTerminalState(session.Status.State) {
