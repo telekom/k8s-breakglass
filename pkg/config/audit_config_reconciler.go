@@ -249,7 +249,7 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		"totalSinks", totalSinks)
 
 	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
 }
 
 // validateConfig validates the AuditConfig and returns a list of errors
