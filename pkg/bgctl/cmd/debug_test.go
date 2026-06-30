@@ -830,12 +830,12 @@ func TestDebugSessionRenewCommand_Table(t *testing.T) {
 			session := breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-1"},
 				Spec: breakglassv1alpha1.DebugSessionSpec{
-					Cluster: "cluster-a",
+					Cluster:     "cluster-a",
 					TemplateRef: "template-1",
 				},
 				Status: breakglassv1alpha1.DebugSessionStatus{
-					State: breakglassv1alpha1.DebugSessionStateActive,
-					StartsAt: &startsAt,
+					State:     breakglassv1alpha1.DebugSessionStateActive,
+					StartsAt:  &startsAt,
 					ExpiresAt: &expiresAt,
 				},
 			}
