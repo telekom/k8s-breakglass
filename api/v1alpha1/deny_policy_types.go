@@ -128,6 +128,7 @@ type PodSecurityRules struct {
 type PodSecurityScope struct {
 	// subresources to evaluate. If empty, defaults to ["exec", "attach", "portforward"].
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
 	Subresources []string `json:"subresources,omitempty"`
 }
 

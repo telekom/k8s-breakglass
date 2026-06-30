@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Added `maxItems` limit to `PodSecurityScope.Subresources`.
+### Fixed
+
 - Prevent unbound growth of BreakglassSession status conditions by deduplicating updates.
 
 - Fixed single resource table formatting in `bgctl` commands.
