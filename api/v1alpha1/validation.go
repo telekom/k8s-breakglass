@@ -244,7 +244,11 @@ func ValidateBreakglassSession(session *BreakglassSession) *ValidationResult {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("grantedGroup"), "grantedGroup is required"))
 	}
 
-	// Validate idleTimeout if set
+	// Validate durations
+	if session.Spec.MaxValidFor != "" {
+		result.Errors = append(result.Errors, validateDurationFormat(session.Spec.MaxValidFor, specPath.Child("maxValidFor"))...)
+	}
+
 	if session.Spec.RetainFor != "" {
 		result.Errors = append(result.Errors, validateDurationFormat(session.Spec.RetainFor, specPath.Child("retainFor"))...)
 	}
