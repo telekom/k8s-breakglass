@@ -621,33 +621,6 @@ export default class AuthService {
     } catch (iframeError) {
       // iframe method failed - likely CSP blocking
       warn("AuthService", "Silent renew via iframe failed, trying refresh token fallback", iframeError);
-
-      // Check if we have a refresh token to try
-      if (!currentUser.refresh_token) {
-        logError("AuthService", "Silent renew failed and no refresh token available", iframeError);
-        return false;
-      }
-
-      try {
-        debug("AuthService", "Attempting token refresh via refresh_token");
-        // Use the token endpoint directly via signinSilent with refresh token
-        // oidc-client-ts will use the refresh_token if available when signinSilent fails
-        const renewedUser = await this.userManager.signinSilent({
-          silentRequestTimeoutInSeconds: 5,
-          extraTokenParams: { grant_type: "refresh_token" },
-        });
-        if (renewedUser) {
-          debug("AuthService", "Refresh token renewal successful", {
-            email: renewedUser.profile?.email,
-            expiresAt: renewedUser.expires_at,
-          });
-          user.value = renewedUser;
-          return true;
-        }
-      } catch (refreshError) {
-        logError("AuthService", "Both iframe and refresh token renewal failed", refreshError);
-      }
-
       return false;
     }
   }
@@ -834,7 +807,7 @@ export default class AuthService {
       silent_redirect_uri: this.baseURL + AuthSilentRedirect,
       response_type: "code",
       // Include offline_access to get refresh tokens for CSP-blocked iframe fallback
-      scope: "openid profile email offline_access",
+      scope: "openid profile email",
       post_logout_redirect_uri: this.baseURL,
       filterProtocolClaims: true,
       automaticSilentRenew: true,
