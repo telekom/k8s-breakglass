@@ -299,7 +299,9 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	now := metav1.Now()
 	latest.Status.LastHealthCheck = &now
 	latest.Status.LastSendError = ""
 
@@ -351,7 +353,7 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 }
 
 // updateStatusUnhealthy updates the status to indicate the provider is unhealthy
-func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *breakglassv1alpha1.MailProvider, healthErr error) (ctrl.Result, error) {
+func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *breakglassv1alpha1.MailProvider, healthErr error) (reconcile.Result, error) {
 	// Re-fetch the object to get the latest resource version
 	var latest breakglassv1alpha1.MailProvider
 	if err := r.Get(ctx, client.ObjectKeyFromObject(mp), &latest); err != nil {
@@ -380,11 +382,6 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 	}
 
 	latest.Status.LastSendError = healthErr.Error()
-			Status:             metav1.ConditionFalse,
-			Reason:             "HealthCheckFailed",
-			Message:            fmt.Sprintf("Health check failed: %v", healthErr),
-			LastTransitionTime: metav1.Now(),
-		})
 
 	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
