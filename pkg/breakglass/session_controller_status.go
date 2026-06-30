@@ -434,7 +434,7 @@ func (wc *BreakglassSessionController) checkSessionLimits(
 		if apierrors.IsNotFound(err) {
 			log.Warnw("IdentityProvider not found — session limits cannot be enforced; failing closed",
 				"idp", idpName)
-			return fmt.Errorf("IdentityProvider %q not found", idpName)
+			return fmt.Errorf("IdentityProvider %q not found: %w", idpName, err)
 		}
 		return fmt.Errorf("failed to get IdentityProvider: %w", err)
 	}
