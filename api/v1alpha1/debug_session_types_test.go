@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -1453,26 +1454,63 @@ func TestDebugSession_ValidateUpdate(t *testing.T) {
 			RequestedBy: "user@example.com",
 		},
 	}
-	newSession := &DebugSession{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "session",
-			Namespace: "breakglass",
-		},
-		Spec: DebugSessionSpec{
-			Cluster:     "cluster",
-			TemplateRef: "template",
-			RequestedBy: "user@example.com",
-			Reason:      "Updated reason",
-		},
-	}
 
-	warnings, err := newSession.ValidateUpdate(ctx, oldSession, newSession)
-	if err != nil {
-		t.Errorf("ValidateUpdate() unexpected error: %v", err)
-	}
-	if len(warnings) > 0 {
-		t.Errorf("ValidateUpdate() unexpected warnings: %v", warnings)
-	}
+	t.Run("valid update", func(t *testing.T) {
+		newSession := oldSession.DeepCopy()
+		_, err := newSession.ValidateUpdate(ctx, oldSession, newSession)
+		if err != nil {
+			t.Errorf("ValidateUpdate() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("spec is immutable", func(t *testing.T) {
+		newSession := oldSession.DeepCopy()
+		newSession.Spec.Reason = "Updated reason"
+		_, err := newSession.ValidateUpdate(ctx, oldSession, newSession)
+		if err == nil {
+			t.Error("ValidateUpdate() expected error for spec mutation")
+		} else if !strings.Contains(err.Error(), "spec is immutable") {
+			t.Errorf("expected 'spec is immutable' error, got %v", err)
+		}
+	})
+
+	t.Run("monotonic timestamp checks", func(t *testing.T) {
+		now := metav1.Now()
+		earlier := metav1.NewTime(now.Add(-1 * time.Hour))
+
+		t.Run("startsAt cleared", func(t *testing.T) {
+			oldS := oldSession.DeepCopy()
+			oldS.Status.StartsAt = &now
+			newS := oldS.DeepCopy()
+			newS.Status.StartsAt = nil
+			_, err := newS.ValidateUpdate(ctx, oldS, newS)
+			if err == nil || !strings.Contains(err.Error(), "startsAt must not be cleared once set") {
+				t.Errorf("expected startsAt cleared error, got %v", err)
+			}
+		})
+
+		t.Run("startsAt backwards", func(t *testing.T) {
+			oldS := oldSession.DeepCopy()
+			oldS.Status.StartsAt = &now
+			newS := oldS.DeepCopy()
+			newS.Status.StartsAt = &earlier
+			_, err := newS.ValidateUpdate(ctx, oldS, newS)
+			if err == nil || !strings.Contains(err.Error(), "startsAt must not move backwards") {
+				t.Errorf("expected startsAt backwards error, got %v", err)
+			}
+		})
+
+		t.Run("approvedAt cleared", func(t *testing.T) {
+			oldS := oldSession.DeepCopy()
+			oldS.Status.Approval = &DebugSessionApproval{ApprovedAt: &now}
+			newS := oldS.DeepCopy()
+			newS.Status.Approval.ApprovedAt = nil
+			_, err := newS.ValidateUpdate(ctx, oldS, newS)
+			if err == nil || !strings.Contains(err.Error(), "approvedAt must not be cleared once set") {
+				t.Errorf("expected approvedAt cleared error, got %v", err)
+			}
+		})
+	})
 }
 
 func TestDebugSession_ValidateDelete(t *testing.T) {

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tightened `DebugSession` update validation to make `.spec` immutable and prevent status timestamps from moving backwards.
 - Prevent unbound growth of BreakglassSession status conditions by deduplicating updates.
 
 - Fixed single resource table formatting in `bgctl` commands.
