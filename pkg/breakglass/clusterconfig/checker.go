@@ -129,7 +129,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		}
 
 		// discovery client to attempt server version call
-		if err := CheckClusterReachable(restCfg); err != nil {
+		if err := CheckClusterReachable(ctx, restCfg); err != nil {
 			msg := "cluster unreachable: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
 			if err2 := ccc.setStatusAndEvent(ctx, &cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
@@ -773,12 +773,14 @@ func (ccc *ClusterConfigChecker) applyStatus(ctx context.Context, config *breakg
 }
 
 // checkClusterReachable tries to perform a simple discovery (server version) to ensure the cluster is reachable
-func checkClusterReachable(cfg *rest.Config) error {
+func checkClusterReachable(ctx context.Context, cfg *rest.Config) error {
 	d, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
 		return err
 	}
-	_, err = d.ServerVersion()
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err = d.RESTClient().Get().AbsPath("/version").Do(timeoutCtx).Raw()
 	return err
 }
 
@@ -877,6 +879,6 @@ func determineClusterConfigFailureType(message string) string {
 
 // overridable function variables for unit testing
 var RestConfigFromKubeConfig = clientcmd.RESTConfigFromKubeConfig
-var CheckClusterReachable = func(cfg *rest.Config) error { return checkClusterReachable(cfg) }
+var CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return checkClusterReachable(ctx, cfg) }
 
 // Fallback: attempt to build rest.Config via clientcmd
