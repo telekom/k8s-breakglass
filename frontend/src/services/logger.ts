@@ -99,10 +99,6 @@ export function toggleDebugLogging(source = "manual toggle") {
   setDebugLoggingEnabled(!debugEnabled, source);
 }
 
-  if (debugEnabled) {
-    announceDebugStatus("initial load");
-  }
-}
 
 export function debug(tag: string, ...args: unknown[]) {
   if (!debugEnabled) return;
