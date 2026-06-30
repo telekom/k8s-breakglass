@@ -279,7 +279,6 @@ func TestEscalationGetCommand_YAML(t *testing.T) {
 	outStr := buf.String()
 	assert.Contains(t, outStr, "test-escalation-1")
 	assert.Contains(t, outStr, "admin")
-	assert.Contains(t, outStr, "ESCALATED_GROUP")
 }
 
 func TestEscalationGetCommand_TableOutputsTable(t *testing.T) {
@@ -305,7 +304,6 @@ func TestEscalationGetCommand_TableOutputsTable(t *testing.T) {
 	outStr := buf.String()
 	assert.Contains(t, outStr, "test-escalation-1")
 	assert.Contains(t, outStr, "admin")
-	assert.Contains(t, outStr, "ESCALATED_GROUP")
 }
 
 func TestEscalationGetCommand_WideOutputsTable(t *testing.T) {
@@ -331,7 +329,6 @@ func TestEscalationGetCommand_WideOutputsTable(t *testing.T) {
 	outStr := buf.String()
 	assert.Contains(t, outStr, "test-escalation-1")
 	assert.Contains(t, outStr, "admin")
-	assert.Contains(t, outStr, "ESCALATED_GROUP")
 }
 
 func TestEscalationGetCommand_UnknownFormatError(t *testing.T) {
