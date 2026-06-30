@@ -18,7 +18,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 
@@ -232,18 +231,12 @@ func run() error {
 	}
 	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, MailProvider, DenyPolicy")
 
-	var restConfig *rest.Config
+	restConfig, err := getKubeConfig(cfg.Kubernetes.Context)
+	if err != nil {
+		return fmt.Errorf("kubernetes configuration error: %w", err)
+	}
 	if cfg.Kubernetes.Context != "" {
 		log.Infow("using specified kubeconfig context", "context", cfg.Kubernetes.Context)
-		loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-		configOverrides := &clientcmd.ConfigOverrides{CurrentContext: cfg.Kubernetes.Context}
-		kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-		restConfig, err = kubeConfig.ClientConfig()
-	} else {
-		restConfig, err = ctrl.GetConfig()
-	}
-	if err != nil {
-		return fmt.Errorf("get kubernetes config: %w", err)
 	}
 
 	uncachedClient, err := client.New(restConfig, client.Options{
@@ -347,7 +340,7 @@ func run() error {
 	certMgrErr := make(chan error, 1) // buffered so non-blocking send in startCertManagerIfNeeded is reliable
 	if cliConfig.EnableWebhooks {
 		log.Infow("Webhooks enabled via --enable-webhooks flag")
-		certsReady := startCertManagerIfNeeded(managerCtx, &wg, errCh, certMgrErr, leaderElectedCh,
+		certsReady := startCertManagerIfNeeded(managerCtx, restConfig, &wg, errCh, certMgrErr, leaderElectedCh,
 			cliConfig, scheme, log)
 		if cliConfig.Webhook.CertGeneration {
 			if err := cert.Ensure(cliConfig.Webhook.CertPath, cliConfig.Webhook.CertName, certsReady, certMgrErr, log); err != nil {
@@ -357,7 +350,7 @@ func run() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := webhook.Setup(managerCtx, log, scheme, &cliConfig.Webhook, cliConfig.EnableValidatingWebhooks,
+			if err := webhook.Setup(managerCtx, restConfig, log, scheme, &cliConfig.Webhook, cliConfig.EnableValidatingWebhooks,
 				cliConfig.EnableHTTP2, cliConfig.Webhook.CertGeneration); err != nil {
 				errCh <- fmt.Errorf("webhook server failed: %w", err)
 			}
@@ -719,7 +712,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 // startCertManagerIfNeeded launches the certificate manager goroutine when webhook
 // certificate generation is enabled. Returns a certsReady channel (nil if not needed).
 // certMgrErr is used to propagate start failures to cert.Ensure(), which blocks on it.
-func startCertManagerIfNeeded(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error,
+func startCertManagerIfNeeded(ctx context.Context, restConfig *rest.Config, wg *sync.WaitGroup, errCh chan<- error,
 	certMgrErr chan<- error, leaderElectedCh chan struct{}, cliConfig *cli.Config,
 	scheme *runtime.Scheme, log *zap.SugaredLogger,
 ) chan struct{} {
@@ -727,7 +720,7 @@ func startCertManagerIfNeeded(ctx context.Context, wg *sync.WaitGroup, errCh cha
 		return nil
 	}
 	certsReady := make(chan struct{})
-	certMgr := cert.NewManager(cliConfig.Webhook.SvcName, cliConfig.BreakglassNamespace,
+	certMgr := cert.NewManager(restConfig, cliConfig.Webhook.SvcName, cliConfig.BreakglassNamespace,
 		cliConfig.Webhook.CertPath, cliConfig.Webhook.ValidatingConfigName, certsReady, leaderElectedCh, log)
 	wg.Add(1)
 	go func() {
