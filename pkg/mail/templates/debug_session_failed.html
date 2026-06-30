@@ -206,7 +206,7 @@
         <span class="detail-label">Requester:</span>
         <span class="detail-value">
           {{if .RequesterName}}{{.RequesterName}}{{end}}
-          {{if .RequesterEmail}}<br><span style="color: #666;">{{.RequesterEmail}}</span>{{end}}
+          {{if .RequesterEmail}}{{if .RequesterName}}<br>{{end}}<span style="color: #666;">{{.RequesterEmail}}</span>{{end}}
         </span>
       </div>
       {{end}}

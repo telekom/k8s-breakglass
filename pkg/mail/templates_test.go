@@ -937,4 +937,6 @@ func TestRenderDebugSessionFailedMinimalParams(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, result)
 	assert.Contains(t, result, "session-min")
+	assert.NotContains(t, result, "<br><span style=\"color: #666;\">user@example.com</span>")
+	assert.Contains(t, result, "<span style=\"color: #666;\">user@example.com</span>")
 }
