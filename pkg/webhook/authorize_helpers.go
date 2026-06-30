@@ -193,7 +193,6 @@ func (wc *WebhookController) logSARAction(s *authorizeState) {
 			"path", nra.Path,
 			"verb", nra.Verb,
 			"action", action,
-		)
 	} else {
 		s.reqLog.Infow("SubjectAccessReview contains no resource or non-resource attributes")
 		metrics.WebhookSARRequestsByAction.WithLabelValues(s.clusterName, "", "", "unknown", "", "").Inc()
