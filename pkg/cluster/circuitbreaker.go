@@ -107,6 +107,7 @@ type clusterBreaker struct {
 	lastFailureTime  atomic.Value // time.Time
 	lastStateChange  atomic.Value // time.Time
 	lastError        atomic.Value // error
+	generation       atomic.Int64
 
 	// Statistics
 	totalRequests   atomic.Int64
@@ -153,17 +154,18 @@ func newClusterBreaker(name string, cfg ClusterCircuitBreakerConfig, logger *zap
 
 // Allow checks whether a request to this cluster should be permitted.
 // Returns nil if allowed, ErrCircuitOpen if the circuit is open.
-func (cb *clusterBreaker) Allow() error {
+func (cb *clusterBreaker) Allow() (int64, error) {
 	if cb.untracked {
-		return nil // sentinel breaker always allows
+		return 0, nil // sentinel breaker always allows
 	}
 
 	for {
 		state := CircuitState(cb.state.Load())
 
+		gen := cb.generation.Load()
 		switch state {
 		case CircuitClosed:
-			return nil
+			return gen, nil
 
 		case CircuitOpen:
 			// Check if enough time has passed to probe — use the mutex to prevent
@@ -179,25 +181,25 @@ func (cb *clusterBreaker) Allow() error {
 				cb.transitionToLocked(CircuitHalfOpen)
 				cb.halfOpenRequests.Add(1) // count this probe request
 				cb.mu.Unlock()
-				return nil
+				return gen, nil
 			}
 			cb.mu.Unlock()
 			cb.totalRejections.Add(1)
 			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
-			return fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cb.name)
+			return gen, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cb.name)
 
 		case CircuitHalfOpen:
 			current := cb.halfOpenRequests.Add(1)
 			if current <= int64(cb.config.HalfOpenMaxRequests) {
-				return nil
+				return gen, nil
 			}
 			cb.halfOpenRequests.Add(-1) // revert
 			cb.totalRejections.Add(1)
 			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
-			return fmt.Errorf("%w: cluster %s (half-open, max probe requests reached)", ErrCircuitOpen, cb.name)
+			return gen, fmt.Errorf("%w: cluster %s (half-open, max probe requests reached)", ErrCircuitOpen, cb.name)
 
 		default:
-			return nil
+			return gen, nil
 		}
 	}
 }
@@ -207,7 +209,9 @@ func (cb *clusterBreaker) Allow() error {
 // Note: consecutive counters use relaxed atomic ordering — brief inconsistencies
 // between consecutiveFails and consecutiveSuccs are acceptable since threshold
 // checks use local return values from Add().
-func (cb *clusterBreaker) RecordSuccess() {
+func (cb *clusterBreaker) Generation() int64 { return cb.generation.Load() }
+
+func (cb *clusterBreaker) RecordSuccess(epoch int64) {
 	if cb.untracked {
 		return // sentinel breaker — no metrics or state transitions
 	}
@@ -219,6 +223,7 @@ func (cb *clusterBreaker) RecordSuccess() {
 	metrics.ClusterCircuitBreakerSuccesses.WithLabelValues(cb.name).Inc()
 	metrics.ClusterCircuitBreakerConsecutiveFailures.WithLabelValues(cb.name).Set(0)
 
+	if cb.generation.Load() != epoch { return }
 	if CircuitState(cb.state.Load()) == CircuitHalfOpen {
 		cb.mu.Lock()
 		// Re-check under lock to avoid TOCTOU race on state transitions
@@ -236,10 +241,11 @@ func (cb *clusterBreaker) RecordSuccess() {
 // RecordFailure records a failed operation against this cluster.
 // Only transient failures (network errors, timeouts) should trip the breaker.
 // Authentication or authorization errors are not counted.
-func (cb *clusterBreaker) RecordFailure(err error) {
+func (cb *clusterBreaker) RecordFailure(epoch int64, err error) {
 	if cb.untracked {
 		return // sentinel breaker — no metrics or state transitions
 	}
+	if cb.generation.Load() != epoch { return }
 	if !IsTransientError(err) {
 		// Non-transient errors (auth, not-found) should not trip the breaker
 		return
@@ -283,6 +289,7 @@ func (cb *clusterBreaker) transitionToLocked(newState CircuitState) {
 		return
 	}
 
+	cb.generation.Add(1)
 	cb.state.Store(int32(newState))
 	cb.lastStateChange.Store(time.Now())
 	cb.consecutiveFails.Store(0)
@@ -591,16 +598,17 @@ type circuitBreakerTransport struct {
 // indicate the spoke cluster's API server is overloaded or proxying failures.
 func (t *circuitBreakerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	cb := t.breakers.Get(t.clusterName)
-	if err := cb.Allow(); err != nil {
+	epoch, err := cb.Allow()
+	if err != nil {
 		return nil, err
 	}
 	resp, err := t.inner.RoundTrip(req)
 	if err != nil {
-		cb.RecordFailure(err)
+		cb.RecordFailure(epoch, err)
 	} else if resp.StatusCode >= http.StatusInternalServerError {
-		cb.RecordFailure(&TransientServerError{StatusCode: resp.StatusCode, ClusterName: t.clusterName})
+		cb.RecordFailure(epoch, &TransientServerError{StatusCode: resp.StatusCode, ClusterName: t.clusterName})
 	} else {
-		cb.RecordSuccess()
+		cb.RecordSuccess(epoch)
 	}
 	return resp, err
 }

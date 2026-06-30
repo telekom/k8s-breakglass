@@ -829,7 +829,8 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 // clusterName should be the canonical "namespace/name" key.
 func (p *ClientProvider) RecordSuccess(clusterName string) {
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
-		p.circuitBreakers.Get(clusterName).RecordSuccess()
+		cb := p.circuitBreakers.Get(clusterName)
+		cb.RecordSuccess(cb.Generation())
 	}
 }
 
@@ -840,7 +841,8 @@ func (p *ClientProvider) RecordSuccess(clusterName string) {
 // clusterName should be the canonical "namespace/name" key.
 func (p *ClientProvider) RecordFailure(clusterName string, err error) {
 	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
-		p.circuitBreakers.Get(clusterName).RecordFailure(err)
+		cb := p.circuitBreakers.Get(clusterName)
+		cb.RecordFailure(cb.Generation(), err)
 	}
 }
 
