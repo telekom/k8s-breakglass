@@ -69,7 +69,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
 	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
-	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
+	bs.SetCondition(metav1.Condition{
 		Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: metav1.Now(),
@@ -139,7 +139,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		bs.Status.ExpiresAt = metav1.NewTime(time.Now())
 		bs.Status.State = breakglassv1alpha1.SessionStateExpired
-		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
+		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
@@ -163,7 +163,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
-		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
+		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
@@ -239,7 +239,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 		bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approverEmail)
 	}
 
-	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
+	bs.SetCondition(metav1.Condition{
 		Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: metav1.Now(),

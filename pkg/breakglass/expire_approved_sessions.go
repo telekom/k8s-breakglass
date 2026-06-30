@@ -32,7 +32,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 				IsSessionExpired,
 				func(current *breakglassv1alpha1.BreakglassSession) {
 					current.Status.State = breakglassv1alpha1.SessionStateExpired
-					current.Status.Conditions = append(current.Status.Conditions, metav1.Condition{
+					current.SetCondition(metav1.Condition{
 						Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 						Status:             metav1.ConditionTrue,
 						LastTransitionTime: metav1.Now(),

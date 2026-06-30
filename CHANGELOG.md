@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent unbound growth of BreakglassSession status conditions by deduplicating updates.
+
 - Fixed single resource table formatting in `bgctl` commands.
 
 - Fixed duplicate session error when status initialization fails.
