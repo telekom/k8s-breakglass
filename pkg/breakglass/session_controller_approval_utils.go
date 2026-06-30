@@ -57,7 +57,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		approverGroups, gerr = wc.getUserGroupsFn(ctx, approverID)
 		if raw, ok := c.Get("groups"); ok {
 			if arr, ok2 := raw.([]string); ok2 && len(arr) > 0 {
-				approverGroups = arr
+				approverGroups = append(approverGroups, arr...)
 			}
 		} else if gerr != nil {
 			reqLog.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
