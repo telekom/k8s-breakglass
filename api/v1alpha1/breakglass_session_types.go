@@ -92,6 +92,7 @@ type BreakglassSessionSpec struct {
 
 	// retainFor is the amount of time to wait before removing the session object after it was expired.
 	// +default="720h"
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	RetainFor string `json:"retainFor,omitempty"`
 
 	// clusterConfigRef references the ClusterConfig object associated with this session (if different from spec.cluster parsing result).

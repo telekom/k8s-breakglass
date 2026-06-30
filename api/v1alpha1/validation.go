@@ -245,6 +245,10 @@ func ValidateBreakglassSession(session *BreakglassSession) *ValidationResult {
 	}
 
 	// Validate idleTimeout if set
+	if session.Spec.RetainFor != "" {
+		result.Errors = append(result.Errors, validateDurationFormat(session.Spec.RetainFor, specPath.Child("retainFor"))...)
+	}
+
 	if session.Spec.IdleTimeout != "" {
 		idleTimeout, err := ParseDuration(session.Spec.IdleTimeout)
 		if err != nil {
@@ -914,6 +918,11 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	// Validate gracePeriodBeforeExpiry is a valid duration
 	if template.Spec.GracePeriodBeforeExpiry != "" {
 		result.Errors = append(result.Errors, validateDurationFormat(template.Spec.GracePeriodBeforeExpiry, specPath.Child("gracePeriodBeforeExpiry"))...)
+	}
+
+	// Validate podCopy config if specified
+	if template.Spec.KubectlDebug != nil && template.Spec.KubectlDebug.PodCopy != nil && template.Spec.KubectlDebug.PodCopy.TTL != "" {
+		result.Errors = append(result.Errors, validateDurationFormat(template.Spec.KubectlDebug.PodCopy.TTL, specPath.Child("kubectlDebug").Child("podCopy").Child("ttl"))...)
 	}
 
 	// Validate auxiliary resources

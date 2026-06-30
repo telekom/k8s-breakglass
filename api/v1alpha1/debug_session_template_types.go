@@ -721,6 +721,7 @@ type PodCopyConfig struct {
 	// ttl specifies how long copied pods live before auto-deletion.
 	// +optional
 	// +kubebuilder:default="2h"
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	TTL string `json:"ttl,omitempty"`
 }
 
@@ -777,11 +778,13 @@ type DebugSessionConstraints struct {
 	// maxDuration is the maximum allowed session duration.
 	// +optional
 	// +kubebuilder:default="4h"
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	MaxDuration string `json:"maxDuration,omitempty"`
 
 	// defaultDuration is the default session duration if not specified.
 	// +optional
 	// +kubebuilder:default="1h"
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	DefaultDuration string `json:"defaultDuration,omitempty"`
 
 	// allowRenewal controls whether session renewal is permitted.

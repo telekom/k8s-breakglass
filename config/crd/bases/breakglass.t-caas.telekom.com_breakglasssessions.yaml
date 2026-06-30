@@ -168,6 +168,7 @@ spec:
                 default: 720h
                 description: retainFor is the amount of time to wait before removing
                   the session object after it was expired.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               scheduledStartTime:
                 description: |-
