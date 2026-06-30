@@ -584,7 +584,7 @@ jobs:
             exit 1
           fi
 
-          if printf '%s\n' "${REMOTE_CHART_LOOKUP_OUTPUT}" | grep -Eiq '(not found|not exist|no such|manifest unknown|404)'; then
+          if printf '%s\n' "${REMOTE_CHART_LOOKUP_OUTPUT}" | grep -Eiq '(^Error: .*(not found|manifest unknown)|(^|[[:space:]])manifest unknown([[:space:][:punct:]]|$))'; then
             echo "Chart escalation-config:${CHART_VERSION} is not present in GHCR; publishing new package."
           else
             echo "::error::Failed to inspect existing escalation-config:${CHART_VERSION} chart in GHCR before publishing." >&2
