@@ -328,6 +328,7 @@ func run() error {
 		auditService:      svcs.auditService,
 		ccProvider:        svcs.ccProvider,
 		idpLoader:         svcs.idpLoader,
+		denyEval:          svcs.denyEval,
 		eventsRecorder:    eventsRecorder,
 		server:            server,
 		scheme:            scheme,
@@ -386,6 +387,7 @@ type services struct {
 	escalationManager *escalation.EscalationManager
 	sessionManager    *breakglass.SessionManager
 	ccProvider        *cluster.ClientProvider
+	denyEval          *policy.Evaluator
 	mailService       *mail.Service
 	auditService      *audit.Service
 	apiControllers    []api.APIController
@@ -498,7 +500,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	// Register API controllers based on component flags
 	apiControllers, webhookCtrl := api.Setup(sessionController, escalationManager, sessionManager,
 		cliConfig.EnableFrontend, cliConfig.EnableAPI, cliConfig.ConfigPath, auth,
-		ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService)
+		ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, idpLoader, auditService)
 
 	return &services{
 		idpLoader:         idpLoader,
@@ -506,6 +508,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		escalationManager: escalationManager,
 		sessionManager:    sessionManager,
 		ccProvider:        ccProvider,
+		denyEval:          denyEval,
 		mailService:       mailService,
 		auditService:      auditService,
 		apiControllers:    apiControllers,
@@ -593,6 +596,7 @@ type backgroundDeps struct {
 	auditService      *audit.Service
 	ccProvider        *cluster.ClientProvider
 	idpLoader         *config.IdentityProviderLoader
+	denyEval          *policy.Evaluator
 	eventsRecorder    *eventrecorder.K8sEventRecorder
 	server            *api.Server
 	scheme            *runtime.Scheme
@@ -703,7 +707,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 	go func() {
 		defer wg.Done()
 		if err := reconciler.Setup(ctx, deps.reconcilerMgr, deps.idpLoader, deps.server,
-			deps.ccProvider, deps.auditService, deps.mailService, deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
+			deps.ccProvider, deps.auditService, deps.denyEval, deps.mailService, deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)
 		}
 	}()

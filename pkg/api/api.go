@@ -1238,6 +1238,7 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	sessionManager *breakglass.SessionManager, enableFrontend, enableAPI bool, configPath string,
 	auth *AuthHandler, ccProvider *cluster.ClientProvider, denyEval *policy.Evaluator,
 	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *debug.DebugSessionAPIController,
+	idpLoader *config.IdentityProviderLoader,
 	auditService *audit.Service) ([]APIController, *webhook.WebhookController) {
 	// Register API controllers based on component flags
 	apiControllers := []APIController{}

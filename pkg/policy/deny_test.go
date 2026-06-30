@@ -29,6 +29,7 @@ func TestEvaluatorMatch(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	log := zap.NewNop().Sugar()
 	eval := NewEvaluator(c, log)
+	_ = eval.UpdateCache(context.Background())
 
 	denied, name, err := eval.Match(context.Background(), Action{Verb: "get", APIGroup: "", Resource: "secrets", Namespace: "foo"})
 	if err != nil {
@@ -63,6 +64,7 @@ func TestEvaluatorWildcards(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(pols...).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	cases := []struct {
 		name    string
@@ -140,6 +142,7 @@ func TestEvaluatorMatch_UsesDenyPolicyPrecedence(t *testing.T) {
 		WithObjects(lowPriorityPolicy, defaultPriorityPolicy, highPriorityPolicy).
 		Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	act := Action{Verb: "get", APIGroup: "", Resource: "secrets", Namespace: "default"}
 	denied, policyName, err := eval.Match(context.Background(), act)
@@ -172,6 +175,7 @@ func TestEvaluatorCalculateRiskScore(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	defaultRiskFactors := breakglassv1alpha1.RiskFactors{
 		HostNetwork:         10,
@@ -378,6 +382,7 @@ func TestEvaluatorShouldEvaluateSubresource(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	tests := []struct {
 		subresource string
@@ -436,6 +441,7 @@ func TestEvaluatorPodSecurityRules(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	log := zap.NewNop().Sugar()
 	eval := NewEvaluator(c, log)
+	_ = eval.UpdateCache(context.Background())
 
 	// Test safe pod - no denial
 	safePod := &corev1.Pod{
@@ -516,6 +522,7 @@ func TestEvaluatorPodSecurityExemptions(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Exempt namespace should be allowed despite privileged
 	exemptByNsPod := &corev1.Pod{
@@ -628,6 +635,7 @@ func TestEvaluatorPodSecurityBlockFactors(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Privileged pod should be blocked despite low score
 	blockedPod := &corev1.Pod{
@@ -680,6 +688,7 @@ func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Create a privileged pod (score 30, normally denied)
 	privilegedPod := &corev1.Pod{
@@ -809,6 +818,7 @@ func TestEvaluatorPodSecurityOverridesExemptFactors(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with host network (blocked factor)
 	hostNetPod := &corev1.Pod{
@@ -908,6 +918,7 @@ func TestEvaluatorPodSecurityOverridesDisabled(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	privilegedPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -970,6 +981,7 @@ func TestEvaluatorPodSecurityFailModeClosed(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod is nil - should deny with fail-closed
 	denied, policyName, err := eval.Match(context.Background(), Action{
@@ -1012,6 +1024,7 @@ func TestEvaluatorPodSecurityFailModeOpen(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod is nil - should allow with fail-open
 	denied, _, err := eval.Match(context.Background(), Action{
@@ -1051,6 +1064,7 @@ func TestEvaluatorPodSecurityFailModeDefault(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod is nil - should deny with default fail-closed behavior
 	denied, _, err := eval.Match(context.Background(), Action{
@@ -1091,6 +1105,7 @@ func TestEvaluatorPodSecurityEmptyThresholds(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Any pod with a score should be denied (exceeds all thresholds = none)
 	pod := &corev1.Pod{
@@ -1142,6 +1157,7 @@ func TestEvaluatorPodSecurityZeroScorePod(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Safe pod with score 0 - should be allowed
 	safePod := &corev1.Pod{
@@ -1187,6 +1203,7 @@ func TestEvaluatorPodSecurityNilRiskFactors(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Even a privileged pod scores 0 if risk factors are all zero
 	riskyPod := &corev1.Pod{
@@ -1250,6 +1267,7 @@ func TestEvaluatorPodSecurityMultipleCapabilities(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with multiple capabilities - scores should accumulate
 	multiCapPod := &corev1.Pod{
@@ -1305,6 +1323,7 @@ func TestEvaluatorPodSecurityMultipleContainers(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with multiple privileged containers - should only count privileged once
 	multiContainerPod := &corev1.Pod{
@@ -1377,6 +1396,7 @@ func TestEvaluatorPodSecurityInitContainersCombined(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Init container is privileged, main container has NET_ADMIN
 	mixedPod := &corev1.Pod{
@@ -1438,6 +1458,7 @@ func TestEvaluatorPodSecurityMultipleHostPathVolumes(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with multiple hostPath volumes (some RW, some RO)
 	multiVolPod := &corev1.Pod{
@@ -1506,6 +1527,7 @@ func TestEvaluatorPodSecurityAllFactorsCombined(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Maximum risk pod
 	maxRiskPod := &corev1.Pod{
@@ -1583,6 +1605,7 @@ func TestEvaluatorPodSecurityExemptionPartialLabelMatch(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with only one matching label - should NOT be exempt
 	partialMatchPod := &corev1.Pod{
@@ -1678,6 +1701,7 @@ func TestEvaluatorPodSecurityExemptionMultipleNamespaces(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	privilegedPod := func(ns string) *corev1.Pod {
 		return &corev1.Pod{
@@ -1746,6 +1770,7 @@ func TestEvaluatorPodSecurityExemptionNilExemptions(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Even pods in kube-system should be denied when no exemptions defined
 	pod := &corev1.Pod{
@@ -1803,6 +1828,7 @@ func TestEvaluatorPodSecurityExemptionEmptyLabels(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Empty label exemption should NOT exempt any pod
 	pod := &corev1.Pod{
@@ -1860,6 +1886,7 @@ func TestEvaluatorPodSecurityMultipleBlockFactors(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	testCases := []struct {
 		name     string
@@ -1958,6 +1985,7 @@ func TestEvaluatorPodSecurityBlockFactorWithOverride(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with multiple block factors
 	multiBlockPod := &corev1.Pod{
@@ -2036,6 +2064,7 @@ func TestEvaluatorPodSecurityBlockFactorPrecedence(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -2093,6 +2122,7 @@ func TestEvaluatorPodSecurityOverrideScoreExactBoundary(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -2167,6 +2197,7 @@ func TestEvaluatorPodSecurityOverrideNilMaxScore(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -2224,6 +2255,7 @@ func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with both hostNetwork (blocked) and privileged (high score)
 	complexPod := &corev1.Pod{
@@ -2316,6 +2348,7 @@ func TestEvaluatorPodSecurityOverrideZeroMaxScore(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Safe pod with score 0
 	safePod := &corev1.Pod{
@@ -2372,6 +2405,7 @@ func TestEvaluatorMatchWithDetailsWarnAction(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Pod with score 25 - falls in warn threshold
 	warnPod := &corev1.Pod{
@@ -2433,6 +2467,7 @@ func TestEvaluatorMatchWithDetailsDenyAction(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-pod", Namespace: "default"},
@@ -2495,6 +2530,7 @@ func TestEvaluatorMatchWithDetailsAllowAction(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	// Safe pod with score 0
 	safePod := &corev1.Pod{
@@ -2534,6 +2570,7 @@ func TestEvaluatorMatchWithDetailsNoPolicy(t *testing.T) {
 	// No policies at all
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "any-pod", Namespace: "default"},
@@ -2597,6 +2634,7 @@ func TestEvaluatorReasonTemplateRendering(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pod", Namespace: "production"},
@@ -2661,6 +2699,7 @@ func TestEvaluatorReasonTemplateEmptyReason(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "default"},
@@ -2714,6 +2753,7 @@ func TestEvaluatorReasonTemplateInvalidTemplate(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "default"},
@@ -2771,6 +2811,7 @@ func TestEvaluatorPodSecurityScopeCluster(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	privilegedPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -2839,6 +2880,7 @@ func TestEvaluatorPodSecurityScopeTenant(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	privilegedPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -2906,6 +2948,7 @@ func TestEvaluatorPodSecurityScopeSession(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	privilegedPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -2974,6 +3017,7 @@ func TestEvaluatorPodSecurityScopeCombined(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	privilegedPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -3043,6 +3087,7 @@ func TestEvaluatorPodSecurityScopeNil(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	privilegedPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "priv-pod", Namespace: "default"},
@@ -3140,6 +3185,7 @@ func TestEvaluatorNamespaceSelectorTerms(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(policies...).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	tests := []struct {
 		name     string
@@ -3343,6 +3389,7 @@ func TestEvaluatorRequiresNamespaceLabels(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(policies...).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	tests := []struct {
 		name string
@@ -3473,6 +3520,7 @@ func TestEvaluatorNamespaceSelectorMatchExpressionOperators(t *testing.T) {
 
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 			eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 			denied, _, err := eval.Match(context.Background(), Action{
 				Verb:            "get",
@@ -3518,6 +3566,7 @@ func TestEvaluatorNamespaceSelectorMultipleTerms(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	tests := []struct {
 		name     string
@@ -3574,6 +3623,7 @@ func TestEvaluatorPodSecurityWarnActionReason(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
 	log := zap.NewNop().Sugar()
 	eval := NewEvaluator(c, log)
+	_ = eval.UpdateCache(context.Background())
 
 	// Create a pod with hostNetwork=true (score 50, triggers warn threshold)
 	pod := &corev1.Pod{
@@ -3754,6 +3804,7 @@ func TestEvaluator_NoPolicies(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	logger := zap.NewNop().Sugar()
 	eval := NewEvaluator(c, logger)
+	_ = eval.UpdateCache(context.Background())
 
 	action := Action{
 		Verb:      "get",
@@ -3797,6 +3848,7 @@ func TestEvaluator_EmptyAction(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
 	logger := zap.NewNop().Sugar()
 	eval := NewEvaluator(c, logger)
+	_ = eval.UpdateCache(context.Background())
 
 	// Empty action
 	action := Action{}
@@ -3855,6 +3907,7 @@ func TestEvaluatorMatchWithDetailsWarnThenDeny(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(warnPolicy, denyPolicy).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
+	_ = eval.UpdateCache(context.Background())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"},

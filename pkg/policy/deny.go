@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/template"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -57,26 +58,34 @@ type PodSecurityResult struct {
 type Evaluator struct {
 	c   ctrlclient.Client
 	log *zap.SugaredLogger
+	mu  sync.RWMutex
+	policies []breakglassv1alpha1.DenyPolicy
 }
 
 // NewEvaluator creates a new policy evaluator using the provided controller-runtime client.
-// The client should be a cached client (e.g., from manager.GetClient()) for optimal performance.
-// Controller-runtime's cache automatically syncs with the API server via informers.
 func NewEvaluator(c ctrlclient.Client, log *zap.SugaredLogger) *Evaluator {
 	return &Evaluator{c: c, log: log}
 }
 
-// listPolicies retrieves all DenyPolicies using the controller-runtime cache.
-// The cache is automatically kept in sync by informers, providing:
-// - Event-driven updates (no polling delay)
-// - Reduced API server load
-// - Consistent reads within a reconciliation cycle
-func (e *Evaluator) listPolicies(ctx context.Context) ([]breakglassv1alpha1.DenyPolicy, error) {
+// UpdateCache fetches all policies and updates the read-only cache.
+// Should be called from a reconciler to avoid List calls on the webhook hot path.
+func (e *Evaluator) UpdateCache(ctx context.Context) error {
 	list := breakglassv1alpha1.DenyPolicyList{}
 	if err := e.c.List(ctx, &list); err != nil {
-		return nil, err
+		return err
 	}
-	return list.Items, nil
+	policies := list.Items
+	sortPoliciesByPrecedence(policies)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.policies = policies
+	return nil
+}
+
+func (e *Evaluator) listPolicies(ctx context.Context) ([]breakglassv1alpha1.DenyPolicy, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.policies, nil
 }
 
 // Match iterates all DenyPolicies (initial naive implementation). Returns (denied, policyName, error).
@@ -85,7 +94,6 @@ func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error)
 	if err != nil {
 		return false, "", err
 	}
-	sortPoliciesByPrecedence(policies)
 	for _, pol := range policies {
 		if !scopeMatches(pol.Spec.AppliesTo, act) {
 			continue
@@ -134,7 +142,6 @@ func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bo
 	if err != nil {
 		return false, "", nil, err
 	}
-	sortPoliciesByPrecedence(policies)
 
 	// Track the first warning result to return if no denial occurs
 	var warnResult *PodSecurityResult
@@ -191,7 +198,6 @@ func (e *Evaluator) RequiresNamespaceLabels(ctx context.Context, actions ...Acti
 	if err != nil {
 		return false, err
 	}
-	sortPoliciesByPrecedence(policies)
 
 	for _, act := range actions {
 		if act.Namespace == "" {

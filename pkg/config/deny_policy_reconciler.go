@@ -16,6 +16,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/policy"
 )
 
 // DenyPolicyConditionType defines condition types for DenyPolicy
@@ -30,13 +31,15 @@ const (
 // updating status conditions to reflect validation state.
 type DenyPolicyReconciler struct {
 	client client.Client
+	evaluator *policy.Evaluator
 	logger *zap.SugaredLogger
 }
 
 // NewDenyPolicyReconciler creates a new DenyPolicyReconciler instance.
-func NewDenyPolicyReconciler(c client.Client, logger *zap.SugaredLogger) *DenyPolicyReconciler {
+func NewDenyPolicyReconciler(c client.Client, evaluator *policy.Evaluator, logger *zap.SugaredLogger) *DenyPolicyReconciler {
 	return &DenyPolicyReconciler{
 		client: c,
+		evaluator: evaluator,
 		logger: logger,
 	}
 }
@@ -123,6 +126,9 @@ func (r *DenyPolicyReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		"name", req.Name,
 		"valid", validationErr == nil)
 
+	if r.evaluator != nil {
+		r.evaluator.UpdateCache(ctx)
+	}
 	return reconcile.Result{}, nil
 }
 

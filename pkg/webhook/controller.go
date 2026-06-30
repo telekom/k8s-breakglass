@@ -125,17 +125,22 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 
 	reqLog.Debugw("Extracting IDP hint from issuer", "issuer", issuer)
 
+	if wc.idpLoader == nil {
+		reqLog.Warn("Failed to list IdentityProviders for IDP hint: idpLoader is nil")
+		return fmt.Sprintf("(Your token was issued by %s)", issuer)
+	}
+
 	// Try to find matching IdentityProvider by issuer
 	// This helps users know which provider authenticated them
-	idpList := &breakglassv1alpha1.IdentityProviderList{}
-	if err := wc.escalManager.List(ctx, idpList); err != nil {
-		reqLog.With("error", err.Error()).Warn("Failed to list IdentityProviders for IDP hint")
+	cachedIDPs := wc.idpLoader.GetCachedIdentityProviders()
+	if cachedIDPs == nil {
+		reqLog.Warn("Failed to list IdentityProviders for IDP hint")
 		// Fallback: just mention the issuer
 		return fmt.Sprintf("(Your token was issued by %s)", issuer)
 	}
 
 	// Find IdentityProvider with matching issuer
-	for _, idp := range idpList.Items {
+	for _, idp := range cachedIDPs {
 		if idp.Spec.Issuer == issuer {
 			displayName := idp.Spec.DisplayName
 			if displayName == "" {
@@ -154,7 +159,7 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 
 	// Default mode: list available providers to help users
 	var displayNames []string
-	for _, idp := range idpList.Items {
+	for _, idp := range cachedIDPs {
 		if idp.Spec.Disabled {
 			continue // skip disabled providers
 		}
@@ -190,9 +195,13 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 	}
 
 	// Find matching IdentityProvider by issuer
-	idpList := &breakglassv1alpha1.IdentityProviderList{}
-	if err := wc.escalManager.List(ctx, idpList); err != nil {
-		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
+	if wc.idpLoader == nil {
+		reqLog.Error("Failed to list IdentityProviders for request validation (idpLoader is nil) - denying request (fail-closed)")
+		return false
+	}
+	cachedIDPs := wc.idpLoader.GetCachedIdentityProviders()
+	if cachedIDPs == nil {
+		reqLog.Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
 		// Fail closed: if we can't load IDPs, deny the request for security
 		// This prevents potential authorization bypass during transient API errors
 		return false
@@ -200,7 +209,7 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 
 	// Map issuer to IDP name
 	var matchedIDPName string
-	for _, idp := range idpList.Items {
+	for _, idp := range cachedIDPs {
 		if idp.Spec.Issuer == issuer && !idp.Spec.Disabled {
 			matchedIDPName = idp.Name
 			break
@@ -244,6 +253,7 @@ type NamespaceLabelsFetchFunction func(ctx context.Context, clusterName, namespa
 
 type WebhookController struct {
 	log                    *zap.SugaredLogger
+	idpLoader              *config.IdentityProviderLoader
 	config                 config.Config
 	sesManager             *breakglass.SessionManager
 	escalManager           *escalation.EscalationManager

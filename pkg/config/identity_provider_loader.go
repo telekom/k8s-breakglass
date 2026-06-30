@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +30,9 @@ type IdentityProviderLoader struct {
 	kubeClient      client.Client
 	logger          *zap.SugaredLogger
 	metricsRecorder ConversionErrorMetricsRecorder
+
+	mu       sync.RWMutex
+	cached   []breakglassv1alpha1.IdentityProvider
 }
 
 // NewIdentityProviderLoader creates a new IdentityProviderLoader
@@ -597,4 +601,24 @@ func DefaultIdentityProviderLoader(ctx context.Context, kubeClient client.Client
 	}
 
 	return idpLoader, nil
+}
+
+// UpdateCache fetches all IdentityProviders and updates the read-only cache.
+// Should be called from a reconciler to avoid List calls on the webhook hot path.
+func (l *IdentityProviderLoader) UpdateCache(ctx context.Context) error {
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
+	if err := l.kubeClient.List(ctx, idpList); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cached = idpList.Items
+	return nil
+}
+
+// GetCachedIdentityProviders returns a read-only list of IdentityProviders without deep-copying.
+func (l *IdentityProviderLoader) GetCachedIdentityProviders() []breakglassv1alpha1.IdentityProvider {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.cached
 }

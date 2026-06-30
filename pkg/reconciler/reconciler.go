@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -141,6 +142,7 @@ func Setup(
 	server *api.Server,
 	ccProvider *cluster.ClientProvider,
 	auditService *audit.Service,
+	denyEval *policy.Evaluator,
 	mailService *mail.Service,
 	escalationManager *escalation.EscalationManager,
 	enableControllers bool,
@@ -178,6 +180,8 @@ func Setup(
 			mgr.GetClient(),
 			log,
 			func(reloadCtx context.Context) error {
+				_ = idpLoader.UpdateCache(reloadCtx)
+				
 				// Reload the IdentityProvider configuration in the API server
 				if err := server.ReloadIdentityProvider(idpLoader); err != nil {
 					return err
@@ -267,7 +271,7 @@ func Setup(
 
 		// Register DenyPolicy Reconciler with controller-runtime manager
 		log.Debugw("Setting up DenyPolicy reconciler")
-		denyPolicyReconciler := config.NewDenyPolicyReconciler(mgr.GetClient(), log)
+		denyPolicyReconciler := config.NewDenyPolicyReconciler(mgr.GetClient(), denyEval, log)
 		if err := denyPolicyReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DenyPolicy reconciler with manager: %w", err)
 		}

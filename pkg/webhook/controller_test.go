@@ -87,6 +87,8 @@ func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -136,6 +138,8 @@ func TestHandleAuthorize_BodyTooLarge(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -172,6 +176,8 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -238,6 +244,8 @@ func TestHandleAuthorize_EscalationDiscoveryUsesSARGroups(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -310,6 +318,8 @@ func TestHandleAuthorize_ImpersonationError_TreatedAsDenied(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -410,6 +420,8 @@ func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -482,6 +494,8 @@ func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -557,6 +571,8 @@ func TestHandleAuthorize_NoIDPRestriction_HappyPath(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
@@ -794,12 +810,15 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 
 		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 		boolPtr := func(v bool) *bool { return &v }
 
 		// Test with hardenedIDPHints = false (explicitly disabled - should show provider names)
 		wcDefault := &WebhookController{
 			log:          logger.Sugar(),
+			idpLoader:    idpLoader,
 			escalManager: escalMgr,
 			config:       config.Config{Server: config.Server{HardenedIDPHints: boolPtr(false)}},
 		}
@@ -814,6 +833,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 		// Test with hardenedIDPHints = true (hardened - should NOT show provider names)
 		wcHardened := &WebhookController{
 			log:          logger.Sugar(),
+			idpLoader:    idpLoader,
 			escalManager: escalMgr,
 			config:       config.Config{Server: config.Server{HardenedIDPHints: boolPtr(true)}},
 		}
@@ -836,9 +856,12 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 
 			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
+				idpLoader:    idpLoader,
 				escalManager: escalMgr,
 				config:       config.Config{Server: config.Server{HardenedIDPHints: boolPtr(false)}},
 			}
@@ -1002,9 +1025,12 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 
 			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
+				idpLoader:    idpLoader,
 				escalManager: escalMgr,
 			}
 
@@ -1530,9 +1556,12 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			}
 			cli := builder.Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
+				idpLoader:    idpLoader,
 				escalManager: escalMgr,
 			}
 
@@ -1818,6 +1847,8 @@ func TestNewWebhookController(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 	denyEval := policy.NewEvaluator(cli, logger.Sugar())
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, denyEval)
@@ -1866,6 +1897,8 @@ func TestWebhookController_Register(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -1909,6 +1942,8 @@ func TestWebhookController_SetCanDoFn(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -1942,6 +1977,8 @@ func TestWebhookController_SetPodFetchFn(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -1975,6 +2012,8 @@ func TestWebhookController_FetchPodFromCluster_WithFn(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -2016,6 +2055,8 @@ func TestWebhookController_FetchPodFromCluster_NilProvider(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, nil)
 
@@ -2261,9 +2302,12 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 
 			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objects...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
+				idpLoader:    idpLoader,
 				escalManager: escalMgr,
 			}
 
@@ -2435,6 +2479,8 @@ func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 
 	logger, _ := zap.NewDevelopment()
 	eval := policy.NewEvaluator(cli, logger.Sugar())
@@ -2696,6 +2742,8 @@ func TestEmitPodSecurityAudit(t *testing.T) {
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
 			escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 			var auditSvc *audit.Service
@@ -2816,6 +2864,8 @@ func TestEmitAccessDecisionAudit(t *testing.T) {
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
 			escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 			ctx := context.Background()
@@ -2907,6 +2957,8 @@ func TestEmitPolicyDenialAudit(t *testing.T) {
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
 			escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 			ctx := context.Background()
@@ -2935,6 +2987,8 @@ func TestFetchPodFromCluster(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		expectedPod := &corev1.Pod{
@@ -2973,6 +3027,8 @@ func TestFetchPodFromCluster(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		// Inject mock function that returns error
@@ -2993,6 +3049,8 @@ func TestFetchPodFromCluster(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		// Create controller without ccProvider
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
@@ -3012,6 +3070,8 @@ func TestFetchPodFromCluster(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		privilegedPod := &corev1.Pod{
@@ -3062,6 +3122,8 @@ func TestFetchNamespaceLabels(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		expectedLabels := map[string]string{
@@ -3096,6 +3158,8 @@ func TestFetchNamespaceLabels(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		// Inject mock function that returns error
@@ -3116,6 +3180,8 @@ func TestFetchNamespaceLabels(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		// Create controller without ccProvider
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
@@ -3135,6 +3201,8 @@ func TestFetchNamespaceLabels(t *testing.T) {
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
 		escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 		testCases := []struct {
@@ -3190,6 +3258,8 @@ func TestSetPodFetchFn(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Initially nil
@@ -3225,6 +3295,8 @@ func TestSetNamespaceLabelsFetchFn(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Initially nil
@@ -3320,6 +3392,8 @@ func TestEmitAuditWithResourceAndNonResourceAttributes(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Set up audit service
@@ -3401,6 +3475,8 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
+		idpLoader := config.NewIdentityProviderLoader(cli)
+		idpLoader.UpdateCache(context.Background())
 	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
 
 	// Set up audit service
