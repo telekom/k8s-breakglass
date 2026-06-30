@@ -31,7 +31,7 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 					retainFor := ParseRetainFor(current.Spec, wc.log)
 					current.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 					current.Status.ReasonEnded = "approvalTimeout"
-					current.Status.Conditions = append(current.Status.Conditions, metav1.Condition{
+					current.SetCondition(metav1.Condition{
 						Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 						Status:             metav1.ConditionTrue,
 						LastTransitionTime: metav1.Now(),

@@ -256,7 +256,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	}
 
 	username, _ := wc.identityProvider.GetEmail(c)
-	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
+	bs.SetCondition(metav1.Condition{
 		Type:               string(sesCondition),
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: metav1.Now(),
