@@ -309,12 +309,6 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
-	}
-
-	// Merge our prepared conditions onto the latest version
-	// This preserves any updates from other controllers while applying our changes
-	for _, condition := range idp.Status.Conditions {
 		latest.SetCondition(condition)
 	}
 	latest.Status.ObservedGeneration = idp.Status.ObservedGeneration

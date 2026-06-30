@@ -248,15 +248,6 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		"configNames", configNames,
 		"totalSinks", totalSinks)
 
-	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
-	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
-}
-
-// isConfigInList checks if a config name is in the valid configs list
-func (r *AuditConfigReconciler) isConfigInList(name string, configs []*breakglassv1alpha1.AuditConfig) bool {
-	for _, cfg := range configs {
-		if cfg.Name == name {
-			return true
 		}
 	}
 	return false
