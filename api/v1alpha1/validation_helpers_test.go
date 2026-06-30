@@ -27,6 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -3408,4 +3410,33 @@ func TestValidateOIDCAuth_RotatedRefreshTokenKey(t *testing.T) {
 		errStr := errs.ToAggregate().Error()
 		assert.Contains(t, errStr, "must differ")
 	})
+}
+
+type errorReader struct {
+	cache.Cache
+	err error
+}
+
+func (e *errorReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	return e.err
+}
+
+func TestValidateSessionIdentityProviderAuthorization_ListError(t *testing.T) {
+	oldCache := webhookCache
+	mockErr := fmt.Errorf("injected list error")
+	webhookCache = &errorReader{err: mockErr}
+	defer func() { webhookCache = oldCache }()
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"cluster-a",
+		"group-a",
+		"idp-a",
+		field.NewPath("spec", "identityProviderName"),
+	)
+
+	assert.Len(t, errs, 1, "expected 1 error for List failure")
+	assert.Equal(t, field.ErrorTypeInternal, errs[0].Type)
+	assert.Contains(t, errs[0].Error(), "failed to list escalations for IDP authorization")
+	assert.Contains(t, errs[0].Error(), "injected list error")
 }
