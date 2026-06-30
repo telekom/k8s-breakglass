@@ -160,7 +160,7 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 	return qs
 }
 
-// Write enqueues an event for async processing (non-blocking).
+// Write enqueues an event for async processing. For sensitive events, it may block up to WriteTimeout if the queue is full or circuit is open.
 func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	if qs.closed.Load() {
 		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
@@ -178,11 +178,13 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 				qs.circuitOpen.Store(false)
 				qs.consecutiveFails.Store(0)
 			}
-		} else {
-			if IsSensitiveEvent(event.Type) {
-				return qs.sink.Write(ctx, event)
-			}
-			// Circuit still open, drop event
+			} else {
+				if IsSensitiveEvent(event.Type) {
+					writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
+					defer cancel()
+					return qs.sink.Write(writeCtx, event)
+				}
+				// Circuit still open, drop event
 			qs.droppedEvents.Add(1)
 			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open").Inc()
 			return nil // Don't return error - just drop silently
@@ -193,11 +195,13 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	select {
 	case qs.queue <- event:
 		return nil
-	default:
-		if IsSensitiveEvent(event.Type) {
-			return qs.sink.Write(ctx, event)
-		}
-		// Queue is full - drop event
+		default:
+			if IsSensitiveEvent(event.Type) {
+				writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
+				defer cancel()
+				return qs.sink.Write(writeCtx, event)
+			}
+			// Queue is full - drop event
 		qs.droppedEvents.Add(1)
 		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
 		if !qs.config.DropOnFull {

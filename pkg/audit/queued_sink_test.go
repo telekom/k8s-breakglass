@@ -341,10 +341,67 @@ func TestQueuedSink_QueueOverflow_Sensitive(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for queue to drain
-	time.Sleep(200 * time.Millisecond)
-
-	// Since sensitive events fall back to direct write, none should be dropped
+	// Since sensitive events fall back to direct write synchronously, they are already written
 	assert.Equal(t, int64(0), qs.Health().DroppedEvents, "Sensitive events should not be dropped")
-	assert.Equal(t, 10, mock.EventCount(), "All sensitive events should have been written")
+	require.Eventually(t, func() bool {
+		return mock.EventCount() == 10
+	}, 1*time.Second, 10*time.Millisecond, "All sensitive events should have been written")
+}
+
+func TestQueuedSink_CircuitBreaker_Sensitive(t *testing.T) {
+	logger := zap.NewNop()
+	mock := newQueuedMockSink("failing-sink")
+
+	cfg := QueuedSinkConfig{
+		QueueSize:               100,
+		WorkerCount:             1,
+		CircuitBreakerThreshold: 2,
+		CircuitBreakerResetTime: 1 * time.Second,
+	}
+
+	qs := NewQueuedSink(mock, cfg, logger)
+	defer func() { _ = qs.Close() }()
+
+	ctx := context.Background()
+
+	// Make sink fail
+	mock.mu.Lock()
+	mock.alwaysFail = true
+	mock.mu.Unlock()
+
+	// Trigger circuit breaker with non-sensitive events
+	for i := 0; i < 3; i++ {
+		event := &Event{
+			ID:   "fail-1",
+			Type: EventResourceList, // Non-sensitive
+		}
+		_ = qs.Write(ctx, event)
+	}
+
+	// Wait for processing and circuit to open
+	require.Eventually(t, func() bool {
+		return qs.Health().CircuitOpen
+	}, 1*time.Second, 10*time.Millisecond, "Circuit should open")
+
+	// Now send a sensitive event while circuit is open
+	// The mock must succeed now so we can observe the direct write
+	mock.mu.Lock()
+	mock.alwaysFail = false
+	mock.mu.Unlock()
+	mock.mu.Lock()
+	mock.events = nil
+	mock.mu.Unlock()
+
+	event := &Event{
+		ID:   "sensitive-1",
+		Type: EventSessionRequested, // Sensitive
+	}
+	
+	// Write should fall back to direct sync write because circuit is open
+	err := qs.Write(ctx, event)
+	require.NoError(t, err)
+
+	// Verify the sensitive event bypassed the circuit breaker
+	assert.Equal(t, int64(0), qs.Health().DroppedEvents, "Sensitive event should not be dropped")
+	assert.Equal(t, 1, mock.EventCount(), "Sensitive event should be written immediately")
 }
