@@ -343,6 +343,12 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
+	// Decrement active gauge for terminated sessions. Expired sessions are
+	// already decremented in handleActive before entering cleanup.
+	if ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated {
+		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+	}
+
 	// Record metrics
 	if ds.Status.StartsAt != nil {
 		duration := time.Since(ds.Status.StartsAt.Time).Seconds()
