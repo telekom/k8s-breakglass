@@ -30,8 +30,9 @@ spec:
     # Auth config: exactly one of kubeconfigSecretRef or oidcAuth must be set
     - expression: >-
         (has(object.spec.kubeconfigSecretRef) && object.spec.kubeconfigSecretRef.name.size() > 0) !=
-        (has(object.spec.oidcAuth) && has(object.spec.oidcAuth.issuer) && object.spec.oidcAuth.issuer.size() > 0)
-      message: "exactly one of spec.kubeconfigSecretRef or spec.oidcAuth must be configured"
+        ((has(object.spec.oidcAuth) && has(object.spec.oidcAuth.issuerURL) && object.spec.oidcAuth.issuerURL.size() > 0) ||
+         (has(object.spec.oidcFromIdentityProvider) && has(object.spec.oidcFromIdentityProvider.name) && object.spec.oidcFromIdentityProvider.name.size() > 0))
+      message: "exactly one of spec.kubeconfigSecretRef or OIDC config (oidcAuth / oidcFromIdentityProvider) must be configured"
       reason: Invalid
 
     # kubeconfigSecretRef.name must be non-empty when set
