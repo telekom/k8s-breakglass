@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -31,6 +32,7 @@ const (
 )
 
 type Manager struct {
+	restConfig                         *rest.Config
 	name                               string
 	namespace                          string
 	path                               string
@@ -42,7 +44,7 @@ type Manager struct {
 	rotatorAdder                       func(ctrl.Manager, *rotator.CertRotator) error
 }
 
-func NewManager(name, namespace, path, validatingWebhookConfigurationName string,
+func NewManager(restConfig *rest.Config, name, namespace, path, validatingWebhookConfigurationName string,
 	certsReady chan struct{}, leaderElected <-chan struct{}, log *zap.SugaredLogger) *Manager {
 	if path == "" {
 		path = DefaultWebhookPath
@@ -53,6 +55,7 @@ func NewManager(name, namespace, path, validatingWebhookConfigurationName string
 	}
 
 	return &Manager{
+		restConfig:                         restConfig,
 		name:                               name,
 		namespace:                          namespace,
 		path:                               path,
@@ -137,11 +140,7 @@ func (m *Manager) getManagerFactory() func(*runtime.Scheme) (ctrl.Manager, error
 	}
 
 	return func(scheme *runtime.Scheme) (ctrl.Manager, error) {
-		cfg, err := ctrl.GetConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
-		}
-		return ctrl.NewManager(cfg, ctrl.Options{
+		return ctrl.NewManager(m.restConfig, ctrl.Options{
 			Scheme:           scheme,
 			LeaderElection:   false,
 			LeaderElectionID: "",

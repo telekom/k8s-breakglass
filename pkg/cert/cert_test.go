@@ -29,7 +29,7 @@ import (
 )
 
 func TestNewManagerAppliesDefaults(t *testing.T) {
-	mgr := NewManager("svc", "ns", "", "", make(chan struct{}), nil, zap.NewNop().Sugar())
+	mgr := NewManager(nil, "svc", "ns", "", "", make(chan struct{}), nil, zap.NewNop().Sugar())
 
 	require.Equal(t, DefaultWebhookPath, mgr.path)
 	require.Equal(t, DefaultValidatingWebhookConfigurationName, mgr.validatingWebhookConfigurationName)
@@ -37,7 +37,7 @@ func TestNewManagerAppliesDefaults(t *testing.T) {
 
 func TestNewCertRotatorConfiguration(t *testing.T) {
 	certsReady := make(chan struct{})
-	mgr := NewManager("svc", "ns", "/tmp/certs", "custom-config", certsReady, nil, zap.NewNop().Sugar())
+	mgr := NewManager(nil, "svc", "ns", "/tmp/certs", "custom-config", certsReady, nil, zap.NewNop().Sugar())
 
 	cr := mgr.newCertRotator()
 
@@ -53,7 +53,7 @@ func TestNewCertRotatorConfiguration(t *testing.T) {
 }
 
 func TestSetupRotatorPassesConfiguration(t *testing.T) {
-	mgr := NewManager("svc", "ns", "/tmp/certs", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
+	mgr := NewManager(nil, "svc", "ns", "/tmp/certs", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
 	fakeMgr := newFakeCtrlManager(t)
 
 	var received *rotator.CertRotator
@@ -68,7 +68,7 @@ func TestSetupRotatorPassesConfiguration(t *testing.T) {
 }
 
 func TestSetupRotatorPropagatesError(t *testing.T) {
-	mgr := NewManager("svc", "ns", "/tmp/certs", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
+	mgr := NewManager(nil, "svc", "ns", "/tmp/certs", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
 	fakeMgr := newFakeCtrlManager(t)
 
 	mgr.rotatorAdder = func(ctrl.Manager, *rotator.CertRotator) error {
@@ -147,7 +147,7 @@ func TestManagerStartContextCancelledBeforeLeadership(t *testing.T) {
 }
 
 func TestManagerStartManagerFactoryError(t *testing.T) {
-	mgr := NewManager("svc", "ns", "/tmp", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
+	mgr := NewManager(nil, "svc", "ns", "/tmp", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
 	mgr.managerFactory = func(*runtime.Scheme) (ctrl.Manager, error) {
 		return nil, errors.New("factory failure")
 	}
@@ -181,7 +181,7 @@ func newTestCertManager(t *testing.T) (*Manager, *fakeCtrlManager) {
 	t.Helper()
 
 	certsReady := make(chan struct{})
-	mgr := NewManager("svc", "ns", "/tmp/certs", "cfg", certsReady, nil, zap.NewNop().Sugar())
+	mgr := NewManager(nil, "svc", "ns", "/tmp/certs", "cfg", certsReady, nil, zap.NewNop().Sugar())
 	fakeMgr := newFakeCtrlManager(t)
 	mgr.managerFactory = func(*runtime.Scheme) (ctrl.Manager, error) {
 		return fakeMgr, nil

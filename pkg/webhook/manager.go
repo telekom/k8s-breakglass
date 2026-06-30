@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -36,6 +37,7 @@ import (
 // be independently disabled. They run whenever enable-api is true.
 func Setup(
 	ctx context.Context,
+	restConfig *rest.Config,
 	log *zap.SugaredLogger,
 	scheme *runtime.Scheme,
 	wc *cli.WebhookConfig,
@@ -59,11 +61,7 @@ func Setup(
 	}
 
 	// Create a manager for webhooks (separate from reconciler manager)
-	cfg, err := ctrl.GetConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load kubeconfig for webhook manager: %w", err)
-	}
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:           scheme,
 		WebhookServer:    webhookServer,
 		Metrics:          metricsServerOptions,
