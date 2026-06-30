@@ -191,7 +191,7 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 
 	// Find matching IdentityProvider by issuer
 	idpList := &breakglassv1alpha1.IdentityProviderList{}
-	if err := wc.escalManager.List(ctx, idpList); err != nil {
+	if err := wc.escalManager.List(ctx, idpList, client.MatchingFields{"spec.issuer": issuer}); err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
 		// Fail closed: if we can't load IDPs, deny the request for security
 		// This prevents potential authorization bypass during transient API errors
