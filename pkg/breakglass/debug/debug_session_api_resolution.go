@@ -542,12 +542,19 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 type debugSessionApprovalAuthorizer struct {
 	controller *DebugSessionAPIController
 	templates  map[string]*breakglassv1alpha1.DebugSessionTemplate
+	bindings   map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup
+}
+
+type debugSessionApprovalBindingLookup struct {
+	binding *breakglassv1alpha1.DebugSessionClusterBinding
+	err     error
 }
 
 func (c *DebugSessionAPIController) newDebugSessionApprovalAuthorizer() *debugSessionApprovalAuthorizer {
 	return &debugSessionApprovalAuthorizer{
 		controller: c,
 		templates:  make(map[string]*breakglassv1alpha1.DebugSessionTemplate),
+		bindings:   make(map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup),
 	}
 }
 
@@ -576,8 +583,8 @@ func (a *debugSessionApprovalAuthorizer) isUserIdentityAuthorizedToApprove(ctx c
 	// happen to match the same template and cluster.
 	if session.Spec.BindingRef != nil {
 		key := ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}
-		binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
-		if err := c.reader().Get(ctx, key, binding); err != nil {
+		binding, err := a.getBinding(ctx, key)
+		if err != nil {
 			c.log.Warnw("Could not fetch recorded binding while checking debug session approval authorization",
 				"session", session.Name, "binding", key.String(), "error", err)
 			return false
@@ -613,6 +620,20 @@ func (a *debugSessionApprovalAuthorizer) isUserIdentityAuthorizedToApprove(ctx c
 
 	// Use resolved template from status
 	return c.checkApproverIdentityAuthorization(session.Status.ResolvedTemplate.Approvers, username, email, userGroupsInterface)
+}
+
+func (a *debugSessionApprovalAuthorizer) getBinding(ctx context.Context, key ctrlclient.ObjectKey) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
+	if lookup, ok := a.bindings[key]; ok {
+		return lookup.binding, lookup.err
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	err := a.controller.reader().Get(ctx, key, binding)
+	if err != nil {
+		a.bindings[key] = debugSessionApprovalBindingLookup{err: err}
+		return nil, err
+	}
+	a.bindings[key] = debugSessionApprovalBindingLookup{binding: binding}
+	return binding, nil
 }
 
 func debugSessionRequesterMatches(session *breakglassv1alpha1.DebugSession, username, email string) bool {

@@ -547,6 +547,63 @@ func TestCanActOnDebugSessionApproval_UsesEmailAuthorization(t *testing.T) {
 	assert.True(t, result)
 }
 
+func TestCanActOnDebugSessionApproval_CachesBindingApprovers(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-binding", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"binding-approver@example.com"},
+			},
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(binding).
+		Build()
+	countingClient := &debugSessionReadCountingClient{
+		Client: baseClient,
+		gets:   map[string]int{},
+	}
+	ctrl := NewDebugSessionAPIController(logger, countingClient, nil, nil)
+	authorizer := ctrl.newDebugSessionApprovalAuthorizer()
+
+	sessionA := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "alice@example.com",
+			BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+	sessionB := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-b"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "bob@example.com",
+			BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{
+		username: "binding-approver@example.com",
+	}, authorizer)
+	require.True(t, result)
+
+	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{
+		username: "binding-approver@example.com",
+	}, authorizer)
+	require.True(t, result)
+
+	require.Equal(t, 1, countingClient.gets["binding:breakglass/prod-binding"])
+}
+
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {
 	// When session has ResolvedTemplate, use that instead of fetching
 
