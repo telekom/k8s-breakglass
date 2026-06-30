@@ -192,54 +192,12 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	})
 }
 
-// collectClusterEscalations queries the index for escalations matching a specific cluster
-// and global "*" patterns. Returns combined results (may be empty if no index hits).
-func (em *EscalationManager) collectClusterEscalations(ctx context.Context, cluster string) []breakglassv1alpha1.BreakglassEscalation {
-	collected := make([]breakglassv1alpha1.BreakglassEscalation, 0)
-	seen := make(map[string]struct{})
-	addUnique := func(items []breakglassv1alpha1.BreakglassEscalation) {
-		for _, item := range items {
-			key := item.Namespace + "/" + item.Name
-			if _, exists := seen[key]; !exists {
-				seen[key] = struct{}{}
-				collected = append(collected, item)
-			}
-		}
-	}
-	list := breakglassv1alpha1.BreakglassEscalationList{}
-	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
-		addUnique(list.Items)
-	}
-	globalList := breakglassv1alpha1.BreakglassEscalationList{}
-	if err := em.List(ctx, &globalList, client.MatchingFields{"spec.allowed.cluster": "*"}); err == nil && len(globalList.Items) > 0 {
-		addUnique(globalList.Items)
-	}
-	return collected
-}
-
 // GetClusterBreakglassEscalations returns escalations that apply to a specific cluster.
 // Supports glob patterns in both Allowed.Clusters and ClusterConfigRefs fields.
 func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterBreakglassEscalations").Inc()
 
-	// Try index-based lookup for exact cluster match and global "*" pattern
-	collected := em.collectClusterEscalations(ctx, cluster)
-
-	// If index returned results, filter using shared helper and return
-	if len(collected) > 0 {
-		out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
-		for _, be := range collected {
-			if escalationMatchesCluster(be, cluster) {
-				out = append(out, be)
-			}
-		}
-		if len(out) > 0 {
-			return out, nil
-		}
-	}
-
-	// Fallback to filter-based scan for glob patterns
 	return em.GetBreakglassEscalationsWithFilter(ctx, func(be breakglassv1alpha1.BreakglassEscalation) bool {
 		return escalationMatchesCluster(be, cluster)
 	})
@@ -302,19 +260,12 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 	log.Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groupCount", len(groups))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 
-	// Try index-based lookup first for exact cluster matches and global "*" pattern
-	collected := em.collectClusterEscalations(ctx, cluster)
-	log.Debugw("Cluster index lookup result", "cluster", cluster, "indexHits", len(collected))
-
-	// If index returned nothing, fall back to scanning all escalations for glob patterns
-	if len(collected) == 0 {
-		all, err := em.GetAllBreakglassEscalations(ctx)
-		if err != nil {
-			return nil, err
-		}
-		collected = all
-		log.Debugw("Fell back to full escalation scan", "cluster", cluster, "totalEscalations", len(collected))
+	all, err := em.GetAllBreakglassEscalations(ctx)
+	if err != nil {
+		return nil, err
 	}
+	collected := all
+	log.Debugw("Fetched full escalation scan", "cluster", cluster, "totalEscalations", len(collected))
 
 	// Filter collected by cluster matching and groups using shared helpers
 	oidcPrefixes := em.getOIDCPrefixes()
@@ -345,20 +296,12 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroupCount", len(userGroups), "targetGroupHint", system.RedactGroupName(targetGroup))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupTargetBreakglassEscalation").Inc()
-	// Try index-based lookup by escalatedGroup first
-	collected := make([]breakglassv1alpha1.BreakglassEscalation, 0)
-	list := breakglassv1alpha1.BreakglassEscalationList{}
-	if err := em.List(ctx, &list, client.MatchingFields{"spec.escalatedGroup": targetGroup}); err == nil && len(list.Items) > 0 {
-		collected = append(collected, list.Items...)
+
+	all, err := em.GetAllBreakglassEscalations(ctx)
+	if err != nil {
+		return nil, err
 	}
-	// If not found via index, fall back to scanning all escalations
-	if len(collected) == 0 {
-		all, err := em.GetAllBreakglassEscalations(ctx)
-		if err != nil {
-			return nil, err
-		}
-		collected = append(collected, all...)
-	}
+	collected := all
 
 	// Filter collected by cluster and allowed groups using shared helpers
 	oidcPrefixes := em.getOIDCPrefixes()
