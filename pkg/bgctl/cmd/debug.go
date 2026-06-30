@@ -367,6 +367,9 @@ func newDebugSessionJoinCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "viewer", "Role: participant|viewer")
+	_ = cmd.RegisterFlagCompletionFunc("role", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"participant", "viewer"}, cobra.ShellCompDirectiveNoFileComp
+	})
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
 	return cmd
 }
