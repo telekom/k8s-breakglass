@@ -11,7 +11,7 @@ import (
 )
 
 func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct{}, resourceLock resourcelock.Interface,
-	hostname, leaseName, leaseNamespace string, log *zap.SugaredLogger) {
+	hostname, leaseName, leaseNamespace string, log *zap.SugaredLogger, onStarted func(context.Context)) {
 	defer wg.Done()
 
 	// Protect concurrent access to *leaderElectedCh from OnStartedLeading
@@ -32,6 +32,9 @@ func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct
 				// Leadership no longer held; do not signal.
 				return
 			default:
+			}
+			if onStarted != nil {
+				onStarted(ctx)
 			}
 			select {
 			case <-*leaderElectedCh:
