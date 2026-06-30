@@ -1011,7 +1011,7 @@ func TestHandleListDebugSessions_WithAllowedPodOperations(t *testing.T) {
 // ============================================================================
 
 func TestHandleGetDebugSession_Found(t *testing.T) {
-	expiresAt := metav1.NewTime(time.Now().Add(1 * time.Hour))
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",

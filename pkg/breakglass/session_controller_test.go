@@ -1452,7 +1452,7 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 			User:         "requester@example.com",
 			GrantedGroup: "g1",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour)), RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)), RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration))},
 	}
 
 	// Escalation exists but approver user is different
@@ -1532,8 +1532,8 @@ func TestSessionApproveRejectInvalidOptionalBody(t *testing.T) {
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:         breakglassv1alpha1.SessionStatePending,
-					TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
-					RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+					TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+					RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 				},
 			}
 			escalation := &breakglassv1alpha1.BreakglassEscalation{
@@ -1599,8 +1599,8 @@ func TestApproveExpiredPendingSessionReturnsConflict(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:         breakglassv1alpha1.SessionStatePending,
-			TimeoutAt:     metav1.NewTime(time.Now().Add(-time.Minute)),
-			RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+			TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(-time.Minute)),
+			RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 		},
 	}
 	escalation := &breakglassv1alpha1.BreakglassEscalation{
@@ -1662,8 +1662,8 @@ func TestApproveExpiredPendingSessionChecksAuthorizationBeforeTimeout(t *testing
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:         breakglassv1alpha1.SessionStatePending,
-			TimeoutAt:     metav1.NewTime(time.Now().Add(-time.Minute)),
-			RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+			TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(-time.Minute)),
+			RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 		},
 	}
 	escalation := &breakglassv1alpha1.BreakglassEscalation{
@@ -1764,8 +1764,8 @@ func TestApproveRejectChecksAuthorizationBeforeBodyAndStateResponses(t *testing.
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:         tt.state,
 					Conditions:    tt.conditions,
-					TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
-					RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+					TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+					RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 				},
 			}
 			escalation := &breakglassv1alpha1.BreakglassEscalation{
@@ -1861,8 +1861,8 @@ func TestApprovalAuthorizationUsesOwningEscalation(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:         breakglassv1alpha1.SessionStatePending,
-			TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
-			RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+			TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+			RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 		},
 	}
 
@@ -1951,8 +1951,8 @@ func TestApprovalAuthorizationIgnoresNonControllerEscalationOwnerRefs(t *testing
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:         breakglassv1alpha1.SessionStatePending,
-			TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
-			RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+			TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+			RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 		},
 	}
 
@@ -2024,8 +2024,8 @@ func TestApprovalAuthorizationRequiresOwnerReferenceUIDMatch(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:         breakglassv1alpha1.SessionStatePending,
-			TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
-			RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+			TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+			RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 		},
 	}
 
@@ -2085,8 +2085,8 @@ func TestApprovalReasonMandatoryEnforced(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:         breakglassv1alpha1.SessionStatePending,
-				TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
-				RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+				TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+				RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 			},
 		}
 		esc := &breakglassv1alpha1.BreakglassEscalation{
@@ -2264,8 +2264,8 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:         breakglassv1alpha1.SessionStatePending,
-					TimeoutAt:     metav1.NewTime(time.Now().Add(time.Hour)),
-					RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+					TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+					RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 				},
 			}
 			builder.WithObjects(session)
@@ -3011,7 +3011,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 			User:         "owner@example.com",
 			GrantedGroup: "g",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(time.Now().Add(-time.Minute))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(time.Now().UTC().Add(-time.Minute))},
 	}
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).WithObjects(pending, approved).Build()
@@ -3655,7 +3655,7 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 
 func TestFilterBreakglassSessionsByState(t *testing.T) {
 	// Create sessions with various states
-	now := time.Now()
+	now := time.Now().UTC()
 	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-pending"},
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "a@ex.com", GrantedGroup: "g"},
@@ -3973,7 +3973,7 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 			User:         "alice@example.com",
 			GrantedGroup: "approvable",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour))},
 	}
 
 	// escalation that grants 'approvable' and lists bob as approver
@@ -4042,7 +4042,7 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:     breakglassv1alpha1.SessionStatePending,
-			TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour)),
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
 		},
 	}
 	approved := &breakglassv1alpha1.BreakglassSession{
@@ -4067,7 +4067,7 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:     breakglassv1alpha1.SessionStatePending,
-			TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour)),
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
 		},
 	}
 	esc := &breakglassv1alpha1.BreakglassEscalation{
@@ -4218,7 +4218,7 @@ func runBlockSelfApprovalPreventsSelfApproval(t *testing.T, sessionUser string) 
 			User:         sessionUser,
 			GrantedGroup: "g-block",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour))},
 	}
 
 	// escalation that would normally allow the user to approve (lists the user)
@@ -4292,7 +4292,7 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 			User:         "user@other.com",
 			GrantedGroup: "g-domain",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour))},
 	}
 
 	esc := &breakglassv1alpha1.BreakglassEscalation{
@@ -4356,7 +4356,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	s1 := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "s1"},
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1@example.com", GrantedGroup: "g1"},
@@ -5157,7 +5157,7 @@ func TestSendOnRequestEmailsByGroup_DeduplicateApproversInMultipleGroups(t *test
 
 // TestIsSessionPendingApproval tests the IsSessionPendingApproval function with various timeout scenarios
 func TestIsSessionPendingApproval(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name     string
@@ -5270,7 +5270,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 
 // TestIsSessionApprovalTimedOut tests the IsSessionApprovalTimedOut function
 func TestIsSessionApprovalTimedOut(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name     string
@@ -5619,7 +5619,7 @@ func TestIsSessionRetained(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:         breakglassv1alpha1.SessionStateExpired,
-				RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+				RetainedUntil: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 			},
 		}
 		// Should be "not retained" (ready for removal) since time has passed
@@ -5630,7 +5630,7 @@ func TestIsSessionRetained(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:         breakglassv1alpha1.SessionStateExpired,
-				RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
+				RetainedUntil: metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 			},
 		}
 		// Should be "retained" (not ready for removal) since time has not passed
@@ -5641,7 +5641,7 @@ func TestIsSessionRetained(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:         breakglassv1alpha1.SessionStateApproved,
-				RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+				RetainedUntil: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 			},
 		}
 		require.False(t, IsSessionRetained(session))
@@ -5715,12 +5715,12 @@ func TestIsSessionExpiredFunction(t *testing.T) {
 	}{
 		// State-first: Expired state takes precedence
 		{"expired state", breakglassv1alpha1.SessionStateExpired, nil, true},
-		{"expired state with past time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
-		{"expired state with future time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
+		{"expired state with past time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), true},
+		{"expired state with future time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), true},
 
 		// Approved state checks timestamp
-		{"approved state with past time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
-		{"approved state with future time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), false},
+		{"approved state with past time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), true},
+		{"approved state with future time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), false},
 		{"approved state with zero time", breakglassv1alpha1.SessionStateApproved, nil, false},
 
 		// Other states are not expired
@@ -5765,8 +5765,8 @@ func TestIsSessionValidFunction(t *testing.T) {
 		{"waiting for scheduled time", breakglassv1alpha1.SessionStateWaitingForScheduledTime, nil, false},
 
 		// Approved state with valid expiry
-		{"approved with future expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
-		{"approved with past expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), false},
+		{"approved with future expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), true},
+		{"approved with past expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), false},
 
 		// Pending is valid
 		{"pending state", breakglassv1alpha1.SessionStatePending, nil, true},
@@ -6729,7 +6729,7 @@ func TestWaitingForScheduledTimeSessionsOccupyRequestSlots(t *testing.T) {
 		return NewBreakglassSessionController(logger, config.Config{}, &sesmanager, &escmanager, nil, "/config/config.yaml", nil, cli)
 	}
 	waitingSession := func(name string) *breakglassv1alpha1.BreakglassSession {
-		now := time.Now()
+		now := time.Now().UTC()
 		return &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,

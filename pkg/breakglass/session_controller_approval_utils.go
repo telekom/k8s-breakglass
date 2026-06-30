@@ -540,9 +540,9 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 	isScheduled := session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero()
 
 	// Determine activation time (either now or scheduled time)
-	activationTime := time.Now().Format("2006-01-02 15:04:05")
+	activationTime := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
 	if isScheduled {
-		activationTime = session.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05")
+		activationTime = session.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05 UTC")
 	}
 
 	// Prepare email parameters with comprehensive approval info
@@ -561,9 +561,9 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 		BrandingName:  brandingName,
 
 		// Tracking and scheduling information
-		ApprovedAt:     time.Now().Format("2006-01-02 15:04:05"),
+		ApprovedAt:     time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		ActivationTime: activationTime,
-		ExpirationTime: session.Status.ExpiresAt.Format("2006-01-02 15:04:05"),
+		ExpirationTime: session.Status.ExpiresAt.Format("2006-01-02 15:04:05 UTC"),
 		IsScheduled:    isScheduled,
 		SessionID:      session.Name,
 		Cluster:        session.Spec.Cluster,
@@ -636,7 +636,7 @@ func (wc *BreakglassSessionController) sendSessionRejectionEmail(log *zap.Sugare
 		}(),
 		RejectorEmail:   session.Status.Approver,
 		BrandingName:    brandingName,
-		RejectedAt:      session.Status.RejectedAt.Format("2006-01-02 15:04:05"),
+		RejectedAt:      session.Status.RejectedAt.Format("2006-01-02 15:04:05 UTC"),
 		RejectionReason: session.Status.ApprovalReason, // ApprovalReason is used for both approve and reject reasons
 		SessionID:       session.Name,
 		Cluster:         session.Spec.Cluster,

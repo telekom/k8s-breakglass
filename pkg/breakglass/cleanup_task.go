@@ -219,7 +219,7 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 	}
 	sessions := bsl.Items
 
-	now := time.Now()
+	now := time.Now().UTC()
 	for _, ses := range sessions {
 		// Check for context cancellation to allow graceful shutdown
 		select {
@@ -287,7 +287,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	for _, ds := range dsl.Items {
 		// Check for context cancellation to allow graceful shutdown
 		select {
@@ -439,7 +439,7 @@ func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds breakglassv1alpha1
 		TemplateName:   ds.Spec.TemplateRef,
 		Namespace:      ds.Namespace,
 		StartedAt:      startedAt,
-		ExpiredAt:      time.Now().Format("2006-01-02 15:04:05 UTC"),
+		ExpiredAt:      time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		Duration:       duration,
 		BrandingName:   routine.BrandingName,
 	}

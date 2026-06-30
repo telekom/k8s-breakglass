@@ -523,7 +523,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Source:       "podTemplateString",
 		Created:      true,
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().UTC().Format(time.RFC3339)
 	status.CreatedAt = &now
 	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
 

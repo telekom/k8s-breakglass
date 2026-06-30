@@ -651,7 +651,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 	// Count active sessions for this binding
 	var totalActive int32
 	var userActive int32
-	now := time.Now()
+	now := time.Now().UTC()
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 		// Check if session uses this binding

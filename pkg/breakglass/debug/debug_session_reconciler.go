@@ -503,7 +503,7 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 		Cluster:        ds.Spec.Cluster,
 		TemplateName:   ds.Spec.TemplateRef,
 		Namespace:      ds.Namespace,
-		FailedAt:       time.Now().Format(time.RFC3339),
+		FailedAt:       time.Now().UTC().Format(time.RFC3339),
 		FailureReason:  reason,
 		URL:            fmt.Sprintf("%s/debug-sessions", c.baseURL),
 		BrandingName:   c.brandingName,

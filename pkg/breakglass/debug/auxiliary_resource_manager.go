@@ -151,7 +151,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			cleanupErrors = append(cleanupErrors, err)
 			session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
 		} else {
-			now := time.Now().UTC().Format(time.RFC3339)
+			now := time.Now().UTC().UTC().Format(time.RFC3339)
 			session.Status.AuxiliaryResourceStatuses[i].Deleted = true
 			session.Status.AuxiliaryResourceStatuses[i].DeletedAt = &now
 			metrics.AuxiliaryResourceCleanups.WithLabelValues(session.Spec.Cluster, status.Category, "success").Inc()
@@ -560,7 +560,7 @@ func (m *AuxiliaryResourceManager) deployResource(
 	}
 
 	status.Created = true
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().UTC().Format(time.RFC3339)
 	status.CreatedAt = &now
 
 	if len(deployedResources) > 1 {
@@ -833,7 +833,7 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 		session.Status.AuxiliaryResourceStatuses[i].ReadinessStatus = primaryReady.readinessStatus
 		if primaryReady.ready {
 			session.Status.AuxiliaryResourceStatuses[i].Ready = true
-			now := time.Now().UTC().Format(time.RFC3339)
+			now := time.Now().UTC().UTC().Format(time.RFC3339)
 			session.Status.AuxiliaryResourceStatuses[i].ReadyAt = &now
 			log.Infow("Auxiliary resource is ready",
 				"resource", status.Name,

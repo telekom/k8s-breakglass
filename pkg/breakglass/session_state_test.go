@@ -23,7 +23,7 @@ import (
 //
 // The fix ensures withdrawn sessions are explicitly excluded from active sessions.
 func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 	expiresAt := now.Add(1 * time.Hour)
 
 	tests := []struct {
@@ -137,7 +137,7 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 //
 // Note: This is consistent with IsSessionActive() which also checks the State field first.
 func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name     string
@@ -232,7 +232,7 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 // This is the core regression test for the bug that was fixed where IsSessionActive()
 // incorrectly treated withdrawn sessions as active, causing 409 conflicts.
 func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	// Simulate a user's previous session that was withdrawn
 	withdrawnSession := breakglassv1alpha1.BreakglassSession{
@@ -288,7 +288,7 @@ func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
 // and should not appear in pending lists. This prevents confusion in the UI and ensures
 // consistent behavior across all filters.
 func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	sessions := []breakglassv1alpha1.BreakglassSession{
 		{
@@ -359,7 +359,7 @@ func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
 // TestIsSessionValid_EdgeCases tests edge cases for IsSessionValid which is used
 // by IsSessionActive to determine if a session is still valid.
 func TestIsSessionValid_EdgeCases(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name     string
@@ -458,7 +458,7 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 //
 // This test verifies the core fix: IsSessionActive() correctly excludes withdrawn sessions.
 func TestRegressionScenario_409ConflictWithdrawnSession(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	// Request A: A previous session the user made and then withdrew
 	requestA := breakglassv1alpha1.BreakglassSession{
@@ -511,7 +511,7 @@ func TestRegressionScenario_409ConflictWithdrawnSession(t *testing.T) {
 // Location: session_controller.go line 443
 // Code: if ses.Status.State == v1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero()
 func TestEdgeCase_ApprovedWithBothTimestamps(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name             string
@@ -578,7 +578,7 @@ func TestEdgeCase_ApprovedWithBothTimestamps(t *testing.T) {
 // Location: session_controller.go line 817
 // Code: bs.Status.RejectedAt = metav1.Time{}
 func TestEdgeCase_ApprovalAfterRejection(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	// Scenario: Session was rejected, then somehow becomes approvable again
 	// (This shouldn't happen due to terminal state checks, but the code explicitly clears it)
@@ -617,7 +617,7 @@ func TestEdgeCase_ApprovalAfterRejection(t *testing.T) {
 // Location: session_controller.go lines 843-859
 // This is critical: premature expiration if timestamps not set correctly!
 func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 	scheduledTime := now.Add(24 * time.Hour) // Schedule for tomorrow
 	validFor := 1 * time.Hour
 
@@ -750,7 +750,7 @@ func TestEdgeCase_RejectedAndWithdrawnAreTerminal(t *testing.T) {
 //
 // This prevents the session from becoming invalid due to an old timeout value.
 func TestEdgeCase_ApprovalTimeoutCleared(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	// Session with pending approval that will timeout
 	session := breakglassv1alpha1.BreakglassSession{
@@ -779,7 +779,7 @@ func TestEdgeCase_ApprovalTimeoutCleared(t *testing.T) {
 // - RejectedAt.IsZero() = "not rejected yet" (normal)
 // - RejectedAt.IsZero() = "misleading" (when state is Withdrawn)
 func TestEdgeCase_NonzeroTimestampsInDifferentContexts(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name        string
@@ -867,7 +867,7 @@ func TestEdgeCase_NonzeroTimestampsInDifferentContexts(t *testing.T) {
 // Location: session_controller.go lines 443-449
 // This documents the expected behavior and prevents accidental changes.
 func TestEdgeCase_PendingVsApprovedConflictMessages(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name            string
@@ -1001,7 +1001,7 @@ func TestRegressionFix_WithdrawnSessionsShouldNotHaveRejectedAtSet(t *testing.T)
 // Terminal states are: Rejected, Withdrawn, Expired, ApprovalTimeout
 // All of these should have RetainedUntil set to determine when to delete the session object.
 func TestRetainedUntilSetForAllTerminalStates(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 	retainFor := 24 * time.Hour
 
 	tests := []struct {
@@ -1076,7 +1076,7 @@ func TestRetainedUntilSetForAllTerminalStates(t *testing.T) {
 // TestIsSessionActive_ExcludesAllTerminalStates verifies that IsSessionActive()
 // correctly excludes all terminal states (Rejected, Withdrawn, Expired, ApprovalTimeout).
 func TestIsSessionActive_ExcludesAllTerminalStates(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 	expiresAt := now.Add(1 * time.Hour)
 	retainedUntil := now.Add(24 * time.Hour)
 
@@ -1157,7 +1157,7 @@ func TestIsSessionActive_ExcludesAllTerminalStates(t *testing.T) {
 // a valid one as the state mismatches, even if the approved date and duration would still
 // make it valid"
 func TestStateIsUltimateAuthority(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name           string
@@ -1337,7 +1337,7 @@ func TestTimestampPreservationAcrossStateTransitions(t *testing.T) {
 // TestWithdrawnAtSemantics verifies that WithdrawnAt is only set for Withdrawn state
 // and correctly documents when a user withdrew their session.
 func TestWithdrawnAtSemantics(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name                  string
@@ -1414,7 +1414,7 @@ func TestWithdrawnAtSemantics(t *testing.T) {
 // The fix adds explicit WithdrawnAt check to exclude withdrawn sessions from
 // pending approval query results.
 func TestIsSessionPendingApproval_WithdrawnSessionsExcluded(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name     string

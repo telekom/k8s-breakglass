@@ -38,7 +38,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "pending-expired",
 				Namespace:         "breakglass",
-				CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+				CreationTimestamp: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
 			},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:    "test@example.com",
@@ -46,7 +46,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStatePending,
-				TimeoutAt: metav1.NewTime(time.Now().Add(-1 * time.Hour)), // Already past
+				TimeoutAt: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)), // Already past
 			},
 		}
 
@@ -85,7 +85,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "pending-recent",
 				Namespace:         "breakglass",
-				CreationTimestamp: metav1.NewTime(time.Now().Add(-5 * time.Minute)),
+				CreationTimestamp: metav1.NewTime(time.Now().UTC().Add(-5 * time.Minute)),
 			},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:    "test@example.com",
@@ -93,7 +93,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStatePending,
-				TimeoutAt: metav1.NewTime(time.Now().Add(25 * time.Minute)), // Still in future
+				TimeoutAt: metav1.NewTime(time.Now().UTC().Add(25 * time.Minute)), // Still in future
 			},
 		}
 
@@ -128,7 +128,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "approved-session",
 				Namespace:         "breakglass",
-				CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+				CreationTimestamp: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
 			},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				User:    "test@example.com",
@@ -136,8 +136,8 @@ func TestExpirePendingSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:      breakglassv1alpha1.SessionStateApproved,
-				ApprovedAt: metav1.NewTime(time.Now().Add(-90 * time.Minute)), // Approved in the past
-				TimeoutAt:  metav1.NewTime(time.Now().Add(-1 * time.Hour)),    // Past but should be ignored
+				ApprovedAt: metav1.NewTime(time.Now().UTC().Add(-90 * time.Minute)), // Approved in the past
+				TimeoutAt:  metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),    // Past but should be ignored
 			},
 		}
 
@@ -179,7 +179,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStatePending,
-				TimeoutAt: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+				TimeoutAt: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 			},
 		}
 

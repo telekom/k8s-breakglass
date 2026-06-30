@@ -106,7 +106,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("duplicate pending sessions — oldest kept, newest withdrawn", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		oldest := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "oldest",
@@ -146,7 +146,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("duplicate approved sessions — oldest kept, newest expired with metadata", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		oldest := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "approved-old",
@@ -187,7 +187,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("three duplicates — approved kept over older pending", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		s1 := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "s1",
@@ -231,7 +231,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("mixed active and terminal sessions — terminal ignored", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		active := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "active",
@@ -264,7 +264,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("different groups same cluster/user — not duplicates", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		s1 := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "group-a",
@@ -297,7 +297,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("newer approved kept over older pending — state priority wins", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		olderPending := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "older-pending",
@@ -330,7 +330,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("nil logger — does not panic", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		s1 := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "dup1",
@@ -366,7 +366,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	t.Run("name tie-breaker — same state and timestamp", func(t *testing.T) {
 		// When two sessions have the same state priority and creation timestamp,
 		// the one with the lexicographically smaller name is kept.
-		ts := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+		ts := metav1.NewTime(time.Now().UTC().Add(-10 * time.Minute))
 		sA := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "aaa-session",
@@ -399,7 +399,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("context cancellation — stops processing early", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC()
 		cancelCtx, cancel := context.WithCancel(ctx)
 		cancel() // cancel immediately
 

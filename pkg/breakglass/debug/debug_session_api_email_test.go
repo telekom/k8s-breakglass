@@ -48,8 +48,8 @@ func TestSendDebugSessionApprovalEmail_HappyPath(t *testing.T) {
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
 		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
 
-	approvedAt := metav1.NewTime(time.Now())
-	expiresAt := metav1.NewTime(time.Now().Add(2 * time.Hour))
+	approvedAt := metav1.NewTime(time.Now().UTC())
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(2 * time.Hour))
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-debug-session",
@@ -218,7 +218,7 @@ func TestSendDebugSessionRejectionEmail_HappyPath(t *testing.T) {
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
 		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
 
-	rejectedAt := metav1.NewTime(time.Now())
+	rejectedAt := metav1.NewTime(time.Now().UTC())
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "rejected-debug-session",

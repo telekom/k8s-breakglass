@@ -157,7 +157,7 @@ func TestIsSessionWithdrawn(t *testing.T) {
 
 // TestIsSessionExpired tests the IsSessionExpired function
 func TestIsSessionExpired(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name      string
@@ -223,7 +223,7 @@ func TestIsSessionExpired(t *testing.T) {
 
 // TestIsSessionRetained_TimeVariants tests the IsSessionRetained function with time variants
 func TestIsSessionRetained_TimeVariants(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name          string
@@ -288,7 +288,7 @@ func TestIsSessionValid(t *testing.T) {
 		assert.False(t, IsSessionValid(session))
 		assert.False(t, IsSessionActive(session))
 	})
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name               string
@@ -375,7 +375,7 @@ func TestIsSessionValid(t *testing.T) {
 
 // TestIsSessionActive tests the IsSessionActive function
 func TestIsSessionActive(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name      string
@@ -433,7 +433,7 @@ func TestIsSessionActive(t *testing.T) {
 }
 
 func TestIsSessionOccupyingSlot(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name      string
@@ -507,7 +507,7 @@ func TestIsSessionOccupyingSlot(t *testing.T) {
 }
 
 func TestIsSessionAccessActive(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tests := []struct {
 		name      string

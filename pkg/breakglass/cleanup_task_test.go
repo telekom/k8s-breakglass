@@ -65,7 +65,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						State:         breakglassv1alpha1.SessionStateExpired,
-						RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+						RetainedUntil: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 					},
 				},
 			},
@@ -82,7 +82,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						State:         breakglassv1alpha1.SessionStateExpired,
-						RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
+						RetainedUntil: metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 					},
 				},
 			},
@@ -99,7 +99,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						State:         breakglassv1alpha1.SessionStateExpired,
-						RetainedUntil: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+						RetainedUntil: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
 					},
 				},
 				{
@@ -109,7 +109,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						State:         breakglassv1alpha1.SessionStateExpired,
-						RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
+						RetainedUntil: metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
 					},
 				},
 				{
@@ -119,7 +119,7 @@ func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 					},
 					Status: breakglassv1alpha1.BreakglassSessionStatus{
 						State:         breakglassv1alpha1.SessionStateExpired,
-						RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+						RetainedUntil: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 					},
 				},
 			},
@@ -206,7 +206,7 @@ func TestCleanupRoutine_markCleanupExpiredSession_ErrorHandling(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:         breakglassv1alpha1.SessionStateExpired,
-			RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+			RetainedUntil: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
 		},
 	}
 
@@ -343,7 +343,7 @@ func TestExpireApprovedSessions(t *testing.T) {
 	//
 	manager := &SessionManager{}
 	// create fake approved session with ExpiresAt in the past
-	past := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	past := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "approved-old"},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -387,8 +387,8 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 	assert.NoError(t, err)
 
 	t.Run("sends email on expiration", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		startTime := metav1.NewTime(time.Now().Add(-3 * time.Hour))
+		past := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
+		startTime := metav1.NewTime(time.Now().UTC().Add(-3 * time.Hour))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-with-email"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -437,7 +437,7 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 	})
 
 	t.Run("does not send email when disabled", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		past := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-no-email"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -596,7 +596,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 	})
 
 	t.Run("active session not expired", func(t *testing.T) {
-		futureTime := metav1.NewTime(time.Now().Add(1 * time.Hour))
+		futureTime := metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))
 		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-not-expired",
@@ -630,7 +630,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 	})
 
 	t.Run("active session expired", func(t *testing.T) {
-		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		pastTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-expired",
@@ -665,7 +665,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 	})
 
 	t.Run("terminated session within retention period", func(t *testing.T) {
-		recentTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		recentTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "terminated-recent",
@@ -740,8 +740,8 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 	t.Run("active session expired sends email notification", func(t *testing.T) {
 		// Verify that when a debug session expires, an email notification is sent
 		// to the session owner
-		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		startTime := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+		pastTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
+		startTime := metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour))
 		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-expired-email",
@@ -795,7 +795,7 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 
 	t.Run("active session expired with email disabled does not send email", func(t *testing.T) {
 		// Verify no email is sent when DisableEmail is true
-		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		pastTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ds := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "active-expired-no-email",
@@ -875,7 +875,7 @@ func TestCleanupRoutine_cleanActivatesScheduledSessionWithoutAuditService(t *tes
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	now := time.Now()
+	now := time.Now().UTC()
 	scheduledSession := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "scheduled-session",
@@ -1270,7 +1270,7 @@ func TestCleanupRoutine_RetentionDeletionRequiresTerminalState(t *testing.T) {
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
 	logger := zaptest.NewLogger(t).Sugar()
 
-	pastRetention := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	pastRetention := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 	tests := []struct {
 		name          string
 		state         breakglassv1alpha1.BreakglassSessionState

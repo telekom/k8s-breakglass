@@ -74,7 +74,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	for _, ses := range sessions {
 		// Sanity check: session should have a scheduledStartTime
 		if ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero() {

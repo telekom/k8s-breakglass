@@ -609,7 +609,7 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 		}
 
 		// Ensure scheduled time is in the future
-		now := time.Now()
+		now := time.Now().UTC()
 		if scheduledTime.Before(now) {
 			reqLog.Warnw("scheduledStartTime is in the past",
 				"requestedTime", request.ScheduledStartTime,
@@ -739,7 +739,7 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	}
 
 	bs.Status = breakglassv1alpha1.BreakglassSessionStatus{
-		TimeoutAt: metav1.NewTime(time.Now().Add(approvalTimeout)), // Approval timeout
+		TimeoutAt: metav1.NewTime(time.Now().UTC().Add(approvalTimeout)), // Approval timeout
 		State:     breakglassv1alpha1.SessionStatePending,
 		Conditions: []metav1.Condition{{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeIdle),

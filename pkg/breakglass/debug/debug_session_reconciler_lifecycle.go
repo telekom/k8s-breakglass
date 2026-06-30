@@ -471,7 +471,7 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		}
 
 		status.Deleted = true
-		now := time.Now().UTC().Format(time.RFC3339)
+		now := time.Now().UTC().UTC().Format(time.RFC3339)
 		status.DeletedAt = &now
 	}
 

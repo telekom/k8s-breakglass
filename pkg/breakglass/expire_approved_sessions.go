@@ -22,7 +22,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 	for _, ses := range sessions {
 		if IsSessionExpired(ses) {
 			// Log intent and timestamps for easier debugging
-			now := time.Now()
+			now := time.Now().UTC()
 			wc.log.Infow("Expiring approved session due to reached ExpiresAt", "session", ses.Name, "expiresAt", ses.Status.ExpiresAt.Time, "now", now)
 
 			updated, applied, err := wc.updateSessionStatusIfCurrent(
@@ -84,7 +84,7 @@ func (wc *BreakglassSessionController) sendSessionExpiredEmail(session breakglas
 		Username:         session.Spec.User,
 		SessionID:        session.Name,
 		StartedAt:        session.Status.ActualStartTime.Time.Format("2006-01-02 15:04:05 UTC"),
-		ExpiredAt:        time.Now().Format("2006-01-02 15:04:05 UTC"),
+		ExpiredAt:        time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		ExpirationReason: reasonText,
 		BrandingName:     wc.config.Frontend.BrandingName,
 	}
