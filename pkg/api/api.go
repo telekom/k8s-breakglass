@@ -1107,29 +1107,54 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool, authority string) (*ht
 		return client, nil
 	}
 
-	s.idpMutex.RLock()
-	idpCfg := s.idpConfig
-	s.idpMutex.RUnlock()
-	if idpCfg == nil {
-		return nil, fmt.Errorf("identity provider not loaded")
+	var idpName string
+	var authorityURL string
+	var insecureSkipVerify bool
+	var certAuthority string
+
+	found := false
+	if s.idpReconciler != nil && authority != "" {
+		for _, idp := range s.idpReconciler.GetCachedIdentityProviders() {
+			if idp.Spec.OIDC.Authority == authority {
+				idpName = idp.Name
+				authorityURL = idp.Spec.OIDC.Authority
+				insecureSkipVerify = idp.Spec.OIDC.InsecureSkipVerify
+				certAuthority = idp.Spec.OIDC.CertificateAuthority
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		s.idpMutex.RLock()
+		idpCfg := s.idpConfig
+		s.idpMutex.RUnlock()
+		if idpCfg == nil {
+			return nil, fmt.Errorf("identity provider not loaded")
+		}
+		idpName = idpCfg.Name
+		authorityURL = idpCfg.Authority
+		insecureSkipVerify = idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify)
+		certAuthority = idpCfg.CertificateAuthority
 	}
 
 	mode := tlsModeSystemCA
 	var tlsConfig *tls.Config
 
-	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
+	if insecureSkipVerify {
 		s.log.Sugar().Warnw("refusing insecure TLS verification for identity provider",
-			"idpName", idpCfg.Name,
-			"authority", idpCfg.Authority,
+			"idpName", idpName,
+			"authority", authorityURL,
 			"remediation", "configure certificateAuthority for private or self-signed identity provider certificates")
-		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpCfg.Name)
+		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpName)
 	}
 
 	switch {
-	case idpCfg.CertificateAuthority != "":
+	case certAuthority != "":
 		roots := x509.NewCertPool()
-		if ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
-			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpCfg.Name)
+		if ok := roots.AppendCertsFromPEM([]byte(certAuthority)); !ok {
+			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpName)
 		}
 		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 		mode = tlsModeCustomCA

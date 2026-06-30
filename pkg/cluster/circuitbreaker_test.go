@@ -328,8 +328,10 @@ func TestRegistry_Remove(t *testing.T) {
 func TestRegistry_AllStats(t *testing.T) {
 	r := NewCircuitBreakerRegistry(testConfig(), testLogger())
 
-	cbA := r.Get("cluster-a"); cbA.RecordSuccess(cbA.Generation())
-	cbB := r.Get("cluster-b"); cbB.RecordFailure(cbB.Generation(), fmt.Errorf("connection refused"))
+	cbA := r.Get("cluster-a")
+	cbA.RecordSuccess(cbA.Generation())
+	cbB := r.Get("cluster-b")
+	cbB.RecordFailure(cbB.Generation(), fmt.Errorf("connection refused"))
 
 	stats := r.AllStats()
 	assert.Len(t, stats, 2)
