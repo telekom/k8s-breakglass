@@ -7,12 +7,10 @@ It is intentionally not auto-mounted. Operators must mount it into the controlle
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}-telemetry
-  namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: breakglass
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    {{- include "escalation-config.labels" $ | nindent 4 }}
+  name: {{ include "escalation-config.fullname" $ }}-telemetry
+  namespace: {{ .Release.Namespace }}
 data:
   telemetry.yaml: |
     telemetry:
