@@ -601,7 +601,7 @@ func (wc *BreakglassSessionController) handleRejectBreakglassSession(c *gin.Cont
 	wc.setSessionStatus(c, breakglassv1alpha1.SessionConditionTypeRejected)
 }
 
-// handleGetBreakglassSessionStatus handles GET /status for breakglass session
+// handleGetBreakglassSessionStatus handles GET /breakglassSessions to list sessions
 func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
@@ -658,6 +658,16 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		sessions, err = wc.sessionManager.GetAllBreakglassSessions(ctx)
 	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			reqLog.Debugw("Request canceled by client during session list", zap.Error(err))
+			c.AbortWithStatus(499) // Client Closed Request
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			reqLog.Warnw("Request timeout during session list", zap.Error(err))
+			c.AbortWithStatus(http.StatusGatewayTimeout)
+			return
+		}
 		reqLog.Error("Error getting breakglass sessions", zap.Error(err))
 		apiresponses.RespondInternalError(c, "list sessions", err, reqLog)
 		return
