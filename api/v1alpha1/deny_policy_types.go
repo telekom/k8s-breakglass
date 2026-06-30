@@ -84,7 +84,6 @@ type DenyRule struct {
 	// subresources (e.g. status). If empty matches none (only main resource). Use "*" for any.
 	// +optional
 	// +kubebuilder:validation:MaxItems=20
-	// +kubebuilder:validation:MaxItems=20
 	Subresources []string `json:"subresources,omitempty"`
 }
 
