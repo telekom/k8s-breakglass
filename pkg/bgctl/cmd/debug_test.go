@@ -254,12 +254,12 @@ func setupMockDebugServer(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/api/debugSessions/templates":
 			_ = json.NewEncoder(w).Encode(templates)
 		case r.URL.Path == "/api/debugSessions/templates/template-1":
-				_ = json.NewEncoder(w).Encode(templates.Templates[0])
-			case r.URL.Path == "/api/debugSessions/templates/template-1/clusters":
+			_ = json.NewEncoder(w).Encode(templates.Templates[0])
+		case r.URL.Path == "/api/debugSessions/templates/template-1/clusters":
 			_ = json.NewEncoder(w).Encode(templateClusters)
 		case r.URL.Path == "/api/debugSessions/podTemplates/pod-template-1":
-				_ = json.NewEncoder(w).Encode(breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Name: "pod-template-1"}})
-			case r.URL.Path == "/api/debugSessions/podTemplates":
+			_ = json.NewEncoder(w).Encode(breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Name: "pod-template-1"}})
+		case r.URL.Path == "/api/debugSessions/podTemplates":
 			_ = json.NewEncoder(w).Encode(podTemplates)
 		default:
 			http.NotFound(w, r)
