@@ -494,7 +494,6 @@ var transientPatterns = []string{
 	"no route to host",
 	"network is unreachable",
 	"i/o timeout",
-	"dial tcp",
 	"dial timeout",
 	"context deadline exceeded",
 	"tls handshake timeout",
