@@ -63,6 +63,11 @@ function openReviewModal(session: SessionCR) {
 }
 
 function closeReviewModal() {
+  if (isSubmitting.value) return;
+  resetReviewModal();
+}
+
+function resetReviewModal() {
   showReviewModal.value = false;
   modalSession.value = null;
   approverNote.value = "";
@@ -75,16 +80,19 @@ function updateApproverNote(note: string) {
 }
 
 async function confirmApprove() {
-  if (!modalSession.value) return;
-  const name = modalSession.value.metadata?.name || modalSession.value.name || "";
+  const session = modalSession.value;
+  if (!session) return;
+  const name = session.metadata?.name || session.name || "";
   if (!name) return;
+  const note = approverNote.value || undefined;
+  const sessionUser = session.spec?.user;
 
   isSubmitting.value = true;
   try {
-    const response = await service.approveReview({ name, reason: approverNote.value || undefined });
+    const response = await service.approveReview({ name, reason: note });
     if (response.status === 200) {
-      pushSuccess(`Approved session for ${modalSession.value.spec?.user}`);
-      closeReviewModal();
+      pushSuccess(`Approved session for ${sessionUser}`);
+      resetReviewModal();
       await getActiveBreakglasses();
     }
   } catch (errResponse: unknown) {
@@ -93,21 +101,25 @@ async function confirmApprove() {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmApprove", errResponse, "Failed to approve session");
+  } finally {
+    isSubmitting.value = false;
   }
-  isSubmitting.value = false;
 }
 
 async function confirmReject() {
-  if (!modalSession.value) return;
-  const name = modalSession.value.metadata?.name || modalSession.value.name || "";
+  const session = modalSession.value;
+  if (!session) return;
+  const name = session.metadata?.name || session.name || "";
   if (!name) return;
+  const note = approverNote.value || undefined;
+  const sessionUser = session.spec?.user;
 
   isSubmitting.value = true;
   try {
-    const response = await service.rejectReview({ name, reason: approverNote.value || undefined });
+    const response = await service.rejectReview({ name, reason: note });
     if (response.status === 200) {
-      pushSuccess(`Rejected session for ${modalSession.value.spec?.user}`);
-      closeReviewModal();
+      pushSuccess(`Rejected session for ${sessionUser}`);
+      resetReviewModal();
       await getActiveBreakglasses();
     }
   } catch (errResponse: unknown) {
@@ -116,8 +128,9 @@ async function confirmReject() {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmReject", errResponse, "Failed to reject session");
+  } finally {
+    isSubmitting.value = false;
   }
-  isSubmitting.value = false;
 }
 
 async function getActiveBreakglasses() {

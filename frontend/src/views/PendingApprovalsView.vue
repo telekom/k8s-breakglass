@@ -446,6 +446,11 @@ function openApproveModal(session: SessionCR) {
 }
 
 function closeApproveModal() {
+  if (approving.value) return;
+  resetApproveModal();
+}
+
+function resetApproveModal() {
   showApproveModal.value = false;
   modalSession.value = null;
 }
@@ -459,50 +464,55 @@ function updateApproverNote(note: string) {
 }
 
 async function confirmApprove() {
-  if (!modalSession.value) return;
-  const name = modalSession.value.metadata?.name;
+  const session = modalSession.value;
+  if (!session) return;
+  const name = session.metadata?.name;
   if (!name) return;
+  const sessionUser = session.spec?.user;
+  const sessionGroup = session.spec?.grantedGroup;
 
   approving.value = name;
   try {
     const note = approverNotes[name] || undefined;
-    const sessionAny = modalSession.value as Record<string, unknown>;
+    const sessionAny = session as Record<string, unknown>;
     const approvalReason = sessionAny.approvalReason as { mandatory?: boolean } | undefined;
 
     if (approvalReason?.mandatory && !(note || "").trim()) {
       pushError("Approval note is required for this escalation");
-      approving.value = null;
       return;
     }
 
     await breakglassService.approveBreakglass(name, note);
-    pushSuccess(`Approved request for ${modalSession.value.spec?.user} (${modalSession.value.spec?.grantedGroup})!`);
-    showApproveModal.value = false;
-    modalSession.value = null;
+    pushSuccess(`Approved request for ${sessionUser} (${sessionGroup})!`);
+    resetApproveModal();
     await fetchPendingApprovals();
   } catch (e: unknown) {
     handleAxiosError("PendingApprovalsView", e, "Failed to approve request");
+  } finally {
+    approving.value = null;
   }
-  approving.value = null;
 }
 
 async function confirmReject() {
-  if (!modalSession.value) return;
-  const name = modalSession.value.metadata?.name;
+  const session = modalSession.value;
+  if (!session) return;
+  const name = session.metadata?.name;
   if (!name) return;
+  const sessionUser = session.spec?.user;
+  const sessionGroup = session.spec?.grantedGroup;
 
   approving.value = name;
   try {
     const note = approverNotes[name] || undefined;
     await breakglassService.rejectBreakglass(name, note);
-    pushSuccess(`Rejected request for ${modalSession.value.spec?.user} (${modalSession.value.spec?.grantedGroup})!`);
-    showApproveModal.value = false;
-    modalSession.value = null;
+    pushSuccess(`Rejected request for ${sessionUser} (${sessionGroup})!`);
+    resetApproveModal();
     await fetchPendingApprovals();
   } catch (e: unknown) {
     handleAxiosError("PendingApprovalsView", e, "Failed to reject request");
+  } finally {
+    approving.value = null;
   }
-  approving.value = null;
 }
 
 onMounted(fetchPendingApprovals);

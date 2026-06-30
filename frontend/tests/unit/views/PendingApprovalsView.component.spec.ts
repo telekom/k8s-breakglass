@@ -6,10 +6,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import PendingApprovalsView from "@/views/PendingApprovalsView.vue";
 import { AuthKey } from "@/keys";
 import { handleAxiosError } from "@/services/logger";
+import { pushSuccess } from "@/services/toast";
 
 const mockFetchPendingSessionsForApproval = vi.fn();
 const mockApproveBreakglass = vi.fn();
@@ -50,6 +51,59 @@ vi.mock("@/composables", () => ({
   dedupeSessions: vi.fn((sessions) => sessions),
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+const SessionSummaryCardStub = {
+  template: `
+    <article data-testid="session-summary-card">
+      <slot name="status" />
+      <slot name="chips" />
+      <slot name="meta" />
+      <slot name="body" />
+      <slot name="footer" />
+    </article>
+  `,
+};
+
+const ActionButtonStub = {
+  props: ["label", "disabled", "loading", "loadingLabel"],
+  emits: ["click"],
+  template:
+    '<button type="button" data-testid="review-button" :disabled="disabled" @click="$emit(\'click\')">{{ label }}</button>',
+};
+
+const ApprovalModalContentStub = {
+  props: ["session", "approverNote", "isApproving"],
+  emits: ["update:approver-note", "approve", "reject", "cancel"],
+  template: `
+    <div data-testid="approval-modal-content">
+      <button type="button" data-testid="modal-approve" @click="$emit('approve')">Approve</button>
+      <button type="button" data-testid="modal-reject" @click="$emit('reject')">Reject</button>
+      <button type="button" data-testid="modal-cancel" @click="$emit('cancel')">Cancel</button>
+    </div>
+  `,
+};
+
+const ScaleModalStub = {
+  inheritAttrs: false,
+  props: ["opened"],
+  emits: ["scale-close"],
+  template: `
+    <div v-if="opened" v-bind="$attrs">
+      <button type="button" data-testid="modal-close" @click="$emit('scale-close')">Close</button>
+      <slot />
+    </div>
+  `,
+};
+
 describe("PendingApprovalsView (component)", () => {
   const mockAuth = {
     user: ref({ email: "approver@example.com" }),
@@ -79,14 +133,14 @@ describe("PendingApprovalsView (component)", () => {
           LoadingState: true,
           StatusTag: true,
           ReasonPanel: true,
-          ActionButton: true,
+          ActionButton: ActionButtonStub,
           CountdownTimer: true,
-          SessionSummaryCard: true,
+          SessionSummaryCard: SessionSummaryCardStub,
           SessionMetaGrid: true,
-          ApprovalModalContent: true,
+          ApprovalModalContent: ApprovalModalContentStub,
           "scale-dropdown-select": true,
           "scale-dropdown-select-option": true,
-          "scale-modal": true,
+          "scale-modal": ScaleModalStub,
           "scale-tag": true,
           "scale-icon-alert-warning": true,
           "scale-icon-content-clock": true,
@@ -137,5 +191,35 @@ describe("PendingApprovalsView (component)", () => {
     expect(errorState.exists()).toBe(true);
     expect(errorState.props("variant")).toBe("error");
     expect(errorState.props("description")).toBe("network error");
+  });
+
+  it("keeps the approval modal mounted while rejection is in flight", async () => {
+    const session = {
+      metadata: { name: "session-1", creationTimestamp: "2026-02-01T10:00:00Z" },
+      spec: { user: "requester@example.com", grantedGroup: "admin", cluster: "cluster-a" },
+      status: { state: "Pending", timeoutAt: "2026-02-01T11:00:00Z" },
+    };
+    const rejection = deferred<void>();
+    mockFetchPendingSessionsForApproval.mockResolvedValueOnce([session]).mockResolvedValue([]);
+    mockRejectBreakglass.mockReturnValueOnce(rejection.promise);
+
+    const wrapper = await createWrapper();
+
+    await wrapper.find('[data-testid="review-button"]').trigger("click");
+    const modal = wrapper.find('[data-testid="approval-modal"]');
+    expect(modal.exists()).toBe(true);
+
+    await wrapper.find('[data-testid="modal-reject"]').trigger("click");
+    modal.element.dispatchEvent(new CustomEvent("scale-close", { bubbles: true, cancelable: true }));
+    await nextTick();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+    expect(wrapper.find('[data-testid="approval-modal-content"]').exists()).toBe(true);
+
+    rejection.resolve();
+    await flushPromises();
+
+    expect(vi.mocked(pushSuccess)).toHaveBeenCalledWith("Rejected request for requester@example.com (admin)!");
+    expect(wrapper.find('[data-testid="approval-modal-content"]').exists()).toBe(false);
   });
 });
