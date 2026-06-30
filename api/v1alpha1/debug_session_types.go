@@ -18,6 +18,9 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
+	"reflect"
+	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -593,16 +596,72 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
+// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(newObj)
-	if result.IsValid() {
+	var allErrs field.ErrorList
+	if !result.IsValid() {
+		allErrs = append(allErrs, result.Errors...)
+	}
+
+	if !reflect.DeepEqual(newObj.Spec, oldObj.Spec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
+	}
+
+	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+
+	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, allErrs)
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
+func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) field.ErrorList {
+	var errs field.ErrorList
+	statusPath := field.NewPath("status")
+
+	if oldObj.Status.StartsAt != nil && !oldObj.Status.StartsAt.IsZero() {
+		if newObj.Status.StartsAt == nil || newObj.Status.StartsAt.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("startsAt"), nil, "startsAt must not be cleared once set"))
+		} else if newObj.Status.StartsAt.Time.Before(oldObj.Status.StartsAt.Time) {
+			errs = append(errs, field.Invalid(statusPath.Child("startsAt"), newObj.Status.StartsAt.Time, fmt.Sprintf("startsAt must not move backwards (was %s)", oldObj.Status.StartsAt.Time.Format(time.RFC3339))))
+		}
+	}
+
+	if oldObj.Status.ExpiresAt != nil && !oldObj.Status.ExpiresAt.IsZero() {
+		if newObj.Status.ExpiresAt == nil || newObj.Status.ExpiresAt.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), nil, "expiresAt must not be cleared once set"))
+		} else if newObj.Status.ExpiresAt.Time.Before(oldObj.Status.ExpiresAt.Time) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newObj.Status.ExpiresAt.Time, fmt.Sprintf("expiresAt must not move backwards (was %s)", oldObj.Status.ExpiresAt.Time.Format(time.RFC3339))))
+		}
+	}
+
+	if oldObj.Status.Approval != nil && newObj.Status.Approval != nil {
+		approvalPath := statusPath.Child("approval")
+		if oldObj.Status.Approval.ApprovedAt != nil && !oldObj.Status.Approval.ApprovedAt.IsZero() {
+			if newObj.Status.Approval.ApprovedAt == nil || newObj.Status.Approval.ApprovedAt.IsZero() {
+				errs = append(errs, field.Invalid(approvalPath.Child("approvedAt"), nil, "approvedAt must not be cleared once set"))
+			} else if newObj.Status.Approval.ApprovedAt.Time.Before(oldObj.Status.Approval.ApprovedAt.Time) {
+				errs = append(errs, field.Invalid(approvalPath.Child("approvedAt"), newObj.Status.Approval.ApprovedAt.Time, fmt.Sprintf("approvedAt must not move backwards (was %s)", oldObj.Status.Approval.ApprovedAt.Time.Format(time.RFC3339))))
+			}
+		}
+		if oldObj.Status.Approval.RejectedAt != nil && !oldObj.Status.Approval.RejectedAt.IsZero() {
+			if newObj.Status.Approval.RejectedAt == nil || newObj.Status.Approval.RejectedAt.IsZero() {
+				errs = append(errs, field.Invalid(approvalPath.Child("rejectedAt"), nil, "rejectedAt must not be cleared once set"))
+			} else if newObj.Status.Approval.RejectedAt.Time.Before(oldObj.Status.Approval.RejectedAt.Time) {
+				errs = append(errs, field.Invalid(approvalPath.Child("rejectedAt"), newObj.Status.Approval.RejectedAt.Time, fmt.Sprintf("rejectedAt must not move backwards (was %s)", oldObj.Status.Approval.RejectedAt.Time.Format(time.RFC3339))))
+			}
+		}
+	} else if oldObj.Status.Approval != nil && newObj.Status.Approval == nil {
+		if (oldObj.Status.Approval.ApprovedAt != nil && !oldObj.Status.Approval.ApprovedAt.IsZero()) ||
+			(oldObj.Status.Approval.RejectedAt != nil && !oldObj.Status.Approval.RejectedAt.IsZero()) {
+			errs = append(errs, field.Invalid(statusPath.Child("approval"), nil, "approval object containing timestamps must not be cleared"))
+		}
+	}
+
+	return errs
+}
 func (ds *DebugSession) ValidateDelete(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	return nil, nil
 }

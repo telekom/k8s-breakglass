@@ -1462,7 +1462,7 @@ func TestDebugSession_ValidateUpdate(t *testing.T) {
 			Cluster:     "cluster",
 			TemplateRef: "template",
 			RequestedBy: "user@example.com",
-			Reason:      "Updated reason",
+			Reason:      "",
 		},
 	}
 
