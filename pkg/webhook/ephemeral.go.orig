@@ -34,13 +34,6 @@ type EphemeralContainerWebhook struct {
 	DebugHandler DebugSessionHandler
 }
 
-type clusterContextKey struct{}
-
-// WithClusterContext returns a new context with the cluster identity attached.
-func WithClusterContext(ctx context.Context, cluster string) context.Context {
-	return context.WithValue(ctx, clusterContextKey{}, cluster)
-}
-
 // NewEphemeralContainerWebhook creates a new webhook with the default handler
 func NewEphemeralContainerWebhook(cli client.Client, decoder admission.Decoder, log *zap.SugaredLogger, handler *debug.KubectlDebugHandler) *EphemeralContainerWebhook {
 	return &EphemeralContainerWebhook{
@@ -66,13 +59,8 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 
 	user := req.UserInfo.Username
 	// Use explicit cluster from context if available, otherwise wildcard (empty)
+	// For Phase 1 we rely on finding *any* active session for the user
 	cluster := ""
-	if c, ok := ctx.Value(clusterContextKey{}).(string); ok {
-		cluster = c
-	}
-	if cluster == "" {
-		return admission.Denied("cluster identity required but not provided in webhook path")
-	}
 
 	session, err := w.DebugHandler.FindActiveSession(ctx, user, cluster)
 	if err != nil {

@@ -1,0 +1,78 @@
+--- pkg/webhook/ephemeral.go
++++ pkg/webhook/ephemeral.go
+@@ -34,6 +34,13 @@
+ 	DebugHandler DebugSessionHandler
+ }
+ 
++type clusterContextKey struct{}
++
++// WithClusterContext returns a new context with the cluster identity attached.
++func WithClusterContext(ctx context.Context, cluster string) context.Context {
++	return context.WithValue(ctx, clusterContextKey{}, cluster)
++}
++
+ // NewEphemeralContainerWebhook creates a new webhook with the default handler
+ func NewEphemeralContainerWebhook(cli client.Client, decoder admission.Decoder, log *zap.SugaredLogger, handler *debug.KubectlDebugHandler) *EphemeralContainerWebhook {
+ 	return &EphemeralContainerWebhook{
+@@ -58,9 +65,14 @@
+ 
+ 	user := req.UserInfo.Username
+ 	// Use explicit cluster from context if available, otherwise wildcard (empty)
+-	// For Phase 1 we rely on finding *any* active session for the user
+ 	cluster := ""
++	if c, ok := ctx.Value(clusterContextKey{}).(string); ok {
++		cluster = c
++	}
++	if cluster == "" {
++		return admission.Denied("cluster identity required but not provided in webhook path")
++	}
+ 
+ 	session, err := w.DebugHandler.FindActiveSession(ctx, user, cluster)
+ 	if err != nil {
+--- pkg/webhook/manager.go
++++ pkg/webhook/manager.go
+@@ -9,6 +9,8 @@
+ 	"crypto/tls"
+ 	"fmt"
+ 	"net"
++	"net/http"
++	"strings"
+ 
+ 	"go.uber.org/zap"
+ 	"k8s.io/client-go/rest"
+@@ -146,14 +148,27 @@
+ 
+ 		// Register ephemeral container webhook
+ 		log.Infof("Registering ephemeral container webhook at /validate-ephemeral-containers")
+-		mgr.GetWebhookServer().Register("/validate-ephemeral-containers", &webhookserver.Admission{
+-			Handler: &EphemeralContainerWebhook{
+-				Client:       mgr.GetClient(),
+-				Log:          log,
+-				Decoder:      admission.NewDecoder(mgr.GetScheme()),
+-				DebugHandler: debug.NewKubectlDebugHandler(mgr.GetClient(), nil),
+-			},
+-		})
++		
++		ephemeralHandler := &EphemeralContainerWebhook{
++			Client:       mgr.GetClient(),
++			Log:          log,
++			Decoder:      admission.NewDecoder(mgr.GetScheme()),
++			DebugHandler: debug.NewKubectlDebugHandler(mgr.GetClient(), nil),
++		}
++		admissionHook := &webhookserver.Admission{
++			Handler: ephemeralHandler,
++		}
++
++		wrapper := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++			cluster := r.URL.Query().Get("cluster")
++			if cluster == "" {
++				cluster = strings.TrimPrefix(r.URL.Path, "/validate-ephemeral-containers/")
++			}
++			ctx := WithClusterContext(r.Context(), cluster)
++			admissionHook.ServeHTTP(w, r.WithContext(ctx))
++		})
++		mgr.GetWebhookServer().Register("/validate-ephemeral-containers", wrapper)
++		mgr.GetWebhookServer().Register("/validate-ephemeral-containers/", wrapper)
+ 	} else {
+ 		log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
+ 	}
