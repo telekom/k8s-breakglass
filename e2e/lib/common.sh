@@ -239,17 +239,31 @@ e2e_load_image_into_kind() {
   log "Loading image $image into Kind cluster $cluster_name"
   
   # Try direct load first
-  if $KIND load docker-image "$image" --name "$cluster_name" 2>&1 | tee /dev/stderr | grep -q "failed to detect containerd snapshotter"; then
+  local load_output
+  if load_output=$($KIND load docker-image "$image" --name "$cluster_name" 2>&1); then
+    printf '%s\n' "$load_output" >&2
+    log "Successfully loaded $image into Kind cluster $cluster_name"
+    return 0
+  fi
+
+  printf '%s\n' "$load_output" >&2
+  if printf '%s\n' "$load_output" | grep -q "failed to detect containerd snapshotter"; then
     log_warn "Direct load failed due to containerd snapshotter issue, using archive method..."
     local tmp_archive
     tmp_archive=$(mktemp --suffix=.tar)
     if $DOCKER save "$image" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$cluster_name"; then
       log "Successfully loaded $image via archive method"
+      rm -f "$tmp_archive"
+      return 0
     else
-      log_warn "Failed to load image $image via archive method"
+      log_error "Failed to load image $image via archive method"
+      rm -f "$tmp_archive"
+      return 1
     fi
-    rm -f "$tmp_archive"
   fi
+
+  log_error "Failed to load image $image into Kind cluster $cluster_name"
+  return 1
 }
 
 # Load all standard images required for breakglass E2E
