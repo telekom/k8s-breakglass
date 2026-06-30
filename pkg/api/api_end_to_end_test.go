@@ -385,7 +385,7 @@ func TestEndToEndSARDeniedWithExpiredSession(t *testing.T) {
 	require.Len(t, sessions, 1)
 	env.approveSession(t, sessions[0].Name)
 
-	expiredAt := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	expiredAt := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 	env.updateSessionStatus(t, sessions[0].Name, func(bs *breakglassv1alpha1.BreakglassSession) {
 		bs.Status.ExpiresAt = expiredAt
 		bs.Status.State = breakglassv1alpha1.SessionStateExpired

@@ -115,14 +115,14 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 	ses2.Name = fmt.Sprintf("%s-%s-a2", testGroupData.Clustername, testGroupData.GroupName)
 	ses2.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		Conditions:    []metav1.Condition{},
-		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(breakglass.MonthDuration)),
 	}
 
 	ses3 := NewBreakglassSession("testError", "testError", "testError")
 	ses3.Name = fmt.Sprintf("%s-%s-a3", testGroupData.Clustername, testGroupData.GroupName)
 	ses3.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		Conditions:    []metav1.Condition{},
-		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(breakglass.MonthDuration)),
 	}
 
 	objects := []client.Object{
@@ -937,8 +937,8 @@ func TestGetSessionsWithIDPMismatchInfo_Matching(t *testing.T) {
 	keycloakSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
-		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
-		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
+		ExpiresAt:     metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(24 * time.Hour)), // Set to future so NOT retained
 	}
 
 	// Session with ldap IDP
@@ -950,8 +950,8 @@ func TestGetSessionsWithIDPMismatchInfo_Matching(t *testing.T) {
 	ldapSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
-		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
-		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
+		ExpiresAt:     metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(24 * time.Hour)), // Set to future so NOT retained
 	}
 
 	// Session with AllowIDPMismatch flag
@@ -962,8 +962,8 @@ func TestGetSessionsWithIDPMismatchInfo_Matching(t *testing.T) {
 	flexibleSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
-		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
-		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
+		ExpiresAt:     metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(24 * time.Hour)), // Set to future so NOT retained
 	}
 
 	// Create a mock session manager that returns our sessions
@@ -1042,8 +1042,8 @@ func TestAllowIDPMismatch_DisablesIDPFilter(t *testing.T) {
 	legacySession.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
-		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
-		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)), // Set to future so NOT retained
+		ExpiresAt:     metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(24 * time.Hour)), // Set to future so NOT retained
 	}
 
 	// Test the filtering logic directly without relying on client queries
@@ -1089,8 +1089,8 @@ func TestIDPMismatchErrorInfo(t *testing.T) {
 	keycloakSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
-		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
-		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt:     metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(24 * time.Hour)),
 	}
 
 	ldapSession := NewBreakglassSession("testuser", "test-cluster", "viewer")
@@ -1101,8 +1101,8 @@ func TestIDPMismatchErrorInfo(t *testing.T) {
 	ldapSession.Status = breakglassv1alpha1.BreakglassSessionStatus{
 		State:         breakglassv1alpha1.SessionStateApproved,
 		ApprovedAt:    metav1.Now(),
-		ExpiresAt:     metav1.NewTime(time.Now().Add(1 * time.Hour)),
-		RetainedUntil: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt:     metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
+		RetainedUntil: metav1.NewTime(time.Now().UTC().Add(24 * time.Hour)),
 	}
 
 	// Test the filtering logic directly

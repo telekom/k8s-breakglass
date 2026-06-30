@@ -161,7 +161,7 @@ func TestMailProviderReconciler_UpdateCondition(t *testing.T) {
 	})
 
 	t.Run("update existing condition status change", func(t *testing.T) {
-		oldTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		oldTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		conditions := []metav1.Condition{
 			{
 				Type:               "Ready",
@@ -187,7 +187,7 @@ func TestMailProviderReconciler_UpdateCondition(t *testing.T) {
 	})
 
 	t.Run("update existing condition same status", func(t *testing.T) {
-		oldTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		oldTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		conditions := []metav1.Condition{
 			{
 				Type:               "Ready",

@@ -71,7 +71,7 @@ func TestExpireIdleSessions(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	t.Run("expires idle session with lastActivity in past", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+		past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "idle-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -101,7 +101,7 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 
 	t.Run("does not expire session within idle timeout based on lastActivity", func(t *testing.T) {
-		recent := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+		recent := metav1.NewTime(time.Now().UTC().Add(-2 * time.Minute))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "active-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -129,7 +129,7 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 
 	t.Run("skips session without lastActivity", func(t *testing.T) {
-		startTime := metav1.NewTime(time.Now().Add(-15 * time.Minute))
+		startTime := metav1.NewTime(time.Now().UTC().Add(-15 * time.Minute))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "no-activity-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -157,7 +157,7 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 
 	t.Run("skips session with approvedAt but no lastActivity", func(t *testing.T) {
-		approvedAt := metav1.NewTime(time.Now().Add(-15 * time.Minute))
+		approvedAt := metav1.NewTime(time.Now().UTC().Add(-15 * time.Minute))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "approved-only-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -185,7 +185,7 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 
 	t.Run("skips sessions without idleTimeout", func(t *testing.T) {
-		startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		startTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "no-idle-timeout", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -212,7 +212,7 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 
 	t.Run("skips sessions with invalid idleTimeout", func(t *testing.T) {
-		startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		startTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "invalid-idle", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -240,7 +240,7 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 
 	t.Run("sets Idle condition on idle-expired sessions", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+		past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "condition-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -278,8 +278,8 @@ func TestExpireIdleSessions(t *testing.T) {
 	})
 
 	t.Run("handles multiple sessions with mixed state", func(t *testing.T) {
-		pastIdle := metav1.NewTime(time.Now().Add(-20 * time.Minute))
-		recentActive := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+		pastIdle := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
+		recentActive := metav1.NewTime(time.Now().UTC().Add(-2 * time.Minute))
 
 		idleSes := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "idle-mixed", Namespace: "default"},
@@ -353,8 +353,8 @@ func TestExpireIdleSessions_SendsEmail(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("sends email on idle expiration", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
-		startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
+		startTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "idle-email-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -400,7 +400,7 @@ func TestExpireIdleSessions_SendsEmail(t *testing.T) {
 	})
 
 	t.Run("does not send email when disabled", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+		past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "idle-no-email", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -454,7 +454,7 @@ func TestExpireIdleSessions_EdgeCases(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	t.Run("session within idle boundary is not expired", func(t *testing.T) {
-		recentEnough := metav1.NewTime(time.Now().Add(-9*time.Minute - 50*time.Second))
+		recentEnough := metav1.NewTime(time.Now().UTC().Add(-9*time.Minute - 50*time.Second))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "boundary-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -494,7 +494,7 @@ func TestExpireIdleSessions_EdgeCases(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "creation-fallback",
 				Namespace:         "default",
-				CreationTimestamp: metav1.NewTime(time.Now().Add(-30 * time.Minute)),
+				CreationTimestamp: metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute)),
 			},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "production",
@@ -520,7 +520,7 @@ func TestExpireIdleSessions_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("uses day duration unit", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().Add(-25 * time.Hour))
+		past := metav1.NewTime(time.Now().UTC().Add(-25 * time.Hour))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "day-duration", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -637,8 +637,8 @@ func TestSendSessionIdleExpiredEmail_EnqueueError(t *testing.T) {
 	mockMail := NewMockMailEnqueuer(true)
 	mockMail.SetError(fmt.Errorf("SMTP connection refused"))
 
-	past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
-	startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
+	startTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 	ses := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "email-fail", Namespace: "default"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -684,7 +684,7 @@ func TestSendSessionIdleExpiredEmail_MailDisabledViaService(t *testing.T) {
 	// mailService exists but IsEnabled() returns false
 	mockMail := NewMockMailEnqueuer(false)
 
-	startTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	startTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 	ctrl := &BreakglassSessionController{
 		log:         logger,
 		mailService: mockMail,
@@ -716,7 +716,7 @@ func TestExpireIdleSessions_RetrySucceedsOnSecondAttempt(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+	past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
 	ses := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "retry-session", Namespace: "default"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -767,7 +767,7 @@ func TestExpireIdleSessions_AllRetriesExhausted(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+	past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
 	ses := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "exhaust-session", Namespace: "default"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -813,7 +813,7 @@ func TestExpireIdleSessions_ConcurrentTransitionDuringRetry(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	past := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+	past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
 	ses := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "concurrent-session", Namespace: "default"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -875,7 +875,7 @@ func TestExpireIdleSessions_CancelledContext(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	past := metav1.NewTime(time.Now().Add(-30 * time.Minute))
+	past := metav1.NewTime(time.Now().UTC().Add(-30 * time.Minute))
 
 	// Create multiple idle sessions
 	sessions := []client.Object{
@@ -946,7 +946,7 @@ func TestExpireIdleSessions_BoundaryIdleEqualsTimeout(t *testing.T) {
 
 	// Set lastActivity to exactly idleTimeout ago
 	idleTimeout := 10 * time.Minute
-	boundary := metav1.NewTime(time.Now().Add(-idleTimeout))
+	boundary := metav1.NewTime(time.Now().UTC().Add(-idleTimeout))
 
 	ses := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "boundary-session", Namespace: "default"},

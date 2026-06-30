@@ -233,7 +233,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 
 		// Set RetainedUntil for rejected sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 		// record approver (rejector)
 		rejectorEmail, _ := wc.identityProvider.GetEmail(c)

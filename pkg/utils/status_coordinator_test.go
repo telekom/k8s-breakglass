@@ -40,8 +40,8 @@ func TestNewStatusCoordinatorWithInterval(t *testing.T) {
 
 func TestShouldSkipStatusUpdate(t *testing.T) {
 	now := metav1.Now()
-	recentTime := metav1.NewTime(time.Now().Add(-10 * time.Second)) // 10 seconds ago
-	oldTime := metav1.NewTime(time.Now().Add(-2 * time.Minute))     // 2 minutes ago
+	recentTime := metav1.NewTime(time.Now().UTC().Add(-10 * time.Second)) // 10 seconds ago
+	oldTime := metav1.NewTime(time.Now().UTC().Add(-2 * time.Minute))     // 2 minutes ago
 
 	tests := []struct {
 		name          string
@@ -207,19 +207,19 @@ func TestShouldSkipStatusUpdateByTime(t *testing.T) {
 		},
 		{
 			name:        "recent lastCheck - should skip",
-			lastCheck:   ptr(metav1.NewTime(time.Now().Add(-10 * time.Second))),
+			lastCheck:   ptr(metav1.NewTime(time.Now().UTC().Add(-10 * time.Second))),
 			minInterval: 30 * time.Second,
 			expectSkip:  true,
 		},
 		{
 			name:        "old lastCheck - should not skip",
-			lastCheck:   ptr(metav1.NewTime(time.Now().Add(-2 * time.Minute))),
+			lastCheck:   ptr(metav1.NewTime(time.Now().UTC().Add(-2 * time.Minute))),
 			minInterval: 30 * time.Second,
 			expectSkip:  false,
 		},
 		{
 			name:        "exactly at boundary - should not skip",
-			lastCheck:   ptr(metav1.NewTime(time.Now().Add(-30 * time.Second))),
+			lastCheck:   ptr(metav1.NewTime(time.Now().UTC().Add(-30 * time.Second))),
 			minInterval: 30 * time.Second,
 			expectSkip:  false,
 		},
@@ -237,7 +237,7 @@ func TestShouldSkipStatusUpdateByTime(t *testing.T) {
 }
 
 func TestShouldSkipStatusUpdateByGeneration(t *testing.T) {
-	recentTime := metav1.NewTime(time.Now().Add(-10 * time.Second))
+	recentTime := metav1.NewTime(time.Now().UTC().Add(-10 * time.Second))
 
 	tests := []struct {
 		name               string
@@ -299,7 +299,7 @@ func TestShouldSkipStatusUpdateByGeneration(t *testing.T) {
 }
 
 func TestShouldSkipStatusUpdateDetailed(t *testing.T) {
-	recentTime := metav1.NewTime(time.Now().Add(-10 * time.Second))
+	recentTime := metav1.NewTime(time.Now().UTC().Add(-10 * time.Second))
 
 	tests := []struct {
 		name           string
