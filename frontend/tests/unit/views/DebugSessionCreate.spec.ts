@@ -387,11 +387,8 @@ describe("DebugSessionCreate", () => {
           selectedSchedulingOption: "maintenance",
         }),
       );
-      expect(mockCreateSession).toHaveBeenCalledWith(
-        expect.not.objectContaining({
-          scheduledStartTime: expect.any(String),
-        }),
-      );
+      const request = mockCreateSession.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(request).not.toHaveProperty("scheduledStartTime");
     });
   });
 
