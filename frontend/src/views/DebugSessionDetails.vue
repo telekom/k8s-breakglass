@@ -200,6 +200,7 @@ watch(
 );
 
 onUnmounted(() => {
+  routeRefreshRequestID++;
   stopPolling();
   clipboardCleanup();
 });

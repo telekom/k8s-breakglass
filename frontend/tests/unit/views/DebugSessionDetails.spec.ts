@@ -160,6 +160,51 @@ describe("DebugSessionDetails", () => {
     expect(wrapper.findComponent({ name: "PageHeader" }).props("title")).toBe("dbg-2");
   });
 
+  it("does not start polling when a route refresh completes after unmount", async () => {
+    let resolveRouteRefresh: (session: unknown) => void = () => {};
+    mockGetSession.mockImplementation((name: string) => {
+      if (name === "dbg-1") {
+        return Promise.resolve({
+          status: { state: "Terminated" },
+          metadata: { name },
+          spec: { cluster: `cluster-${name}` },
+        });
+      }
+      return new Promise((resolve) => {
+        resolveRouteRefresh = resolve;
+      });
+    });
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    mockRouteParams.name = "dbg-2";
+    await flushPromises();
+    expect(mockGetSession).toHaveBeenCalledWith("dbg-2");
+
+    wrapper.unmount();
+    wrapper = null;
+    resolveRouteRefresh({
+      status: { state: "Active" },
+      metadata: { name: "dbg-2" },
+      spec: { cluster: "cluster-dbg-2" },
+    });
+    await flushPromises();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("renders copy button for each running pod and calls clipboard copy", async () => {
     mockGetSession.mockResolvedValue({
       status: {
