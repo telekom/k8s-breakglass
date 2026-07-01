@@ -1425,9 +1425,9 @@ constraints for that session. Renewals extend the current expiration time, but
 the renewed expiration cannot move past `status.startsAt + maxDuration`.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
-The active-session expiry, expiring-soon message, and cleanup timeout writers
-use optimistic locking, so stale reconciler or cleanup passes cannot overwrite a
-newer renewal or participant update.
+The active-session expiry, approval-timeout, expiring-soon message, cleanup
+timeout, and cleanup expiry writers use optimistic locking, so stale reconciler
+or cleanup passes cannot overwrite a newer renewal or participant update.
 
 ## Terminal Sharing
 
