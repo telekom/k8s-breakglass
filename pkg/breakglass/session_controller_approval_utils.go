@@ -42,29 +42,37 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	ctx := c.Request.Context()
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	requestContextGroups := approverGroupsFromRequestContext(c)
 
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
 	var baseAllowedApproverDomains []string
 
 	// Gather approver groups with caching
-	cacheKey := "approverGroups_" + email
+	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, email)
 	var approverGroups []string
+	lookupApproverGroups := true
 	if cached, ok := c.Get(cacheKey); ok {
-		approverGroups = cached.([]string)
-	} else {
+		if groups, ok := cached.([]string); ok {
+			approverGroups = groups
+			lookupApproverGroups = false
+		} else {
+			reqLog.Debugw("Ignoring approver group cache entry with unexpected type",
+				"cacheKey", cacheKey, "cachedType", fmt.Sprintf("%T", cached))
+		}
+	}
+	if lookupApproverGroups {
 		var gerr error
 		approverGroups, gerr = wc.getUserGroupsFn(ctx, approverID)
-		if raw, ok := c.Get("groups"); ok {
-			if arr, ok2 := raw.([]string); ok2 && len(arr) > 0 {
-				approverGroups = append(approverGroups, arr...)
-			}
-		} else if gerr != nil {
-			reqLog.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
-			return ApprovalCheckResult{
-				Allowed: false,
-				Reason:  ApprovalDenialUnauthenticated,
-				Message: "Unable to retrieve user groups",
+		if gerr != nil {
+			approverGroups = requestContextGroups
+			if len(approverGroups) == 0 {
+				reqLog.Errorw("Failed to retrieve approver groups", "cluster", session.Spec.Cluster, "error", gerr)
+				return ApprovalCheckResult{
+					Allowed: false,
+					Reason:  ApprovalDenialUnauthenticated,
+					Message: "Unable to retrieve user groups",
+				}
 			}
 		}
 		c.Set(cacheKey, approverGroups)
@@ -159,27 +167,39 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		// Multi-IDP aware group checking
 		approverGroupsToCheck := esc.Spec.Approvers.Groups
 		var dedupMembers []string
+		fallbackApproverGroups := approverGroupsToCheck
 
-		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 && esc.Status.ApproverGroupMembers != nil {
+		if esc.Status.ApproverGroupMembers != nil {
+			fallbackApproverGroups = nil
 			for _, g := range approverGroupsToCheck {
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
-					reqLog.Debugw("Using deduplicated members from multi-IDP status",
+					reqLog.Debugw("Using resolved approver group members from escalation status",
 						"escalation", esc.Name, "group", system.RedactGroupName(g), "memberCount", len(members))
+				} else {
+					fallbackApproverGroups = append(fallbackApproverGroups, g)
 				}
 			}
 
 			for _, member := range dedupMembers {
 				if strings.EqualFold(member, email) {
-					reqLog.Debugw("User is session approver (multi-IDP deduplicated group member)",
+					reqLog.Debugw("User is session approver (resolved group member)",
 						"session", session.Name, "escalation", esc.Name, "member", email)
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}
-		} else {
-			for _, g := range approverGroupsToCheck {
-				if slices.Contains(approverGroups, g) {
-					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(g))
+		}
+
+		if len(fallbackApproverGroups) > 0 {
+			if matchedGroup, ok := firstMatchingApproverGroup(approverGroups, fallbackApproverGroups); ok {
+				reqLog.Debugw("User is session approver (target cluster group)",
+					"session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(matchedGroup))
+				return ApprovalCheckResult{Allowed: true}
+			}
+			if shouldUseRequestContextApproverGroups(approverGroups, requestContextGroups) {
+				if matchedGroup, ok := firstMatchingApproverGroup(requestContextGroups, fallbackApproverGroups); ok {
+					reqLog.Debugw("User is session approver (request identity group fallback)",
+						"session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(matchedGroup))
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}
@@ -239,6 +259,39 @@ func sessionOwnedByEscalation(session breakglassv1alpha1.BreakglassSession, esc 
 		}
 	}
 	return false
+}
+
+func approverGroupsFromRequestContext(c *gin.Context) []string {
+	raw, ok := c.Get("groups")
+	if !ok {
+		return nil
+	}
+	groups, ok := raw.([]string)
+	if !ok {
+		return nil
+	}
+	return slices.Clone(groups)
+}
+
+func firstMatchingApproverGroup(userGroups, approverGroups []string) (string, bool) {
+	for _, g := range approverGroups {
+		if slices.Contains(userGroups, g) {
+			return g, true
+		}
+	}
+	return "", false
+}
+
+func shouldUseRequestContextApproverGroups(targetClusterGroups, requestContextGroups []string) bool {
+	if len(requestContextGroups) == 0 {
+		return false
+	}
+	for _, group := range targetClusterGroups {
+		if group != "" && !strings.HasPrefix(group, "system:") {
+			return false
+		}
+	}
+	return true
 }
 
 // isSessionApprover returns true if the current user is authorized to approve/reject the session.

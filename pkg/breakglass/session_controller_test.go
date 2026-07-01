@@ -2296,6 +2296,437 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 	}
 }
 
+func TestApprovalAuthorizationCachesApproverGroupsPerCluster(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(
+		&breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-a-escalation", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}, Groups: []string{"system:authenticated"}},
+				EscalatedGroup: "breakglass-admin",
+				Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"cluster-a-approvers"}},
+			},
+		},
+		&breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster-b-escalation", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster-b"}, Groups: []string{"system:authenticated"}},
+				EscalatedGroup: "breakglass-admin",
+				Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"cluster-b-approvers"}},
+			},
+		},
+	)
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	var lookedUpClusters []string
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		lookedUpClusters = append(lookedUpClusters, cug.Clustername)
+		switch cug.Clustername {
+		case "cluster-a":
+			return []string{"cluster-a-approvers"}, nil
+		case "cluster-b":
+			return []string{"cluster-b-approvers"}, nil
+		default:
+			return nil, fmt.Errorf("unexpected cluster %q", cug.Clustername)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+
+	clusterASession := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cluster-a",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+	clusterBSession := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-b", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cluster-b",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	require.True(t, ctrl.checkApprovalAuthorization(c, clusterASession).Allowed)
+	require.True(t, ctrl.checkApprovalAuthorization(c, clusterBSession).Allowed)
+	require.True(t, ctrl.checkApprovalAuthorization(c, clusterASession).Allowed)
+	assert.Equal(t, []string{"cluster-a", "cluster-b"}, lookedUpClusters)
+}
+
+func TestApprovalAuthorizationIgnoresInvalidApproverGroupCacheEntry(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
+		},
+	})
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	lookupCount := 0
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		lookupCount++
+		assert.Equal(t, "target-cluster", cug.Clustername)
+		return []string{"target-approvers"}, nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+	c.Set(`approverGroups_"target-cluster"_"approver@example.com"`, "not-a-group-slice")
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "target-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	require.True(t, ctrl.checkApprovalAuthorization(c, session).Allowed)
+	assert.Equal(t, 1, lookupCount)
+}
+
+func TestApprovalAuthorizationPrefersTargetClusterGroupsOverRequestGroups(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
+		},
+	})
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		assert.Equal(t, "target-cluster", cug.Clustername)
+		return []string{"target-approvers"}, nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+	c.Set("groups", []string{"unrelated-request-group"})
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "target-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	require.True(t, ctrl.checkApprovalAuthorization(c, session).Allowed)
+}
+
+func TestApprovalAuthorizationUsesResolvedApproverGroupMembers(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"target-approvers": {"approver@example.com"},
+			},
+		},
+	})
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		assert.Equal(t, "target-cluster", cug.Clustername)
+		return nil, nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+	c.Set("groups", []string{"unrelated-request-group"})
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "target-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	require.True(t, ctrl.checkApprovalAuthorization(c, session).Allowed)
+}
+
+func TestApprovalAuthorizationFallsBackToTargetGroupsWhenResolvedApproverMembersMissing(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:                              breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup:                       "breakglass-admin",
+			Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
+			AllowedIdentityProvidersForRequests:  []string{"request-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+	})
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		assert.Equal(t, "target-cluster", cug.Clustername)
+		return []string{"target-approvers"}, nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+	c.Set("groups", []string{"unrelated-request-group"})
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "target-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	require.True(t, ctrl.checkApprovalAuthorization(c, session).Allowed)
+}
+
+func TestApprovalAuthorizationDoesNotFallbackWhenResolvedApproverGroupIsEmpty(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"target-approvers": {},
+			},
+		},
+	})
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		assert.Equal(t, "target-cluster", cug.Clustername)
+		return []string{"target-approvers"}, nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+	c.Set("groups", []string{"unrelated-request-group"})
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "target-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	result := ctrl.checkApprovalAuthorization(c, session)
+	require.False(t, result.Allowed)
+	assert.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+}
+
+func TestApprovalAuthorizationUsesRequestGroupsWhenTargetLookupOnlyHasSystemGroups(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
+		},
+	})
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		assert.Equal(t, "target-cluster", cug.Clustername)
+		return []string{"system:authenticated"}, nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+	c.Set("groups", []string{"target-approvers"})
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "target-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	require.True(t, ctrl.checkApprovalAuthorization(c, session).Allowed)
+}
+
+func TestApprovalAuthorizationDoesNotUseRequestGroupsWhenTargetLookupSucceeds(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"target-cluster"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "breakglass-admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
+		},
+	})
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "approver@example.com")
+			c.Set("username", "approver@example.com")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		assert.Equal(t, "target-cluster", cug.Clustername)
+		return []string{"other-target-group"}, nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/breakglassSessions/session/approve", nil)
+	require.NoError(t, err)
+	c.Request = req
+	c.Set("email", "approver@example.com")
+	c.Set("username", "approver@example.com")
+	c.Set("groups", []string{"target-approvers"})
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "target-cluster",
+			User:         "requester@example.com",
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	result := ctrl.checkApprovalAuthorization(c, session)
+	require.False(t, result.Allowed)
+	assert.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+}
+
 // TestTerminalStateImmutability verifies that terminal states cannot be reverted or re-applied.
 // TestTerminalStateImmutability
 //
