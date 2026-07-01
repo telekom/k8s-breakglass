@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -47,6 +49,28 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
 	var baseAllowedApproverDomains []string
+	if wc.clusterConfigManager != nil && wc.clusterConfigManager.hasClient() {
+		if cc, cerr := wc.clusterConfigManager.GetClusterConfigByName(ctx, session.Spec.Cluster); cerr == nil && cc != nil {
+			baseBlockSelfApproval = cc.Spec.BlockSelfApproval
+			baseAllowedApproverDomains = cc.Spec.AllowedApproverDomains
+		} else if cerr != nil && errors.Is(cerr, errClusterConfigNameNotUnique) {
+			reqLog.Warnw("Unable to resolve unique ClusterConfig for approval policy", "cluster", session.Spec.Cluster, "error", cerr)
+			return ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialClusterApprovalPolicyAmbiguous,
+				Message: "Cluster approval policy is ambiguous",
+			}
+		} else if cerr != nil && !apierrors.IsNotFound(cerr) {
+			reqLog.Warnw("Unable to look up ClusterConfig for approval policy", "cluster", session.Spec.Cluster, "error", cerr)
+			return ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialClusterApprovalPolicyLookupFailed,
+				Message: "Cluster approval policy could not be resolved",
+			}
+		} else if cerr != nil {
+			reqLog.Debugw("No ClusterConfig found for approval policy, continuing with defaults", "cluster", session.Spec.Cluster, "error", cerr)
+		}
+	}
 
 	// Gather approver groups with caching
 	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, email)
@@ -108,14 +132,6 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		// Determine effective settings for this escalation
 		effectiveBlockSelf := baseBlockSelfApproval
 		effectiveAllowedDomains := baseAllowedApproverDomains
-		if wc.clusterConfigManager != nil {
-			if cc, cerr := wc.clusterConfigManager.GetClusterConfigInNamespace(c.Request.Context(), esc.Namespace, session.Spec.Cluster); cerr == nil && cc != nil {
-				effectiveBlockSelf = cc.Spec.BlockSelfApproval
-				effectiveAllowedDomains = cc.Spec.AllowedApproverDomains
-			} else if cerr != nil {
-				reqLog.Debugw("No ClusterConfig found in escalation namespace, continuing with defaults", "cluster", session.Spec.Cluster, "namespace", esc.Namespace, "error", cerr)
-			}
-		}
 		if esc.Spec.BlockSelfApproval != nil {
 			effectiveBlockSelf = *esc.Spec.BlockSelfApproval
 		}

@@ -69,6 +69,10 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 				apiresponses.RespondForbidden(c, authResult.Message)
 			case ApprovalDenialNoMatchingEscalation:
 				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialClusterApprovalPolicyAmbiguous:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialClusterApprovalPolicyLookupFailed:
+				apiresponses.RespondForbidden(c, authResult.Message)
 			default:
 				// Fallback for unknown reasons
 				apiresponses.RespondForbidden(c, "Access denied")
