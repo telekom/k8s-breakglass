@@ -672,8 +672,9 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	// Ownership and state filters are request-local, so validate them before
 	// listing sessions from Kubernetes.
 	includeMine := ParseBoolQuery(c.Query("mine"), false)
-	includeApprover := ParseBoolQuery(c.Query("approver"), true)
 	includeApprovedByMe := ParseBoolQuery(c.Query("approvedByMe"), false)
+	includeApproverDefault := !includeMine && !includeApprovedByMe
+	includeApprover := ParseBoolQuery(c.Query("approver"), includeApproverDefault)
 	activeOnly := ParseBoolQuery(c.Query("activeOnly"), false)
 	stateFilters := normalizeStateFilters(c)
 	if invalidFilters := validateStateFilterTokens(stateFilters); len(invalidFilters) > 0 {
