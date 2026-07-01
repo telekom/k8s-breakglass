@@ -247,7 +247,7 @@ func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Cont
 	recipients := []string{requesterEmail}
 
 	params := mail.DebugSessionFailedMailParams{
-		RequesterName:  session.Spec.RequestedBy,
+		RequesterName:  debugSessionRequesterDisplayName(session),
 		RequesterEmail: requesterEmail,
 		SessionID:      session.Name,
 		Cluster:        session.Spec.Cluster,
@@ -271,6 +271,13 @@ func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Cont
 	} else {
 		c.log.Infow("Debug session failed email queued", "session", session.Name, "requester", requesterEmail)
 	}
+}
+
+func debugSessionRequesterDisplayName(session *breakglassv1alpha1.DebugSession) string {
+	if session.Spec.RequestedByDisplayName != "" {
+		return session.Spec.RequestedByDisplayName
+	}
+	return session.Spec.RequestedBy
 }
 
 // sendDebugSessionCreatedEmail sends email confirmation to requester when a debug session is created

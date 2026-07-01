@@ -1627,6 +1627,10 @@ func TestHandleApproveDebugSession_PendingApprovalWithRecordedDecisionConflicts(
 	runDebugApprovalDecisionConflictTest(t, "approve")
 }
 
+func TestHandleApproveDebugSession_UnauthorizedRecordedDecisionForbidden(t *testing.T) {
+	runDebugApprovalDecisionUnauthorizedTest(t, "approve")
+}
+
 func TestHandleApproveDebugSession_NotAuthorized(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
@@ -2132,6 +2136,10 @@ func TestHandleRejectDebugSession_PendingApprovalWithRecordedDecisionConflicts(t
 	runDebugApprovalDecisionConflictTest(t, "reject")
 }
 
+func TestHandleRejectDebugSession_UnauthorizedRecordedDecisionForbidden(t *testing.T) {
+	runDebugApprovalDecisionUnauthorizedTest(t, "reject")
+}
+
 func runDebugApprovalDecisionConflictTest(t *testing.T, action string) {
 	t.Helper()
 
@@ -2204,6 +2212,57 @@ func runDebugApprovalDecisionConflictTest(t *testing.T, action string) {
 			assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, updated.Status.State)
 		})
 	}
+}
+
+func runDebugApprovalDecisionUnauthorizedTest(t *testing.T, action string) {
+	t.Helper()
+
+	now := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pending-session-decided",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session-decided",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			Approval: &breakglassv1alpha1.DebugSessionApproval{
+				Required:   true,
+				ApprovedBy: "first-approver@example.com",
+				ApprovedAt: &now,
+			},
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"admin@example.com"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "unauthorized@example.com", "unauthorized@example.com", []string{})
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/"+session.Name+"/"+action+"?namespace=default", nil)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.NotContains(t, rr.Body.String(), "already been decided")
 }
 
 func TestHandleRejectDebugSession_NotAuthorized(t *testing.T) {

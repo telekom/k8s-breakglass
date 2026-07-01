@@ -423,11 +423,6 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
-	if debugSessionApprovalDecisionRecorded(session) {
-		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
-		return
-	}
-
 	// Check if user is authorized to approve (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
 	currentUserEmail := ""
@@ -436,6 +431,10 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
+		return
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 		return
 	}
 
@@ -529,11 +528,6 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
-	if debugSessionApprovalDecisionRecorded(session) {
-		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
-		return
-	}
-
 	// Check if user is authorized to reject (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
 	currentUserEmail := ""
@@ -542,6 +536,10 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	}
 	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
+		return
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 		return
 	}
 
@@ -632,10 +630,14 @@ func debugSessionApprovalDecisionConflict(session *breakglassv1alpha1.DebugSessi
 
 func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context.Context, session *breakglassv1alpha1.DebugSession, actor, reason string) error {
 	latest := &breakglassv1alpha1.DebugSession{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(session), latest); err != nil {
+	if err := c.reader().Get(ctx, ctrlclient.ObjectKeyFromObject(session), latest); err != nil {
 		return fmt.Errorf("load latest debug session before approval timeout: %w", err)
 	}
 
+	if debugSessionApprovalTimeoutAlreadyRecorded(latest) {
+		session.Status = latest.Status
+		return nil
+	}
 	if debugSessionApprovalDecisionRecorded(latest) {
 		return debugSessionApprovalDecisionConflict(latest)
 	}
@@ -648,7 +650,7 @@ func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context
 	latest.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 	latest.Status.Message = reason
 
-	if err := c.client.Status().Update(ctx, latest); err != nil {
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, latest); err != nil {
 		if apierrors.IsConflict(err) {
 			return err
 		}
@@ -662,6 +664,11 @@ func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context
 	}
 	metrics.DebugSessionsFailed.WithLabelValues(latest.Spec.Cluster, latest.Spec.TemplateRef).Inc()
 	return nil
+}
+
+func debugSessionApprovalTimeoutAlreadyRecorded(session *breakglassv1alpha1.DebugSession) bool {
+	return session.Status.State == breakglassv1alpha1.DebugSessionStateFailed &&
+		strings.Contains(strings.ToLower(session.Status.Message), "approval timed out")
 }
 
 // handleLeaveDebugSession allows a participant to leave a session
