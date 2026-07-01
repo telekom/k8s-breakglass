@@ -18,6 +18,7 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -32,6 +33,15 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type scheduledSessionStateChangedError struct {
+	name  string
+	state breakglassv1alpha1.BreakglassSessionState
+}
+
+func (e *scheduledSessionStateChangedError) Error() string {
+	return fmt.Sprintf("session state changed to %s", e.state)
+}
 
 // ScheduledSessionActivator handles activation of scheduled sessions.
 // When a session's ScheduledStartTime is reached, it transitions from WaitingForScheduledTime to Approved
@@ -181,16 +191,13 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 	session breakglassv1alpha1.BreakglassSession,
 ) error {
 	key := client.ObjectKeyFromObject(&session)
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := breakglassv1alpha1.BreakglassSession{}
 		if err := ssa.sessionManager.Reader().Get(ctx, key, &current); err != nil {
 			return err
 		}
 		if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
-			return apierrors.NewConflict(schema.GroupResource{
-				Group:    breakglassv1alpha1.GroupVersion.Group,
-				Resource: "breakglasssessions",
-			}, current.Name, fmt.Errorf("session state changed to %s", current.Status.State))
+			return &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
 		}
 
 		base := current.DeepCopy()
@@ -199,6 +206,17 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 		patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
 		return ssa.sessionManager.Client.Status().Patch(ctx, &current, patch)
 	})
+	if err == nil {
+		return nil
+	}
+	var stateChanged *scheduledSessionStateChangedError
+	if errors.As(err, &stateChanged) {
+		return apierrors.NewConflict(schema.GroupResource{
+			Group:    breakglassv1alpha1.GroupVersion.Group,
+			Resource: "breakglasssessions",
+		}, stateChanged.name, stateChanged)
+	}
+	return err
 }
 
 func (ssa *ScheduledSessionActivator) expireScheduledSession(ctx context.Context, session breakglassv1alpha1.BreakglassSession, now time.Time, reasonEnded, conditionReason, message string) {
