@@ -494,6 +494,9 @@ func (r *DebugSessionClusterBindingReconciler) bindingsForTemplate(ctx context.C
 				"error", err)
 			continue
 		}
+		if selector.Empty() {
+			continue
+		}
 		if selector.Matches(templateLabels) {
 			addClusterBindingRequest(requests, binding)
 		}

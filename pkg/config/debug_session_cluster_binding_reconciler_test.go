@@ -696,10 +696,16 @@ func TestDebugSessionClusterBindingReconciler_BindingsForTemplate(t *testing.T) 
 			},
 		},
 	}
+	emptySelectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-selector-binding", Namespace: "team-d"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateSelector: &metav1.LabelSelector{},
+		},
+	}
 
 	r.client = fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(template, exactBinding, selectorBinding, otherBinding).
+		WithObjects(template, exactBinding, selectorBinding, otherBinding, emptySelectorBinding).
 		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingTemplateRefIndex, indexClusterBindingTemplateRef).
 		Build()
 
