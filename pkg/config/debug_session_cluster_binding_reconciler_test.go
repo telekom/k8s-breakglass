@@ -746,7 +746,8 @@ func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testin
 	r, scheme := newTestClusterBindingReconciler()
 	cluster := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "cluster-a",
+			Name:      "cluster-a",
+			Namespace: "tenant-a",
 			Labels: map[string]string{
 				"env": "prod",
 			},

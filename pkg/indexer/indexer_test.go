@@ -351,6 +351,36 @@ func TestIndexerFunctions_DebugSessionClusterBinding(t *testing.T) {
 		result = fn(empty)
 		assert.Nil(t, result)
 	})
+
+	t.Run("spec.templateSelector.present index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.templateSelector.present"]
+		require.NotNil(t, fn)
+
+		withSelector := binding.DeepCopy()
+		withSelector.Spec.TemplateSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "debug"}}
+		result := fn(withSelector)
+		assert.Equal(t, []string{"true"}, result)
+
+		emptySelector := binding.DeepCopy()
+		emptySelector.Spec.TemplateSelector = &metav1.LabelSelector{}
+		result = fn(emptySelector)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusterSelector.present index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.clusterSelector.present"]
+		require.NotNil(t, fn)
+
+		withSelector := binding.DeepCopy()
+		withSelector.Spec.ClusterSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}
+		result := fn(withSelector)
+		assert.Equal(t, []string{"true"}, result)
+
+		emptySelector := binding.DeepCopy()
+		emptySelector.Spec.ClusterSelector = &metav1.LabelSelector{}
+		result = fn(emptySelector)
+		assert.Nil(t, result)
+	})
 }
 
 func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {

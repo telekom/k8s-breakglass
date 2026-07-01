@@ -44,9 +44,9 @@ import (
 
 const (
 	debugBindingTemplateRefIndex      = "spec.templateRef.name"
-	debugBindingTemplateSelectorIndex = "spec.templateSelector"
+	debugBindingTemplateSelectorIndex = "spec.templateSelector.present"
 	debugBindingClustersIndex         = "spec.clusters"
-	debugBindingClusterSelectorIndex  = "spec.clusterSelector"
+	debugBindingClusterSelectorIndex  = "spec.clusterSelector.present"
 	debugBindingSelectorPresenceValue = "true"
 )
 

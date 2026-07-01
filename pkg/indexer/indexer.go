@@ -210,8 +210,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
-	if err := register("DebugSessionClusterBinding", "spec.templateSelector", func() error {
-		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.templateSelector", func(rawObj client.Object) []string {
+	if err := register("DebugSessionClusterBinding", "spec.templateSelector.present", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.templateSelector.present", func(rawObj client.Object) []string {
 			binding, ok := rawObj.(*breakglassv1alpha1.DebugSessionClusterBinding)
 			if !ok || binding == nil || binding.Spec.TemplateSelector == nil {
 				return nil
@@ -244,8 +244,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
-	if err := register("DebugSessionClusterBinding", "spec.clusterSelector", func() error {
-		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.clusterSelector", func(rawObj client.Object) []string {
+	if err := register("DebugSessionClusterBinding", "spec.clusterSelector.present", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.clusterSelector.present", func(rawObj client.Object) []string {
 			binding, ok := rawObj.(*breakglassv1alpha1.DebugSessionClusterBinding)
 			if !ok || binding == nil || binding.Spec.ClusterSelector == nil {
 				return nil
