@@ -200,7 +200,7 @@ async function captureDebugTemplateErrorState(
   await page.emulateMedia({ colorScheme: theme === "dark" || theme === "high-contrast-dark" ? "dark" : "light" });
   await page.setViewportSize(viewport);
   await performMockLogin(page);
-  await navigateTo(page, "/debug-sessions/create");
+  await navigateWithRouter(page, "/debug-sessions/create");
   await setTheme(page, theme);
   await waitForPageLoad(page);
   await hideDynamicContent(page);
@@ -240,7 +240,7 @@ async function captureDebugClusterErrorState(
   await page.emulateMedia({ colorScheme: theme === "dark" || theme === "high-contrast-dark" ? "dark" : "light" });
   await page.setViewportSize(viewport);
   await performMockLogin(page);
-  await navigateTo(page, "/debug-sessions/create");
+  await navigateWithRouter(page, "/debug-sessions/create");
   await setTheme(page, theme);
   await waitForPageLoad(page);
 
