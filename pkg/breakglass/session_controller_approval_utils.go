@@ -114,9 +114,11 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	}
 
 	// Track the most specific denial reason encountered during evaluation.
-	// Priority: SelfApprovalBlocked > DomainNotAllowed > IdentityProviderNotAllowed.
-	// NotAnApprover replaces IdentityProviderNotAllowed when no otherwise matching escalation
-	// has an allowed approver identity provider, then falls back to NoMatchingEscalation.
+	// Priority: SelfApprovalBlocked > DomainNotAllowed > IdentityProviderNotAllowed
+	// until a matching escalation allows the approver identity provider. If that
+	// escalation still does not list the caller as an approver, NotAnApprover
+	// replaces IdentityProviderNotAllowed. NoMatchingEscalation is returned only
+	// when no escalation matches the session's granted group.
 	var mostSpecificDenial ApprovalCheckResult
 	foundMatchingEscalation := false
 	foundMatchingEscalationWithAllowedApproverIDP := false
