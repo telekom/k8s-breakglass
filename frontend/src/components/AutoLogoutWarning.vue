@@ -15,17 +15,17 @@
         @scale-close="dismiss"
       >
         <p class="warning-copy">
-          Your session will expire shortly. Click stay logged in to silently renew, or log out if you are finished.
+          Your session will expire shortly. Re-authenticate to continue, or log out if you are finished.
         </p>
         <div class="warning-actions">
           <scale-button
             variant="primary"
             size="small"
             :loading="renewing"
-            data-testid="stay-logged-in-button"
-            @click="stayLoggedIn"
+            data-testid="reauthenticate-button"
+            @click="reauthenticate"
           >
-            Stay logged in
+            Re-authenticate
           </scale-button>
           <scale-button variant="secondary" size="small" data-testid="dismiss-button" @click="dismiss"
             >Dismiss</scale-button
@@ -42,6 +42,8 @@ import { inject, onMounted, onUnmounted, ref } from "vue";
 import { AuthKey } from "@/keys";
 import { warn } from "@/services/logger";
 
+const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
+
 export default {
   name: "AutoLogoutWarning",
   setup() {
@@ -49,6 +51,9 @@ export default {
     const renewing = ref(false);
     const dismissed = ref(false);
     let timer: number | null = null;
+    const warnedStorageAccess = new Set<"sessionStorage" | "localStorage">();
+    const warnedStorageItemReads = new Set<string>();
+    const warnedOIDCParseValues = new Set<string>();
     const requireAuth = () => {
       const injectedAuth = inject(AuthKey);
       if (!injectedAuth) {
@@ -63,15 +68,29 @@ export default {
       auth.logout();
     }
 
-    async function stayLoggedIn() {
-      if (!auth || renewing.value) return;
+    function getCurrentIdentityProviderName(): string | undefined {
+      const sessionStorageValue = getStorageItem(
+        getBrowserStorage("sessionStorage"),
+        "oidc_idp_name",
+        "sessionStorage",
+      );
+      const localStorageValue = shouldReadLocalOIDCStorage()
+        ? getStorageItem(getBrowserStorage("localStorage"), "breakglass_current_idp_name", "localStorage")
+        : undefined;
+      return auth.getIdentityProviderName() ?? sessionStorageValue ?? localStorageValue ?? undefined;
+    }
+
+    async function reauthenticate() {
+      if (renewing.value) return;
       renewing.value = true;
       try {
-        await auth.userManager.signinSilent();
+        const path = window.location.pathname + window.location.search + window.location.hash;
+        const idpName = getCurrentIdentityProviderName();
+        await auth.login(idpName ? { path, idpName } : { path });
         show.value = false;
         dismissed.value = false;
       } catch (err) {
-        warn("AutoLogoutWarning", "Silent renew failed", err);
+        warn("AutoLogoutWarning", "Re-authentication failed", err);
       } finally {
         renewing.value = false;
       }
@@ -82,38 +101,125 @@ export default {
       show.value = false;
     }
 
-    function checkExpiring() {
-      const userStr = localStorage.getItem(
-        "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id,
-      );
-      if (userStr) {
-        try {
-          const parsed = JSON.parse(userStr);
-          if (parsed && parsed.expires_at) {
-            const expiresIn = parsed.expires_at * 1000 - Date.now();
-            if (expiresIn < WARNING_THRESHOLD_MS && expiresIn > 0 && !dismissed.value) {
-              show.value = true;
-            } else {
-              show.value = false;
-              if (expiresIn > WARNING_THRESHOLD_MS) {
-                dismissed.value = false;
-              }
-            }
-          }
-        } catch (e) {
-          warn("AutoLogoutWarning", "Failed to parse OIDC user data from localStorage", e);
+    function getBrowserStorage(name: "sessionStorage" | "localStorage"): Storage | undefined {
+      if (typeof window === "undefined") {
+        return undefined;
+      }
+      try {
+        return window[name];
+      } catch (err) {
+        if (!warnedStorageAccess.has(name)) {
+          warnedStorageAccess.add(name);
+          warn("AutoLogoutWarning", `Unable to access browser ${name}`, err);
         }
+        return undefined;
       }
     }
 
+    function getStorageItem(storage: Storage | undefined, key: string, storageName: string): string | null {
+      if (!storage) {
+        return null;
+      }
+      try {
+        return storage.getItem(key);
+      } catch (err) {
+        const warningKey = `${storageName}:${key}`;
+        if (!warnedStorageItemReads.has(warningKey)) {
+          warnedStorageItemReads.add(warningKey);
+          warn("AutoLogoutWarning", "Unable to read browser storage item", err);
+        }
+        return null;
+      }
+    }
+
+    function shouldReadLocalOIDCStorage(): boolean {
+      if (import.meta.env.PROD) {
+        return false;
+      }
+      return getStorageItem(getBrowserStorage("localStorage"), TOKEN_PERSISTENCE_KEY, "localStorage") === "persistent";
+    }
+
+    function getAvailableOIDCStorages(): Array<{ name: "sessionStorage" | "localStorage"; storage: Storage }> {
+      const storages: Array<{ name: "sessionStorage" | "localStorage"; storage: Storage }> = [];
+      const sessionStorage = getBrowserStorage("sessionStorage");
+      if (sessionStorage) storages.push({ name: "sessionStorage", storage: sessionStorage });
+      if (shouldReadLocalOIDCStorage()) {
+        const localStorage = getBrowserStorage("localStorage");
+        if (localStorage) storages.push({ name: "localStorage", storage: localStorage });
+      }
+      return storages;
+    }
+
+    function fingerprintStoredValue(value: string): string {
+      let hash = 0;
+      for (let index = 0; index < value.length; index += 1) {
+        hash = (hash * 31 + value.charCodeAt(index)) | 0;
+      }
+      return `${value.length}:${hash}`;
+    }
+
+    function getStoredOIDCUserValues(): string[] {
+      const values: string[] = [];
+      const seenValues = new Set<string>();
+      const activeKeys = auth.getActiveOIDCUserStorageKeys();
+
+      for (const { name, storage } of getAvailableOIDCStorages()) {
+        for (const key of activeKeys) {
+          const value = getStorageItem(storage, key, name);
+          if (value && !seenValues.has(value)) {
+            seenValues.add(value);
+            values.push(value);
+          }
+        }
+      }
+
+      return values;
+    }
+
+    function checkExpiring() {
+      let nearestExpiryMs: number | null = null;
+      for (const userStr of getStoredOIDCUserValues()) {
+        try {
+          const parsed = JSON.parse(userStr) as { expires_at?: unknown } | null;
+          if (parsed && typeof parsed.expires_at === "number") {
+            const expiresIn = parsed.expires_at * 1000 - Date.now();
+            if (expiresIn > 0 && (nearestExpiryMs === null || expiresIn < nearestExpiryMs)) {
+              nearestExpiryMs = expiresIn;
+            }
+          }
+        } catch (e) {
+          const warningKey = fingerprintStoredValue(userStr);
+          if (!warnedOIDCParseValues.has(warningKey)) {
+            warnedOIDCParseValues.add(warningKey);
+            warn("AutoLogoutWarning", "Failed to parse OIDC user data from browser storage", e);
+          }
+        }
+      }
+
+      if (nearestExpiryMs === null) {
+        show.value = false;
+        dismissed.value = false;
+        return;
+      }
+
+      if (nearestExpiryMs < WARNING_THRESHOLD_MS) {
+        show.value = !dismissed.value;
+        return;
+      }
+
+      show.value = false;
+      dismissed.value = false;
+    }
+
     onMounted(() => {
+      checkExpiring();
       timer = window.setInterval(checkExpiring, 5000);
     });
     onUnmounted(() => {
       if (timer) clearInterval(timer);
     });
 
-    return { show, logout, stayLoggedIn, dismiss, renewing };
+    return { show, logout, reauthenticate, dismiss, renewing };
   },
 };
 </script>

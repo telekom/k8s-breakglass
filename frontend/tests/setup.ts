@@ -55,7 +55,11 @@ globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
 const sessionStorageMock = (() => {
   let store: Record<string, string> = {};
   return {
-    getItem: (key: string) => store[key] || null,
+    get length() {
+      return Object.keys(store).length;
+    },
+    getItem: (key: string) => (Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null),
+    key: (index: number) => Object.keys(store)[index] ?? null,
     setItem: (key: string, value: string) => {
       store[key] = value;
     },
@@ -69,6 +73,7 @@ const sessionStorageMock = (() => {
 })();
 
 Object.defineProperty(window, "sessionStorage", {
+  configurable: true,
   value: sessionStorageMock,
 });
 
@@ -76,7 +81,11 @@ Object.defineProperty(window, "sessionStorage", {
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
   return {
-    getItem: (key: string) => store[key] || null,
+    get length() {
+      return Object.keys(store).length;
+    },
+    getItem: (key: string) => (Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null),
+    key: (index: number) => Object.keys(store)[index] ?? null,
     setItem: (key: string, value: string) => {
       store[key] = value;
     },
@@ -90,6 +99,7 @@ const localStorageMock = (() => {
 })();
 
 Object.defineProperty(window, "localStorage", {
+  configurable: true,
   value: localStorageMock,
 });
 
