@@ -589,7 +589,8 @@ Requester/owner matching uses the authenticated email, `preferred_username`, or 
 
 The UI matches owner actions against the authenticated user's OIDC identity in
 this order: `profile.email`, `profile.preferred_username`, top-level `email`,
-then top-level `preferred_username`.
+then top-level `preferred_username`; subject-claim owners remain manageable
+through the backend requester/owner matching above.
 
 Terminal sessions (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, `ApprovalTimeout`)
 return `400 Bad Request` and are not modified.
