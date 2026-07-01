@@ -397,7 +397,7 @@ func TestSendDebugSessionFailedEmail_HappyPath(t *testing.T) {
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1)
 	assert.Equal(t, "failed-debug-session", messages[0].SessionID)
-	assert.Equal(t, []string{"developer"}, messages[0].Recipients)
+	assert.Equal(t, []string{"developer@example.com"}, messages[0].Recipients)
 	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
 	assert.Contains(t, messages[0].Body, "Approval timed out after 24h")
 }
@@ -437,7 +437,7 @@ func TestSendDebugSessionFailedEmail_IgnoresNotificationRecipients(t *testing.T)
 
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1)
-	assert.Equal(t, []string{"developer"}, messages[0].Recipients)
+	assert.Equal(t, []string{"developer@example.com"}, messages[0].Recipients)
 }
 
 func TestSendDebugSessionFailedEmail_SendsWhenNotificationApprovalDisabled(t *testing.T) {

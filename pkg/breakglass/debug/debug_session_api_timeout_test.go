@@ -20,11 +20,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap/zaptest"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -35,13 +38,17 @@ func TestFailTimedOutDebugSessionApproval_StatusApplyError(t *testing.T) {
 	expectedErr := errors.New("status apply failed")
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "timed-out-debug-session",
-			Namespace: "default",
+			Name:              "timed-out-debug-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			TemplateRef: "standard-debug",
 			RequestedBy: "developer@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
 		},
 	}
 
@@ -50,7 +57,7 @@ func TestFailTimedOutDebugSessionApproval_StatusApplyError(t *testing.T) {
 		WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+			SubResourceUpdate: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ ...client.SubResourceUpdateOption) error {
 				if subResource == "status" {
 					return expectedErr
 				}
@@ -72,11 +79,60 @@ func TestFailTimedOutDebugSessionApproval_StatusApplyError(t *testing.T) {
 	assert.Empty(t, mockAudit.GetEvents())
 }
 
+func TestFailTimedOutDebugSessionApproval_LatestDecisionReturnsConflict(t *testing.T) {
+	stale := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "timed-out-debug-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "production",
+			TemplateRef: "standard-debug",
+			RequestedBy: "developer@example.com",
+		},
+	}
+
+	now := metav1.Now()
+	latest := stale.DeepCopy()
+	latest.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+	latest.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
+		Required:   true,
+		ApprovedBy: "first-approver@example.com",
+		ApprovedAt: &now,
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(latest).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	mockMail := NewMockMailEnqueuer(true)
+	mockAudit := NewMockAuditEmitter(true)
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil).
+		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
+		WithAuditService(mockAudit)
+
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), stale, "approver@example.com", "Approval timed out after 24h")
+
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err))
+	assert.Empty(t, mockMail.GetMessages())
+	assert.Empty(t, mockAudit.GetEvents())
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: stale.Name}, &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, stored.Status.State)
+	require.NotNil(t, stored.Status.Approval)
+	assert.NotNil(t, stored.Status.Approval.ApprovedAt)
+}
+
 func TestFailTimedOutDebugSessionApproval_RespectsTemplateAuditDisabled(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "timed-out-debug-session",
-			Namespace: "default",
+			Name:              "timed-out-debug-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
@@ -84,6 +140,7 @@ func TestFailTimedOutDebugSessionApproval_RespectsTemplateAuditDisabled(t *testi
 			RequestedBy: "developer@example.com",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
 			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
 				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{
 					Enabled: false,

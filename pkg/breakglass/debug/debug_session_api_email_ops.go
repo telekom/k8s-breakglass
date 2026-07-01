@@ -240,11 +240,15 @@ func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Cont
 		return
 	}
 
-	recipients := []string{session.Spec.RequestedBy}
+	requesterEmail := session.Spec.RequestedByEmail
+	if requesterEmail == "" {
+		requesterEmail = session.Spec.RequestedBy
+	}
+	recipients := []string{requesterEmail}
 
 	params := mail.DebugSessionFailedMailParams{
 		RequesterName:  session.Spec.RequestedBy,
-		RequesterEmail: session.Spec.RequestedBy,
+		RequesterEmail: requesterEmail,
 		SessionID:      session.Name,
 		Cluster:        session.Spec.Cluster,
 		TemplateName:   session.Spec.TemplateRef,
@@ -265,7 +269,7 @@ func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Cont
 	if err := c.mailService.Enqueue(session.Name, recipients, subject, body); err != nil {
 		c.log.Errorw("Failed to enqueue debug session failed email", "session", session.Name, "error", err)
 	} else {
-		c.log.Infow("Debug session failed email queued", "session", session.Name, "requester", session.Spec.RequestedBy)
+		c.log.Infow("Debug session failed email queued", "session", session.Name, "requester", requesterEmail)
 	}
 }
 
