@@ -542,7 +542,11 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				},
 			}
 		default:
-			log.Warnw("Unknown resource type, skipping cleanup", "kind", ref.Kind, "name", ref.Name)
+			log.Warnw("Unknown resource type, preserving cleanup retry",
+				"apiVersion", ref.APIVersion,
+				"kind", ref.Kind,
+				"name", ref.Name,
+				"namespace", ref.Namespace)
 			remainingDeployedResources = append(remainingDeployedResources, ref)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("unsupported deployed resource kind %q for %s/%s", ref.Kind, ref.Namespace, ref.Name))
 			continue
