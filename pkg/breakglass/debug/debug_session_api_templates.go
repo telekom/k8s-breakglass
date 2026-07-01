@@ -298,11 +298,13 @@ func filterExtraDeployVariablesForRequester(vars []breakglassv1alpha1.ExtraDeplo
 			filteredOptions := make([]breakglassv1alpha1.SelectOption, 0, len(filteredVariable.Options))
 			for _, option := range filteredVariable.Options {
 				if userHasAnyExactGroup(requester.groups, option.AllowedGroups) {
+					option.AllowedGroups = nil
 					filteredOptions = append(filteredOptions, option)
 				}
 			}
 			filteredVariable.Options = filteredOptions
 		}
+		filteredVariable.AllowedGroups = nil
 		filtered = append(filtered, filteredVariable)
 	}
 
@@ -526,14 +528,14 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 		return
 	}
 
-	// Find UI-visible bindings that apply to this template. Hidden bindings can
-	// still be used through explicit API bindingRef requests, but are not offered
-	// as selectable cluster options.
-	applicableBindings := c.findVisibleBindingsForTemplate(template, bindingList.Items)
+	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)
 	if !c.canReadTemplateWithBindings(template, applicableBindings, requester) {
 		apiresponses.RespondForbidden(ctx, "access denied to this template")
 		return
 	}
+	// Hidden bindings can still authorize template access and explicit API
+	// bindingRef requests, but are not offered as selectable cluster options.
+	visibleBindings := visibleDebugSessionBindings(applicableBindings)
 
 	var clusterConfigList breakglassv1alpha1.ClusterConfigList
 	if err := c.reader().List(apiCtx, &clusterConfigList); err != nil {
@@ -546,7 +548,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	clusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
 	// Build the response - resolve clusters from bindings and template's allowed.clusters
-	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap, requester)
+	clusterDetails := c.resolveTemplateClusters(template, visibleBindings, clusterMap, requester)
 
 	// Apply optional query filters
 	environment := ctx.Query("environment")
