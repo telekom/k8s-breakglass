@@ -4917,9 +4917,19 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 		require.NoError(t, json.NewDecoder(res.Body).Decode(&apiErr))
 		assert.Equal(t, "BAD_REQUEST", apiErr.Code)
 		assert.Equal(t, "invalid state filter", apiErr.Error)
-		assert.Contains(t, apiErr.Details, invalidToken)
-		assert.Equal(t, 1, strings.Count(apiErr.Details, invalidToken))
-		assert.Contains(t, apiErr.Details, "Supported values:")
+		invalidList, ok := strings.CutPrefix(apiErr.Details, "unsupported state filter value(s): ")
+		require.True(t, ok, "unexpected details format: %q", apiErr.Details)
+		invalidList, supportedValues, ok := strings.Cut(invalidList, ". Supported values:")
+		require.True(t, ok, "details should include supported values: %q", apiErr.Details)
+		assert.NotEmpty(t, supportedValues)
+		invalidTokens := strings.Split(invalidList, ", ")
+		matches := 0
+		for _, token := range invalidTokens {
+			if token == invalidToken {
+				matches++
+			}
+		}
+		assert.Equal(t, 1, matches)
 	}
 
 	assertInvalidState(t, "/breakglassSessions?state=not-a-state&mine=true", "notastate")
