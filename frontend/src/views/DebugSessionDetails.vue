@@ -174,7 +174,7 @@ function stopPolling() {
 }
 
 onMounted(() => {
-  fetchSession().then(() => startPolling());
+  void fetchSession();
 });
 
 watch(sessionName, async (nextName, previousName) => {
