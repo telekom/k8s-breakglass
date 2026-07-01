@@ -231,6 +231,14 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithAuxiliaryResourceStatuses(AuxiliaryResourceStatusFrom(&status.AuxiliaryResourceStatuses[i]))
 	}
 
+	// Set pod template resource statuses
+	if status.PodTemplateResourceStatuses != nil {
+		result.PodTemplateResourceStatuses = []ac.PodTemplateResourceStatusApplyConfiguration{}
+	}
+	for i := range status.PodTemplateResourceStatuses {
+		result.WithPodTemplateResourceStatuses(PodTemplateResourceStatusFrom(&status.PodTemplateResourceStatuses[i]))
+	}
+
 	// Set allowed pods
 	for i := range status.AllowedPods {
 		result.WithAllowedPods(AllowedPodRefFrom(&status.AllowedPods[i]))
@@ -277,13 +285,6 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	// Set resolved binding
 	if status.ResolvedBinding != nil {
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
-	}
-
-	for i := range status.AuxiliaryResourceStatuses {
-		result.WithAuxiliaryResourceStatuses(AuxiliaryResourceStatusFrom(&status.AuxiliaryResourceStatuses[i]))
-	}
-	for i := range status.PodTemplateResourceStatuses {
-		result.WithPodTemplateResourceStatuses(PodTemplateResourceStatusFrom(&status.PodTemplateResourceStatuses[i]))
 	}
 
 	return result
@@ -620,9 +621,7 @@ func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) 
 	if s.DeletedAt != nil {
 		result.WithDeletedAt(*s.DeletedAt)
 	}
-	if s.Error != "" {
-		result.WithError(s.Error)
-	}
+	result.WithError(s.Error)
 	for i := range s.AdditionalResources {
 		result.WithAdditionalResources(AdditionalResourceRefFrom(&s.AdditionalResources[i]))
 	}
@@ -648,10 +647,7 @@ func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.
 	if r.ReadinessStatus != "" {
 		result.WithReadinessStatus(r.ReadinessStatus)
 	}
-	if r.Error != "" {
-		result.WithError(r.Error)
-	}
-
+	result.WithError(r.Error)
 	return result
 }
 
@@ -691,9 +687,7 @@ func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStat
 	if s.DeletedAt != nil {
 		result.WithDeletedAt(*s.DeletedAt)
 	}
-	if s.Error != "" {
-		result.WithError(s.Error)
-	}
+	result.WithError(s.Error)
 	return result
 }
 

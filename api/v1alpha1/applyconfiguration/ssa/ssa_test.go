@@ -709,6 +709,51 @@ func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testin
 	assert.Equal(t, "cleanup pending", *podTemplateStatus.Error)
 }
 
+func TestDebugSessionStatusFromIncludesEmptyErrorFields(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{
+				Name:         "debug-rbac",
+				Kind:         "ServiceAccount",
+				APIVersion:   "v1",
+				ResourceName: "debug-sa",
+				AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+					{
+						Kind:         "Role",
+						APIVersion:   "rbac.authorization.k8s.io/v1",
+						ResourceName: "debug-role",
+					},
+				},
+			},
+		},
+		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{
+			{
+				Kind:         "ConfigMap",
+				APIVersion:   "v1",
+				ResourceName: "debug-config",
+			},
+		},
+	}
+
+	result := DebugSessionStatusFrom(status)
+	require.NotNil(t, result)
+
+	require.Len(t, result.AuxiliaryResourceStatuses, 1)
+	auxiliaryStatus := result.AuxiliaryResourceStatuses[0]
+	require.NotNil(t, auxiliaryStatus.Error)
+	assert.Empty(t, *auxiliaryStatus.Error)
+
+	require.Len(t, auxiliaryStatus.AdditionalResources, 1)
+	additionalResource := auxiliaryStatus.AdditionalResources[0]
+	require.NotNil(t, additionalResource.Error)
+	assert.Empty(t, *additionalResource.Error)
+
+	require.Len(t, result.PodTemplateResourceStatuses, 1)
+	podTemplateStatus := result.PodTemplateResourceStatuses[0]
+	require.NotNil(t, podTemplateStatus.Error)
+	assert.Empty(t, *podTemplateStatus.Error)
+}
+
 // TestApplyAuditConfigStatus tests SSA status updates for AuditConfig.
 func TestApplyAuditConfigStatus(t *testing.T) {
 	scheme := newTestScheme()
