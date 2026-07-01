@@ -344,10 +344,8 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -376,9 +374,9 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		return
 	}
 
-	// Verify user is a participant
-	if !c.isUserParticipant(session, currentUser.(string)) {
-		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
+	// Verify user can perform mutating debug operations
+	if !c.canUserOperateDebugResources(session, username) {
+		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
 
@@ -408,7 +406,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Inject the ephemeral container
-	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, currentUser.(string)); err != nil {
+	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, username); err != nil {
 		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
 			reqLog.Errorw("Failed to inject ephemeral container", "error", err)
 		} else {
@@ -423,7 +421,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		"pod", req.PodName,
 		"namespace", req.Namespace,
 		"container", req.ContainerName,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":   "ephemeral container injected successfully",
@@ -450,10 +448,8 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -482,9 +478,9 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		return
 	}
 
-	// Verify user is a participant
-	if !c.isUserParticipant(session, currentUser.(string)) {
-		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
+	// Verify user can perform mutating debug operations
+	if !c.canUserOperateDebugResources(session, username) {
+		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
 
@@ -500,7 +496,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Create the pod copy
-	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
+	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
 	if err != nil {
 		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
 			reqLog.Errorw("Failed to create pod copy", "error", err)
@@ -517,7 +513,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		"originalNamespace", req.Namespace,
 		"copyName", pod.Name,
 		"copyNamespace", pod.Namespace,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":           "pod copy created successfully",
@@ -545,10 +541,8 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -577,9 +571,9 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		return
 	}
 
-	// Verify user is a participant
-	if !c.isUserParticipant(session, currentUser.(string)) {
-		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
+	// Verify user can perform mutating debug operations
+	if !c.canUserOperateDebugResources(session, username) {
+		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
 
@@ -595,7 +589,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Create the node debug pod
-	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
+	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
 	if err != nil {
 		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
 			reqLog.Errorw("Failed to create node debug pod", "error", err)
@@ -611,7 +605,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		"node", req.NodeName,
 		"podName", pod.Name,
 		"namespace", pod.Namespace,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":   "node debug pod created successfully",
@@ -677,6 +671,28 @@ func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha
 	for _, p := range session.Status.Participants {
 		if p.User == user && p.LeftAt == nil {
 			return true
+		}
+	}
+
+	return false
+}
+
+// canUserOperateDebugResources checks if the user can run mutating kubectl-debug operations.
+func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, user string) bool {
+	if session.Spec.RequestedBy == user {
+		return true
+	}
+
+	for _, p := range session.Status.Participants {
+		if p.User != user || p.LeftAt != nil {
+			continue
+		}
+
+		switch p.Role {
+		case breakglassv1alpha1.ParticipantRoleOwner, breakglassv1alpha1.ParticipantRoleParticipant:
+			return true
+		default:
+			continue
 		}
 	}
 

@@ -345,12 +345,8 @@ type debugSessionReadIdentity struct {
 }
 
 func debugSessionRequestIdentity(ctx *gin.Context) (debugSessionReadIdentity, bool) {
-	usernameValue, exists := ctx.Get("username")
-	if !exists || usernameValue == nil {
-		return debugSessionReadIdentity{}, false
-	}
-	username, ok := usernameValue.(string)
-	if !ok || username == "" {
+	username, ok := debugSessionUsernameFromContext(ctx)
+	if !ok {
 		return debugSessionReadIdentity{}, false
 	}
 
@@ -364,6 +360,38 @@ func debugSessionRequestIdentity(ctx *gin.Context) (debugSessionReadIdentity, bo
 		identity.groups = debugSessionGroupsFromContext(groupsValue)
 	}
 	return identity, true
+}
+
+func debugSessionUsernameFromContext(ctx *gin.Context) (string, bool) {
+	usernameValue, exists := ctx.Get("username")
+	if !exists || usernameValue == nil {
+		return "", false
+	}
+	username, ok := usernameValue.(string)
+	username = strings.TrimSpace(username)
+	if !ok || username == "" {
+		return "", false
+	}
+	return username, true
+}
+
+func requireDebugSessionUsername(ctx *gin.Context) (string, bool) {
+	usernameValue, exists := ctx.Get("username")
+	if !exists || usernameValue == nil {
+		apiresponses.RespondUnauthorized(ctx)
+		return "", false
+	}
+	username, ok := usernameValue.(string)
+	if !ok {
+		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
+		return "", false
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		apiresponses.RespondUnauthorized(ctx)
+		return "", false
+	}
+	return username, true
 }
 
 func debugSessionGroupsFromContext(groupsValue interface{}) []string {
@@ -621,19 +649,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		req.Reason = breakglass.SanitizeReasonText(req.Reason)
 	}
 
-	// Get current user from context before authorization checks.
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
-		return
-	}
-	currentUserStr, ok := currentUser.(string)
+	currentUserStr, ok := requireDebugSessionUsername(ctx)
 	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
-		return
-	}
-	if strings.TrimSpace(currentUserStr) == "" {
-		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -1155,13 +1172,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	c.sendDebugSessionCreatedEmail(apiCtx, session, template, resolvedBinding)
 
 	// Emit audit event for session creation
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUser.(string), "Debug session created")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUserStr, "Debug session created")
 
 	reqLog.Infow("Debug session created",
 		"name", sessionName,
 		"cluster", req.Cluster,
 		"template", req.TemplateRef,
-		"user", currentUser)
+		"user", currentUserStr)
 
 	metrics.DebugSessionsCreated.WithLabelValues(req.Cluster, req.TemplateRef).Inc()
 

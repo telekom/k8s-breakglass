@@ -25,10 +25,8 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 	if rejectUnexpectedDebugActionBody(ctx) {
@@ -56,13 +54,6 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	}
 	if isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot join expired session")
-		return
-	}
-
-	// Check if user already joined
-	username, ok := currentUser.(string)
-	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
 		return
 	}
 
@@ -326,10 +317,8 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -349,7 +338,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 
 	// Check if user is allowed to terminate (owner or admin)
 	// For now, only the owner can terminate
-	if session.Spec.RequestedBy != currentUser.(string) {
+	if session.Spec.RequestedBy != username {
 		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
 		return
 	}
@@ -375,7 +364,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 
 	// Mark as terminated
 	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-	session.Status.Message = fmt.Sprintf("Terminated by %s", currentUser)
+	session.Status.Message = fmt.Sprintf("Terminated by %s", username)
 
 	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to terminate session", "session", name, "error", err)
@@ -384,9 +373,9 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	}
 
 	// Emit audit event for session termination
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser.(string), "Debug session terminated by user")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, username, "Debug session terminated by user")
 
-	reqLog.Infow("Debug session terminated", "session", name, "user", currentUser)
+	reqLog.Infow("Debug session terminated", "session", name, "user", username)
 	metrics.DebugSessionsTerminated.WithLabelValues(session.Spec.Cluster, "user_terminated").Inc()
 
 	// Return updated session - client expects the session object, not just a message
@@ -399,10 +388,8 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -441,7 +428,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	if email, exists := ctx.Get("email"); exists && email != nil {
 		currentUserEmail, _ = email.(string)
 	}
-	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
+	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
 		return
 	}
@@ -460,7 +447,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	if session.Status.Approval == nil {
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
 	}
-	session.Status.Approval.ApprovedBy = currentUser.(string)
+	session.Status.Approval.ApprovedBy = username
 	session.Status.Approval.ApprovedAt = &now
 	session.Status.Approval.Reason = req.Reason
 
@@ -474,9 +461,9 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	c.sendDebugSessionApprovalEmail(apiCtx, session)
 
 	// Emit audit event for session approval
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser.(string), "Debug session approved")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, username, "Debug session approved")
 
-	reqLog.Infow("Debug session approved", "session", name, "approver", currentUser)
+	reqLog.Infow("Debug session approved", "session", name, "approver", username)
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
 
 	// Return updated session - client expects the session object, not just a message
@@ -489,10 +476,8 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -531,7 +516,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	if email, exists := ctx.Get("email"); exists && email != nil {
 		currentUserEmail, _ = email.(string)
 	}
-	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
+	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
 		return
 	}
@@ -552,13 +537,13 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	if session.Status.Approval == nil {
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
 	}
-	session.Status.Approval.RejectedBy = currentUser.(string)
+	session.Status.Approval.RejectedBy = username
 	session.Status.Approval.RejectedAt = &now
 	session.Status.Approval.Reason = sanitizedReason
 
 	// Move to terminated state
 	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
+	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", username, sanitizedReason)
 
 	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to reject session", "session", name, "error", err)
@@ -570,9 +555,9 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	c.sendDebugSessionRejectionEmail(apiCtx, session)
 
 	// Emit audit event for session rejection
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser.(string), fmt.Sprintf("Debug session rejected: %s", req.Reason))
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, username, fmt.Sprintf("Debug session rejected: %s", req.Reason))
 
-	reqLog.Infow("Debug session rejected", "session", name, "rejector", currentUser, "reason", req.Reason)
+	reqLog.Infow("Debug session rejected", "session", name, "rejector", username, "reason", req.Reason)
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()
 
 	// Return updated session - client expects the session object, not just a message
@@ -585,10 +570,8 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -611,7 +594,6 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	}
 
 	// Find the participant
-	username := currentUser.(string)
 	participantIndex := -1
 	for i := range session.Status.Participants {
 		if session.Status.Participants[i].User == username {

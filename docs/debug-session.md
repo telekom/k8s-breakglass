@@ -1506,6 +1506,7 @@ Debug sessions support multiple participant roles:
 | `viewer` | Read-only access, can observe terminal sharing |
 
 Joining an existing session requires an entry in `spec.invitedParticipants`, an active unexpired session, and terminal sharing enabled by the resolved template/status. Leaving or terminating through the API also requires the session to still be active and unexpired. Self-service join requests always create `viewer` entries; users cannot request the `participant` role for themselves.
+Kubectl-debug mutation endpoints require the requester, an active `owner`, or an active `participant`; active `viewer` entries remain read-only and receive `403 Forbidden` for pod mutation requests.
 
 Leaving a session sets `status.participants[].leftAt`. Participants with
 `leftAt` set are no longer treated as active participants for kubectl-debug
@@ -1575,6 +1576,9 @@ rejected after `status.expiresAt` even if cleanup has not yet marked the session
 `Expired`. Policy denials such as disallowed namespaces or node selector
 mismatches return `403 Forbidden`; unsupported or malformed operation requests
 return `400 Bad Request`.
+They require the requester, an active `owner`, or an active `participant` role
+on the session. `viewer` participants can observe shared terminals but cannot
+inject ephemeral containers, create pod copies, or create node debug pods.
 
 Kubectl-debug operations merge their operation-specific status fields into the
 latest `DebugSession` status before returning. Concurrent renewals, participant
