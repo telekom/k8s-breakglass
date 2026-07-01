@@ -74,7 +74,7 @@ type BreakglassEscalationSpec struct {
 	// idleTimeout is the duration of inactivity (no authorization requests) after which sessions
 	// for this escalation are automatically expired with state IdleExpired.
 	// If not set, idle timeout is not enforced for sessions created from this escalation.
-	// Must be at least 1m and must not exceed maxValidFor when both are set.
+	// Must be at least 1m and must not exceed maxValidFor; when maxValidFor is omitted, admission validates against the default 1h.
 	// +optional
 	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	IdleTimeout string `json:"idleTimeout,omitempty"`
@@ -295,7 +295,7 @@ type BreakglassEscalationAllowed struct {
 	// clusters is a list of clusters this escalation can be used for.
 	// Supports exact string matching and glob patterns (e.g., "prod-*", "*-staging", "*").
 	// Use "*" to match all clusters (global escalation).
-	// Glob patterns follow filepath.Match semantics: * matches any sequence of characters, ? matches single character.
+	// Glob patterns follow path.Match semantics: * matches any sequence of characters, ? matches single character.
 	// +kubebuilder:validation:MaxItems=50
 	Clusters []string `json:"clusters,omitempty"`
 	// groups is a list of groups this escalation can be used by.

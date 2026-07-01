@@ -1,8 +1,6 @@
 package v1alpha1
 
 import (
-	"path/filepath"
-
 	"context"
 	"errors"
 	"fmt"

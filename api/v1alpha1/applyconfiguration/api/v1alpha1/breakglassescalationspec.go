@@ -24,7 +24,7 @@ type BreakglassEscalationSpecApplyConfiguration struct {
 	// idleTimeout is the duration of inactivity (no authorization requests) after which sessions
 	// for this escalation are automatically expired with state IdleExpired.
 	// If not set, idle timeout is not enforced for sessions created from this escalation.
-	// Must be at least 1m and must not exceed maxValidFor when both are set.
+	// Must be at least 1m and must not exceed maxValidFor; when maxValidFor is omitted, admission validates against the default 1h.
 	IdleTimeout *string `json:"idleTimeout,omitempty"`
 	// retainFor is the amount of time to wait before removing a session for this escalation after it expired
 	RetainFor *string `json:"retainFor,omitempty"`

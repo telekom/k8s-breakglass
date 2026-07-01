@@ -1001,7 +1001,7 @@ The controller matches requested clusters against `spec.allowed.clusters` and `s
 
 #### Glob Pattern Matching
 
-Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for flexible cluster matching. This uses Go's `filepath.Match` syntax:
+Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for flexible cluster matching. This uses Go's `path.Match` syntax:
 
 | Pattern | Matches |
 |---------|---------|
