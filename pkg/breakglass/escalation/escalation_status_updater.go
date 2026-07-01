@@ -696,9 +696,23 @@ func (u EscalationStatusUpdater) patchStatus(ctx context.Context, escalation *br
 	}
 
 	base := current.DeepCopy()
-	current.Status = escalation.Status
+	copyEscalationGroupSyncStatus(current, escalation)
 	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
 	return u.K8sClient.Status().Patch(ctx, current, patch)
+}
+
+func copyEscalationGroupSyncStatus(current, desired *breakglassv1alpha1.BreakglassEscalation) {
+	current.Status.ApproverGroupMembers = desired.Status.ApproverGroupMembers
+	current.Status.IDPGroupMemberships = desired.Status.IDPGroupMemberships
+	current.Status.ObservedGeneration = desired.Status.ObservedGeneration
+
+	conditionType := string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved)
+	condition := apimeta.FindStatusCondition(desired.Status.Conditions, conditionType)
+	if condition == nil {
+		apimeta.RemoveStatusCondition(&current.Status.Conditions, conditionType)
+		return
+	}
+	apimeta.SetStatusCondition(&current.Status.Conditions, *condition)
 }
 
 func markEscalationStatusObserved(escalation *breakglassv1alpha1.BreakglassEscalation) {
