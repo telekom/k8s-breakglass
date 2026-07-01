@@ -26,7 +26,9 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -338,6 +340,177 @@ func TestExpireIdleSessions(t *testing.T) {
 		gotNoTimeout, err := manager.GetBreakglassSessionByName(context.Background(), "no-timeout-mixed")
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, gotNoTimeout.Status.State)
+	})
+}
+
+func TestExpireIdleSessions_UsesReaderBeforeStatusUpdate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	staleActivity := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+	recentActivity := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+
+	tests := []struct {
+		name       string
+		liveStatus breakglassv1alpha1.BreakglassSessionStatus
+	}{
+		{
+			name: "skips when live session is already terminal",
+			liveStatus: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateExpired,
+				LastActivity: &staleActivity,
+				ReasonEnded:  "dropped",
+			},
+		},
+		{
+			name: "skips when live session has recent activity",
+			liveStatus: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &recentActivity,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			staleCached := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "stale-idle-session", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassSessionSpec{
+					Cluster:      "production",
+					User:         "user@example.com",
+					GrantedGroup: "admin",
+					IdleTimeout:  "10m",
+				},
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:        breakglassv1alpha1.SessionStateApproved,
+					LastActivity: &staleActivity,
+				},
+			}
+			live := staleCached.DeepCopy()
+			live.Status = tt.liveStatus
+
+			cacheClient := newIdleTestClient(scheme, staleCached)
+			readerClient := newIdleTestClient(scheme, live)
+			manager := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+			ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+			ctrl.ExpireIdleSessions(context.Background())
+
+			var cachedAfter breakglassv1alpha1.BreakglassSession
+			require.NoError(t, cacheClient.Get(context.Background(), client.ObjectKeyFromObject(staleCached), &cachedAfter))
+			assert.Equal(t, breakglassv1alpha1.SessionStateApproved, cachedAfter.Status.State,
+				"stale cache snapshot must not be patched to IdleExpired")
+
+			var liveAfter breakglassv1alpha1.BreakglassSession
+			require.NoError(t, readerClient.Get(context.Background(), client.ObjectKeyFromObject(live), &liveAfter))
+			assert.Equal(t, tt.liveStatus.State, liveAfter.Status.State)
+			if tt.liveStatus.ReasonEnded != "" {
+				assert.Equal(t, tt.liveStatus.ReasonEnded, liveAfter.Status.ReasonEnded)
+			}
+		})
+	}
+
+	t.Run("fails closed when listed session has no namespace", func(t *testing.T) {
+		staleCached := breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "missing-namespace-idle-session"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "production",
+				User:         "user@example.com",
+				GrantedGroup: "admin",
+				IdleTimeout:  "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &staleActivity,
+			},
+		}
+		manager := NewSessionManagerWithClientAndReader(newIdleTestClient(scheme), newIdleTestClient(scheme))
+		ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+		_, _, ok, err := ctrl.prepareIdleExpiredSession(context.Background(), staleCached)
+
+		require.Error(t, err)
+		assert.False(t, ok)
+		assert.Contains(t, err.Error(), "without namespace")
+	})
+}
+
+func TestExpireIdleSessions_ReevaluatesLiveIdleTimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	staleActivity := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+
+	t.Run("skips when live idle timeout is extended", func(t *testing.T) {
+		staleCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "live-timeout-session", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "production",
+				User:         "user@example.com",
+				GrantedGroup: "admin",
+				IdleTimeout:  "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &staleActivity,
+			},
+		}
+		live := staleCached.DeepCopy()
+		live.Spec.IdleTimeout = "30m"
+
+		cacheClient := newIdleTestClient(scheme, staleCached)
+		readerClient := newIdleTestClient(scheme, live)
+		manager := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+		ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+		ctrl.ExpireIdleSessions(context.Background())
+
+		var cachedAfter breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(context.Background(), client.ObjectKeyFromObject(staleCached), &cachedAfter))
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, cachedAfter.Status.State)
+	})
+
+	t.Run("uses live idle timeout in expired condition", func(t *testing.T) {
+		staleCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "live-condition-session", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "production",
+				User:         "user@example.com",
+				GrantedGroup: "admin",
+				IdleTimeout:  "10m",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:        breakglassv1alpha1.SessionStateApproved,
+				LastActivity: &staleActivity,
+			},
+		}
+		live := staleCached.DeepCopy()
+		live.Spec.IdleTimeout = "15m"
+
+		cacheClient := newIdleTestClient(scheme, staleCached)
+		readerClient := newIdleTestClient(scheme, live)
+		manager := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+		ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+		ctrl.ExpireIdleSessions(context.Background())
+
+		var cachedAfter breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(context.Background(), client.ObjectKeyFromObject(staleCached), &cachedAfter))
+		assert.Equal(t, breakglassv1alpha1.SessionStateIdleExpired, cachedAfter.Status.State)
+
+		var idleCondition *metav1.Condition
+		for i := range cachedAfter.Status.Conditions {
+			if cachedAfter.Status.Conditions[i].Type == string(breakglassv1alpha1.SessionConditionTypeIdle) {
+				idleCondition = &cachedAfter.Status.Conditions[i]
+				break
+			}
+		}
+		require.NotNil(t, idleCondition)
+		assert.Contains(t, idleCondition.Message, "idle timeout: 15m")
 	})
 }
 
@@ -804,6 +977,69 @@ func TestExpireIdleSessions_AllRetriesExhausted(t *testing.T) {
 	require.NoError(t, gerr)
 	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, got.Status.State,
 		"Session should remain Approved when all status update retries are exhausted")
+}
+
+func TestExpireIdleSessions_ReportsRevalidationErrorAfterStatusUpdateFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	core, logs := observer.New(zap.ErrorLevel)
+	logger := zap.New(core).Sugar()
+
+	past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
+	ses := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "revalidation-error-session", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "production",
+			User:         "user@example.com",
+			GrantedGroup: "admin",
+			IdleTimeout:  "10m",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:        breakglassv1alpha1.SessionStateApproved,
+			LastActivity: &past,
+		},
+	}
+
+	statusUpdateFailed := false
+	var retryRevalidationFailures int
+	var patchCallCount int
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ses).
+		WithStatusSubresource(ses).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", idleTestMetadataNameIndexer).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if statusUpdateFailed && key.Namespace == ses.Namespace && key.Name == ses.Name {
+					retryRevalidationFailures++
+					return fmt.Errorf("api reader unavailable")
+				}
+				return cl.Get(ctx, key, obj, opts...)
+			},
+			SubResourcePatch: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+				patchCallCount++
+				statusUpdateFailed = true
+				return fmt.Errorf("transient status update")
+			},
+		}).
+		Build()
+
+	manager := &SessionManager{Client: fakeClient}
+	ctrl := &BreakglassSessionController{log: logger, sessionManager: manager}
+
+	ctrl.ExpireIdleSessions(context.Background())
+
+	require.Equal(t, 1, retryRevalidationFailures, "expected retry revalidation to fail once")
+	require.Equal(t, 1, patchCallCount, "retry loop should stop after revalidation fails")
+
+	entries := logs.FilterMessage("failed to update idle-expired session after retries").All()
+	require.Len(t, entries, 1)
+	loggedErr := fmt.Sprint(entries[0].ContextMap()["error"])
+	assert.Contains(t, loggedErr, "prepare idle-expired session after status update attempt 1 failed")
+	assert.Contains(t, loggedErr, "api reader unavailable")
+	assert.NotContains(t, loggedErr, "transient status update")
 }
 
 func TestExpireIdleSessions_ConcurrentTransitionDuringRetry(t *testing.T) {

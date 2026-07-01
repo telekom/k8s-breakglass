@@ -290,7 +290,7 @@ status:
   lastActivity: "2024-01-15T10:45:00Z"
 ```
 
-Used as the primary baseline for idle timeout calculation. Sessions without `lastActivity` are skipped by the idle-timeout controller to avoid false positives.
+Used as the primary baseline for idle timeout calculation. Sessions without `lastActivity` are skipped by the idle-timeout controller to avoid false positives. Before writing `IdleExpired`, cleanup refetches the live namespaced session and revalidates both state and `lastActivity` so a stale cache snapshot cannot overwrite a newer terminal state or recent activity update.
 
 #### activityCount
 
