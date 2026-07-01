@@ -82,6 +82,11 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 		"status.state",
 		"status.participants.user",
 		"spec.allowed.cluster",
+		BreakglassEscalationClusterConfigRefsField,
+		BreakglassEscalationClusterConfigRefsPatternField,
+		BreakglassEscalationAllowedIdentityProvidersField,
+		BreakglassEscalationDenyPolicyRefsField,
+		BreakglassEscalationMailProviderField,
 		"spec.allowed.group",
 		"spec.escalatedGroup",
 		"spec.templateRef.name",
@@ -423,7 +428,12 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 				Clusters: []string{"cluster-a", "cluster-b"},
 				Groups:   []string{"developers@example.com", "ops@example.com"},
 			},
-			ClusterConfigRefs: []string{"cluster-c"},
+			ClusterConfigRefs:                    []string{"cluster-c", "cluster-*", "cluster-c", " "},
+			DenyPolicyRefs:                       []string{"deny-prod", "deny-prod", " "},
+			AllowedIdentityProviders:             []string{"corp-idp", "corp-idp"},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+			MailProvider:                         "prod-mail",
 		},
 	}
 
@@ -432,11 +442,68 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		require.NotNil(t, fn)
 
 		result := fn(escalation)
-		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b", "cluster-c"}, result)
+		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b", "cluster-c", "cluster-*"}, result)
 
 		// Test with nil escalation
 		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
 		assert.Empty(t, result)
+	})
+
+	t.Run("spec.clusterConfigRefs index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefsField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.ElementsMatch(t, []string{"cluster-c", "cluster-*"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusterConfigRefs pattern index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefsPatternField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.Equal(t, []string{BreakglassEscalationGlobPatternIndexValue}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{ClusterConfigRefs: []string{"cluster-c"}},
+		})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.allowedIdentityProviders aggregate index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationAllowedIdentityProvidersField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.ElementsMatch(t, []string{"corp-idp", "requester-idp", "approver-idp"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.denyPolicyRefs index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationDenyPolicyRefsField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.Equal(t, []string{"deny-prod"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.mailProvider index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationMailProviderField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.Equal(t, []string{"prod-mail"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
 	})
 
 	t.Run("spec.allowed.group index", func(t *testing.T) {
@@ -662,6 +729,7 @@ func TestIsIndexRegistered(t *testing.T) {
 	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.cluster"))
 	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.clusterConfigRef"))
 	assert.True(t, IsIndexRegistered("BreakglassEscalation", "spec.allowed.cluster"))
+	assert.True(t, IsIndexRegistered("BreakglassEscalation", BreakglassEscalationAllowedIdentityProvidersField))
 	assert.True(t, IsIndexRegistered("ClusterConfig", "metadata.name"))
 	assert.False(t, IsIndexRegistered("NonExistent", "field"))
 }

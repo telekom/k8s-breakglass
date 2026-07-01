@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -16,7 +17,16 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 20
+const ExpectedIndexCount = 25
+
+const (
+	BreakglassEscalationClusterConfigRefsField        = "spec.clusterConfigRefs"
+	BreakglassEscalationClusterConfigRefsPatternField = "spec.clusterConfigRefs.pattern"
+	BreakglassEscalationAllowedIdentityProvidersField = "spec.allowedIdentityProviders.all"
+	BreakglassEscalationDenyPolicyRefsField           = "spec.denyPolicyRefs"
+	BreakglassEscalationMailProviderField             = "spec.mailProvider"
+	BreakglassEscalationGlobPatternIndexValue         = "__has_glob_pattern__"
+)
 
 // registeredIndexes tracks which indexes have been successfully registered.
 // Uses sync.Map because RegisterCommonFieldIndexes may be called concurrently
@@ -170,7 +180,83 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 			out := make([]string, 0, len(be.Spec.Allowed.Clusters)+len(be.Spec.ClusterConfigRefs))
 			out = append(out, be.Spec.Allowed.Clusters...)
 			out = append(out, be.Spec.ClusterConfigRefs...)
-			return out
+			return uniqueTrimmedIndexValues(out)
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("BreakglassEscalation", BreakglassEscalationClusterConfigRefsField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationClusterConfigRefsField, func(rawObj client.Object) []string {
+			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok || be == nil {
+				return nil
+			}
+			return uniqueTrimmedIndexValues(be.Spec.ClusterConfigRefs)
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("BreakglassEscalation", BreakglassEscalationClusterConfigRefsPatternField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationClusterConfigRefsPatternField, func(rawObj client.Object) []string {
+			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok || be == nil {
+				return nil
+			}
+			for _, ref := range be.Spec.ClusterConfigRefs {
+				if strings.ContainsAny(strings.TrimSpace(ref), "*?[") {
+					return []string{BreakglassEscalationGlobPatternIndexValue}
+				}
+			}
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("BreakglassEscalation", BreakglassEscalationAllowedIdentityProvidersField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationAllowedIdentityProvidersField, func(rawObj client.Object) []string {
+			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok || be == nil {
+				return nil
+			}
+			values := make([]string, 0,
+				len(be.Spec.AllowedIdentityProviders)+
+					len(be.Spec.AllowedIdentityProvidersForRequests)+
+					len(be.Spec.AllowedIdentityProvidersForApprovers))
+			values = append(values, be.Spec.AllowedIdentityProviders...)
+			values = append(values, be.Spec.AllowedIdentityProvidersForRequests...)
+			values = append(values, be.Spec.AllowedIdentityProvidersForApprovers...)
+			return uniqueTrimmedIndexValues(values)
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("BreakglassEscalation", BreakglassEscalationDenyPolicyRefsField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationDenyPolicyRefsField, func(rawObj client.Object) []string {
+			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok || be == nil {
+				return nil
+			}
+			return uniqueTrimmedIndexValues(be.Spec.DenyPolicyRefs)
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("BreakglassEscalation", BreakglassEscalationMailProviderField, func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.BreakglassEscalation{}, BreakglassEscalationMailProviderField, func(rawObj client.Object) []string {
+			be, ok := rawObj.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok || be == nil {
+				return nil
+			}
+			name := strings.TrimSpace(be.Spec.MailProvider)
+			if name == "" {
+				return nil
+			}
+			return []string{name}
 		})
 	}); err != nil {
 		return err
@@ -304,6 +390,29 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 	return nil
+}
+
+func uniqueTrimmedIndexValues(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // AssertIndexesRegistered checks that the expected number of field indexes have been registered.
