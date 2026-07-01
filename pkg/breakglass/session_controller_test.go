@@ -2766,6 +2766,7 @@ func TestApprovalAuthorizationPrefersTargetClusterGroupsOverRequestGroups(t *tes
 	c.Set("email", "approver@example.com")
 	c.Set("username", "approver@example.com")
 	c.Set("groups", []string{"unrelated-request-group"})
+	c.Set("identity_provider_name", "approver-idp")
 
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
@@ -2819,6 +2820,7 @@ func TestApprovalAuthorizationUsesResolvedApproverGroupMembers(t *testing.T) {
 	c.Set("email", "approver@example.com")
 	c.Set("username", "approver@example.com")
 	c.Set("groups", []string{"unrelated-request-group"})
+	c.Set("identity_provider_name", "approver-idp")
 
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
@@ -2869,6 +2871,7 @@ func TestApprovalAuthorizationFallsBackToTargetGroupsWhenResolvedApproverMembers
 	c.Set("email", "approver@example.com")
 	c.Set("username", "approver@example.com")
 	c.Set("groups", []string{"unrelated-request-group"})
+	c.Set("identity_provider_name", "approver-idp")
 
 	session := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
