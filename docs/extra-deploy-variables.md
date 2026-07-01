@@ -35,7 +35,7 @@ Simple on/off toggle.
 
 **Usage in templates:**
 ```yaml
-{{- if eq .Vars.enableTcpdump "true" }}
+{{- if eq .vars.enableTcpdump "true" }}
 # Conditional content when enabled
 {{- end }}
 ```
@@ -58,7 +58,7 @@ Free-form text input with optional validation.
 
 **Usage in templates:**
 ```yaml
-namespace: customer-{{ .Vars.customerName | k8sName }}
+namespace: customer-{{ .vars.customerName | k8sName }}
 ```
 
 ### Number (`inputType: number`)
@@ -77,7 +77,7 @@ Numeric value with optional min/max constraints.
 
 **Usage in templates:**
 ```yaml
---iodepth={{ .Vars.ioDepth }}
+--iodepth={{ .vars.ioDepth }}
 ```
 
 ### Storage Size (`inputType: storageSize`)
@@ -96,7 +96,7 @@ Kubernetes quantity format for storage.
 
 **Usage in templates:**
 ```yaml
-sizeLimit: {{ .Vars.storageSize }}
+sizeLimit: {{ .vars.storageSize }}
 ```
 
 ### Select (`inputType: select`)
@@ -120,7 +120,7 @@ Single selection from predefined options.
 
 **Usage in templates:**
 ```yaml
-{{- if eq .Vars.networkMode "host" }}
+{{- if eq .vars.networkMode "host" }}
 hostNetwork: true
 {{- end }}
 ```
@@ -147,7 +147,7 @@ Multiple selections from predefined options.
 ```yaml
 capabilities:
   add:
-    {{- range $cap := split "," .Vars.capabilities }}
+    {{- range $cap := split "," .vars.capabilities }}
     - {{ $cap }}
     {{- end }}
 ```
@@ -217,10 +217,10 @@ The API error response includes the required groups:
 
 ```yaml
 # SAFE: User input is properly quoted
-label: {{ .Vars.customerName | yamlQuote }}
+label: {{ .vars.customerName | yamlQuote }}
 
 # UNSAFE: Could break YAML if input contains special chars
-label: {{ .Vars.customerName }}
+label: {{ .vars.customerName }}
 ```
 
 The `yamlQuote` function:
@@ -235,7 +235,7 @@ Sanitizes strings by replacing dangerous characters:
 ```yaml
 # Input: "test:value#comment"
 # Output: "test-value-comment"
-safe-label: {{ .Vars.userInput | yamlSafe }}
+safe-label: {{ .vars.userInput | yamlSafe }}
 ```
 
 ### `k8sName`
@@ -245,7 +245,7 @@ Converts strings to valid Kubernetes names:
 ```yaml
 # Input: "My Customer Name!"
 # Output: "my-customer-name"
-namespace: test-{{ .Vars.customerName | k8sName }}
+namespace: test-{{ .vars.customerName | k8sName }}
 ```
 
 ### `truncName`
@@ -254,7 +254,7 @@ Truncates strings to a maximum length:
 
 ```yaml
 # Keep within 63 char limit
-name: {{ .Session.Name | truncName 50 }}-suffix
+name: {{ .session.name | truncName 50 }}-suffix
 ```
 
 ## Complete Example
@@ -300,25 +300,25 @@ spec:
     kind: Pod
     metadata:
       labels:
-        network-mode: {{ .Vars.networkMode | yamlQuote }}
+        network-mode: {{ .vars.networkMode | yamlQuote }}
     spec:
-      {{- if eq .Vars.networkMode "host" }}
+      {{- if eq .vars.networkMode "host" }}
       hostNetwork: true
       {{- end }}
       containers:
         - name: debug
           image: nicolaka/netshoot:v0.13
           command: ["sleep", "infinity"]
-          {{- if eq .Vars.enableCapture "true" }}
+          {{- if eq .vars.enableCapture "true" }}
           volumeMounts:
             - name: captures
               mountPath: /captures
           {{- end }}
-      {{- if eq .Vars.enableCapture "true" }}
+      {{- if eq .vars.enableCapture "true" }}
       volumes:
         - name: captures
           emptyDir:
-            sizeLimit: {{ .Vars.captureSize }}
+            sizeLimit: {{ .vars.captureSize }}
       {{- end }}
 ```
 
@@ -350,14 +350,14 @@ spec:
           allowedGroups: ["platform_poweruser"]
   
   constraints:
-    maxDuration: "{{ if eq .Vars.severity \"incident\" }}8h{{ else }}2h{{ end }}"
+    maxDuration: "{{ if eq .vars.severity \"incident\" }}8h{{ else }}2h{{ end }}"
 ```
 
 ## Security Best Practices
 
 1. **Always use `yamlQuote` for user values:**
    ```yaml
-   label: {{ .Vars.userInput | yamlQuote }}
+   label: {{ .vars.userInput | yamlQuote }}
    ```
 
 2. **Use `allowedGroups` for sensitive options:**
@@ -380,7 +380,7 @@ spec:
 
 5. **Use `k8sName` for generated resource names:**
    ```yaml
-   name: test-{{ .Vars.customerName | k8sName }}
+   name: test-{{ .vars.customerName | k8sName }}
    ```
 
 ## Validation Rules

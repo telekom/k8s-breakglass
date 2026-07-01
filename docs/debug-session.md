@@ -176,7 +176,7 @@ spec:
     {{- end }}
 ```
 
-The `templateString` supports all session context variables (`.session`, `.target`, `.vars`, etc.) using Sprout template functions. See [Template Context Variables](#template-context-variables) for the full list.
+The `templateString` supports all session context variables (`.session`, `.target`, `.vars`, etc.) using Sprig template functions. See [Template Context Variables](#template-context-variables) for the full list.
 
 > **Note:** `template` and `templateString` are mutually exclusive. The webhook will reject DebugPodTemplates with both fields set.
 
@@ -1040,12 +1040,12 @@ spec:
         apiVersion: networking.k8s.io/v1
         kind: NetworkPolicy
         metadata:
-          name: "debug-{{ .Session.Name }}-isolation"
-          namespace: "{{ .Session.Spec.TargetNamespace }}"
+          name: "debug-{{ .session.name }}-isolation"
+          namespace: "{{ .target.namespace }}"
         spec:
           podSelector:
             matchLabels:
-              breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+              breakglass.t-caas.telekom.com/session: "{{ .session.name }}"
           policyTypes:
             - Ingress
             - Egress
@@ -1073,14 +1073,14 @@ spec:
         apiVersion: v1
         kind: ServiceAccount
         metadata:
-          name: debug-{{ .Session.Name }}-sa
-          namespace: {{ .Target.Namespace }}
+          name: debug-{{ .session.name }}-sa
+          namespace: {{ .target.namespace }}
         ---
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
         metadata:
-          name: debug-{{ .Session.Name }}-role
-          namespace: {{ .Target.Namespace }}
+          name: debug-{{ .session.name }}-role
+          namespace: {{ .target.namespace }}
         rules:
           - apiGroups: [""]
             resources: ["pods", "pods/log"]
@@ -1089,15 +1089,15 @@ spec:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
         metadata:
-          name: debug-{{ .Session.Name }}-binding
-          namespace: {{ .Target.Namespace }}
+          name: debug-{{ .session.name }}-binding
+          namespace: {{ .target.namespace }}
         subjects:
           - kind: ServiceAccount
-            name: debug-{{ .Session.Name }}-sa
-            namespace: {{ .Target.Namespace }}
+            name: debug-{{ .session.name }}-sa
+            namespace: {{ .target.namespace }}
         roleRef:
           kind: Role
-          name: debug-{{ .Session.Name }}-role
+          name: debug-{{ .session.name }}-role
           apiGroup: rbac.authorization.k8s.io
 ```
 
@@ -1132,13 +1132,13 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 
 | Variable | Description |
 |----------|-------------|
-| `.Session.Name` | Debug session name |
-| `.Session.Namespace` | Session's namespace |
-| `.Session.Spec.Cluster` | Target cluster name |
-| `.Session.Spec.User` | Requesting user |
-| `.Session.Spec.TargetNamespace` | Target namespace for debug pods |
-| `.Session.Spec.Reason` | Session request reason |
-| `.Template.Name` | Template name |
+| `.session.name` | Debug session name |
+| `.session.namespace` | Session's namespace |
+| `.session.cluster` | Target cluster name |
+| `.session.requestedBy` | Requesting user |
+| `.target.namespace` | Target namespace for debug pods |
+| `.session.reason` | Session request reason |
+| `.template.name` | Template name |
 
 ### Lifecycle
 
@@ -1195,7 +1195,7 @@ Both pod templates and auxiliary resources support multi-document YAML for creat
 | **Readiness Tracking** | Basic (created/deleted) | Full kstatus monitoring |
 | **Categories** | Not categorized | Organized by category |
 | **Binding Requirements** | N/A | Can enforce required categories |
-| **Template Context** | `.session`, `.target`, `.vars` | `.Session`, `.Target`, `.Vars` |
+| **Template Context** | `.session`, `.target`, `.vars` | `.session`, `.target`, `.vars` |
 
 **Choose Pod Template Multi-Doc when:**
 - Resources are specific to this pod template (e.g., PVC for storage testing)

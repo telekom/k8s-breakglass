@@ -81,7 +81,7 @@ type DebugSessionTemplateSpec struct {
 
 	// podTemplateRef references a DebugPodTemplate for the pod specification.
 	// Required when mode is "workload" or "hybrid".
-	// The referenced template can itself contain {{ .Vars.* }} placeholders.
+	// The referenced template can itself contain {{ .vars.* }} placeholders.
 	// Mutually exclusive with podTemplateString.
 	// +optional
 	PodTemplateRef *DebugPodTemplateReference `json:"podTemplateRef,omitempty"`
@@ -100,7 +100,7 @@ type DebugSessionTemplateSpec struct {
 
 	// extraDeployVariables defines user-provided variables for template rendering.
 	// These values are collected from the user at session request time
-	// and made available as {{ .Vars.<name> }} in all templates.
+	// and made available as {{ .vars.<name> }} in all templates.
 	// +optional
 	ExtraDeployVariables []ExtraDeployVariable `json:"extraDeployVariables,omitempty"`
 

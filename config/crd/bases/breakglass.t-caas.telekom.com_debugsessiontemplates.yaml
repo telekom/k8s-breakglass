@@ -1296,7 +1296,7 @@ spec:
                     template:
                       description: |-
                         template is the embedded resource template.
-                        Supports Go templating with session context variables using Sprout functions.
+                        Supports Go templating with session context variables using Sprig functions.
                         See documentation for available variables and functions.
                         Mutually exclusive with templateString.
                         Deprecated: Use templateString for new templates. Removal target: v1beta1.
@@ -1306,7 +1306,7 @@ spec:
                       description: |-
                         templateString is a Go template that produces one or more YAML documents.
                         Use `---` separator for multiple resources from one definition.
-                        Supports all context variables including {{ .Vars.* }} for user-provided values.
+                        Supports all context variables including {{ .vars.* }} for user-provided values.
                         Mutually exclusive with template.
                       type: string
                   required:
@@ -1382,11 +1382,11 @@ spec:
                 description: |-
                   extraDeployVariables defines user-provided variables for template rendering.
                   These values are collected from the user at session request time
-                  and made available as {{ .Vars.<name> }} in all templates.
+                  and made available as {{ .vars.<name> }} in all templates.
                 items:
                   description: |-
                     ExtraDeployVariable defines a user-provided variable for template rendering.
-                    Variables are available as {{ .Vars.<name> }} in all templates.
+                    Variables are available as {{ .vars.<name> }} in all templates.
                   properties:
                     advanced:
                       description: |-
@@ -1430,7 +1430,7 @@ spec:
                       type: string
                     name:
                       description: |-
-                        name is the variable name, used as {{ .Vars.<name> }} in templates.
+                        name is the variable name, used as {{ .vars.<name> }} in templates.
                         Must be a valid Go identifier (letters, digits, underscores, starting with letter).
                       maxLength: 63
                       minLength: 1
@@ -2687,7 +2687,7 @@ spec:
                 description: |-
                   podTemplateRef references a DebugPodTemplate for the pod specification.
                   Required when mode is "workload" or "hybrid".
-                  The referenced template can itself contain {{ .Vars.* }} placeholders.
+                  The referenced template can itself contain {{ .vars.* }} placeholders.
                   Mutually exclusive with podTemplateString.
                 properties:
                   name:
