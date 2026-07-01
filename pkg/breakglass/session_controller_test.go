@@ -291,6 +291,128 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	}
 }
 
+func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
+	now := time.Now()
+	namespace := "default"
+	makeTimedOutSession := func(name string) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "timeout-cluster",
+				User:         "requester@example.com",
+				GrantedGroup: "breakglass-admin",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
+				TimeoutAt: metav1.NewTime(now.Add(-time.Minute)),
+			},
+		}
+	}
+
+	approveSession := makeTimedOutSession("timed-out-approve")
+	rejectSession := makeTimedOutSession("timed-out-reject")
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "timeout-escalation", Namespace: namespace},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"timeout-cluster"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "breakglass-admin",
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.
+		WithObjects(approveSession, rejectSession, escalation).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			if c.Request.Method == http.MethodOptions {
+				c.Next()
+				return
+			}
+			c.Set("email", "approver@example.com")
+			c.Set("username", "Approver")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	cases := []struct {
+		name       string
+		session    string
+		actionPath string
+	}{
+		{name: "approve", session: "timed-out-approve", actionPath: "approve"},
+		{name: "reject", session: "timed-out-reject", actionPath: "reject"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost,
+				fmt.Sprintf("/breakglassSessions/%s/%s", tc.session, tc.actionPath),
+				nil)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+			res := w.Result()
+			defer res.Body.Close()
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected 400 for timed-out pending session, got %d", res.StatusCode)
+			}
+			var body struct {
+				Error string `json:"error"`
+			}
+			if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if !strings.Contains(body.Error, "approval timeout") {
+				t.Fatalf("expected timeout error, got %q", body.Error)
+			}
+
+			var got breakglassv1alpha1.BreakglassSession
+			if err := cli.Get(context.Background(), client.ObjectKey{Name: tc.session, Namespace: namespace}, &got); err != nil {
+				t.Fatalf("failed to get session: %v", err)
+			}
+			if got.Status.State != breakglassv1alpha1.SessionStatePending {
+				t.Fatalf("expected stale session to remain pending for cleanup, got %s", got.Status.State)
+			}
+			if !got.Status.ApprovedAt.IsZero() || !got.Status.RejectedAt.IsZero() || got.Status.TimeoutAt.IsZero() {
+				t.Fatalf("expected approve/reject timestamps unchanged, got status %#v", got.Status)
+			}
+		})
+	}
+
+	t.Run("pending_timeout_at_current_instant", func(t *testing.T) {
+		session := breakglassv1alpha1.BreakglassSession{
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStatePending,
+				ApprovedAt: metav1.Time{},
+				RejectedAt: metav1.Time{},
+				TimeoutAt:  metav1.NewTime(now),
+			},
+		}
+
+		result := isSessionApprovalTimedOutAt(session, now)
+		if !result {
+			t.Errorf("expected timeout to be elapsed at the exact timeout instant")
+		}
+	})
+}
+
 // Test that approving a session records the approver email in Status.Approver and
 // appends it to Status.Approvers, and that rejecting updates the approver and
 // appends the rejector to the history as well.
@@ -1708,6 +1830,7 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
 
+	futureTimeout := metav1.NewTime(time.Now().UTC().Add(time.Hour))
 	pending := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "pending-1"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -1715,7 +1838,7 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 			User:         "requester@example.com",
 			GrantedGroup: "g1",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)), RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration))},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: futureTimeout, RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration))},
 	}
 
 	// Escalation exists but approver user is different
@@ -1847,7 +1970,7 @@ func TestSessionApproveRejectInvalidOptionalBody(t *testing.T) {
 	}
 }
 
-func TestApproveExpiredPendingSessionReturnsConflict(t *testing.T) {
+func TestApproveExpiredPendingSessionReturnsBadRequest(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
@@ -1901,7 +2024,7 @@ func TestApproveExpiredPendingSessionReturnsConflict(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusConflict, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), "approval timeout has elapsed")
 
 	var fetched breakglassv1alpha1.BreakglassSession
@@ -2335,6 +2458,7 @@ func TestApprovalReasonMandatoryEnforced(t *testing.T) {
 			builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 		}
 
+		futureTimeout := metav1.NewTime(time.Now().UTC().Add(time.Hour))
 		pending := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: sessionName},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -2348,7 +2472,7 @@ func TestApprovalReasonMandatoryEnforced(t *testing.T) {
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:         breakglassv1alpha1.SessionStatePending,
-				TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+				TimeoutAt:     futureTimeout,
 				RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 			},
 		}
@@ -2555,6 +2679,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 			}
 
 			// Create a pending session
+			futureTimeout := metav1.NewTime(time.Now().UTC().Add(time.Hour))
 			session := &breakglassv1alpha1.BreakglassSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-session", Namespace: esc.Namespace},
 				Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -2564,7 +2689,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:         breakglassv1alpha1.SessionStatePending,
-					TimeoutAt:     metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+					TimeoutAt:     futureTimeout,
 					RetainedUntil: metav1.NewTime(time.Now().UTC().Add(MonthDuration)),
 				},
 			}
@@ -6679,6 +6804,19 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 			},
 			expected: false,
 			reason:   "session state is already marked as timeout",
+		},
+		{
+			name: "non_pending_stale_timeout_without_terminal_timestamp",
+			session: breakglassv1alpha1.BreakglassSession{
+				Status: breakglassv1alpha1.BreakglassSessionStatus{
+					State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "non-pending state must not be reclassified by stale timeout",
 		},
 	}
 

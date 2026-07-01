@@ -130,6 +130,22 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	//   because approved sessions may later transition to expired/dropped by owner or canceled by approver.
 	currState := bs.Status.State
 	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved || sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+		if IsSessionApprovalTimedOut(bs) {
+			action := "approval"
+			if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+				action = "rejection"
+			}
+			c.JSON(http.StatusBadRequest, struct {
+				Error   string                               `json:"error"`
+				Code    string                               `json:"code"`
+				Session breakglassv1alpha1.BreakglassSession `json:"session"`
+			}{
+				Error:   fmt.Sprintf("session approval timeout has elapsed; cannot perform %s", action),
+				Code:    "BAD_REQUEST",
+				Session: bs,
+			})
+			return
+		}
 		if currState != breakglassv1alpha1.SessionStatePending {
 			c.JSON(http.StatusBadRequest, struct {
 				Error   string                               `json:"error"`
@@ -155,21 +171,6 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			})
 			return
 		}
-	}
-
-	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved &&
-		!bs.Status.TimeoutAt.IsZero() &&
-		!time.Now().Before(bs.Status.TimeoutAt.Time) {
-		c.JSON(http.StatusConflict, struct {
-			Error   string                               `json:"error"`
-			Code    string                               `json:"code"`
-			Session breakglassv1alpha1.BreakglassSession `json:"session"`
-		}{
-			Error:   "session approval timeout has elapsed",
-			Code:    "CONFLICT",
-			Session: bs,
-		})
-		return
 	}
 
 	approverReasonAction := "approval"

@@ -338,11 +338,9 @@ learning whether the session is terminal, timed out, or has malformed request
 details.
 
 **Request validation:** `reason` is required when the session's stored
-`approvalReasonConfig.mandatory` is `true`.
-
-If the pending session's approval timeout has already elapsed, the endpoint returns
-`409 Conflict` and leaves the session pending until cleanup records the
-`ApprovalTimeout` terminal state.
+`approvalReasonConfig.mandatory` is `true`. If `status.timeoutAt` has already
+elapsed, approval fails with `400 Bad Request` and the stale pending session is
+left unchanged for cleanup to transition to `ApprovalTimeout`.
 
 **Response:** Complete updated `BreakglassSession` resource with approved status.
 
@@ -406,7 +404,9 @@ Approver authorization is checked before request-body validation and
 state-specific responses; unrelated callers receive only authorization errors.
 
 **Request validation:** `reason` is required when the session's stored
-`approvalReasonConfig.mandatory` is `true`.
+`approvalReasonConfig.mandatory` is `true`. If `status.timeoutAt` has already
+elapsed, rejection fails with `400 Bad Request` and the stale pending session is
+left unchanged for cleanup to transition to `ApprovalTimeout`.
 
 **Response:** Complete updated `BreakglassSession` resource with rejected status:
 
