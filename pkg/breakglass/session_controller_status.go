@@ -243,8 +243,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 		// record approver (rejector)
-		rejectorEmail := c.GetString("email")
-		rejector := firstNonEmpty(rejectorEmail, authenticatedActor)
+		rejector := authenticatedActor
 		if rejector != "" {
 			bs.Status.Approver = rejector
 			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, rejector)
