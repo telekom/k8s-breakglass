@@ -35,7 +35,7 @@ Approval and rejection REST requests may omit the optional JSON body. When a bod
 | `Approved` | Active and granting privileges | ✅ Yes (if not expired) | Approver approved OR scheduled time reached | `approvedAt`, `expiresAt` |
 | `Rejected` | Approver denied the request | ❌ No | Approver rejected request | `rejectedAt` (Terminal) |
 | `Withdrawn` | User canceled their own request | ❌ No | User withdrew before approval | `withdrawnAt` (Terminal) |
-| `Expired` | Session reached max duration OR was explicitly ended after approval | ❌ No | Session time exceeded OR explicitly expired | `expiresAt` (Terminal) |
+| `Expired` | Session reached max duration, was explicitly ended after approval, OR missed scheduled activation until after expiry | ❌ No | Session time exceeded, scheduled activation was missed until after expiry, OR explicitly expired | `expiresAt` (Terminal) |
 | `IdleExpired` | Session idle timeout exceeded | ❌ No | No activity within configured `idleTimeout` | `lastActivity` (Terminal) |
 | `ApprovalTimeout` | Pending session timed out awaiting approval | ❌ No | Pending session exceeded timeout threshold | `timeoutAt` (Terminal) |
 
@@ -56,6 +56,7 @@ Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**
 - Even if timestamps appear valid, the session is not valid
 - The state field is the only determinant for terminal state detection
 - Automatic expiry routines re-check live state before writing terminal status, so a concurrent withdraw, rejection, drop, or cancellation keeps its original terminal audit reason.
+- Scheduled sessions whose `expiresAt` is already in the past when cleanup reaches their `scheduledStartTime` are marked `Expired` instead of being activated
 
 ### Timestamp Semantics
 
