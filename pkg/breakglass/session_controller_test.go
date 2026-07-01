@@ -1889,8 +1889,7 @@ func TestFilterBreakglassSessionsExplicitOwnershipFiltersDoNotIncludeImplicitApp
 		engine.ServeHTTP(w, req)
 		res := w.Result()
 		require.Equal(t, http.StatusOK, res.StatusCode)
-		var sessions []breakglassv1alpha1.BreakglassSession
-		require.NoError(t, json.NewDecoder(res.Body).Decode(&sessions))
+		sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
 
 		got := make([]string, 0, len(sessions))
 		for _, session := range sessions {
@@ -1970,8 +1969,7 @@ func TestFilterBreakglassSessionsMineUsesAlternateIdentifiersWhenEmailMissing(t 
 	res := w.Result()
 	require.Equal(t, http.StatusOK, res.StatusCode)
 
-	var sessions []breakglassv1alpha1.BreakglassSession
-	require.NoError(t, json.NewDecoder(res.Body).Decode(&sessions))
+	sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
 	got := make([]string, 0, len(sessions))
 	for _, session := range sessions {
 		got = append(got, session.Name)
