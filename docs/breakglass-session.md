@@ -498,7 +498,7 @@ All session activities are logged for compliance and troubleshooting.
 - **Provide Justifications**: Include clear details for audit purposes
 - **Minimum Duration**: Request only needed time
 - **Monitor Usage**: Track session patterns and usage
-- **Clean Up**: Remove expired sessions regularly
+- **Clean Up**: Remove expired sessions regularly. Duplicate-session cleanup revalidates live session state before terminating duplicates, so concurrent rejection, withdrawal, expiry, or activity changes are preserved.
 
 ## Troubleshooting
 

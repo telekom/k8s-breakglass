@@ -13,9 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // stateIndexer is a field index function used by the fake client for status.state queries.
@@ -230,6 +233,101 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, got3.Status.State, "waiting withdrawn")
 	})
 
+	t.Run("stale duplicate already terminal in live reader is preserved", func(t *testing.T) {
+		now := time.Now()
+		keepCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "live-terminal-keep",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-10 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		dupCached := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "live-terminal-dup",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-1 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		keepLive := keepCached.DeepCopy()
+		dupLive := dupCached.DeepCopy()
+		dupLive.Status.State = breakglassv1alpha1.SessionStateRejected
+		dupLive.Status.ReasonEnded = "rejected"
+
+		cacheClient := newFakeClientWithSessions(keepCached, dupCached)
+		readerClient := newFakeClientWithSessions(keepLive, dupLive)
+		mgr := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+
+		CleanupDuplicateSessions(ctx, logger, mgr)
+
+		var cachedDup breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(ctx, client.ObjectKeyFromObject(dupCached), &cachedDup))
+		assert.Equal(t, breakglassv1alpha1.SessionStatePending, cachedDup.Status.State,
+			"stale cached duplicate must not be withdrawn after live state is terminal")
+
+		var liveDup breakglassv1alpha1.BreakglassSession
+		require.NoError(t, readerClient.Get(ctx, client.ObjectKeyFromObject(dupLive), &liveDup))
+		assert.Equal(t, breakglassv1alpha1.SessionStateRejected, liveDup.Status.State)
+		assert.Equal(t, "rejected", liveDup.Status.ReasonEnded)
+	})
+
+	t.Run("cached survivor terminal in live reader is not kept", func(t *testing.T) {
+		now := time.Now()
+		staleSurvivor := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "stale-survivor",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-30 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		remainingOld := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "remaining-old",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-20 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		remainingNew := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "remaining-new",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Minute)),
+			},
+			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		}
+		staleSurvivorLive := staleSurvivor.DeepCopy()
+		staleSurvivorLive.Status.State = breakglassv1alpha1.SessionStateExpired
+		staleSurvivorLive.Status.ReasonEnded = "expired"
+
+		cacheClient := newFakeClientWithSessions(staleSurvivor, remainingOld, remainingNew)
+		readerClient := newFakeClientWithSessions(staleSurvivorLive, remainingOld.DeepCopy(), remainingNew.DeepCopy())
+		mgr := NewSessionManagerWithClientAndReader(cacheClient, readerClient)
+
+		CleanupDuplicateSessions(ctx, logger, mgr)
+
+		var gotOld, gotNew breakglassv1alpha1.BreakglassSession
+		require.NoError(t, cacheClient.Get(ctx, client.ObjectKeyFromObject(remainingOld), &gotOld))
+		require.NoError(t, cacheClient.Get(ctx, client.ObjectKeyFromObject(remainingNew), &gotNew))
+		assert.Equal(t, breakglassv1alpha1.SessionStatePending, gotOld.Status.State,
+			"oldest still-active live candidate must become the recomputed survivor")
+		assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, gotNew.Status.State,
+			"newer still-active live candidate should be withdrawn")
+
+		var liveStaleSurvivor breakglassv1alpha1.BreakglassSession
+		require.NoError(t, readerClient.Get(ctx, client.ObjectKeyFromObject(staleSurvivorLive), &liveStaleSurvivor))
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, liveStaleSurvivor.Status.State)
+		assert.Equal(t, "expired", liveStaleSurvivor.Status.ReasonEnded)
+	})
+
 	t.Run("mixed active and terminal sessions — terminal ignored", func(t *testing.T) {
 		now := time.Now()
 		active := &breakglassv1alpha1.BreakglassSession{
@@ -432,6 +530,65 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		// Duplicate should NOT have been withdrawn because context was cancelled
 		assert.Equal(t, breakglassv1alpha1.SessionStatePending, got2.Status.State, "cancelled context prevents duplicate processing")
 	})
+}
+
+func TestGetLiveDuplicateSessionRequiresNamespace(t *testing.T) {
+	t.Parallel()
+
+	fc := newFakeClientWithSessions(&breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "duplicate",
+			Namespace: "breakglass",
+		},
+	})
+	mgr := NewSessionManagerWithClient(fc)
+
+	_, err := getLiveDuplicateSession(context.Background(), mgr, breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "duplicate"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "namespace is required")
+}
+
+func TestTerminateDuplicateSessionIgnoresStatusPatchNotFound(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	ctx := context.Background()
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "duplicate",
+			Namespace: "breakglass",
+		},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "prod",
+			User:    "developer@example.com",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	fc := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(&session).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", stateIndexer).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", func(o client.Object) []string {
+			return []string{o.GetName()}
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, obj client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+				if subResource == "status" {
+					return apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "breakglasssessions"}, obj.GetName())
+				}
+				return nil
+			},
+		}).
+		Build()
+	mgr := NewSessionManagerWithClient(fc)
+
+	updated, err := terminateDuplicateSession(ctx, logger, mgr, duplicateKeyForSession(session), session)
+
+	require.NoError(t, err)
+	assert.False(t, updated)
 }
 
 func TestSessionStatePriority(t *testing.T) {
