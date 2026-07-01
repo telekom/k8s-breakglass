@@ -344,15 +344,8 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
-		return
-	}
-	username, ok := currentUser.(string)
+	username, ok := requireDebugSessionUsername(ctx)
 	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
 		return
 	}
 
@@ -428,7 +421,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		"pod", req.PodName,
 		"namespace", req.Namespace,
 		"container", req.ContainerName,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":   "ephemeral container injected successfully",
@@ -455,15 +448,8 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
-		return
-	}
-	username, ok := currentUser.(string)
+	username, ok := requireDebugSessionUsername(ctx)
 	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
 		return
 	}
 
@@ -527,7 +513,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		"originalNamespace", req.Namespace,
 		"copyName", pod.Name,
 		"copyNamespace", pod.Namespace,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":           "pod copy created successfully",
@@ -555,15 +541,8 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
-		return
-	}
-	username, ok := currentUser.(string)
+	username, ok := requireDebugSessionUsername(ctx)
 	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
 		return
 	}
 
@@ -626,7 +605,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		"node", req.NodeName,
 		"podName", pod.Name,
 		"namespace", pod.Namespace,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":   "node debug pod created successfully",
@@ -713,7 +692,7 @@ func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakg
 		case breakglassv1alpha1.ParticipantRoleOwner, breakglassv1alpha1.ParticipantRoleParticipant:
 			return true
 		default:
-			return false
+			continue
 		}
 	}
 

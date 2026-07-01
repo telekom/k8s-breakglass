@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **DebugSession operation authorization**: Usernames loaded from request context are trimmed before debug-session read and kubectl-debug authorization checks, and viewer participants now receive `403 Forbidden` for mutating kubectl-debug endpoints.
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
 ### Fixed
 

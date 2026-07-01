@@ -1073,6 +1073,8 @@ func TestCanUserOperateDebugResources(t *testing.T) {
 				{User: "left-participant@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now, LeftAt: &leftAt},
 				{User: "unknown-role@example.com", Role: breakglassv1alpha1.ParticipantRole("operator"), JoinedAt: now},
 				{User: "empty-role@example.com", JoinedAt: now},
+				{User: "upgraded@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				{User: "upgraded@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now},
 			},
 		},
 	}
@@ -1089,6 +1091,7 @@ func TestCanUserOperateDebugResources(t *testing.T) {
 		{name: "left participant cannot mutate", user: "left-participant@example.com", want: false},
 		{name: "unknown role cannot mutate", user: "unknown-role@example.com", want: false},
 		{name: "empty role cannot mutate", user: "empty-role@example.com", want: false},
+		{name: "later participant role can mutate after viewer entry", user: "upgraded@example.com", want: true},
 		{name: "unrelated user", user: "other@example.com", want: false},
 	}
 
