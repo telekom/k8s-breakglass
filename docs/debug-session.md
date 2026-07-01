@@ -1424,7 +1424,7 @@ When enabled, participants can attach to shared terminals:
 **Implementation details:**
 - When terminal sharing is enabled, the controller wraps the container command with `tmux new-session` or `screen` 
 - The attach command is populated in `status.terminalSharing.attachCommand`
-- Invited viewers can attach to the shared terminal. The join API does not grant the privileged `participant` role; only existing owner or participant status entries can use debug pod operations.
+- Invited viewers can attach to the shared terminal. The join API does not accept a request body and does not grant the privileged `participant` role; only existing owner or participant status entries can use debug pod operations.
 - The debug image must include the selected terminal sharing binary (`tmux` or `screen`)
 
 **Tmux image for E2E:**
@@ -1526,6 +1526,8 @@ Debug sessions can be managed via the REST API:
 | `POST` | `/api/v1/debugSessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
 | `POST` | `/api/v1/debugSessions/{name}/createPodCopy` | Create a debug copy of a pod |
 | `POST` | `/api/v1/debugSessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
+
+Lifecycle actions `join`, `leave`, and `terminate` reject non-empty request bodies.
 
 List and detail responses require an authenticated caller. A caller can read a
 debug session when they are the requester, an active participant, an invited

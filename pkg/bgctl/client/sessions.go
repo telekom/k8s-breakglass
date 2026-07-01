@@ -143,7 +143,7 @@ func (s *SessionService) Cancel(ctx context.Context, name string) (*breakglassv1
 func (s *SessionService) action(ctx context.Context, name, action, reason string) (*breakglassv1alpha1.BreakglassSession, error) {
 	endpoint := fmt.Sprintf("api/breakglassSessions/%s/%s", url.PathEscape(name), action)
 	var session breakglassv1alpha1.BreakglassSession
-	var payload *SessionActionRequest
+	var payload any
 	if reason != "" {
 		payload = &SessionActionRequest{Reason: reason}
 	}

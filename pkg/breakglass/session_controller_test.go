@@ -3068,6 +3068,127 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 	}
 }
 
+func TestNoBodySessionActionsRejectUnexpectedBody(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	approvedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	sessions := []*breakglassv1alpha1.BreakglassSession{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "body-withdraw"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "cl-a",
+				User:         "owner@example.com",
+				GrantedGroup: "g",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "body-drop"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "cl-a",
+				User:         "owner@example.com",
+				GrantedGroup: "g",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateApproved,
+				ApprovedAt: approvedAt,
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "body-cancel"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "cl-a",
+				User:         "owner@example.com",
+				GrantedGroup: "g",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateApproved,
+				ApprovedAt: approvedAt,
+			},
+		},
+	}
+
+	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-action-body"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cl-a"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "g",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	})
+	for _, session := range sessions {
+		builder.WithObjects(session)
+	}
+
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	ss := SessionManager{Client: cli}
+	es := testEscalationLookup{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, func(c *gin.Context) {
+		if h := c.GetHeader("X-Test-Email"); h != "" {
+			c.Set("email", h)
+			c.Set("username", strings.Split(h, "@")[0])
+		}
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	tests := []struct {
+		name      string
+		path      string
+		email     string
+		session   string
+		wantState breakglassv1alpha1.BreakglassSessionState
+	}{
+		{
+			name:      "withdraw",
+			path:      "/breakglassSessions/body-withdraw/withdraw",
+			email:     "owner@example.com",
+			session:   "body-withdraw",
+			wantState: breakglassv1alpha1.SessionStatePending,
+		},
+		{
+			name:      "drop",
+			path:      "/breakglassSessions/body-drop/drop",
+			email:     "owner@example.com",
+			session:   "body-drop",
+			wantState: breakglassv1alpha1.SessionStateApproved,
+		},
+		{
+			name:      "cancel",
+			path:      "/breakglassSessions/body-cancel/cancel",
+			email:     "approver@example.com",
+			session:   "body-cancel",
+			wantState: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, tt.path, strings.NewReader(`{"unexpected":true}`))
+			req.Header.Set("X-Test-Email", tt.email)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+			require.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+			assert.Contains(t, w.Body.String(), "request body must be empty")
+
+			var got breakglassv1alpha1.BreakglassSession
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Name: tt.session}, &got))
+			assert.Equal(t, tt.wantState, got.Status.State)
+			assert.Empty(t, got.Status.ReasonEnded)
+		})
+	}
+}
+
 func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {

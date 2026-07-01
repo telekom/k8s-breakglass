@@ -450,7 +450,7 @@ describe("BreakglassService", () => {
     } as unknown as Breakglass;
 
     await service.dropBreakglass(bg);
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/session%2F1/drop", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/session%2F1/drop");
 
     await expect(service.dropBreakglass({} as unknown as Breakglass)).rejects.toThrow("Missing session name");
   });
@@ -495,7 +495,7 @@ describe("BreakglassService", () => {
   it("withdraws pending requests and errors when metadata is missing", async () => {
     mockClient.post.mockResolvedValueOnce({ status: 204 });
     await service.withdrawMyRequest({ metadata: { name: "pending" } } as SessionCR);
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/pending/withdraw", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/pending/withdraw");
 
     await expect(service.withdrawMyRequest({ metadata: {} } as SessionCR)).rejects.toThrow("Missing session name");
   });
@@ -506,7 +506,7 @@ describe("BreakglassService", () => {
     await expect(service.withdrawMyRequest({ metadata: { name: "oops" } } as SessionCR)).rejects.toThrow(
       "withdraw failed",
     );
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/withdraw", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/withdraw");
   });
 
   it("sends payloads via testButton helper", async () => {

@@ -68,10 +68,6 @@ type CreateDebugSessionRequest struct {
 	ExtraDeployValues        map[string]interface{} `json:"extraDeployValues,omitempty"` // User-provided variable values for extraDeployVariables
 }
 
-type JoinDebugSessionRequest struct {
-	Role string `json:"role,omitempty"`
-}
-
 type RenewDebugSessionRequest struct {
 	ExtendBy string `json:"extendBy"`
 }
@@ -170,8 +166,10 @@ func (s *DebugSessionService) Create(ctx context.Context, req CreateDebugSession
 }
 
 func (s *DebugSessionService) Join(ctx context.Context, name, role, namespace string) (*breakglassv1alpha1.DebugSession, error) {
-	payload := JoinDebugSessionRequest{Role: role}
-	return s.action(ctx, name, "join", namespace, payload)
+	if role != "" && role != "viewer" {
+		return nil, fmt.Errorf("debug session join only supports viewer role")
+	}
+	return s.action(ctx, name, "join", namespace, nil)
 }
 
 func (s *DebugSessionService) Leave(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSession, error) {

@@ -220,7 +220,7 @@ describe("DebugSessionDetails", () => {
     await wrapper.find('[data-testid="join-session-button"]').trigger("click");
     await flushPromises();
 
-    expect(mockJoinSession).toHaveBeenCalledWith("dbg-1", { role: "viewer" });
+    expect(mockJoinSession).toHaveBeenCalledWith("dbg-1");
   });
 
   it("calls clipboardCleanup on unmount", async () => {

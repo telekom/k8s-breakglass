@@ -490,6 +490,8 @@ POST /api/breakglassSessions/{session-name}/withdraw
 Authorization: Bearer <token>
 ```
 
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
 **Status Code:** `200 OK`
 
 **Authorization:** Only the session requester can withdraw a pending request
@@ -541,6 +543,8 @@ POST /api/breakglassSessions/{session-name}/drop
 Authorization: Bearer <token>
 ```
 
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
 **Status Codes:**
 
 - `200 OK` - Session was dropped and updated
@@ -568,6 +572,8 @@ Approver cancels/terminates a running or approved session.
 POST /api/breakglassSessions/{session-name}/cancel
 Authorization: Bearer <token>
 ```
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
 **Status Code:** `200 OK`
 
@@ -944,7 +950,7 @@ JSON bodies for debug-session create requests must contain only known field name
 
 ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned only after the request is authorized by the selected template or binding.
 
-The same strict JSON parsing applies to DebugSession join, renew, approve, reject, and kubectl-debug operation bodies. Optional bodies may be omitted only where the endpoint documents that behavior; non-empty bodies must contain only known fields and one JSON object.
+The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
 
 **Response:** Created `DebugSession` object (201 Created).
 
@@ -958,15 +964,9 @@ The same strict JSON parsing applies to DebugSession join, renew, approve, rejec
 POST /api/debugSessions/:name/join
 ```
 
-**Request Body:**
-
-```json
-{
-  "role": "viewer"
-}
-```
-
 Only invited users can join an active, unexpired session, and only when terminal sharing is enabled for that session. The join endpoint adds callers as `viewer` participants; callers cannot self-select the privileged `participant` role.
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
 ### Leave Debug Session
 
@@ -978,6 +978,8 @@ Allows a participant (not owner) to leave a session. Owners must use terminate i
 The API sets the participant's `leftAt` timestamp; users with `leftAt` set are
 excluded from active participant checks and cannot use debug-session pod
 operations.
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
 ### Renew Debug Session
 
@@ -1006,6 +1008,8 @@ POST /api/debugSessions/:name/terminate
 ```
 
 Terminates the session early. Only the session owner can terminate.
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
 **Response:** Updated `DebugSession` object with `state: Terminated`.
 

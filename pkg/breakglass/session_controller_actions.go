@@ -11,6 +11,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
@@ -51,6 +52,9 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	// Only allow withdrawal if session is still pending
 	if !IsSessionPendingApproval(bs) {
 		apiresponses.RespondBadRequest(c, "Session is not pending and cannot be withdrawn")
+		return
+	}
+	if rejectUnexpectedActionBody(c) {
 		return
 	}
 
@@ -128,6 +132,9 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 
 	if IsSessionTerminalState(bs.Status.State) {
 		apiresponses.RespondBadRequest(c, fmt.Sprintf("session is in terminal state %s and cannot be dropped", bs.Status.State))
+		return
+	}
+	if rejectUnexpectedActionBody(c) {
 		return
 	}
 
@@ -221,6 +228,9 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 		apiresponses.RespondBadRequest(c, "Session is not active/approved and cannot be canceled by approver")
 		return
 	}
+	if rejectUnexpectedActionBody(c) {
+		return
+	}
 
 	// Transition to expired immediately
 	// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
@@ -264,6 +274,14 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRevoked, &bs, approverEmail, "Session canceled by approver")
 
 	c.JSON(http.StatusOK, bs)
+}
+
+func rejectUnexpectedActionBody(c *gin.Context) bool {
+	if err := jsonutil.RequireEmptyBody(c.Request.Body); err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return true
+	}
+	return false
 }
 
 // formatDuration converts a time.Duration to a human-readable string (e.g., "2 hours", "30 minutes")

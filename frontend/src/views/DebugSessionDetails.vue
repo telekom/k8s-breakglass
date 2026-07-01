@@ -252,7 +252,7 @@ function operationStatusVariant(allowed: boolean): string {
 
 async function handleJoin() {
   try {
-    await debugSessionService.joinSession(sessionName.value, { role: "viewer" });
+    await debugSessionService.joinSession(sessionName.value);
     pushSuccess("Joined session successfully");
     await fetchSession();
   } catch {
