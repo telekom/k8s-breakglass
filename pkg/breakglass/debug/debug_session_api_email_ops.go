@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -370,6 +371,10 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
@@ -391,15 +396,25 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
 	runAsNonRoot := extractRunAsNonRoot(req.SecurityContext)
-	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot); err != nil {
-		apiresponses.RespondForbidden(ctx, err.Error())
+	privileged := extractPrivileged(req.SecurityContext)
+	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot, privileged); err != nil {
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to validate ephemeral container request", "error", err)
+		} else {
+			reqLog.Warnw("Rejected ephemeral container request", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
 		return
 	}
 
 	// Inject the ephemeral container
 	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, currentUser.(string)); err != nil {
-		reqLog.Errorw("Failed to inject ephemeral container", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to inject ephemeral container")
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to inject ephemeral container", "error", err)
+		} else {
+			reqLog.Warnw("Rejected ephemeral container injection", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to inject ephemeral container")
 		return
 	}
 
@@ -462,6 +477,10 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
@@ -483,8 +502,12 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
 	if err != nil {
-		reqLog.Errorw("Failed to create pod copy", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to create pod copy")
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to create pod copy", "error", err)
+		} else {
+			reqLog.Warnw("Rejected pod copy request", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to create pod copy")
 		return
 	}
 
@@ -549,6 +572,10 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
@@ -570,8 +597,12 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
 	if err != nil {
-		reqLog.Errorw("Failed to create node debug pod", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to create node debug pod")
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to create node debug pod", "error", err)
+		} else {
+			reqLog.Warnw("Rejected node debug pod request", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to create node debug pod")
 		return
 	}
 
@@ -590,12 +621,44 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	})
 }
 
+func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback string) {
+	switch kubectlDebugOperationHTTPStatus(err) {
+	case http.StatusForbidden:
+		apiresponses.RespondForbidden(ctx, err.Error())
+	case http.StatusBadRequest:
+		apiresponses.RespondBadRequest(ctx, err.Error())
+	default:
+		apiresponses.RespondInternalErrorSimple(ctx, fallback)
+	}
+}
+
+func kubectlDebugOperationHTTPStatus(err error) int {
+	var operationErr *kubectlDebugOperationError
+	if errors.As(err, &operationErr) {
+		switch operationErr.kind {
+		case kubectlDebugOperationErrorPolicy:
+			return http.StatusForbidden
+		case kubectlDebugOperationErrorRequest:
+			return http.StatusBadRequest
+		case kubectlDebugOperationErrorInternal:
+			return http.StatusInternalServerError
+		}
+	}
+	if apierrors.IsNotFound(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 // clusterClientAdapter adapts cluster.ClientProvider to ClientProviderInterface
 type clusterClientAdapter struct {
 	ccProvider *cluster.ClientProvider
 }
 
 func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error) {
+	if a.ccProvider == nil {
+		return nil, fmt.Errorf("cluster client provider is not configured")
+	}
 	restCfg, err := a.ccProvider.GetRESTConfig(ctx, clusterName)
 	if err != nil {
 		return nil, err
@@ -638,6 +701,14 @@ func extractRunAsNonRoot(sc *corev1.SecurityContext) bool {
 		return false
 	}
 	return *sc.RunAsNonRoot
+}
+
+// extractPrivileged extracts the privileged value from a security context.
+func extractPrivileged(sc *corev1.SecurityContext) bool {
+	if sc == nil || sc.Privileged == nil {
+		return false
+	}
+	return *sc.Privileged
 }
 
 // checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.

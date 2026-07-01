@@ -45,6 +45,48 @@ type ClientProviderInterface interface {
 	GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error)
 }
 
+type kubectlDebugOperationErrorKind string
+
+const (
+	kubectlDebugOperationErrorPolicy   kubectlDebugOperationErrorKind = "policy"
+	kubectlDebugOperationErrorRequest  kubectlDebugOperationErrorKind = "request"
+	kubectlDebugOperationErrorInternal kubectlDebugOperationErrorKind = "internal"
+)
+
+type kubectlDebugOperationError struct {
+	kind kubectlDebugOperationErrorKind
+	err  error
+}
+
+func (e *kubectlDebugOperationError) Error() string {
+	return e.err.Error()
+}
+
+func (e *kubectlDebugOperationError) Unwrap() error {
+	return e.err
+}
+
+func kubectlDebugPolicyErrorf(format string, args ...interface{}) error {
+	return &kubectlDebugOperationError{
+		kind: kubectlDebugOperationErrorPolicy,
+		err:  fmt.Errorf(format, args...),
+	}
+}
+
+func kubectlDebugRequestErrorf(format string, args ...interface{}) error {
+	return &kubectlDebugOperationError{
+		kind: kubectlDebugOperationErrorRequest,
+		err:  fmt.Errorf(format, args...),
+	}
+}
+
+func kubectlDebugInternalErrorf(format string, args ...interface{}) error {
+	return &kubectlDebugOperationError{
+		kind: kubectlDebugOperationErrorInternal,
+		err:  fmt.Errorf(format, args...),
+	}
+}
+
 // NewKubectlDebugHandler creates a new kubectl debug handler
 func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderInterface) *KubectlDebugHandler {
 	return &KubectlDebugHandler{
@@ -164,46 +206,56 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 	namespace, podName, image string,
 	capabilities []string,
 	runAsNonRoot bool,
+	privileged bool,
 ) error {
 	template := ds.Status.ResolvedTemplate
 	if template == nil {
-		return fmt.Errorf("no resolved template in session")
+		return kubectlDebugRequestErrorf("no resolved template in session")
 	}
 
 	if template.KubectlDebug == nil || template.KubectlDebug.EphemeralContainers == nil {
-		return fmt.Errorf("ephemeral containers not configured in template")
+		return kubectlDebugRequestErrorf("ephemeral containers not configured in template")
 	}
 
 	ec := template.KubectlDebug.EphemeralContainers
 	if !ec.Enabled {
-		return fmt.Errorf("ephemeral containers are not enabled for this template")
+		return kubectlDebugRequestErrorf("ephemeral containers are not enabled for this template")
 	}
 
 	// Validate namespace
-	if !h.isNamespaceAllowed(namespace, ec.AllowedNamespaces, ec.DeniedNamespaces) {
-		return fmt.Errorf("namespace %s is not allowed for ephemeral container injection", namespace)
+	namespaceAllowed, err := h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ec.AllowedNamespaces, ec.DeniedNamespaces)
+	if err != nil {
+		return err
+	}
+	if !namespaceAllowed {
+		return kubectlDebugPolicyErrorf("namespace %s is not allowed for ephemeral container injection", namespace)
 	}
 
 	// Validate image
 	if !h.isImageAllowed(image, ec.AllowedImages) {
-		return fmt.Errorf("image %s is not in the allowed list", image)
+		return kubectlDebugPolicyErrorf("image %s is not in the allowed list", image)
 	}
 
 	// Validate image digest if required
 	if ec.RequireImageDigest && !h.hasImageDigest(image) {
-		return fmt.Errorf("image must use @sha256: digest")
+		return kubectlDebugPolicyErrorf("image must use @sha256: digest")
 	}
 
 	// Validate capabilities
 	for _, cap := range capabilities {
 		if !h.isCapabilityAllowed(cap, ec.MaxCapabilities) {
-			return fmt.Errorf("capability %s is not allowed", cap)
+			return kubectlDebugPolicyErrorf("capability %s is not allowed", cap)
 		}
+	}
+
+	// Validate privileged mode
+	if privileged && !ec.AllowPrivileged {
+		return kubectlDebugPolicyErrorf("privileged ephemeral containers are not allowed")
 	}
 
 	// Validate non-root
 	if ec.RequireNonRoot && !runAsNonRoot {
-		return fmt.Errorf("ephemeral container must run as non-root")
+		return kubectlDebugPolicyErrorf("ephemeral container must run as non-root")
 	}
 
 	return nil
@@ -306,12 +358,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 ) (*corev1.Pod, error) {
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.PodCopy == nil {
-		return nil, fmt.Errorf("pod copy not configured in template")
+		return nil, kubectlDebugRequestErrorf("pod copy not configured in template")
 	}
 
 	pc := template.KubectlDebug.PodCopy
 	if !pc.Enabled {
-		return nil, fmt.Errorf("pod copy is not enabled for this template")
+		return nil, kubectlDebugRequestErrorf("pod copy is not enabled for this template")
 	}
 
 	// Get target cluster client (needed before namespace validation to fetch labels)
@@ -326,7 +378,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	}
 	matcher := utils.NewNamespaceAllowDenyMatcher(pc.AllowedNamespaces, pc.DeniedNamespaces)
 	if !matcher.IsAllowedWithLabels(originalNamespace, nsLabels) {
-		return nil, fmt.Errorf("namespace %s is not allowed for pod copy", originalNamespace)
+		return nil, kubectlDebugPolicyErrorf("namespace %s is not allowed for pod copy", originalNamespace)
 	}
 
 	// Get the original pod
@@ -345,7 +397,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	ns := &corev1.Namespace{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("target namespace %s does not exist", targetNs)
+			return nil, kubectlDebugRequestErrorf("target namespace %s does not exist", targetNs)
 		}
 		return nil, fmt.Errorf("failed to check namespace: %w", err)
 	}
@@ -458,12 +510,12 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 ) (*corev1.Pod, error) {
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.NodeDebug == nil {
-		return nil, fmt.Errorf("node debug not configured in template")
+		return nil, kubectlDebugRequestErrorf("node debug not configured in template")
 	}
 
 	nd := template.KubectlDebug.NodeDebug
 	if !nd.Enabled {
-		return nil, fmt.Errorf("node debug is not enabled for this template")
+		return nil, kubectlDebugRequestErrorf("node debug is not enabled for this template")
 	}
 
 	// Validate node selector if configured
@@ -483,7 +535,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		// Check node selector
 		for k, v := range nd.NodeSelector {
 			if nodeVal, exists := node.Labels[k]; !exists || nodeVal != v {
-				return nil, fmt.Errorf("node %s does not match required selector %s=%s", nodeName, k, v)
+				return nil, kubectlDebugPolicyErrorf("node %s does not match required selector %s=%s", nodeName, k, v)
 			}
 		}
 	}
@@ -516,10 +568,13 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		podName = podName[:63]
 	}
 
-	// Determine namespace from template or default
-	namespace := "breakglass-debug"
-	if template.TargetNamespace != "" {
+	// Determine namespace from the resolved session namespace, then template, then default.
+	namespace := ds.Spec.TargetNamespace
+	if namespace == "" && template.TargetNamespace != "" {
 		namespace = template.TargetNamespace
+	}
+	if namespace == "" {
+		namespace = "breakglass-debug"
 	}
 
 	debugPod := &corev1.Pod{
@@ -645,6 +700,41 @@ func (h *KubectlDebugHandler) isNamespaceAllowed(namespace string, allowed, deni
 	return matcher.IsAllowed(namespace)
 }
 
+func (h *KubectlDebugHandler) isNamespaceAllowedForEphemeral(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	namespace string,
+	allowed, denied *breakglassv1alpha1.NamespaceFilter,
+) (bool, error) {
+	matcher := utils.NewNamespaceAllowDenyMatcher(allowed, denied)
+	if !namespaceFilterRequiresLabels(allowed) && !namespaceFilterRequiresLabels(denied) {
+		return matcher.IsAllowed(namespace), nil
+	}
+	targetClient := h.client
+	if h.ccProvider != nil {
+		var err error
+		targetClient, err = h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return false, kubectlDebugInternalErrorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+		}
+	}
+	if targetClient == nil {
+		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: kubernetes client is not configured", namespace)
+	}
+	nsLabels, err := h.fetchNamespaceLabels(ctx, targetClient, namespace)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, kubectlDebugRequestErrorf("namespace %s not found", namespace)
+		}
+		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: %w", namespace, err)
+	}
+	return matcher.IsAllowedWithLabels(namespace, nsLabels), nil
+}
+
+func namespaceFilterRequiresLabels(filter *breakglassv1alpha1.NamespaceFilter) bool {
+	return filter != nil && filter.HasSelectorTerms()
+}
+
 func (h *KubectlDebugHandler) fetchNamespaceLabels(ctx context.Context, cl ctrlclient.Client, namespace string) (map[string]string, error) {
 	ns := &corev1.Namespace{}
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, ns); err != nil {
@@ -669,11 +759,6 @@ func (h *KubectlDebugHandler) isImageAllowed(image string, allowed []string) boo
 
 		// Standard glob matching
 		if matched, _ := filepath.Match(pattern, image); matched {
-			return true
-		}
-
-		// Check if image starts with pattern (for versioned images)
-		if strings.HasPrefix(image, strings.TrimSuffix(pattern, "*")) {
 			return true
 		}
 	}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -70,8 +71,10 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 		image        string
 		capabilities []string
 		runAsNonRoot bool
+		privileged   bool
 		expectError  bool
 		errorContain string
+		wantHTTP     int
 	}{
 		{
 			name: "valid request",
@@ -104,6 +107,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "no resolved template",
+			wantHTTP:     http.StatusBadRequest,
 		},
 		{
 			name: "ephemeral containers not configured",
@@ -119,6 +123,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "ephemeral containers not configured",
+			wantHTTP:     http.StatusBadRequest,
 		},
 		{
 			name: "ephemeral containers disabled",
@@ -138,6 +143,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "not enabled",
+			wantHTTP:     http.StatusBadRequest,
 		},
 		{
 			name: "namespace denied",
@@ -158,6 +164,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "namespace kube-system is not allowed",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "image not allowed",
@@ -178,6 +185,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "malicious:latest",
 			expectError:  true,
 			errorContain: "image malicious:latest is not in the allowed list",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "requires image digest",
@@ -198,6 +206,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			image:        "busybox:latest",
 			expectError:  true,
 			errorContain: "must use @sha256: digest",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "valid with image digest",
@@ -238,6 +247,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			capabilities: []string{"SYS_ADMIN"},
 			expectError:  true,
 			errorContain: "capability SYS_ADMIN is not allowed",
+			wantHTTP:     http.StatusForbidden,
 		},
 		{
 			name: "requires non-root",
@@ -259,6 +269,49 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 			runAsNonRoot: false,
 			expectError:  true,
 			errorContain: "must run as non-root",
+			wantHTTP:     http.StatusForbidden,
+		},
+		{
+			name: "privileged denied unless explicitly allowed",
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+								Enabled:         true,
+								AllowPrivileged: false,
+							},
+						},
+					},
+				},
+			},
+			namespace:    "default",
+			podName:      "test-pod",
+			image:        "busybox:latest",
+			privileged:   true,
+			expectError:  true,
+			errorContain: "privileged ephemeral containers are not allowed",
+			wantHTTP:     http.StatusForbidden,
+		},
+		{
+			name: "privileged allowed when configured",
+			session: &breakglassv1alpha1.DebugSession{
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+							EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+								Enabled:         true,
+								AllowPrivileged: true,
+							},
+						},
+					},
+				},
+			},
+			namespace:   "default",
+			podName:     "test-pod",
+			image:       "busybox:latest",
+			privileged:  true,
+			expectError: false,
 		},
 	}
 
@@ -275,16 +328,162 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 				tt.image,
 				tt.capabilities,
 				tt.runAsNonRoot,
+				tt.privileged,
 			)
 
 			if tt.expectError {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorContain)
+				assert.Equal(t, tt.wantHTTP, kubectlDebugOperationHTTPStatus(err))
 			} else {
 				require.NoError(t, err)
 			}
 		})
 	}
+}
+
+func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors(t *testing.T) {
+	scheme := newKubectlTestScheme()
+
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster: "test-cluster",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled: true,
+					},
+				},
+			},
+		},
+	}
+	prodNamespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "production",
+			Labels: map[string]string{"env": "prod"},
+		},
+	}
+
+	tests := []struct {
+		name             string
+		allowed          *breakglassv1alpha1.NamespaceFilter
+		denied           *breakglassv1alpha1.NamespaceFilter
+		targetObjects    []ctrlclient.Object
+		expectError      bool
+		expectedErrorMsg string
+		wantHTTP         int
+	}{
+		{
+			name: "allowed selector matches namespace labels",
+			allowed: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "prod"}},
+				},
+			},
+			targetObjects: []ctrlclient.Object{prodNamespace},
+		},
+		{
+			name: "allowed selector blocks non matching namespace labels",
+			allowed: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "staging"}},
+				},
+			},
+			targetObjects:    []ctrlclient.Object{prodNamespace},
+			expectError:      true,
+			expectedErrorMsg: "namespace production is not allowed",
+			wantHTTP:         http.StatusForbidden,
+		},
+		{
+			name: "denied selector blocks matching namespace labels",
+			denied: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "prod"}},
+				},
+			},
+			targetObjects:    []ctrlclient.Object{prodNamespace},
+			expectError:      true,
+			expectedErrorMsg: "namespace production is not allowed",
+			wantHTTP:         http.StatusForbidden,
+		},
+		{
+			name: "selector lookup treats missing namespace as request error",
+			allowed: &breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+					{MatchLabels: map[string]string{"env": "prod"}},
+				},
+			},
+			expectError:      true,
+			expectedErrorMsg: "namespace production not found",
+			wantHTTP:         http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testSession := session.DeepCopy()
+			testSession.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.AllowedNamespaces = tt.allowed
+			testSession.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.DeniedNamespaces = tt.denied
+
+			targetClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.targetObjects...).
+				Build()
+			hubClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+				clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+			})
+
+			err := handler.ValidateEphemeralContainerRequest(
+				context.Background(),
+				testSession,
+				"production",
+				"test-pod",
+				"busybox:latest",
+				nil,
+				false,
+				false,
+			)
+
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedErrorMsg)
+				assert.Equal(t, tt.wantHTTP, kubectlDebugOperationHTTPStatus(err))
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+
+	t.Run("selector lookup uses handler client when provider is nil", func(t *testing.T) {
+		testSession := session.DeepCopy()
+		testSession.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.AllowedNamespaces = &breakglassv1alpha1.NamespaceFilter{
+			SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+				{MatchLabels: map[string]string{"env": "prod"}},
+			},
+		}
+
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(prodNamespace).
+			Build()
+		handler := NewKubectlDebugHandler(hubClient, nil)
+
+		err := handler.ValidateEphemeralContainerRequest(
+			context.Background(),
+			testSession,
+			"production",
+			"test-pod",
+			"busybox:latest",
+			nil,
+			false,
+			false,
+		)
+
+		require.NoError(t, err)
+	})
 }
 
 func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
@@ -376,6 +575,12 @@ func TestKubectlDebugHandler_isImageAllowed(t *testing.T) {
 			image:    "busybox:latest",
 			allowed:  []string{"busybox:latest"},
 			expected: true,
+		},
+		{
+			name:     "exact entry does not allow longer prefix",
+			image:    "registry.example.com/debug:1.0.0-backdoored",
+			allowed:  []string{"registry.example.com/debug:1.0.0"},
+			expected: false,
 		},
 		{
 			name:     "wildcard match",
@@ -1197,6 +1402,42 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		// Check host root mount
 		require.Len(t, pod.Spec.Volumes, 1)
 		assert.Equal(t, "host-root", pod.Spec.Volumes[0].Name)
+	})
+
+	t.Run("uses resolved session target namespace before template namespace", func(t *testing.T) {
+		tenantNs := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "tenant-debug",
+			},
+		}
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testNode, tenantNs).
+			Build()
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(testSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+			clients: map[string]ctrlclient.Client{
+				"test-cluster": targetClient,
+			},
+		})
+
+		session := testSession.DeepCopy()
+		session.Spec.TargetNamespace = "tenant-debug"
+		session.Status.ResolvedTemplate.TargetNamespace = "breakglass-debug"
+
+		pod, err := handler.CreateNodeDebugPod(
+			context.Background(),
+			session,
+			"worker-1",
+			"test-user@example.com",
+		)
+
+		require.NoError(t, err)
+		assert.Equal(t, "tenant-debug", pod.Namespace)
 	})
 
 	t.Run("node debug disabled", func(t *testing.T) {

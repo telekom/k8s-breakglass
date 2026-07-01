@@ -936,6 +936,7 @@ When a user creates a debug session:
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
 The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace selectors and cluster state.
+Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read.
 
 ### Example: Team-Isolated Debug Namespaces
 
@@ -1309,6 +1310,12 @@ kubectlDebug:
     requireNonRoot: true
 ```
 
+`allowedImages` entries are exact image references or explicit glob patterns. Use `*`
+where tag or repository wildcards are intended; exact entries such as
+`registry.example.com/debug:1.0.0` do not allow longer tags such as
+`registry.example.com/debug:1.0.0-extra`. When `allowPrivileged` is `false`,
+requests with `securityContext.privileged: true` are rejected.
+
 #### Namespace Filtering with Labels
 
 The `allowedNamespaces` and `deniedNamespaces` fields support label selectors for dynamic namespace matching:
@@ -1360,6 +1367,10 @@ kubectlDebug:
     nodeSelector:
       node-role.kubernetes.io/worker: ""
 ```
+
+Node-debug pods are created in the debug session's resolved
+`spec.targetNamespace` first, then the template `targetNamespace`, and finally
+the default `breakglass-debug` namespace.
 
 ### Pod Copy Debugging
 
@@ -1514,20 +1525,20 @@ Debug sessions can be managed via the REST API:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/v1/debugSessions` | List debug sessions visible to the caller |
-| `GET` | `/api/v1/debugSessions/{name}` | Get a specific visible session |
-| `POST` | `/api/v1/debugSessions` | Create a new session |
-| `POST` | `/api/v1/debugSessions/{name}/join` | Join an existing session |
-| `POST` | `/api/v1/debugSessions/{name}/leave` | Leave an existing session |
-| `POST` | `/api/v1/debugSessions/{name}/renew` | Renew session duration |
-| `POST` | `/api/v1/debugSessions/{name}/terminate` | Terminate session |
-| `POST` | `/api/v1/debugSessions/{name}/approve` | Approve session |
-| `POST` | `/api/v1/debugSessions/{name}/reject` | Reject session |
-| `GET` | `/api/v1/debugSessions/templates` | List available templates |
-| `GET` | `/api/v1/debugSessions/podTemplates` | List pod templates |
-| `POST` | `/api/v1/debugSessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
-| `POST` | `/api/v1/debugSessions/{name}/createPodCopy` | Create a debug copy of a pod |
-| `POST` | `/api/v1/debugSessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
+| `GET` | `/api/debugSessions` | List debug sessions visible to the caller |
+| `GET` | `/api/debugSessions/{name}` | Get a specific visible session |
+| `POST` | `/api/debugSessions` | Create a new session |
+| `POST` | `/api/debugSessions/{name}/join` | Join an existing session |
+| `POST` | `/api/debugSessions/{name}/leave` | Leave an existing session |
+| `POST` | `/api/debugSessions/{name}/renew` | Renew session duration |
+| `POST` | `/api/debugSessions/{name}/terminate` | Terminate session |
+| `POST` | `/api/debugSessions/{name}/approve` | Approve session |
+| `POST` | `/api/debugSessions/{name}/reject` | Reject session |
+| `GET` | `/api/debugSessions/templates` | List available templates |
+| `GET` | `/api/debugSessions/podTemplates` | List pod templates |
+| `POST` | `/api/debugSessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
+| `POST` | `/api/debugSessions/{name}/createPodCopy` | Create a debug copy of a pod |
+| `POST` | `/api/debugSessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
 
 Lifecycle actions `join`, `leave`, and `terminate` reject non-empty request bodies.
 
@@ -1543,7 +1554,12 @@ non-empty join bodies must still be strict JSON.
 
 ### Kubectl Debug API Endpoints
 
-These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode:
+These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode.
+The session must still be active and unexpired at request time; operations are
+rejected after `status.expiresAt` even if cleanup has not yet marked the session
+`Expired`. Policy denials such as disallowed namespaces or node selector
+mismatches return `403 Forbidden`; unsupported or malformed operation requests
+return `400 Bad Request`.
 
 Kubectl-debug operations merge their operation-specific status fields into the
 latest `DebugSession` status before returning. Concurrent renewals, participant
@@ -1552,7 +1568,7 @@ pods, injected containers, allowed pods, or cleanup state.
 
 #### Inject Ephemeral Container
 
-**POST** `/api/v1/debugSessions/{name}/injectEphemeralContainer`
+**POST** `/api/debugSessions/{name}/injectEphemeralContainer`
 
 Inject a debug container into a running pod without restarting it.
 
@@ -1578,7 +1594,7 @@ Inject a debug container into a running pod without restarting it.
 
 #### Create Pod Copy
 
-**POST** `/api/v1/debugSessions/{name}/createPodCopy`
+**POST** `/api/debugSessions/{name}/createPodCopy`
 
 Create a copy of an existing pod for debugging without affecting the original.
 
@@ -1601,7 +1617,7 @@ Create a copy of an existing pod for debugging without affecting the original.
 
 #### Create Node Debug Pod
 
-**POST** `/api/v1/debugSessions/{name}/createNodeDebugPod`
+**POST** `/api/debugSessions/{name}/createNodeDebugPod`
 
 Create a privileged debug pod on a specific node for node-level debugging.
 
@@ -1881,7 +1897,8 @@ This means:
 This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:
 
 - **Namespace restrictions** — `allowedNamespaces` / `deniedNamespaces` control where debug pods can be created
-- **Image allow-lists** — `allowedImages` restricts which debug container images can be used
+- **Image allow-lists** — `allowedImages` restricts which debug container images can be used by exact reference or explicit glob pattern
+- **Privileged ephemeral containers** — `allowPrivileged: false` blocks ephemeral container requests with `securityContext.privileged: true`
 - **Approval requirements** — `approvalConfig` can require explicit approver sign-off
 - **Time limits** — `maxDuration` caps session lifetime
 - **Operation restrictions** — `status.allowedPodOperations` (resolved from template/binding) limits which subresources are accessible

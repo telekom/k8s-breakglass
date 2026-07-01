@@ -23,6 +23,7 @@ type DebugSessionHandler interface {
 		namespace, podName, image string,
 		capabilities []string,
 		runAsNonRoot bool,
+		privileged bool,
 	) error
 }
 
@@ -96,10 +97,11 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 	for _, c := range newContainers {
 		caps := capsToStrings(c.SecurityContext)
 		nonRoot := isRunAsNonRoot(c.SecurityContext)
+		privileged := isPrivileged(c.SecurityContext)
 
 		if err := w.DebugHandler.ValidateEphemeralContainerRequest(
 			ctx, session, pod.Namespace, pod.Name, c.Image,
-			caps, nonRoot); err != nil {
+			caps, nonRoot, privileged); err != nil {
 			return admission.Denied(fmt.Sprintf("ephemeral container denied: %v", err))
 		}
 	}
@@ -137,4 +139,11 @@ func isRunAsNonRoot(sc *corev1.SecurityContext) bool {
 		return false
 	}
 	return *sc.RunAsNonRoot
+}
+
+func isPrivileged(sc *corev1.SecurityContext) bool {
+	if sc == nil || sc.Privileged == nil {
+		return false
+	}
+	return *sc.Privileged
 }

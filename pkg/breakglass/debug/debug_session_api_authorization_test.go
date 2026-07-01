@@ -972,6 +972,39 @@ func TestExtractRunAsNonRoot(t *testing.T) {
 	})
 }
 
+func TestExtractPrivileged(t *testing.T) {
+	t.Run("nil security context", func(t *testing.T) {
+		result := extractPrivileged(nil)
+		assert.False(t, result)
+	})
+
+	t.Run("nil privileged", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			Privileged: nil,
+		}
+		result := extractPrivileged(sc)
+		assert.False(t, result)
+	})
+
+	t.Run("privileged true", func(t *testing.T) {
+		trueVal := true
+		sc := &corev1.SecurityContext{
+			Privileged: &trueVal,
+		}
+		result := extractPrivileged(sc)
+		assert.True(t, result)
+	})
+
+	t.Run("privileged false", func(t *testing.T) {
+		falseVal := false
+		sc := &corev1.SecurityContext{
+			Privileged: &falseVal,
+		}
+		result := extractPrivileged(sc)
+		assert.False(t, result)
+	})
+}
+
 // ============================================================================
 // Tests for getDebugSessionByName
 // ============================================================================
