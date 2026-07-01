@@ -347,6 +347,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if c.ccProvider == nil {
 		return nil
 	}
+	cleanupBase := ds.DeepCopy()
 
 	// Clean up kubectl-debug resources (if any)
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
@@ -359,7 +360,8 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			// Clear deployed resources since we can't clean them up anyway
 			ds.Status.DeployedResources = nil
 			ds.Status.AllowedPods = nil
-			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+			ds.Status.KubectlDebugStatus = nil
+			return c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		cleanupErrors = append(cleanupErrors, err)
@@ -375,7 +377,8 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			// Clear deployed resources since we can't clean them up anyway
 			ds.Status.DeployedResources = nil
 			ds.Status.AllowedPods = nil
-			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+			ds.Status.KubectlDebugStatus = nil
+			return c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds)
 		}
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return errors.Join(cleanupErrors...)
@@ -406,7 +409,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		if err := c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 		}
 		return errors.Join(cleanupErrors...)
@@ -415,10 +418,18 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
-	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+	if err := c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds); err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 	}
 	return errors.Join(cleanupErrors...)
+}
+
+func (c *DebugSessionController) patchDebugSessionCleanupStatus(
+	ctx context.Context,
+	base *breakglassv1alpha1.DebugSession,
+	ds *breakglassv1alpha1.DebugSession,
+) error {
+	return c.client.Status().Patch(ctx, ds, ctrlclient.MergeFrom(base))
 }
 
 func (c *DebugSessionController) cleanupDeployedResources(
@@ -503,10 +514,39 @@ func (c *DebugSessionController) cleanupDeployedResources(
 	}
 
 	ds.Status.DeployedResources = remainingDeployedResources
-	if len(remainingDeployedResources) == 0 && len(ds.Status.PodTemplateResourceStatuses) == 0 {
-		ds.Status.AllowedPods = nil
-	}
+	ds.Status.AllowedPods = allowedPodsForRemainingDeployedPods(ds.Status.AllowedPods, remainingDeployedResources)
 	return errors.Join(cleanupErrors...)
+}
+
+func allowedPodsForRemainingDeployedPods(
+	allowedPods []breakglassv1alpha1.AllowedPodRef,
+	remainingDeployedResources []breakglassv1alpha1.DeployedResourceRef,
+) []breakglassv1alpha1.AllowedPodRef {
+	if len(allowedPods) == 0 {
+		return nil
+	}
+
+	remainingPodRefs := make(map[string]struct{})
+	for _, ref := range remainingDeployedResources {
+		if ref.Kind != "Pod" {
+			continue
+		}
+		remainingPodRefs[ref.Namespace+"\x00"+ref.Name] = struct{}{}
+	}
+	if len(remainingPodRefs) == 0 {
+		return nil
+	}
+
+	filtered := make([]breakglassv1alpha1.AllowedPodRef, 0, len(allowedPods))
+	for _, pod := range allowedPods {
+		if _, ok := remainingPodRefs[pod.Namespace+"\x00"+pod.Name]; ok {
+			filtered = append(filtered, pod)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 // cleanupPodTemplateResources removes resources deployed from multi-document pod templates.
