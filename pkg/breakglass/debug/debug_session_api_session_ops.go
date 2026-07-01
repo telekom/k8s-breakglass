@@ -440,7 +440,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	timeoutNow := time.Now()
 	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
-		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason, timeoutNow); err != nil {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, username, reason, timeoutNow); err != nil {
 			if apierrors.IsConflict(err) {
 				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 				return
@@ -546,7 +546,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	timeoutNow := time.Now()
 	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
-		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason, timeoutNow); err != nil {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, username, reason, timeoutNow); err != nil {
 			if apierrors.IsConflict(err) {
 				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 				return
