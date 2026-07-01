@@ -390,10 +390,12 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	username, ok := requireDebugSessionUsername(ctx)
+	identity, ok := debugSessionRequestIdentity(ctx)
 	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	currentUser := identity.username
 
 	var req ApprovalRequest
 	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
@@ -424,12 +426,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		return
 	}
 	// Check if user is authorized to approve (in allowed approver groups)
-	userGroups, _ := ctx.Get("groups")
-	currentUserEmail := ""
-	if email, exists := ctx.Get("email"); exists && email != nil {
-		currentUserEmail, _ = email.(string)
-	}
-	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
+	if !c.isIdentityAuthorizedToApprove(apiCtx, session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
 		return
 	}
@@ -440,7 +437,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	timeoutNow := time.Now()
 	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
-		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, username, reason, timeoutNow); err != nil {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser, reason, timeoutNow); err != nil {
 			if apierrors.IsConflict(err) {
 				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 				return
@@ -469,7 +466,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		existingApproval := *session.Status.Approval
 		approval = &existingApproval
 	}
-	approval.ApprovedBy = username
+	approval.ApprovedBy = currentUser
 	approval.ApprovedAt = &now
 	approval.Reason = req.Reason
 
@@ -484,9 +481,9 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	c.sendDebugSessionApprovalEmail(apiCtx, session)
 
 	// Emit audit event for session approval
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, username, "Debug session approved")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser, "Debug session approved")
 
-	reqLog.Infow("Debug session approved", "session", name, "approver", username)
+	reqLog.Infow("Debug session approved", "session", name, "approver", currentUser)
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
 
 	// Return updated session - client expects the session object, not just a message
@@ -499,10 +496,12 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	username, ok := requireDebugSessionUsername(ctx)
+	identity, ok := debugSessionRequestIdentity(ctx)
 	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	currentUser := identity.username
 
 	var req ApprovalRequest
 	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
@@ -533,12 +532,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		return
 	}
 	// Check if user is authorized to reject (in allowed approver groups)
-	userGroups, _ := ctx.Get("groups")
-	currentUserEmail := ""
-	if email, exists := ctx.Get("email"); exists && email != nil {
-		currentUserEmail, _ = email.(string)
-	}
-	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
+	if !c.isIdentityAuthorizedToApprove(apiCtx, session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
 		return
 	}
@@ -549,7 +543,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	timeoutNow := time.Now()
 	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
-		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, username, reason, timeoutNow); err != nil {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser, reason, timeoutNow); err != nil {
 			if apierrors.IsConflict(err) {
 				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 				return
@@ -580,14 +574,14 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		existingApproval := *session.Status.Approval
 		approval = &existingApproval
 	}
-	approval.RejectedBy = username
+	approval.RejectedBy = currentUser
 	approval.RejectedAt = &now
 	approval.Reason = sanitizedReason
 
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.Approval = approval
 		status.State = breakglassv1alpha1.DebugSessionStateTerminated
-		status.Message = fmt.Sprintf("Rejected by %s: %s", username, sanitizedReason)
+		status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
 	}); err != nil {
 		respondDebugSessionStatusPatchError(ctx, reqLog, "reject session", "failed to reject session", name, err)
 		return
@@ -597,9 +591,9 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	c.sendDebugSessionRejectionEmail(apiCtx, session)
 
 	// Emit audit event for session rejection
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, username, fmt.Sprintf("Debug session rejected: %s", req.Reason))
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser, fmt.Sprintf("Debug session rejected: %s", req.Reason))
 
-	reqLog.Infow("Debug session rejected", "session", name, "rejector", username, "reason", req.Reason)
+	reqLog.Infow("Debug session rejected", "session", name, "rejector", currentUser, "reason", req.Reason)
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()
 
 	// Return updated session - client expects the session object, not just a message

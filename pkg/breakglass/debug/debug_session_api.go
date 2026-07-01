@@ -412,11 +412,17 @@ func debugSessionGroupsFromContext(groupsValue interface{}) []string {
 }
 
 func debugSessionIdentityMatches(identity debugSessionReadIdentity, values ...string) bool {
+	username := strings.TrimSpace(identity.username)
+	email := strings.TrimSpace(identity.email)
 	for _, value := range values {
+		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
-		if value == identity.username || (identity.email != "" && value == identity.email) {
+		if username != "" && strings.EqualFold(value, username) {
+			return true
+		}
+		if email != "" && strings.EqualFold(value, email) {
 			return true
 		}
 	}
@@ -1378,13 +1384,7 @@ func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.
 }
 
 func (a *debugSessionReadAuthorizer) approverAuthorizationMatches(approvers *breakglassv1alpha1.DebugSessionApprovers) bool {
-	identity := a.identity
-	if a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups) {
-		return true
-	}
-	return identity.email != "" &&
-		identity.email != identity.username &&
-		a.controller.checkApproverAuthorization(approvers, identity.email, identity.groups)
+	return a.controller.checkApproverAuthorizationForIdentity(approvers, a.identity)
 }
 
 func (a *debugSessionReadAuthorizer) readApproversFromBinding(ctx context.Context, session *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.DebugSessionApprovers, error) {
