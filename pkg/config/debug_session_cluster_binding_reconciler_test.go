@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -42,6 +43,60 @@ func newTestClusterBindingReconciler() (*DebugSessionClusterBindingReconciler, *
 	return &DebugSessionClusterBindingReconciler{
 		logger: logger,
 	}, scheme
+}
+
+func clusterBindingRequestNames(requests []reconcile.Request) []types.NamespacedName {
+	names := make([]types.NamespacedName, 0, len(requests))
+	for _, req := range requests {
+		names = append(names, req.NamespacedName)
+	}
+	return names
+}
+
+func indexClusterBindingTemplateRef(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || binding.Spec.TemplateRef == nil || binding.Spec.TemplateRef.Name == "" {
+		return nil
+	}
+	return []string{binding.Spec.TemplateRef.Name}
+}
+
+func indexClusterBindingTemplateSelector(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || binding.Spec.TemplateSelector == nil {
+		return nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
+	if err != nil || selector.Empty() {
+		return nil
+	}
+	return []string{debugBindingSelectorPresenceValue}
+}
+
+func indexClusterBindingClusters(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || len(binding.Spec.Clusters) == 0 {
+		return nil
+	}
+	clusters := make([]string, 0, len(binding.Spec.Clusters))
+	for _, cluster := range binding.Spec.Clusters {
+		if cluster != "" {
+			clusters = append(clusters, cluster)
+		}
+	}
+	return clusters
+}
+
+func indexClusterBindingClusterSelector(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || binding.Spec.ClusterSelector == nil {
+		return nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	if err != nil || selector.Empty() {
+		return nil
+	}
+	return []string{debugBindingSelectorPresenceValue}
 }
 
 func TestDebugSessionClusterBindingReconciler_Reconcile_NotFound(t *testing.T) {
@@ -631,4 +686,216 @@ func TestDebugSessionClusterBindingReconciler_ResolveClusters_DeduplicatesExplic
 	require.Len(t, resolved, 1)
 	assert.Equal(t, "shared-cluster", resolved[0].Name)
 	assert.Equal(t, "explicit", resolved[0].MatchedBy) // Explicit takes precedence
+}
+
+func TestDebugSessionClusterBindingReconciler_BindingsForTemplate(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "template-a",
+			Labels: map[string]string{
+				"tier": "standard",
+			},
+		},
+	}
+	exactBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "exact-binding", Namespace: "team-a"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-a"},
+		},
+	}
+	selectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "selector-binding", Namespace: "team-b"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"tier": "standard"},
+			},
+		},
+	}
+	otherBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-binding", Namespace: "team-c"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"tier": "platform"},
+			},
+		},
+	}
+	emptySelectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-selector-binding", Namespace: "team-d"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateSelector: &metav1.LabelSelector{},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(template, exactBinding, selectorBinding, otherBinding, emptySelectorBinding).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingTemplateRefIndex, indexClusterBindingTemplateRef).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingTemplateSelectorIndex, indexClusterBindingTemplateSelector).
+		Build()
+
+	requests := r.bindingsForTemplate(context.Background(), template)
+
+	assert.ElementsMatch(t, []types.NamespacedName{
+		{Namespace: "team-a", Name: "exact-binding"},
+		{Namespace: "team-b", Name: "selector-binding"},
+	}, clusterBindingRequestNames(requests))
+}
+
+func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testing.T) {
+	r, scheme := newTestClusterBindingReconciler()
+	cluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster-a",
+			Namespace: "tenant-a",
+			Labels: map[string]string{
+				"env": "prod",
+			},
+		},
+	}
+	exactBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "exact-binding", Namespace: "team-a"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Clusters: []string{"cluster-a"},
+		},
+	}
+	selectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "selector-binding", Namespace: "team-b"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "prod"},
+			},
+		},
+	}
+	otherBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-binding", Namespace: "team-c"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "stage"},
+			},
+		},
+	}
+	emptySelectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-selector-binding", Namespace: "team-d"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ClusterSelector: &metav1.LabelSelector{},
+		},
+	}
+
+	r.client = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, exactBinding, selectorBinding, otherBinding, emptySelectorBinding).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingClustersIndex, indexClusterBindingClusters).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingClusterSelectorIndex, indexClusterBindingClusterSelector).
+		Build()
+
+	requests := r.bindingsForClusterConfig(context.Background(), cluster)
+
+	assert.ElementsMatch(t, []types.NamespacedName{
+		{Namespace: "team-a", Name: "exact-binding"},
+		{Namespace: "team-b", Name: "selector-binding"},
+	}, clusterBindingRequestNames(requests))
+}
+
+func TestDebugSessionClusterBindingReconciler_TemplateDependencyChanged(t *testing.T) {
+	readyTrue := metav1.Condition{
+		Type:               string(breakglassv1alpha1.DebugSessionTemplateConditionReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            "template is ready",
+		ObservedGeneration: 1,
+	}
+
+	baseTemplate := func() *breakglassv1alpha1.DebugSessionTemplate {
+		return &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "template-a",
+				Generation: 1,
+				Labels: map[string]string{
+					"tier": "standard",
+				},
+			},
+			Status: breakglassv1alpha1.DebugSessionTemplateStatus{
+				Conditions: []metav1.Condition{readyTrue},
+			},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*breakglassv1alpha1.DebugSessionTemplate)
+		want   bool
+	}{
+		{
+			name: "unchanged template does not requeue bindings",
+			want: false,
+		},
+		{
+			name: "generation change requeues bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Generation = 2
+			},
+			want: true,
+		},
+		{
+			name: "label change requeues selector bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Labels = map[string]string{"tier": "privileged"}
+			},
+			want: true,
+		},
+		{
+			name: "ready status change requeues bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Status.Conditions[0].Status = metav1.ConditionFalse
+			},
+			want: true,
+		},
+		{
+			name: "ready message change does not requeue bindings",
+			mutate: func(template *breakglassv1alpha1.DebugSessionTemplate) {
+				template.Status.Conditions[0].Message = "template is still ready"
+				template.Status.Conditions[0].Reason = "StillReady"
+				template.Status.Conditions[0].ObservedGeneration = 2
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldTemplate := baseTemplate()
+			newTemplate := oldTemplate.DeepCopy()
+			if tt.mutate != nil {
+				tt.mutate(newTemplate)
+			}
+
+			assert.Equal(t, tt.want, templateDependencyChanged(oldTemplate, newTemplate))
+		})
+	}
+}
+
+func TestDebugSessionClusterBindingReconciler_ReadyConditionChanged(t *testing.T) {
+	readyTrue := metav1.Condition{
+		Type:               string(breakglassv1alpha1.ClusterConfigConditionReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            "cluster is ready",
+		ObservedGeneration: 1,
+	}
+	readyTrueLater := readyTrue
+	readyTrueLater.LastTransitionTime = metav1.Now()
+	readyTrueDifferentReason := readyTrue
+	readyTrueDifferentReason.Reason = "StillReady"
+	readyTrueDifferentReason.Message = "cluster is still ready"
+	readyTrueDifferentReason.ObservedGeneration = 2
+	readyFalse := readyTrue
+	readyFalse.Status = metav1.ConditionFalse
+	readyFalse.Reason = "NotReady"
+
+	assert.False(t, readyConditionChanged(nil, nil))
+	assert.True(t, readyConditionChanged(nil, []metav1.Condition{readyTrue}))
+	assert.False(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyTrueLater}))
+	assert.False(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyTrueDifferentReason}))
+	assert.True(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyFalse}))
 }

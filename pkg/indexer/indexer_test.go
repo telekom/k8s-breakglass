@@ -83,6 +83,10 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 		"spec.allowed.cluster",
 		"spec.allowed.group",
 		"spec.escalatedGroup",
+		"spec.templateRef.name",
+		"spec.templateSelector.present",
+		"spec.clusters",
+		"spec.clusterSelector.present",
 		"spec.clusterID",
 	}
 
@@ -134,6 +138,14 @@ func TestRegisterCommonFieldIndexes_FailureOnField(t *testing.T) {
 		{
 			name:        "fail on spec.escalatedGroup",
 			failOnField: "spec.escalatedGroup",
+		},
+		{
+			name:        "fail on spec.templateRef.name",
+			failOnField: "spec.templateRef.name",
+		},
+		{
+			name:        "fail on spec.clusters",
+			failOnField: "spec.clusters",
 		},
 		{
 			name:        "fail on spec.clusterID",
@@ -295,6 +307,80 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 
 		empty := &breakglassv1alpha1.DebugSession{}
 		result = fn(empty)
+		assert.Nil(t, result)
+	})
+}
+
+func TestIndexerFunctions_DebugSessionClusterBinding(t *testing.T) {
+	indexer := newMockFieldIndexer()
+	logger := zaptest.NewLogger(t).Sugar()
+	ctx := context.Background()
+
+	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
+	require.NoError(t, err)
+
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "debug-binding",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-a"},
+			Clusters:    []string{"cluster-a", "", "cluster-b"},
+		},
+	}
+
+	t.Run("spec.templateRef.name index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.templateRef.name"]
+		require.NotNil(t, fn)
+
+		result := fn(binding)
+		assert.Equal(t, []string{"template-a"}, result)
+
+		empty := &breakglassv1alpha1.DebugSessionClusterBinding{}
+		result = fn(empty)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusters index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.clusters"]
+		require.NotNil(t, fn)
+
+		result := fn(binding)
+		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b"}, result)
+
+		empty := &breakglassv1alpha1.DebugSessionClusterBinding{}
+		result = fn(empty)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.templateSelector.present index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.templateSelector.present"]
+		require.NotNil(t, fn)
+
+		withSelector := binding.DeepCopy()
+		withSelector.Spec.TemplateSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "debug"}}
+		result := fn(withSelector)
+		assert.Equal(t, []string{"true"}, result)
+
+		emptySelector := binding.DeepCopy()
+		emptySelector.Spec.TemplateSelector = &metav1.LabelSelector{}
+		result = fn(emptySelector)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusterSelector.present index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.clusterSelector.present"]
+		require.NotNil(t, fn)
+
+		withSelector := binding.DeepCopy()
+		withSelector.Spec.ClusterSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}
+		result := fn(withSelector)
+		assert.Equal(t, []string{"true"}, result)
+
+		emptySelector := binding.DeepCopy()
+		emptySelector.Spec.ClusterSelector = &metav1.LabelSelector{}
+		result = fn(emptySelector)
 		assert.Nil(t, result)
 	})
 }
