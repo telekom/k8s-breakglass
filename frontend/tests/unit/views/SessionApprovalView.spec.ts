@@ -204,14 +204,14 @@ describe("SessionApprovalView", () => {
               description: "Document the incident ticket",
             },
           },
-          status: { state: "pending" },
+          status: { state: "Pending" },
         },
         approvalMeta: {
           canApprove: true,
           canReject: true,
           isRequester: false,
           isApprover: true,
-          sessionState: "pending",
+          sessionState: "Pending",
         },
       },
     });
@@ -405,14 +405,14 @@ function approvalResponse(name: string, requester: string) {
           cluster: "prod",
           grantedGroup: "cluster-admin",
         },
-        status: { state: "pending" },
+        status: { state: "Pending" },
       },
       approvalMeta: {
         canApprove: true,
         canReject: true,
         isRequester: false,
         isApprover: true,
-        sessionState: "pending",
+        sessionState: "Pending",
       },
     },
   };

@@ -33,6 +33,10 @@ type EnrichedApprovalReasonSession = SessionCR & {
 // Denial reason categories for specific UI treatment
 type DenialCategory = "self-approval" | "domain-restriction" | "not-approver" | "no-matching-escalation" | "other";
 
+function isPendingSessionState(state?: string): boolean {
+  return state?.toLowerCase() === "pending";
+}
+
 function categorizeDenialReason(reason?: string): DenialCategory {
   if (!reason) return "other";
   const lowerReason = reason.toLowerCase();
@@ -191,7 +195,7 @@ const loadSession = async () => {
       // Fallback for old API response format (backward compatibility)
       const found = foundSession as SessionCR;
       debug("SessionApprovalView", "Found session:", found.metadata?.name, "state:", found.status?.state);
-      if (found.status?.state !== "pending") {
+      if (!isPendingSessionState(found.status?.state)) {
         error.value = "Cannot Approve Session";
         errorDetails.value = `Session is ${found.status?.state}. Only pending sessions can be approved.`;
       } else {
@@ -416,7 +420,7 @@ onUnmounted(() => {
           <p v-if="approvalMeta.isRequester && denialCategory !== 'self-approval'" class="meta-info">
             <strong>Note:</strong> You are the requester of this session.
           </p>
-          <p v-if="approvalMeta.sessionState && approvalMeta.sessionState !== 'pending'" class="meta-info">
+          <p v-if="approvalMeta.sessionState && !isPendingSessionState(approvalMeta.sessionState)" class="meta-info">
             <strong>Session State:</strong> {{ approvalMeta.sessionState }}
           </p>
         </div>
