@@ -1443,6 +1443,24 @@ func TestShouldSendNotification(t *testing.T) {
 			expected: false,
 		},
 		{
+			name: "enabled config - termination event with notify on termination",
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:             true,
+				NotifyOnTermination: true,
+			},
+			event:    notificationEventTermination,
+			expected: true,
+		},
+		{
+			name: "enabled config - termination event without notify on termination",
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:             true,
+				NotifyOnTermination: false,
+			},
+			event:    notificationEventTermination,
+			expected: false,
+		},
+		{
 			name: "enabled config - unknown event returns true",
 			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
 				Enabled: true,

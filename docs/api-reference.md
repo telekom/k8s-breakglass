@@ -1082,6 +1082,12 @@ When present, the optional approval body must contain only the known `reason` fi
 
 Approves a session in `PendingApproval` state.
 
+If the `DEBUG_SESSION_APPROVAL_TIMEOUT` deadline has elapsed, the handler
+returns `409 Conflict`. Before returning the conflict, it reloads the latest
+session state and may mark the session `Failed` with an approval-timeout
+message; already decided approvals and already recorded timeout failures also
+return `409 Conflict`.
+
 `reason` is required when the session's stored `approvalReasonConfig.mandatory`
 is `true`, and must satisfy the configured `minLength` after sanitization.
 
@@ -1106,6 +1112,12 @@ POST /api/debugSessions/:name/reject
 ```
 
 Rejects a session in `PendingApproval` state.
+
+If the `DEBUG_SESSION_APPROVAL_TIMEOUT` deadline has elapsed, the handler
+returns `409 Conflict`. Before returning the conflict, it reloads the latest
+session state and may mark the session `Failed` with an approval-timeout
+message; already decided approvals and already recorded timeout failures also
+return `409 Conflict`.
 
 When present, the rejection body must contain only the known `reason` field and exactly one JSON object.
 

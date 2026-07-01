@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1472,6 +1473,57 @@ func TestHandleGetDebugSession_NotFound(t *testing.T) {
 // Tests for handleApproveDebugSession
 // ============================================================================
 
+func TestDebugSessionApprovalTimedOut(t *testing.T) {
+	now := time.Now()
+	timeout := breakglass.DebugSessionApprovalTimeout
+
+	tests := []struct {
+		name      string
+		createdAt metav1.Time
+		approval  *breakglassv1alpha1.DebugSessionApproval
+		want      bool
+	}{
+		{name: "zero timestamp is not treated as timed out", createdAt: metav1.Time{}, want: false},
+		{name: "before timeout", createdAt: metav1.NewTime(now.Add(-timeout + time.Second)), want: false},
+		{name: "at timeout", createdAt: metav1.NewTime(now.Add(-timeout)), want: false},
+		{name: "after timeout", createdAt: metav1.NewTime(now.Add(-timeout - time.Second)), want: true},
+		{
+			name:      "approved pending status is not timed out",
+			createdAt: metav1.NewTime(now.Add(-timeout - time.Second)),
+			approval: &breakglassv1alpha1.DebugSessionApproval{
+				ApprovedAt: &metav1.Time{Time: now},
+			},
+			want: false,
+		},
+		{
+			name:      "rejected pending status is not timed out",
+			createdAt: metav1.NewTime(now.Add(-timeout - time.Second)),
+			approval: &breakglassv1alpha1.DebugSessionApproval{
+				RejectedAt: &metav1.Time{Time: now},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.createdAt},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					Approval: tt.approval,
+				},
+			}
+			got, reason := debugSessionApprovalTimedOut(session, now)
+			assert.Equal(t, tt.want, got)
+			if tt.want {
+				assert.Contains(t, reason, "Approval timed out")
+			} else {
+				assert.Empty(t, reason)
+			}
+		})
+	}
+}
+
 func TestHandleApproveDebugSession_Unauthorized(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
@@ -1569,6 +1621,14 @@ func TestHandleApproveDebugSession_NotPendingApproval(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assert.Contains(t, rr.Body.String(), "not pending approval")
+}
+
+func TestHandleApproveDebugSession_PendingApprovalWithRecordedDecisionConflicts(t *testing.T) {
+	runDebugApprovalDecisionConflictTest(t, "approve")
+}
+
+func TestHandleApproveDebugSession_UnauthorizedRecordedDecisionForbidden(t *testing.T) {
+	runDebugApprovalDecisionUnauthorizedTest(t, "approve")
 }
 
 func TestHandleApproveDebugSession_NotAuthorized(t *testing.T) {
@@ -1672,6 +1732,74 @@ func TestHandleApproveDebugSession_BlocksRequesterEmailSelfApproval(t *testing.T
 	var fetched breakglassv1alpha1.DebugSession
 	require.NoError(t, fakeClient.Get(req.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &fetched))
 	require.Nil(t, fetched.Status.Approval)
+}
+
+func TestHandleApproveDebugSession_ApprovalTimedOut(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pending-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	mockMail := NewMockMailEnqueuer(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("username", "approver@example.com")
+		c.Set("groups", []string{})
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	_ = ctrl.Register(rg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusConflict, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Approval timed out")
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	assert.Contains(t, updated.Status.Message, "Approval timed out")
+	assert.Nil(t, updated.Status.Approval)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
+	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
 }
 
 func TestHandleApproveDebugSession_Success(t *testing.T) {
@@ -2004,6 +2132,139 @@ func TestHandleRejectDebugSession_NotPendingApproval(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "not pending approval")
 }
 
+func TestHandleRejectDebugSession_PendingApprovalWithRecordedDecisionConflicts(t *testing.T) {
+	runDebugApprovalDecisionConflictTest(t, "reject")
+}
+
+func TestHandleRejectDebugSession_UnauthorizedRecordedDecisionForbidden(t *testing.T) {
+	runDebugApprovalDecisionUnauthorizedTest(t, "reject")
+}
+
+func runDebugApprovalDecisionConflictTest(t *testing.T, action string) {
+	t.Helper()
+
+	for _, decision := range []string{"approved", "rejected"} {
+		t.Run(action+"_"+decision, func(t *testing.T) {
+			now := metav1.Now()
+			approval := &breakglassv1alpha1.DebugSessionApproval{
+				Required: true,
+			}
+			if decision == "approved" {
+				approval.ApprovedBy = "first-approver@example.com"
+				approval.ApprovedAt = &now
+			} else {
+				approval.RejectedBy = "first-approver@example.com"
+				approval.RejectedAt = &now
+				approval.Reason = "Already rejected"
+			}
+
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pending-session-" + decision,
+					Namespace: "default",
+					Labels: map[string]string{
+						DebugSessionLabelKey: "pending-session-" + decision,
+					},
+				},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					Cluster:     "test-cluster",
+					RequestedBy: "requester@example.com",
+					TemplateRef: "test-template",
+				},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:    breakglassv1alpha1.DebugSessionStatePendingApproval,
+					Approval: approval,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+							Users: []string{"approver@example.com"},
+						},
+					},
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(Scheme).
+				WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+				Build()
+			ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil)
+			router := setupAuthenticatedDebugSessionRouter(t, ctrl, "approver@example.com", "approver@example.com", []string{})
+
+			req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/"+session.Name+"/"+action+"?namespace=default", nil)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusConflict, rr.Code)
+			assert.Contains(t, rr.Body.String(), "already been decided")
+
+			var updated breakglassv1alpha1.DebugSession
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: session.Name}, &updated))
+			require.NotNil(t, updated.Status.Approval)
+			if decision == "approved" {
+				assert.NotNil(t, updated.Status.Approval.ApprovedAt)
+				assert.Nil(t, updated.Status.Approval.RejectedAt)
+			} else {
+				assert.NotNil(t, updated.Status.Approval.RejectedAt)
+				assert.Nil(t, updated.Status.Approval.ApprovedAt)
+			}
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, updated.Status.State)
+		})
+	}
+}
+
+func runDebugApprovalDecisionUnauthorizedTest(t *testing.T, action string) {
+	t.Helper()
+
+	now := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pending-session-decided",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session-decided",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			Approval: &breakglassv1alpha1.DebugSessionApproval{
+				Required:   true,
+				ApprovedBy: "first-approver@example.com",
+				ApprovedAt: &now,
+			},
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"admin@example.com"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "unauthorized@example.com", "unauthorized@example.com", []string{})
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/"+session.Name+"/"+action+"?namespace=default", nil)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.NotContains(t, rr.Body.String(), "already been decided")
+}
+
 func TestHandleRejectDebugSession_NotAuthorized(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
@@ -2105,6 +2366,75 @@ func TestHandleRejectDebugSession_BlocksRequesterEmailSelfApproval(t *testing.T)
 	var fetched breakglassv1alpha1.DebugSession
 	require.NoError(t, fakeClient.Get(req.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &fetched))
 	require.Nil(t, fetched.Status.Approval)
+}
+
+func TestHandleRejectDebugSession_ApprovalTimedOut(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pending-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	mockMail := NewMockMailEnqueuer(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("username", "approver@example.com")
+		c.Set("groups", []string{})
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	_ = ctrl.Register(rg)
+
+	body := bytes.NewBuffer([]byte(`{"reason": "Too late"}`))
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/reject?namespace=default", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusConflict, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Approval timed out")
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	assert.Contains(t, updated.Status.Message, "Approval timed out")
+	assert.Nil(t, updated.Status.Approval)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
+	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
 }
 
 func TestHandleRejectDebugSession_Success(t *testing.T) {

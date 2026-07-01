@@ -1926,7 +1926,7 @@ spec:
 - Verify approver groups/users are configured
 - Check if user is in autoApproveFor groups
 - Contact an approver to approve/reject
-- Sessions automatically fail after `DEBUG_SESSION_APPROVAL_TIMEOUT` (default: 24h) — the reconciler checks this on every requeue cycle
+- Sessions automatically fail after `DEBUG_SESSION_APPROVAL_TIMEOUT` (default: 24h) — approve/reject API calls enforce the deadline immediately, and the reconciler also checks this on every requeue cycle
 
 ### Debug pods not starting
 

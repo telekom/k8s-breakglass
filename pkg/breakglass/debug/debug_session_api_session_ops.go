@@ -18,6 +18,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
@@ -421,7 +423,6 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
-
 	// Check if user is authorized to approve (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
 	currentUserEmail := ""
@@ -430,6 +431,25 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
+		return
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
+		return
+	}
+
+	timeoutNow := time.Now()
+	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, username, reason, timeoutNow); err != nil {
+			if apierrors.IsConflict(err) {
+				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
+				return
+			}
+			reqLog.Errorw("Failed to mark timed-out debug session approval", "session", name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to update timed-out debug session")
+			return
+		}
+		apiresponses.RespondConflict(ctx, reason)
 		return
 	}
 
@@ -512,7 +532,6 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
-
 	// Check if user is authorized to reject (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
 	currentUserEmail := ""
@@ -521,6 +540,25 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	}
 	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, username, currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
+		return
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
+		return
+	}
+
+	timeoutNow := time.Now()
+	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, username, reason, timeoutNow); err != nil {
+			if apierrors.IsConflict(err) {
+				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
+				return
+			}
+			reqLog.Errorw("Failed to mark timed-out debug session rejection", "session", name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to update timed-out debug session")
+			return
+		}
+		apiresponses.RespondConflict(ctx, reason)
 		return
 	}
 
@@ -566,6 +604,77 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	// Return updated session - client expects the session object, not just a message
 	ctx.JSON(http.StatusOK, session)
+}
+
+func debugSessionApprovalTimedOut(session *breakglassv1alpha1.DebugSession, now time.Time) (bool, string) {
+	if session.CreationTimestamp.IsZero() {
+		return false, ""
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		return false, ""
+	}
+
+	timeout := breakglass.DebugSessionApprovalTimeout
+	if !session.CreationTimestamp.Add(timeout).Before(now) {
+		return false, ""
+	}
+
+	return true, fmt.Sprintf("Approval timed out after %s", timeout)
+}
+
+func debugSessionApprovalDecisionRecorded(session *breakglassv1alpha1.DebugSession) bool {
+	return session.Status.Approval != nil &&
+		(session.Status.Approval.ApprovedAt != nil || session.Status.Approval.RejectedAt != nil)
+}
+
+func debugSessionApprovalDecisionConflict(session *breakglassv1alpha1.DebugSession) error {
+	return apierrors.NewConflict(schema.GroupResource{
+		Group:    breakglassv1alpha1.GroupVersion.Group,
+		Resource: "debugsessions",
+	}, session.Name, errors.New("debug session approval has already been decided"))
+}
+
+func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context.Context, session *breakglassv1alpha1.DebugSession, actor, reason string, now time.Time) error {
+	latest := &breakglassv1alpha1.DebugSession{}
+	if err := c.reader().Get(ctx, ctrlclient.ObjectKeyFromObject(session), latest); err != nil {
+		return fmt.Errorf("load latest debug session before approval timeout: %w", err)
+	}
+
+	if debugSessionApprovalTimeoutAlreadyRecorded(latest) {
+		session.Status = latest.Status
+		return nil
+	}
+	if debugSessionApprovalDecisionRecorded(latest) {
+		return debugSessionApprovalDecisionConflict(latest)
+	}
+	if timedOut, latestReason := debugSessionApprovalTimedOut(latest, now); !timedOut {
+		return debugSessionApprovalDecisionConflict(latest)
+	} else if reason == "" {
+		reason = latestReason
+	}
+
+	latest.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+	latest.Status.Message = reason
+
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, latest); err != nil {
+		if apierrors.IsConflict(err) {
+			return err
+		}
+		return fmt.Errorf("mark debug session approval timed out: %w", err)
+	}
+
+	session.Status = latest.Status
+	c.sendDebugSessionFailedEmail(ctx, latest, reason)
+	if c.shouldEmitAudit(latest) {
+		c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, latest, actor, reason)
+	}
+	metrics.DebugSessionsFailed.WithLabelValues(latest.Spec.Cluster, latest.Spec.TemplateRef).Inc()
+	return nil
+}
+
+func debugSessionApprovalTimeoutAlreadyRecorded(session *breakglassv1alpha1.DebugSession) bool {
+	return session.Status.State == breakglassv1alpha1.DebugSessionStateFailed &&
+		strings.Contains(strings.ToLower(session.Status.Message), "approval timed out")
 }
 
 // handleLeaveDebugSession allows a participant to leave a session
