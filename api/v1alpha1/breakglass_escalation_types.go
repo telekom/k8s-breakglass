@@ -295,7 +295,7 @@ type BreakglassEscalationAllowed struct {
 	// clusters is a list of clusters this escalation can be used for.
 	// Supports exact string matching and glob patterns (e.g., "prod-*", "*-staging", "*").
 	// Use "*" to match all clusters (global escalation).
-	// Glob patterns follow path.Match semantics: * matches any sequence of characters, ? matches single character.
+	// Admission validates glob syntax with path.Match. Runtime matching for stored escalations uses filepath.Match semantics on the controller OS.
 	// +kubebuilder:validation:MaxItems=50
 	Clusters []string `json:"clusters,omitempty"`
 	// groups is a list of groups this escalation can be used by.
