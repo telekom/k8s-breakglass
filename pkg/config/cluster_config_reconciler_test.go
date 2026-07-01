@@ -319,13 +319,19 @@ func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "pending-session", Namespace: "default"}, &pending)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, pending.Status.State)
+	assert.Equal(t, "clusterDeleted", pending.Status.ReasonEnded)
 	assert.False(t, pending.Status.RetainedUntil.IsZero(), "terminated session should get retention")
+	expiredCondition := pending.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpired))
+	require.NotNil(t, expiredCondition)
+	assert.Equal(t, metav1.ConditionTrue, expiredCondition.Status)
+	assert.Equal(t, "ExpiredByClusterDeletion", expiredCondition.Reason)
 
 	// Verify approved session was terminated (expired)
 	var approved breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "approved-session", Namespace: "default"}, &approved)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, approved.Status.State)
+	assert.Equal(t, "clusterDeleted", approved.Status.ReasonEnded)
 	require.False(t, approved.Status.ExpiresAt.IsZero(), "terminated session should get expiry")
 	assert.WithinDuration(t, approved.Status.ExpiresAt.Time.Add(2*time.Hour), approved.Status.RetainedUntil.Time, time.Second)
 
@@ -956,11 +962,16 @@ func TestClusterConfigReconciler_BreakglassStatusPatchFailureBlocksDeletion(t *t
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "test-cluster"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
 	}
+	debugSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+	}
 
 	statusPatchError := errors.New("simulated breakglass status patch failure")
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(clusterConfig, failingSession, okSession).
+		WithObjects(clusterConfig, failingSession, okSession, debugSession).
 		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
 			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
@@ -1006,6 +1017,11 @@ func TestClusterConfigReconciler_BreakglassStatusPatchFailureBlocksDeletion(t *t
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "ok-session", Namespace: "default"}, &ok)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, ok.Status.State)
+
+	var debug breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "debug-session", Namespace: "default"}, &debug)
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, debug.Status.State)
 }
 
 func TestClusterConfigReconciler_DebugStatusPatchFailureBlocksDeletion(t *testing.T) {

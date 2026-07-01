@@ -84,17 +84,20 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if controllerutil.ContainsFinalizer(clusterConfig, ClusterConfigFinalizer) {
 			log.Infow("ClusterConfig is being deleted, cleaning up sessions", "cluster", clusterName)
 
+			var cleanupErrs []error
 			// Terminate all BreakglassSessions for this cluster
 			if err := r.terminateBreakglassSessionsForCluster(ctx, clusterName, log); err != nil {
 				log.Errorw("Failed to terminate BreakglassSessions for cluster", "cluster", clusterName, "error", err)
-				// Returning the error keeps deletion blocked and lets controller-runtime
-				// retry through its rate limiter.
-				return ctrl.Result{}, err
+				cleanupErrs = append(cleanupErrs, err)
 			}
 
 			// Terminate all DebugSessions for this cluster
 			if err := r.terminateDebugSessionsForCluster(ctx, clusterName, log); err != nil {
 				log.Errorw("Failed to terminate DebugSessions for cluster", "cluster", clusterName, "error", err)
+				cleanupErrs = append(cleanupErrs, err)
+			}
+
+			if err := errors.Join(cleanupErrs...); err != nil {
 				// Returning the error keeps deletion blocked and lets controller-runtime
 				// retry through its rate limiter.
 				return ctrl.Result{}, err
@@ -196,6 +199,14 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 		// Update the session status to Expired
 		session.Status.State = breakglassv1alpha1.SessionStateExpired
 		session.Status.ExpiresAt = now
+		session.Status.ReasonEnded = "clusterDeleted"
+		session.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "ExpiredByClusterDeletion",
+			Message:            "Session expired because its ClusterConfig is being deleted.",
+		})
 		retainFor := utils.ParseRetainFor(session.Spec, log)
 		session.Status.RetainedUntil = metav1.NewTime(now.Time.Add(retainFor))
 
