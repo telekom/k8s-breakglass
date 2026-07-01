@@ -1587,6 +1587,43 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("clears empty status without spoke client", func(t *testing.T) {
+		session := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "ephemeral-only-session",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateTerminated,
+				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					EphemeralContainersInjected: []breakglassv1alpha1.EphemeralContainerRef{
+						{
+							PodName:       "app-pod",
+							Namespace:     "default",
+							ContainerName: "debugger",
+						},
+					},
+				},
+			},
+		}
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{err: assert.AnError})
+
+		err := handler.CleanupKubectlDebugResources(context.Background(), session)
+		require.NoError(t, err)
+
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "breakglass", Name: "ephemeral-only-session"}, &stored))
+		assert.Nil(t, stored.Status.KubectlDebugStatus)
+	})
+
 	t.Run("returns error when GetClient fails", func(t *testing.T) {
 		hubClient := fake.NewClientBuilder().
 			WithScheme(scheme).

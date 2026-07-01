@@ -667,6 +667,14 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 		return nil
 	}
 
+	if len(ds.Status.KubectlDebugStatus.CopiedPods) == 0 {
+		// Ephemeral containers cannot be removed; without copied pods there is
+		// no spoke-cluster cleanup to perform.
+		return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.KubectlDebugStatus = nil
+		})
+	}
+
 	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 	if err != nil {
 		return fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
