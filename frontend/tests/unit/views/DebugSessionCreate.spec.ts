@@ -251,7 +251,7 @@ describe("DebugSessionCreate", () => {
       const wrapper = await createWrapper(defaultTemplates(), {
         templateLoadError: {
           response: {
-            data: { error: "template API unavailable" },
+            data: { error: " template API unavailable\n" },
             status: 503,
           },
           message: "Request failed with status code 503",
@@ -267,10 +267,12 @@ describe("DebugSessionCreate", () => {
       const vm = wrapper.vm as unknown as {
         currentStep: number;
         form: { templateRef: string; cluster: string };
+        templateLoadError: string;
       };
       expect(vm.currentStep).toBe(1);
       expect(vm.form.templateRef).toBe("");
       expect(vm.form.cluster).toBe("");
+      expect(vm.templateLoadError).toBe("template API unavailable");
     });
 
     it("uses a friendly fallback for generic template load failures", async () => {
@@ -444,7 +446,7 @@ describe("DebugSessionCreate", () => {
     it("shows a blocking error state when compatible clusters fail to load", async () => {
       mockGetTemplateClusters.mockRejectedValue({
         response: {
-          data: { error: "cluster discovery unavailable" },
+          data: { error: "\ncluster discovery unavailable " },
           status: 503,
         },
         message: "Request failed with status code 503",
@@ -455,6 +457,7 @@ describe("DebugSessionCreate", () => {
         currentStep: number;
         goToStep2: () => void;
         form: { cluster: string };
+        clusterLoadError: string;
       };
 
       vm.goToStep2();
@@ -466,6 +469,7 @@ describe("DebugSessionCreate", () => {
       expect(errorState.exists()).toBe(true);
       expect(errorState.text()).toContain("Unable to load compatible clusters");
       expect(errorState.text()).toContain("cluster discovery unavailable");
+      expect(vm.clusterLoadError).toBe("cluster discovery unavailable");
       expect(wrapper.find(".warning-text").exists()).toBe(false);
     });
 

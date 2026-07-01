@@ -71,14 +71,8 @@ watch(
   (newVal, oldVal) => {
     if (oldVal && newVal !== oldVal) {
       debug("DebugSessionCreate", "TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
-      form.cluster = "";
-      form.selectedBindingIndex = 0;
+      resetClusterSelection();
       form.requestedDuration = "1h";
-      form.targetNamespace = "";
-      form.selectedSchedulingOption = "";
-      form.extraDeployValues = {};
-      extraDeployValid.value = true;
-      form.showAdvancedOptions = false;
       clusterDetails.value = [];
       clusterLoadError.value = "";
       currentStep.value = 1;
@@ -122,6 +116,16 @@ const templateLoadErrorFallback =
   "Debug session templates could not be loaded. Please retry or contact an administrator.";
 const clusterLoadErrorFallback = "Compatible clusters could not be loaded. Please retry or contact an administrator.";
 
+function resetClusterSelection() {
+  form.cluster = "";
+  form.selectedBindingIndex = 0;
+  form.targetNamespace = "";
+  form.selectedSchedulingOption = "";
+  form.extraDeployValues = {};
+  extraDeployValid.value = true;
+  form.showAdvancedOptions = false;
+}
+
 function loadErrorMessage(error: unknown, fallback: string): string {
   if (!error || typeof error !== "object") {
     return fallback;
@@ -131,7 +135,7 @@ function loadErrorMessage(error: unknown, fallback: string): string {
   if (responseData && typeof responseData === "object") {
     const data = responseData as Record<string, unknown>;
     if (typeof data.error === "string" && data.error.trim()) {
-      return data.error;
+      return data.error.trim();
     }
   }
 
@@ -518,13 +522,7 @@ async function fetchTemplateClusters() {
 
   clusterLoadError.value = "";
   clusterDetails.value = [];
-  form.cluster = "";
-  form.selectedBindingIndex = 0;
-  form.targetNamespace = "";
-  form.selectedSchedulingOption = "";
-  form.extraDeployValues = {};
-  extraDeployValid.value = true;
-  form.showAdvancedOptions = false;
+  resetClusterSelection();
   loadingClusters.value = true;
   try {
     const result = await debugSessionService.getTemplateClusters(form.templateRef);
