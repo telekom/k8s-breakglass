@@ -28,6 +28,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/util/retry"
@@ -201,8 +202,7 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 		}
 
 		base := current.DeepCopy()
-		current.Status = session.Status
-		current.Status.ObservedGeneration = current.Generation
+		applyScheduledSessionStatusTransition(&current, session)
 		patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
 		return ssa.sessionManager.Client.Status().Patch(ctx, &current, patch)
 	})
@@ -217,6 +217,25 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 		}, stateChanged.name, stateChanged)
 	}
 	return err
+}
+
+func applyScheduledSessionStatusTransition(current *breakglassv1alpha1.BreakglassSession, desired breakglassv1alpha1.BreakglassSession) {
+	current.Status.State = desired.Status.State
+	current.Status.ObservedGeneration = current.Generation
+	if !desired.Status.ActualStartTime.IsZero() {
+		current.Status.ActualStartTime = desired.Status.ActualStartTime
+	}
+	if desired.Status.State == breakglassv1alpha1.SessionStateExpired {
+		current.Status.ReasonEnded = desired.Status.ReasonEnded
+		current.Status.ExpiresAt = desired.Status.ExpiresAt
+		current.Status.RetainedUntil = desired.Status.RetainedUntil
+	}
+	for _, condition := range desired.Status.Conditions {
+		switch condition.Type {
+		case "ScheduledStartTimeReached", string(breakglassv1alpha1.SessionConditionTypeExpired):
+			meta.SetStatusCondition(&current.Status.Conditions, condition)
+		}
+	}
 }
 
 func (ssa *ScheduledSessionActivator) expireScheduledSession(ctx context.Context, session breakglassv1alpha1.BreakglassSession, now time.Time, reasonEnded, conditionReason, message string) {

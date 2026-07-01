@@ -965,6 +965,50 @@ func TestCurrentWaitingScheduledSession(t *testing.T) {
 	})
 }
 
+func TestApplyScheduledSessionStatusTransitionPreservesUnrelatedLiveStatus(t *testing.T) {
+	current := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "scheduled-session",
+			Generation: 7,
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			Conditions: []metav1.Condition{{
+				Type:               "UnrelatedMaintenance",
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Hour)),
+				Reason:             "StillOwnedElsewhere",
+				Message:            "must survive scheduled transition patch",
+			}},
+		},
+	}
+	desired := current.DeepCopy()
+	desired.Status.State = breakglassv1alpha1.SessionStateApproved
+	desired.Status.ActualStartTime = metav1.Now()
+	desired.SetCondition(metav1.Condition{
+		Type:               "ScheduledStartTimeReached",
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "ActivationTriggered",
+		Message:            "Session activated at scheduled start time",
+	})
+
+	applyScheduledSessionStatusTransition(current, *desired)
+
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, current.Status.State)
+	assert.Equal(t, int64(7), current.Status.ObservedGeneration)
+	assert.False(t, current.Status.ActualStartTime.IsZero())
+	assert.Len(t, current.Status.Conditions, 2)
+	assert.Condition(t, func() bool {
+		for _, condition := range current.Status.Conditions {
+			if condition.Type == "UnrelatedMaintenance" && condition.Reason == "StillOwnedElsewhere" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 func TestNewScheduledSessionActivator(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	fakeClient := newFakeActivationClient()
