@@ -532,8 +532,8 @@ func validateClusterGlobPatterns(patterns []string, fieldPath *field.Path) field
 }
 
 func clusterMatchesValidationPattern(cluster string, pattern string) bool {
-	if pattern == cluster {
-		return true
+	if !strings.ContainsAny(pattern, "*?[") {
+		return pattern == cluster
 	}
 	matched, err := path.Match(pattern, cluster)
 	if err != nil {

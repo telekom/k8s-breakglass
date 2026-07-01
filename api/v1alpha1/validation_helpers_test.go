@@ -732,6 +732,58 @@ func TestValidateSessionIdentityProviderAuthorization_WithMatchingEscalation(t *
 	assert.NotNil(t, errs, "should reject non-matching IDP")
 }
 
+func TestClusterMatchesValidationPattern(t *testing.T) {
+	cases := []struct {
+		name    string
+		cluster string
+		pattern string
+		want    bool
+	}{
+		{
+			name:    "exact non-glob match",
+			cluster: "prod-eu",
+			pattern: "prod-eu",
+			want:    true,
+		},
+		{
+			name:    "exact non-glob mismatch",
+			cluster: "prod-eu",
+			pattern: "prod-us",
+			want:    false,
+		},
+		{
+			name:    "glob match",
+			cluster: "prod-eu",
+			pattern: "prod-*",
+			want:    true,
+		},
+		{
+			name:    "glob mismatch",
+			cluster: "dev-eu",
+			pattern: "prod-*",
+			want:    false,
+		},
+		{
+			name:    "malformed glob does not exact match",
+			cluster: "prod-[",
+			pattern: "prod-[",
+			want:    false,
+		},
+		{
+			name:    "malformed glob does not match other cluster",
+			cluster: "prod-eu",
+			pattern: "prod-[",
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, clusterMatchesValidationPattern(tc.cluster, tc.pattern))
+		})
+	}
+}
+
 func TestValidateSessionIdentityProviderAuthorization_MatchesAllowedClusterGlob(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)

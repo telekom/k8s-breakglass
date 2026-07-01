@@ -1001,7 +1001,7 @@ The controller matches requested clusters against `spec.allowed.clusters` and `s
 
 #### Glob Pattern Matching
 
-Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for flexible cluster matching. This uses Go's `path.Match` syntax:
+Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for flexible cluster matching. Admission validates patterns with Go's `path.Match` syntax; existing runtime matching for stored `BreakglassEscalation` objects uses Go's `filepath.Match` semantics for cluster names.
 
 | Pattern | Matches |
 |---------|---------|
