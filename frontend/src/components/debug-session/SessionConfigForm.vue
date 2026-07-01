@@ -36,8 +36,6 @@ defineProps<{
   namespaceValidationError?: string;
   requestedDuration: string;
   reason: string;
-  scheduledStartTime: string;
-  useScheduledStart: boolean;
   extraDeployValues: ExtraDeployValues;
   showAdvancedOptions: boolean;
 }>();
@@ -48,8 +46,6 @@ const emit = defineEmits<{
   "update:extraDeployValid": [valid: boolean];
   "update:requestedDuration": [value: string];
   "update:reason": [value: string];
-  "update:scheduledStartTime": [value: string];
-  "update:useScheduledStart": [value: boolean];
   "update:extraDeployValues": [value: ExtraDeployValues];
   "update:showAdvancedOptions": [value: boolean];
 }>();
@@ -249,24 +245,6 @@ function handleDurationChange(ev: Event) {
         @update:show-advanced="emit('update:showAdvancedOptions', $event)"
         @validation-change="emit('update:extraDeployValid', $event)"
       />
-    </div>
-
-    <div class="schedule-section">
-      <scale-checkbox
-        :checked="useScheduledStart"
-        label="Schedule for later"
-        data-testid="schedule-checkbox"
-        @scale-change="emit('update:useScheduledStart', ($event.target as HTMLInputElement).checked)"
-      ></scale-checkbox>
-
-      <scale-text-field
-        v-if="useScheduledStart"
-        :value="scheduledStartTime"
-        type="datetime-local"
-        label="Scheduled Start Time"
-        data-testid="schedule-time-input"
-        @scale-change="emit('update:scheduledStartTime', ($event.target as HTMLInputElement).value)"
-      ></scale-text-field>
     </div>
   </div>
 </template>
@@ -474,11 +452,5 @@ function handleDurationChange(ev: Event) {
 .extra-variables-section .section-description {
   color: var(--telekom-color-text-and-icon-additional);
   margin: 0 0 var(--space-md) 0;
-}
-
-.schedule-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
 }
 </style>

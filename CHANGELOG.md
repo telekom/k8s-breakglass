@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
 - **Frontend modal dismissal**: Approval, review, and withdraw modals now keep destructive actions mounted while requests are in flight, and support Escape or modal-close dismissal only when closing is safe.
 - **Frontend: review owner actions**: Session review cards now match owners from profile email and preferred username claims so owners see the correct Drop/Cancel actions. (#859)
+- **Frontend debug-session creation**: Scheduling options now only affect pod placement, and the create form no longer submits delayed-start fields unsupported by the DebugSession API.
 - Prevent unbound growth of BreakglassSession status conditions by deduplicating updates.
 
 - Fixed single resource table formatting in `bgctl` commands.

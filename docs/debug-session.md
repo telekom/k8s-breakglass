@@ -806,6 +806,8 @@ Exact `deniedNodes` entries and `deniedNodeLabels` are rendered into hard node a
 
 Scheduling options allow administrators to offer users a choice of predefined scheduling configurations. This reduces the need for multiple templates for different node pools:
 
+Scheduling options affect where the debug pod is placed. They do not delay debug-session activation, and `POST /api/debugSessions` does not accept a `scheduledStartTime` field.
+
 ```yaml
 schedulingOptions:
   # If true, user MUST select an option
