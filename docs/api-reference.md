@@ -1002,6 +1002,9 @@ Only invited users can join an active, unexpired session, and only when terminal
 
 This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
+If the session changes concurrently while recording the joined participant, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
 ### Leave Debug Session
 
 ```http
@@ -1014,6 +1017,9 @@ excluded from active participant checks and cannot use debug-session pod
 operations.
 
 This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
+If the session changes concurrently while recording `leftAt`, the endpoint
+returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 ### Renew Debug Session
 
@@ -1035,6 +1041,9 @@ Extends the session duration. Subject to template constraints (`maxDuration`,
 `participant` status entry can renew; `viewer` entries and participants with
 `leftAt` set cannot renew sessions.
 
+If the session changes concurrently while updating expiration status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
 ### Terminate Debug Session
 
 ```http
@@ -1044,6 +1053,9 @@ POST /api/debugSessions/:name/terminate
 Terminates the session early. Only the session owner can terminate.
 
 This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
+If the session changes concurrently while recording termination status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 **Response:** Updated `DebugSession` object with `state: Terminated`.
 
@@ -1068,6 +1080,9 @@ Approves a session in `PendingApproval` state.
 `reason` is required when the session's stored `approvalReasonConfig.mandatory`
 is `true`, and must satisfy the configured `minLength` after sanitization.
 
+If the session changes concurrently while recording approval status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
 **Response:** Updated `DebugSession` object with `state: Approved`.
 
 ### Reject Debug Session
@@ -1091,6 +1106,9 @@ When present, the rejection body must contain only the known `reason` field and 
 `reason` is required when the session's stored `approvalReasonConfig.mandatory`
 or `approvalReasonConfig.mandatoryForRejection` is `true`, and must satisfy the
 configured `minLength` after sanitization.
+
+If the session changes concurrently while recording rejection status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 **Response:** Updated `DebugSession` object with `state: Rejected`.
 
