@@ -671,11 +671,6 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglass
 	return result
 }
 
-func (c *DebugSessionAPIController) findVisibleBindingsForTemplate(template *breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding) []breakglassv1alpha1.DebugSessionClusterBinding {
-	applicableBindings := c.findBindingsForTemplate(template, bindings)
-	return visibleDebugSessionBindings(applicableBindings)
-}
-
 func visibleDebugSessionBindings(bindings []breakglassv1alpha1.DebugSessionClusterBinding) []breakglassv1alpha1.DebugSessionClusterBinding {
 	visibleBindings := make([]breakglassv1alpha1.DebugSessionClusterBinding, 0, len(bindings))
 	for i := range bindings {
