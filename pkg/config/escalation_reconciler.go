@@ -521,7 +521,10 @@ func (r *EscalationReconciler) escalationRequestsMatching(
 	var list breakglassv1alpha1.BreakglassEscalationList
 	if err := r.client.List(ctx, &list, listOpts...); err != nil {
 		if isFieldIndexUnavailable(err) {
-			return r.escalationRequestsMatching(ctx, withoutMatchingFields(listOpts), dependencyKind, dependencyName, matches)
+			fallbackOpts := withoutMatchingFields(listOpts)
+			if len(fallbackOpts) < len(listOpts) {
+				return r.escalationRequestsMatching(ctx, fallbackOpts, dependencyKind, dependencyName, matches)
+			}
 		}
 		if r.logger != nil {
 			r.logger.Warnw("Failed to list BreakglassEscalations for dependency change",
