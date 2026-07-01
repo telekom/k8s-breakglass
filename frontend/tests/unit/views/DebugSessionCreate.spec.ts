@@ -29,6 +29,7 @@ vi.mock("@/services/debugSession", () => ({
 vi.mock("@/services/toast", () => ({
   pushError: vi.fn(),
   pushSuccess: vi.fn(),
+  pushWarning: vi.fn(),
 }));
 
 // Mock auth service
@@ -145,19 +146,41 @@ describe("DebugSessionCreate", () => {
     ];
   }
 
-  const createWrapper = async (templates = defaultTemplates(), attachTo?: HTMLElement) => {
-    mockListTemplates.mockResolvedValue({ templates });
+  type CreateWrapperOptions = {
+    templateLoadError?: unknown;
+    configureTemplateList?: () => void;
+    attachTo?: HTMLElement;
+  };
+
+  const createWrapper = async (
+    templates = defaultTemplates(),
+    optionsOrAttachTo: CreateWrapperOptions | HTMLElement = {},
+  ) => {
+    const options = optionsOrAttachTo instanceof HTMLElement ? { attachTo: optionsOrAttachTo } : optionsOrAttachTo;
+
+    if (options.configureTemplateList) {
+      options.configureTemplateList();
+    } else if (options.templateLoadError) {
+      mockListTemplates.mockRejectedValue(options.templateLoadError);
+    } else {
+      mockListTemplates.mockResolvedValue({ templates });
+    }
 
     await router.push("/debug-sessions/create");
     await router.isReady();
 
     const wrapper = mount(DebugSessionCreate, {
-      attachTo,
+      attachTo: options.attachTo,
       global: {
         plugins: [router],
         stubs: {
           PageHeader: true,
           LoadingState: true,
+          EmptyState: {
+            template:
+              '<section v-bind="$attrs"><p>{{ title }}</p><p>{{ description }}</p><slot name="actions" /></section>',
+            props: ["title", "description", "variant"],
+          },
           "scale-dropdown-select": {
             template: '<select :value="value" :disabled="disabled" @change="handleChange"><slot /></select>',
             props: ["value", "label", "disabled", "required"],
@@ -222,6 +245,99 @@ describe("DebugSessionCreate", () => {
       await createWrapper();
 
       expect(mockListTemplates).toHaveBeenCalled();
+    });
+
+    it("shows a blocking error state when templates fail to load", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: {
+          response: {
+            data: { error: " template API unavailable\n" },
+            status: 503,
+          },
+          message: "Request failed with status code 503",
+        },
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.exists()).toBe(true);
+      expect(errorState.text()).toContain("Unable to load debug session templates");
+      expect(errorState.text()).toContain("template API unavailable");
+      expect(wrapper.find('[data-testid="no-templates-message"]').exists()).toBe(false);
+
+      const vm = wrapper.vm as unknown as {
+        currentStep: number;
+        form: { templateRef: string; cluster: string };
+        templateLoadError: string;
+      };
+      expect(vm.currentStep).toBe(1);
+      expect(vm.form.templateRef).toBe("");
+      expect(vm.form.cluster).toBe("");
+      expect(vm.templateLoadError).toBe("template API unavailable");
+    });
+
+    it("uses a friendly fallback for generic template load failures", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: new Error("Request failed with status code 500"),
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.text()).toContain("Debug session templates could not be loaded");
+      expect(errorState.text()).not.toContain("Request failed with status code 500");
+    });
+
+    it("does not surface response message fields in template load errors", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: {
+          response: {
+            data: { message: "raw backend message" },
+            status: 500,
+          },
+          message: "Request failed with status code 500",
+        },
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.text()).toContain("Debug session templates could not be loaded");
+      expect(errorState.text()).not.toContain("raw backend message");
+    });
+
+    it("does not surface unstructured string template load errors", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: {
+          response: {
+            data: "<html><body>proxy failure details</body></html>",
+            status: 502,
+          },
+          message: "Request failed with status code 502",
+        },
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.text()).toContain("Debug session templates could not be loaded");
+      expect(errorState.text()).not.toContain("proxy failure details");
+    });
+
+    it("retries template loading from the error state", async () => {
+      const templates = defaultTemplates();
+      const wrapper = await createWrapper(templates, {
+        configureTemplateList: () => {
+          mockListTemplates
+            .mockRejectedValueOnce(new Error("template API unavailable"))
+            .mockResolvedValueOnce({ templates });
+        },
+      });
+
+      expect(wrapper.find('[data-testid="debug-session-template-error-state"]').exists()).toBe(true);
+
+      await wrapper.find('[data-testid="retry-template-load-button"]').trigger("click");
+      await flushPromises();
+
+      const vm = wrapper.vm as unknown as {
+        form: { templateRef: string };
+      };
+      expect(mockListTemplates).toHaveBeenCalledTimes(2);
+      expect(wrapper.find('[data-testid="debug-session-template-error-state"]').exists()).toBe(false);
+      expect(vm.form.templateRef).toBe("standard-debug");
     });
 
     it("starts on step 1 (template selection)", async () => {
@@ -324,6 +440,62 @@ describe("DebugSessionCreate", () => {
       const warningText = wrapper.find(".warning-text");
       expect(warningText.exists()).toBe(true);
       expect(warningText.text()).toContain("No clusters are available");
+      expect(wrapper.find('[data-testid="debug-session-cluster-error-state"]').exists()).toBe(false);
+    });
+
+    it("shows a blocking error state when compatible clusters fail to load", async () => {
+      mockGetTemplateClusters.mockRejectedValue({
+        response: {
+          data: { error: "\ncluster discovery unavailable " },
+          status: 503,
+        },
+        message: "Request failed with status code 503",
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        currentStep: number;
+        goToStep2: () => void;
+        form: { cluster: string };
+        clusterLoadError: string;
+      };
+
+      vm.goToStep2();
+      await flushPromises();
+
+      const errorState = wrapper.find('[data-testid="debug-session-cluster-error-state"]');
+      expect(vm.currentStep).toBe(2);
+      expect(vm.form.cluster).toBe("");
+      expect(errorState.exists()).toBe(true);
+      expect(errorState.text()).toContain("Unable to load compatible clusters");
+      expect(errorState.text()).toContain("cluster discovery unavailable");
+      expect(vm.clusterLoadError).toBe("cluster discovery unavailable");
+      expect(wrapper.find(".warning-text").exists()).toBe(false);
+    });
+
+    it("retries compatible cluster loading from the error state", async () => {
+      mockGetTemplateClusters.mockRejectedValueOnce(new Error("cluster discovery unavailable")).mockResolvedValueOnce({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [{ name: "prod-east", displayName: "Production East" }],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+
+      vm.goToStep2();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="debug-session-cluster-error-state"]').exists()).toBe(true);
+
+      await wrapper.find('[data-testid="retry-cluster-load-button"]').trigger("click");
+      await flushPromises();
+
+      expect(mockGetTemplateClusters).toHaveBeenCalledTimes(2);
+      expect(wrapper.find('[data-testid="debug-session-cluster-error-state"]').exists()).toBe(false);
+      expect(vm.form.cluster).toBe("prod-east");
     });
   });
 

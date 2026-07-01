@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { debug } from "@/services/logger";
 import DebugSessionService from "@/services/debugSession";
-import { PageHeader, LoadingState } from "@/components/common";
+import { EmptyState, PageHeader, LoadingState } from "@/components/common";
 import ClusterSelectGrid from "@/components/debug-session/ClusterSelectGrid.vue";
 import BindingOptionsGrid from "@/components/debug-session/BindingOptionsGrid.vue";
 import SessionConfigForm from "@/components/debug-session/SessionConfigForm.vue";
@@ -36,6 +36,8 @@ const loading = ref(true);
 const loadingClusters = ref(false);
 const submitting = ref(false);
 const extraDeployValid = ref(true);
+const templateLoadError = ref("");
+const clusterLoadError = ref("");
 
 const form = reactive<{
   templateRef: string;
@@ -65,15 +67,10 @@ watch(
   (newVal, oldVal) => {
     if (oldVal && newVal !== oldVal) {
       debug("DebugSessionCreate", "TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
-      form.cluster = "";
-      form.selectedBindingIndex = 0;
+      resetClusterSelection();
       form.requestedDuration = "1h";
-      form.targetNamespace = "";
-      form.selectedSchedulingOption = "";
-      form.extraDeployValues = {};
-      extraDeployValid.value = true;
-      form.showAdvancedOptions = false;
       clusterDetails.value = [];
+      clusterLoadError.value = "";
       currentStep.value = 1;
     }
   },
@@ -110,6 +107,44 @@ const selectedTemplate = computed(() => {
   if (!templates.value || templates.value.length === 0) return undefined;
   return templates.value.find((t) => t.name === form.templateRef);
 });
+
+const templateLoadErrorFallback =
+  "Debug session templates could not be loaded. Please retry or contact an administrator.";
+const clusterLoadErrorFallback = "Compatible clusters could not be loaded. Please retry or contact an administrator.";
+
+function resetClusterSelection() {
+  form.cluster = "";
+  form.selectedBindingIndex = 0;
+  form.targetNamespace = "";
+  form.selectedSchedulingOption = "";
+  form.extraDeployValues = {};
+  extraDeployValid.value = true;
+  form.showAdvancedOptions = false;
+}
+
+function loadErrorMessage(error: unknown, fallback: string): string {
+  if (!error || typeof error !== "object") {
+    return fallback;
+  }
+
+  const responseData = (error as { response?: { data?: unknown } }).response?.data;
+  if (responseData && typeof responseData === "object") {
+    const data = responseData as Record<string, unknown>;
+    if (typeof data.error === "string" && data.error.trim()) {
+      return data.error.trim();
+    }
+  }
+
+  return fallback;
+}
+
+function templateLoadErrorMessage(error: unknown): string {
+  return loadErrorMessage(error, templateLoadErrorFallback);
+}
+
+function clusterLoadErrorMessage(error: unknown): string {
+  return loadErrorMessage(error, clusterLoadErrorFallback);
+}
 
 // User groups for variable visibility filtering
 const userGroups = ref<string[]>([]);
@@ -451,6 +486,8 @@ const isValid = computed(() => {
 });
 
 async function fetchTemplates() {
+  templateLoadError.value = "";
+  clusterLoadError.value = "";
   loading.value = true;
   try {
     const result = await debugSessionService.listTemplates();
@@ -462,7 +499,14 @@ async function fetchTemplates() {
     if (firstTemplate && !form.templateRef) {
       form.templateRef = firstTemplate.name;
     }
-  } catch {
+  } catch (error: unknown) {
+    templateLoadError.value = templateLoadErrorMessage(error);
+    templates.value = [];
+    form.templateRef = "";
+    clusterDetails.value = [];
+    form.cluster = "";
+    clusterLoadError.value = "";
+    currentStep.value = 1;
     // Error already handled by debugSessionService (pushError with CID)
   } finally {
     loading.value = false;
@@ -472,6 +516,9 @@ async function fetchTemplates() {
 async function fetchTemplateClusters() {
   if (!form.templateRef) return;
 
+  clusterLoadError.value = "";
+  clusterDetails.value = [];
+  resetClusterSelection();
   loadingClusters.value = true;
   try {
     const result = await debugSessionService.getTemplateClusters(form.templateRef);
@@ -481,7 +528,8 @@ async function fetchTemplateClusters() {
     if (clusterDetails.value.length === 1 && clusterDetails.value[0]) {
       form.cluster = clusterDetails.value[0].name;
     }
-  } catch {
+  } catch (error: unknown) {
+    clusterLoadError.value = clusterLoadErrorMessage(error);
     // Error already handled by debugSessionService (pushError with CID)
   } finally {
     loadingClusters.value = false;
@@ -506,6 +554,7 @@ function goToStep2() {
 function goBackToStep1() {
   currentStep.value = 1;
   form.cluster = "";
+  clusterLoadError.value = "";
 }
 
 onMounted(async () => {
@@ -615,6 +664,21 @@ function handleTemplateChange(ev: Event) {
 
     <LoadingState v-if="loading" message="Loading templates..." />
 
+    <EmptyState
+      v-else-if="templateLoadError"
+      variant="error"
+      title="Unable to load debug session templates"
+      :description="templateLoadError"
+      data-testid="debug-session-template-error-state"
+    >
+      <template #actions>
+        <scale-button variant="primary" data-testid="retry-template-load-button" @click="fetchTemplates">
+          Retry
+        </scale-button>
+        <scale-button variant="secondary" @click="handleCancel">Go Back</scale-button>
+      </template>
+    </EmptyState>
+
     <div v-else-if="!hasTemplates" class="no-templates-message" data-testid="no-templates-message">
       <scale-icon-alert-error size="48" color="var(--scl-color-text-disabled)"></scale-icon-alert-error>
       <h2>No Debug Session Templates Available</h2>
@@ -709,7 +773,22 @@ function handleTemplateChange(ev: Event) {
       </div>
 
       <!-- Cluster Selection -->
+      <EmptyState
+        v-if="clusterLoadError"
+        variant="error"
+        title="Unable to load compatible clusters"
+        :description="clusterLoadError"
+        data-testid="debug-session-cluster-error-state"
+      >
+        <template #actions>
+          <scale-button variant="primary" data-testid="retry-cluster-load-button" @click="fetchTemplateClusters">
+            Retry
+          </scale-button>
+          <scale-button variant="secondary" @click="goBackToStep1">Change Template</scale-button>
+        </template>
+      </EmptyState>
       <ClusterSelectGrid
+        v-else
         :clusters="clusterDetails"
         :selected-cluster="form.cluster"
         :loading="loadingClusters"
