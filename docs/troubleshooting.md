@@ -682,7 +682,7 @@ kubectl patch breakglassescalation <name> -p '{"spec":{"allowedIdentityProviders
 
 ### Group Sync Failing for One IDP
 
-**Symptoms:** GroupSyncStatus shows "PartialFailure" or "Failed"
+**Symptoms:** `ApprovalGroupMembersResolved` condition shows `False` with reason `GroupSyncPartialFailure` or `GroupSyncFailed`
 
 **Causes:**
 - IDP connection timeout
@@ -694,7 +694,8 @@ kubectl patch breakglassescalation <name> -p '{"spec":{"allowedIdentityProviders
 1. Check sync status and errors
 
 ```bash
-kubectl get breakglassescalation <name> -o yaml | grep -A 10 "groupSync"
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
+kubectl describe breakglassescalation <name> | grep -A 5 "GroupSync"
 ```
 
 2. Check IdentityProvider events
