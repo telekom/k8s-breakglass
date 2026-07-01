@@ -566,7 +566,7 @@ func TestAuditConfigReconciler_Reconcile_ReloadError(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "test-reload-error"},
 	})
 
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	assert.True(t, errorHandlerCalled)
 	assert.Equal(t, 30*time.Second, result.RequeueAfter)
 

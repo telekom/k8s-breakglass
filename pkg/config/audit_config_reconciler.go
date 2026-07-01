@@ -233,7 +233,7 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 				}
 			}
 			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
-			return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+			return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
 

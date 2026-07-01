@@ -1105,6 +1105,43 @@ func TestIsKnownIDPAuthority(t *testing.T) {
 
 		assert.False(t, server.isKnownIDPAuthority(context.Background(), "https://keycloak.example.com"))
 	})
+
+	t.Run("falls back to default authority when IDP lookup fails", func(t *testing.T) {
+		authority, err := url.Parse("https://keycloak.example.com")
+		require.NoError(t, err)
+		badSchemeClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+		server := &Server{
+			log:           logger,
+			oidcAuthority: authority,
+			idpReconciler: config.NewIdentityProviderReconciler(badSchemeClient, logger.Sugar(), nil),
+		}
+
+		assert.True(t, server.isKnownIDPAuthority(context.Background(), "https://keycloak.example.com"))
+		assert.False(t, server.isKnownIDPAuthority(context.Background(), "https://other.example.com"))
+	})
+}
+
+func TestOIDCProxyIDPConfigForAuthorityFallsBackToDefaultOnIDPLookupError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	defaultConfig := &config.IdentityProviderConfig{
+		Name:      "default-idp",
+		Authority: "https://keycloak.example.com",
+	}
+	badSchemeClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	server := &Server{
+		log:           logger,
+		idpConfig:     defaultConfig,
+		idpReconciler: config.NewIdentityProviderReconciler(badSchemeClient, logger.Sugar(), nil),
+	}
+
+	cfg, err := server.oidcProxyIDPConfigForAuthority(context.Background(), defaultConfig.Authority)
+	require.NoError(t, err)
+	assert.Same(t, defaultConfig, cfg)
+
+	cfg, err = server.oidcProxyIDPConfigForAuthority(context.Background(), "https://other.example.com")
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "list enabled identity providers")
 }
 
 func TestBuildOIDCProxyHTTPRequest(t *testing.T) {

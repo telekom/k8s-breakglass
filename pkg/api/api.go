@@ -944,11 +944,11 @@ func (s *Server) isKnownIDPAuthority(ctx context.Context, authority string) bool
 			if s.log != nil {
 				s.log.Sugar().Warnw("oidc_proxy_idp_authority_lookup_failed", "authority", authority, "error", err)
 			}
-			return false
-		}
-		for _, idp := range cachedIDPs {
-			if idp.Spec.OIDC.Authority == authority {
-				return true
+		} else {
+			for _, idp := range cachedIDPs {
+				if idp.Spec.OIDC.Authority == authority {
+					return true
+				}
 			}
 		}
 	}
@@ -1156,14 +1156,19 @@ func (s *Server) newOIDCProxyHTTPClient(ctx context.Context, requiresTLS bool, a
 }
 
 func (s *Server) oidcProxyIDPConfigForAuthority(ctx context.Context, authority string) (*config.IdentityProviderConfig, error) {
+	var idpLookupErr error
 	if authority != "" && s.idpReconciler != nil {
 		idps, err := s.idpReconciler.GetEnabledIdentityProviders(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("list enabled identity providers: %w", err)
-		}
-		for _, idp := range idps {
-			if idp.Spec.OIDC.Authority == authority {
-				return identityProviderCRToOIDCProxyConfig(idp), nil
+			idpLookupErr = fmt.Errorf("list enabled identity providers: %w", err)
+			if s.log != nil {
+				s.log.Sugar().Warnw("oidc_proxy_idp_config_lookup_failed", "authority", authority, "error", err)
+			}
+		} else {
+			for _, idp := range idps {
+				if idp.Spec.OIDC.Authority == authority {
+					return identityProviderCRToOIDCProxyConfig(idp), nil
+				}
 			}
 		}
 	}
@@ -1175,6 +1180,9 @@ func (s *Server) oidcProxyIDPConfigForAuthority(ctx context.Context, authority s
 		return nil, fmt.Errorf("identity provider not loaded")
 	}
 	if authority != "" && idpCfg.Authority != authority {
+		if idpLookupErr != nil {
+			return nil, idpLookupErr
+		}
 		return nil, fmt.Errorf("identity provider for authority %q not loaded", authority)
 	}
 	return idpCfg, nil
