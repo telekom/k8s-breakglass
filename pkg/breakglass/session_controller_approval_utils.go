@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -916,6 +917,57 @@ func dropK8sInternalFieldsSessionList(list []breakglassv1alpha1.BreakglassSessio
 
 type sessionStatePredicate func(breakglassv1alpha1.BreakglassSession) bool
 
+var sessionStateFilterPredicates = map[string]sessionStatePredicate{
+	"all": nil,
+	"pending": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStatePending
+	},
+	"approved": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateApproved
+	},
+	"active": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionAccessActive(session)
+	},
+	"waiting": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
+	},
+	"waitingforscheduledtime": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
+	},
+	"scheduled": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
+	},
+	"rejected": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionRejected(session)
+	},
+	"withdrawn": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionWithdrawn(session)
+	},
+	"expired": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionExpired(session)
+	},
+	"idleexpired": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateIdleExpired
+	},
+	"timeout": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateTimeout
+	},
+	"approvaltimeout": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateTimeout
+	},
+}
+
+var supportedSessionStateFilterTokens = sortedSessionStateFilterTokens()
+
+func sortedSessionStateFilterTokens() []string {
+	tokens := make([]string, 0, len(sessionStateFilterPredicates))
+	for token := range sessionStateFilterPredicates {
+		tokens = append(tokens, token)
+	}
+	sort.Strings(tokens)
+	return tokens
+}
+
 func ParseBoolQuery(value string, defaultVal bool) bool {
 	if value == "" {
 		return defaultVal
@@ -956,54 +1008,41 @@ func normalizeStateToken(value string) string {
 	return replacer.Replace(trimmed)
 }
 
+func validateStateFilterTokens(tokens []string) []string {
+	if len(tokens) == 0 {
+		return nil
+	}
+	invalidSet := make(map[string]struct{})
+	for _, token := range tokens {
+		if _, supported := sessionStateFilterPredicates[token]; !supported {
+			invalidSet[token] = struct{}{}
+		}
+	}
+	if len(invalidSet) == 0 {
+		return nil
+	}
+	invalid := make([]string, 0, len(invalidSet))
+	for token := range invalidSet {
+		invalid = append(invalid, token)
+	}
+	sort.Strings(invalid)
+	return invalid
+}
+
 func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
 	if len(tokens) == 0 {
 		return nil
 	}
 	predicates := make([]sessionStatePredicate, 0, len(tokens))
 	for _, token := range tokens {
-		switch token {
-		case "all":
-			return nil
-		case "pending":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStatePending
-			})
-		case "approved":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateApproved
-			})
-		case "rejected":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionRejected(session)
-			})
-		case "withdrawn":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionWithdrawn(session)
-			})
-		case "expired":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionExpired(session)
-			})
-		case "timeout", "approvaltimeout":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateTimeout
-			})
-		case "active":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionAccessActive(session)
-			})
-		case "waitingforscheduledtime", "waiting", "scheduled":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
-			})
-		case "idleexpired":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateIdleExpired
-			})
-		default:
+		predicate, supported := sessionStateFilterPredicates[token]
+		if !supported {
 			continue
 		}
+		if predicate == nil {
+			return nil
+		}
+		predicates = append(predicates, predicate)
 	}
 	return predicates
 }

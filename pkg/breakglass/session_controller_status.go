@@ -669,6 +669,27 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		return
 	}
 
+	// Ownership and state filters are request-local, so validate them before
+	// listing sessions from Kubernetes.
+	includeMine := ParseBoolQuery(c.Query("mine"), false)
+	includeApprover := ParseBoolQuery(c.Query("approver"), true)
+	includeApprovedByMe := ParseBoolQuery(c.Query("approvedByMe"), false)
+	activeOnly := ParseBoolQuery(c.Query("activeOnly"), false)
+	stateFilters := normalizeStateFilters(c)
+	if invalidFilters := validateStateFilterTokens(stateFilters); len(invalidFilters) > 0 {
+		apiresponses.RespondBadRequestWithDetails(
+			c,
+			"invalid state filter",
+			fmt.Sprintf(
+				"unsupported state filter value(s): %s. Supported values: %s",
+				strings.Join(invalidFilters, ", "),
+				strings.Join(supportedSessionStateFilterTokens, ", "),
+			),
+		)
+		return
+	}
+	statePredicates := buildStateFilterPredicates(stateFilters)
+
 	var sessions []breakglassv1alpha1.BreakglassSession
 	var err error
 	if clusterQ != "" || userQ != "" || groupQ != "" {
@@ -694,14 +715,6 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		apiresponses.RespondInternalError(c, "list sessions", err, reqLog)
 		return
 	}
-
-	// Ownership filters
-	includeMine := ParseBoolQuery(c.Query("mine"), false)
-	includeApprover := ParseBoolQuery(c.Query("approver"), true)
-	includeApprovedByMe := ParseBoolQuery(c.Query("approvedByMe"), false)
-	activeOnly := ParseBoolQuery(c.Query("activeOnly"), false)
-	stateFilters := normalizeStateFilters(c)
-	statePredicates := buildStateFilterPredicates(stateFilters)
 
 	var userEmail string
 	if includeMine || includeApprovedByMe {

@@ -170,7 +170,7 @@ Authorization: Bearer <token>
 | `approver` | boolean | Sessions user can approve (default: `true`) |
 | `approvedByMe` | boolean | Sessions the user has already approved |
 | `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
-| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. |
+| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. Unknown non-empty tokens return `400 Bad Request`. |
 | `token` | string | Validate approval-link metadata for a session name. This mode returns metadata for one session instead of the normal session list. |
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:

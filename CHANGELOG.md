@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **DebugSession operation authorization**: Usernames loaded from request context are trimmed before debug-session read and kubectl-debug authorization checks, and viewer participants now receive `403 Forbidden` for mutating kubectl-debug endpoints.
+- **BreakglassSession state filters**: `GET /api/breakglassSessions` now returns `400 Bad Request` for unknown non-empty `state` filter tokens.
 - **DebugSession reconciler audit and failure mail wiring**: Lifecycle audit events and requester failure emails now use the configured audit and mail services, while invalid failure-mail recipients are rejected before enqueueing.
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
 - **Frontend modal dismissal**: Approval, review, and withdraw modals now keep destructive actions mounted while requests are in flight, and support Escape or modal-close dismissal only when closing is safe.

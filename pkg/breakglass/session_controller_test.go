@@ -4867,7 +4867,8 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 	assertStates := func(t *testing.T, query string, want []string) {
 		t.Helper()
-		req, _ := http.NewRequest(http.MethodGet, query, nil)
+		req, err := http.NewRequest(http.MethodGet, query, nil)
+		require.NoError(t, err)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		res := w.Result()
@@ -4893,6 +4894,48 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 	assertStates(t, "/breakglassSessions?state=pending&state=approved&mine=true", []string{"multi-pending", "multi-approved"})
 	assertStates(t, "/breakglassSessions?state=pending,approved&mine=true", []string{"multi-pending", "multi-approved"})
+	assertStates(t, "/breakglassSessions?state=all&mine=true", []string{"multi-pending", "multi-approved", "multi-rejected"})
+
+	assertInvalidState := func(t *testing.T, query string, invalidToken string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, query, nil)
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		res := w.Result()
+		defer func() {
+			assert.NoError(t, res.Body.Close())
+		}()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", res.StatusCode)
+		}
+		var apiErr struct {
+			Code    string `json:"code"`
+			Error   string `json:"error"`
+			Details string `json:"details"`
+		}
+		require.NoError(t, json.NewDecoder(res.Body).Decode(&apiErr))
+		assert.Equal(t, "BAD_REQUEST", apiErr.Code)
+		assert.Equal(t, "invalid state filter", apiErr.Error)
+		invalidList, ok := strings.CutPrefix(apiErr.Details, "unsupported state filter value(s): ")
+		require.True(t, ok, "unexpected details format: %q", apiErr.Details)
+		invalidList, supportedValues, ok := strings.Cut(invalidList, ". Supported values:")
+		require.True(t, ok, "details should include supported values: %q", apiErr.Details)
+		assert.NotEmpty(t, supportedValues)
+		invalidTokens := strings.Split(invalidList, ", ")
+		matches := 0
+		for _, token := range invalidTokens {
+			if token == invalidToken {
+				matches++
+			}
+		}
+		assert.Equal(t, 1, matches)
+	}
+
+	assertInvalidState(t, "/breakglassSessions?state=not-a-state&mine=true", "notastate")
+	assertInvalidState(t, "/breakglassSessions?state=pending,not-a-state&mine=true", "notastate")
+	assertInvalidState(t, "/breakglassSessions?state=not-a-state&state=still-not-a-state&mine=true", "stillnotastate")
+	assertInvalidState(t, "/breakglassSessions?state=duplicate-invalid&state=duplicate-invalid&mine=true", "duplicateinvalid")
 }
 
 func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
