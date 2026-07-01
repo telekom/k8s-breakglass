@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"testing"
@@ -287,6 +288,56 @@ func TestEscalationReconciler_DependencyMapFunctions(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "prod-mail"},
 		})),
 	)
+}
+
+func TestIsFieldIndexUnavailable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "controller runtime field index",
+			err:  errors.New("field index spec.mailProvider does not exist"),
+			want: true,
+		},
+		{
+			name: "fake client no indexer",
+			err:  errors.New("List on GroupVersionKind with no indexer configured"),
+			want: true,
+		},
+		{
+			name: "missing index name",
+			err:  errors.New("no index with name spec.clusterConfigRefs"),
+			want: true,
+		},
+		{
+			name: "field label unsupported",
+			err:  errors.New("field label not supported: spec.allowedIdentityProviders"),
+			want: true,
+		},
+		{
+			name: "uppercase index wording",
+			err:  errors.New("Index with name spec.denyPolicyRefs does not exist"),
+			want: true,
+		},
+		{
+			name: "unrelated list error",
+			err:  errors.New("permission denied listing BreakglassEscalations"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isFieldIndexUnavailable(tt.err))
+		})
+	}
 }
 
 func requestKeys(requests []reconcile.Request) []string {
