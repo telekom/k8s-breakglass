@@ -9,6 +9,7 @@ import {
   sanitizeReason,
   validateDuration,
 } from "@/utils/breakglassSession";
+import { useModalBehavior } from "@/composables/useModalBehavior";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import type { Breakglass } from "@/model/breakglass";
 
@@ -52,6 +53,8 @@ function closeRequestModal() {
   showAllRequesterGroups.value = false;
   showAllApprovalGroups.value = false;
 }
+
+useModalBehavior(showRequestModal, closeRequestModal);
 
 watch(
   () => props.breakglass,

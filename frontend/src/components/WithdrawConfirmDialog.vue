@@ -2,13 +2,16 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script setup lang="ts">
+import { toRef } from "vue";
+import { useModalBehavior } from "@/composables/useModalBehavior";
+
 /**
  * Reusable withdraw confirmation dialog.
  *
  * Wraps a scale-modal with standardised wording and test IDs so that
  * both SessionBrowser and MyPendingRequests use the same UI.
  */
-defineProps<{
+const props = defineProps<{
   /** Whether the dialog is visible */
   opened: boolean;
   /** Display name for the request being withdrawn */
@@ -19,6 +22,8 @@ const emit = defineEmits<{
   (e: "confirm"): void;
   (e: "cancel"): void;
 }>();
+
+useModalBehavior(toRef(props, "opened"), () => emit("cancel"));
 </script>
 
 <template>

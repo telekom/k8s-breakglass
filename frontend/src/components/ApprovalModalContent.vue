@@ -61,7 +61,7 @@
     </div>
 
     <div class="modal-actions">
-      <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
+      <scale-button variant="secondary" :disabled="isApproving" @click="$emit('cancel')"> Cancel </scale-button>
       <scale-button
         v-if="canReview"
         data-testid="reject-button"
