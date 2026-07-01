@@ -142,7 +142,7 @@ The `state` parameter in list/filter operations supports filtering by session st
 - `waiting`, `waitingforscheduledtime`, `scheduled` - Sessions waiting for their scheduled start time
 - `rejected` - Rejected by approver (terminal)
 - `withdrawn` - Withdrawn by requester (terminal)
-- `expired` - Exceeded max duration (terminal)
+- `expired` - Recorded `Expired` state, or an approved session whose `status.expiresAt` has passed
 - `idleexpired` - Exceeded configured idle timeout (terminal)
 - `timeout`, `approvaltimeout` - Approval request timed out (terminal)
 
