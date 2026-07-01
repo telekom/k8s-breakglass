@@ -231,9 +231,22 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithAuxiliaryResourceStatuses(AuxiliaryResourceStatusFrom(&status.AuxiliaryResourceStatuses[i]))
 	}
 
+	// Set pod template resource statuses
+	if status.PodTemplateResourceStatuses != nil {
+		result.PodTemplateResourceStatuses = []ac.PodTemplateResourceStatusApplyConfiguration{}
+	}
+	for i := range status.PodTemplateResourceStatuses {
+		result.WithPodTemplateResourceStatuses(PodTemplateResourceStatusFrom(&status.PodTemplateResourceStatuses[i]))
+	}
+
 	// Set allowed pods
 	for i := range status.AllowedPods {
 		result.WithAllowedPods(AllowedPodRefFrom(&status.AllowedPods[i]))
+	}
+
+	// Set resolved pod operations used by the authorization webhook
+	if status.AllowedPodOperations != nil {
+		result.WithAllowedPodOperations(AllowedPodOperationsFrom(status.AllowedPodOperations))
 	}
 
 	// Set kubectl debug status
@@ -549,6 +562,27 @@ func AllowedPodRefFrom(p *breakglassv1alpha1.AllowedPodRef) *ac.AllowedPodRefApp
 	return result
 }
 
+// AllowedPodOperationsFrom converts an AllowedPodOperations to its ApplyConfiguration.
+func AllowedPodOperationsFrom(o *breakglassv1alpha1.AllowedPodOperations) *ac.AllowedPodOperationsApplyConfiguration {
+	if o == nil {
+		return nil
+	}
+	result := ac.AllowedPodOperations()
+	if o.Exec != nil {
+		result.WithExec(*o.Exec)
+	}
+	if o.Attach != nil {
+		result.WithAttach(*o.Attach)
+	}
+	if o.Logs != nil {
+		result.WithLogs(*o.Logs)
+	}
+	if o.PortForward != nil {
+		result.WithPortForward(*o.PortForward)
+	}
+	return result
+}
+
 // AuxiliaryResourceStatusFrom converts an AuxiliaryResourceStatus to its ApplyConfiguration.
 func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) *ac.AuxiliaryResourceStatusApplyConfiguration {
 	if s == nil {
@@ -587,9 +621,7 @@ func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) 
 	if s.DeletedAt != nil {
 		result.WithDeletedAt(*s.DeletedAt)
 	}
-	if s.Error != "" {
-		result.WithError(s.Error)
-	}
+	result.WithError(s.Error)
 	for i := range s.AdditionalResources {
 		result.WithAdditionalResources(AdditionalResourceRefFrom(&s.AdditionalResources[i]))
 	}
@@ -615,10 +647,47 @@ func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.
 	if r.ReadinessStatus != "" {
 		result.WithReadinessStatus(r.ReadinessStatus)
 	}
-	if r.Error != "" {
-		result.WithError(r.Error)
-	}
+	result.WithError(r.Error)
+	return result
+}
 
+// PodTemplateResourceStatusFrom converts a PodTemplateResourceStatus to its ApplyConfiguration.
+func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStatus) *ac.PodTemplateResourceStatusApplyConfiguration {
+	if s == nil {
+		return nil
+	}
+	result := ac.PodTemplateResourceStatus().
+		WithCreated(s.Created).
+		WithReady(s.Ready).
+		WithDeleted(s.Deleted)
+	if s.Kind != "" {
+		result.WithKind(s.Kind)
+	}
+	if s.APIVersion != "" {
+		result.WithAPIVersion(s.APIVersion)
+	}
+	if s.ResourceName != "" {
+		result.WithResourceName(s.ResourceName)
+	}
+	if s.Namespace != "" {
+		result.WithNamespace(s.Namespace)
+	}
+	if s.Source != "" {
+		result.WithSource(s.Source)
+	}
+	if s.CreatedAt != nil {
+		result.WithCreatedAt(*s.CreatedAt)
+	}
+	if s.ReadyAt != nil {
+		result.WithReadyAt(*s.ReadyAt)
+	}
+	if s.ReadinessStatus != "" {
+		result.WithReadinessStatus(s.ReadinessStatus)
+	}
+	if s.DeletedAt != nil {
+		result.WithDeletedAt(*s.DeletedAt)
+	}
+	result.WithError(s.Error)
 	return result
 }
 
