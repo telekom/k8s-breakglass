@@ -246,8 +246,8 @@ ensure_busybox_image() {
   ensure_image_exists "$image"
 }
 
-# Load image into Kind cluster
-# Uses docker save + kind load image-archive to avoid "failed to detect containerd snapshotter" issues
+# Load image into Kind cluster.
+# Falls back to docker save + kind load image-archive only for the known containerd snapshotter issue.
 e2e_load_image_into_kind() {
   local cluster_name="$1"
   local image="$2"
@@ -258,17 +258,21 @@ e2e_load_image_into_kind() {
   
   # Try direct load first
   local load_output
+  local load_status
   if load_output=$($KIND load docker-image "$image" --name "$cluster_name" 2>&1); then
     printf '%s\n' "$load_output" >&2
     log "Successfully loaded $image into Kind cluster $cluster_name"
     return 0
+  else
+    load_status=$?
   fi
-
   printf '%s\n' "$load_output" >&2
+
   if printf '%s\n' "$load_output" | grep -q "failed to detect containerd snapshotter"; then
     log_warn "Direct load failed due to containerd snapshotter issue, using archive method..."
     local tmp_archive
-    tmp_archive=$(mktemp --suffix=.tar)
+    local tmp_dir="${TMPDIR:-/tmp}"
+    tmp_archive=$(mktemp "${tmp_dir%/}/breakglass-kind-image.XXXXXX")
     if $DOCKER save "$image" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$cluster_name"; then
       log "Successfully loaded $image via archive method"
       rm -f "$tmp_archive"
@@ -281,7 +285,7 @@ e2e_load_image_into_kind() {
   fi
 
   log_error "Failed to load image $image into Kind cluster $cluster_name"
-  return 1
+  return "$load_status"
 }
 
 # Load all standard images required for breakglass E2E

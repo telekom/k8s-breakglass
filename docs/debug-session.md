@@ -1445,7 +1445,8 @@ When enabled, participants can attach to shared terminals:
 
 **Tmux image for E2E:**
 - The repository provides a tmux-enabled image at [e2e/images/tmux-debug/Dockerfile](../e2e/images/tmux-debug/Dockerfile)
-- E2E setup scripts build it as `breakglass-tmux-debug:e2e` and load it into kind
+- E2E setup scripts build it as `breakglass-tmux-debug:e2e` and load it into Kind before terminal-sharing tests run
+- Test pod templates set `imagePullPolicy: IfNotPresent`, and pod-copy E2E requests use the non-`latest` `breakglass-tmux-debug:e2e` image so Kubernetes uses a preloaded Kind image when it is already present instead of pulling from a registry
 - Override the image name via `TMUX_DEBUG_IMAGE` if needed
 
 ## Approval Workflow

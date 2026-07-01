@@ -24,7 +24,7 @@ exec: "tmux": executable file not found in $PATH
 
 - **Tmux debug image**: [e2e/images/tmux-debug/Dockerfile](../e2e/images/tmux-debug/Dockerfile)
 - **Build hook**: E2E setup scripts build and preload the tmux image into kind clusters
-- **Tests updated**: Terminal sharing E2E cases now set `Provider: "tmux"` and assert the provider
+- **Tests updated**: Terminal sharing E2E cases now use the current DebugSession API fields, set `imagePullPolicy: IfNotPresent` on test pod templates, use a non-`latest` tmux image tag for pod-copy debug containers so Kubernetes reuses the preloaded kind image without changing pull policy, and assert terminal sharing is enabled
 
 ## Related Files
 
