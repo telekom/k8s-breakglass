@@ -19,9 +19,10 @@ import App from "@/App.vue";
 import { AuthKey, BrandingKey } from "@/keys";
 import { useUser } from "@/services/auth";
 
+const ScaleTelekomAppShellElement = class extends HTMLElement {};
+
 // Stub heavy Scale web components so the test doesn't depend on custom element registrations.
-const SCALE_STUBS = {
-  "scale-telekom-app-shell": { template: "<div><slot name='header'/><slot/></div>" },
+const BASE_SCALE_STUBS = {
   "scale-telekom-header": { template: "<div><slot name='main-nav'/><slot name='functions'/></div>" },
   "scale-telekom-nav-list": { template: "<div><slot/></div>" },
   "scale-telekom-nav-item": { template: "<div><slot/></div>" },
@@ -41,6 +42,11 @@ const SCALE_STUBS = {
   ErrorBoundary: { template: "<div><slot/></div>" },
   RouterView: true,
   IDPSelector: true,
+};
+
+type MountAppOptions = {
+  appShellDefined?: boolean;
+  uiFlavour?: "telekom" | "oss" | "neutral";
 };
 
 function createMockRouter() {
@@ -89,9 +95,18 @@ describe("App — high-contrast and theme toggles", () => {
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-mode");
     document.documentElement.removeAttribute("data-high-contrast");
+    document.documentElement.removeAttribute("data-ui-flavour");
   });
 
-  function mountApp() {
+  function mountApp(options: MountAppOptions = {}) {
+    const appShellDefined = options.appShellDefined ?? true;
+    document.documentElement.setAttribute("data-ui-flavour", options.uiFlavour ?? "telekom");
+    vi.spyOn(customElements, "get").mockImplementation((name: string) => {
+      if (name === "scale-telekom-app-shell" && appShellDefined) {
+        return ScaleTelekomAppShellElement;
+      }
+      return undefined;
+    });
     const router = createMockRouter();
     return mount(App, {
       global: {
@@ -100,7 +115,14 @@ describe("App — high-contrast and theme toggles", () => {
           [AuthKey as symbol]: createMockAuth(),
           [BrandingKey as symbol]: "Test",
         },
-        stubs: SCALE_STUBS,
+        stubs: {
+          ...BASE_SCALE_STUBS,
+          "scale-telekom-app-shell": {
+            template: appShellDefined
+              ? "<main><slot name='header'/><slot/></main>"
+              : "<div><slot name='header'/><slot/></div>",
+          },
+        },
       },
     });
   }
@@ -241,12 +263,32 @@ describe("App — high-contrast and theme toggles", () => {
     expect(wrapper.findAll(".mobile-nav-fallback__link")).toHaveLength(0);
   });
 
-  it("exposes the app content as the skip-link main landmark", () => {
+  it("keeps the app content as the skip-link focus target without duplicating the app-shell main landmark", () => {
     wrapper = mountApp();
+
+    const main = wrapper.find("#main");
+    expect(main.exists()).toBe(true);
+    expect(main.attributes("role")).toBeUndefined();
+    expect(main.attributes("tabindex")).toBe("-1");
+  });
+
+  it.each(["oss", "neutral"] as const)("keeps #main as the single main landmark in %s mode", (uiFlavour) => {
+    wrapper = mountApp({ appShellDefined: false, uiFlavour });
 
     const main = wrapper.find("#main");
     expect(main.exists()).toBe(true);
     expect(main.attributes("role")).toBe("main");
     expect(main.attributes("tabindex")).toBe("-1");
+    expect(wrapper.findAll("main, [role='main']")).toHaveLength(1);
+  });
+
+  it("keeps #main as the single main landmark while the Telekom app shell is undefined", () => {
+    wrapper = mountApp({ appShellDefined: false, uiFlavour: "telekom" });
+
+    const main = wrapper.find("#main");
+    expect(main.exists()).toBe(true);
+    expect(main.attributes("role")).toBe("main");
+    expect(main.attributes("tabindex")).toBe("-1");
+    expect(wrapper.findAll("main, [role='main']")).toHaveLength(1);
   });
 });

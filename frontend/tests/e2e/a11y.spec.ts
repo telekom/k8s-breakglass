@@ -396,4 +396,20 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
       expect(isHighContrast).toBeNull();
     });
   });
+
+  test.describe("Landmark Semantics", () => {
+    test("App shell exposes one main landmark and skip link still focuses content", async ({ page }) => {
+      await performMockLogin(page);
+      await navigateTo(page, "/debug-sessions");
+
+      await expect(page.getByRole("main")).toHaveCount(1);
+
+      const skipLink = page.getByRole("link", { name: "Skip to content", exact: true });
+      await skipLink.focus();
+      await expect(skipLink).toBeFocused();
+
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#main")).toBeFocused();
+    });
+  });
 });
