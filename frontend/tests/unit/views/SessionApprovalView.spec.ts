@@ -123,6 +123,44 @@ describe("SessionApprovalView", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("ignores a late 401 load failure after unmount", async () => {
+    let rejectLoad!: (error: unknown) => void;
+    mockGetSessionByName.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectLoad = reject;
+      }),
+    );
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSessionByName).toHaveBeenCalledTimes(1);
+
+    wrapper.unmount();
+    rejectLoad({ response: { status: 401 } });
+    await flushPromises();
+    vi.advanceTimersByTime(3500);
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
   it("redirects after 401 load failure when component remains mounted", async () => {
     mockGetSessionByName.mockRejectedValue({ response: { status: 401 } });
 

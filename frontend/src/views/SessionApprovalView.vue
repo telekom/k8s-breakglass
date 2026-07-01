@@ -366,6 +366,8 @@ watch(sessionName, async (newSessionName, previousSessionName) => {
 });
 
 onUnmounted(() => {
+  ++loadRequestId;
+  ++actionRequestId;
   clearRedirectTimer();
 });
 </script>
