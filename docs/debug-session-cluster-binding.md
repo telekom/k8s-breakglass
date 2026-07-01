@@ -194,6 +194,9 @@ autoApprove: false  # Require manual approval
 Entries in `approvers.users` are matched against the authenticated approver's
 username and email claims. This allows templates and bindings to list email
 addresses even when the OIDC `preferred_username` claim is an opaque subject.
+Exact entries are trimmed and matched case-insensitively. Entries containing
+glob metacharacters (`*`, `?`, or `[]`) are trimmed and matched with
+case-sensitive glob semantics.
 
 ### impersonation
 

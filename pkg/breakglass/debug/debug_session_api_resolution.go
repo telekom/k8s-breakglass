@@ -723,10 +723,12 @@ func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakg
 }
 
 func matchApproverUser(pattern, username string) bool {
+	pattern = strings.TrimSpace(pattern)
+	username = strings.TrimSpace(username)
 	if strings.ContainsAny(pattern, "*?[") {
 		return matchPattern(pattern, username)
 	}
-	return strings.EqualFold(strings.TrimSpace(pattern), strings.TrimSpace(username))
+	return strings.EqualFold(pattern, username)
 }
 
 // matchPattern checks if a string matches a glob pattern.

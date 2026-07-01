@@ -987,10 +987,11 @@ func TestCheckApproverAuthorization_GlobUserMatchKeepsPatternSemantics(t *testin
 	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
 	approvers := &breakglassv1alpha1.DebugSessionApprovers{
-		Users: []string{"*@Example.COM"},
+		Users: []string{" *@Example.COM "},
 	}
 
 	assert.True(t, ctrl.checkApproverAuthorization(approvers, "approver@Example.COM", nil))
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, " approver@Example.COM ", nil))
 	assert.False(t, ctrl.checkApproverAuthorization(approvers, "approver@example.com", nil))
 }
 
