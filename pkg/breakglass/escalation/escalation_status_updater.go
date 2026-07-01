@@ -526,7 +526,8 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
 
-		changed := pruneUnconfiguredApproverGroupStatus(updated, groups)
+		prunedCachedMembers := pruneUnconfiguredApproverGroupStatus(updated, groups)
+		changed := prunedCachedMembers
 		if updated.Status.ApproverGroupMembers == nil {
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
@@ -639,7 +640,13 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		if changed {
 			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
 			markEscalationStatusObserved(updated)
-			if err := u.applyStatus(ctx, updated); err != nil {
+			var err error
+			if prunedCachedMembers {
+				err = u.K8sClient.Status().Update(ctx, updated)
+			} else {
+				err = u.applyStatus(ctx, updated)
+			}
+			if err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
 				// Emit error event
 				if u.EventRecorder != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -27,6 +28,58 @@ func (m *MockGroupMemberResolverForTest) Members(ctx context.Context, group stri
 		return nil, m.err
 	}
 	return m.memberData[group], nil
+}
+
+type statusUpdateTrackingClient struct {
+	client.Client
+	statusWriter *statusUpdateTrackingSubResourceClient
+}
+
+func newStatusUpdateTrackingClient(delegate client.Client) *statusUpdateTrackingClient {
+	return &statusUpdateTrackingClient{
+		Client:       delegate,
+		statusWriter: &statusUpdateTrackingSubResourceClient{delegate: delegate.SubResource("status")},
+	}
+}
+
+func (c *statusUpdateTrackingClient) Status() client.StatusWriter {
+	return c.statusWriter
+}
+
+func (c *statusUpdateTrackingClient) SubResource(subResource string) client.SubResourceClient {
+	if subResource == "status" {
+		return c.statusWriter
+	}
+	return c.Client.SubResource(subResource)
+}
+
+type statusUpdateTrackingSubResourceClient struct {
+	delegate client.SubResourceClient
+	updates  int
+	patches  int
+}
+
+func (c *statusUpdateTrackingSubResourceClient) Get(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceGetOption) error {
+	return c.delegate.Get(ctx, obj, subResource, opts...)
+}
+
+func (c *statusUpdateTrackingSubResourceClient) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	return c.delegate.Create(ctx, obj, subResource, opts...)
+}
+
+func (c *statusUpdateTrackingSubResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	c.updates++
+	return c.delegate.Update(ctx, obj, opts...)
+}
+
+func (c *statusUpdateTrackingSubResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	c.patches++
+	return c.delegate.Patch(ctx, obj, patch, opts...)
+}
+
+func (c *statusUpdateTrackingSubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	c.patches++
+	return c.delegate.Apply(ctx, obj, opts...)
 }
 
 // TestIDPGroupMembershipsPopulation verifies that IDPGroupMemberships are populated in multi-IDP mode
@@ -578,6 +631,83 @@ func TestPruneUnconfiguredApproverGroupStatus(t *testing.T) {
 			"admin": {"alice@example.com"},
 		},
 	}, escalation.Status.IDPGroupMemberships)
+}
+
+func TestEscalationStatusUpdaterPrunesRemovedApproverGroupsWithStatusUpdate(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	baseClient := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
+		Build()
+	trackingClient := newStatusUpdateTrackingClient(baseClient)
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "removed-approver-group",
+			Namespace:  "default",
+			Generation: 4,
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin-group",
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"my-cluster"},
+			},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Groups: []string{"admin"},
+			},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ObservedGeneration: 1,
+			ApproverGroupMembers: map[string][]string{
+				"admin":   {"alice@example.com"},
+				"removed": {"stale@example.com"},
+			},
+			IDPGroupMemberships: map[string]map[string][]string{
+				"idp-a": {
+					"admin":   {"alice@example.com"},
+					"removed": {"stale@example.com"},
+				},
+				"idp-b": {
+					"removed": {"other-stale@example.com"},
+				},
+			},
+		},
+	}
+
+	err := baseClient.Create(context.Background(), escalation)
+	assert.NoError(t, err)
+
+	updater := EscalationStatusUpdater{
+		Log:       logger.Sugar(),
+		K8sClient: trackingClient,
+		Resolver: &MockGroupMemberResolverForTest{
+			memberData: map[string][]string{
+				"admin": {"alice@example.com"},
+			},
+		},
+	}
+
+	updater.runOnce(context.Background(), logger.Sugar())
+
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
+	err = baseClient.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
+	assert.NoError(t, err)
+
+	assert.Equal(t, 1, trackingClient.statusWriter.updates)
+	assert.Zero(t, trackingClient.statusWriter.patches)
+	assert.Equal(t, map[string][]string{
+		"admin": {"alice@example.com"},
+	}, updated.Status.ApproverGroupMembers)
+	assert.Equal(t, map[string]map[string][]string{
+		"idp-a": {
+			"admin": {"alice@example.com"},
+		},
+	}, updated.Status.IDPGroupMemberships)
+	assert.Equal(t, int64(4), updated.Status.ObservedGeneration)
 }
 
 func TestExplicitIDPsWithoutLoaderReportLegacyResolverCondition(t *testing.T) {
