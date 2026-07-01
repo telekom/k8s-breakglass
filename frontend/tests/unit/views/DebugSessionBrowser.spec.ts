@@ -147,6 +147,38 @@ describe("DebugSessionBrowser", () => {
       expect(refreshButton.classes()).toContain("ui-toolbar-icon-control");
     });
 
+    it("announces filtered result counts as a status update", async () => {
+      const wrapper = await createWrapper();
+      const status = wrapper.find('[data-testid="debug-session-results-status"]');
+
+      expect(status.exists()).toBe(true);
+      expect(status.attributes("role")).toBe("status");
+      expect(status.attributes("aria-live")).toBe("polite");
+      expect(status.attributes("aria-atomic")).toBe("true");
+      expect(status.text()).toBe("Showing 2 of 2 debug sessions");
+    });
+
+    it("uses singular debug session text when there is one result", async () => {
+      mockListSessions.mockResolvedValueOnce({
+        sessions: [
+          {
+            name: "debug-session-1",
+            namespace: "default",
+            cluster: "test-cluster",
+            state: "Active",
+            templateRef: "standard-debug",
+            requestedBy: "user@example.com",
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const status = wrapper.find('[data-testid="debug-session-results-status"]');
+
+      expect(status.text()).toBe("Showing 1 of 1 debug session");
+    });
+
     it("shows an error state when loading debug sessions fails", async () => {
       mockListSessions.mockRejectedValueOnce(new Error("debug list down"));
 
@@ -156,6 +188,7 @@ describe("DebugSessionBrowser", () => {
       expect(errorState.exists()).toBe(true);
       expect(errorState.props("variant")).toBe("error");
       expect(errorState.props("description")).toBe("debug list down");
+      expect(wrapper.find('[data-testid="debug-session-results-status"]').exists()).toBe(false);
     });
 
     it("joins sessions as a viewer", async () => {

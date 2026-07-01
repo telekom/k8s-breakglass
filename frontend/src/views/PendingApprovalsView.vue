@@ -38,8 +38,18 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
-        Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
+      <div
+        v-if="!loading && !error"
+        class="toolbar-info ui-toolbar-info"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="toolbar-info"
+      >
+        Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} {{ pendingRequestCountLabel }}
+      </div>
+      <div v-else class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
+        Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} {{ pendingRequestCountLabel }}
       </div>
     </div>
 
@@ -278,6 +288,9 @@ const approving = ref<string | null>(null);
 const approverNotes = reactive<Record<string, string>>({});
 const showApproveModal = ref(false);
 const modalSession = ref<SessionCR | null>(null);
+const pendingRequestCountLabel = computed(() =>
+  pendingSessions.value.length === 1 ? "pending request" : "pending requests",
+);
 
 // Track which sessions have expanded approver groups
 const expandedApproverGroups = reactive<Record<string, boolean>>({});

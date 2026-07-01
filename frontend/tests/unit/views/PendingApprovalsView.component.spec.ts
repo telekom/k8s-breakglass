@@ -165,6 +165,32 @@ describe("PendingApprovalsView (component)", () => {
     expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
   });
 
+  it("announces pending approval result counts as a status update", async () => {
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="toolbar-info"]');
+
+    expect(status.exists()).toBe(true);
+    expect(status.attributes("role")).toBe("status");
+    expect(status.attributes("aria-live")).toBe("polite");
+    expect(status.attributes("aria-atomic")).toBe("true");
+    expect(status.text()).toBe("Showing 0 of 0 pending requests");
+  });
+
+  it("uses singular pending request text when there is one result", async () => {
+    mockFetchPendingSessionsForApproval.mockResolvedValueOnce([
+      {
+        metadata: { name: "session-1", creationTimestamp: "2026-02-01T10:00:00Z" },
+        spec: { user: "user@example.com", grantedGroup: "admin", cluster: "cluster-a" },
+        status: { state: "Pending", timeoutAt: "2026-02-01T11:00:00Z" },
+      },
+    ]);
+
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="toolbar-info"]');
+
+    expect(status.text()).toBe("Showing 1 of 1 pending request");
+  });
+
   it("shows session list when pending sessions exist", async () => {
     mockFetchPendingSessionsForApproval.mockResolvedValueOnce([
       {
@@ -191,6 +217,11 @@ describe("PendingApprovalsView (component)", () => {
     expect(errorState.exists()).toBe(true);
     expect(errorState.props("variant")).toBe("error");
     expect(errorState.props("description")).toBe("network error");
+
+    const status = wrapper.find('[data-testid="toolbar-info"]');
+    expect(status.attributes("role")).toBeUndefined();
+    expect(status.attributes("aria-live")).toBeUndefined();
+    expect(status.attributes("aria-atomic")).toBeUndefined();
   });
 
   it("keeps the approval modal mounted while rejection is in flight", async () => {

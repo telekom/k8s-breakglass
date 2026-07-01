@@ -163,6 +163,35 @@ describe("BreakglassSessionReview", () => {
     });
   });
 
+  it("announces review result counts as a status update", async () => {
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="review-results-status"]');
+
+    expect(status.exists()).toBe(true);
+    expect(status.attributes("role")).toBe("status");
+    expect(status.attributes("aria-live")).toBe("polite");
+    expect(status.attributes("aria-atomic")).toBe("true");
+    expect(status.text()).toBe("Showing 0 of 0 sessions");
+  });
+
+  it("uses singular session text when there is one review result", async () => {
+    mockGetSessionStatus.mockResolvedValueOnce({
+      status: 200,
+      data: [
+        {
+          metadata: { name: "session-1" },
+          spec: { user: "user@example.com", cluster: "cluster-a", grantedGroup: "admin" },
+          status: { state: "Active" },
+        },
+      ],
+    });
+
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="review-results-status"]');
+
+    expect(status.text()).toBe("Showing 1 of 1 session");
+  });
+
   it("uses approver mode params when route query has approver=true", async () => {
     await createWrapper("/review?approver=true&name=session-1");
 
@@ -242,5 +271,17 @@ describe("BreakglassSessionReview", () => {
     const wrapper = await createWrapper();
 
     expect(wrapper.find('[data-testid="session-card-email"]').text()).toBe("owner@example.com");
+  });
+
+  it("does not announce result counts while an authorization message is shown", async () => {
+    mockGetSessionStatus.mockRejectedValueOnce({ response: { status: 401 } });
+
+    const wrapper = await createWrapper();
+    const status = wrapper.find('[data-testid="review-results-status"]');
+
+    expect(status.exists()).toBe(true);
+    expect(status.attributes("role")).toBeUndefined();
+    expect(status.attributes("aria-live")).toBeUndefined();
+    expect(status.attributes("aria-atomic")).toBeUndefined();
   });
 });
