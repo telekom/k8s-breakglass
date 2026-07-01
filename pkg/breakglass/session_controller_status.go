@@ -628,16 +628,35 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		// Try to load session by metadata.name (token is treated as session name)
 		ses, err := wc.sessionManager.GetBreakglassSessionByName(ctx, token)
 		if err != nil {
-			reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
-			c.JSON(http.StatusNotFound, struct {
-				Valid bool `json:"valid"`
-			}{Valid: false})
+			if apierrors.IsNotFound(err) {
+				reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
+				c.JSON(http.StatusNotFound, struct {
+					Valid bool `json:"valid"`
+				}{Valid: false})
+				return
+			}
+			reqLog.Errorw("Token validation: unable to load session", "tokenLen", len(token), "error", err)
+			apiresponses.RespondInternalError(c, "get session", err, reqLog)
 			return
 		}
 		pendingApproval := IsSessionPendingApproval(ses)
 		approvalTimedOut := IsSessionApprovalTimedOut(ses)
-		canApprove := pendingApproval && wc.isSessionApprover(c, ses)
-		alreadyActive := IsSessionActive(ses) && !approvalTimedOut
+		sessionForAuth := ses
+		sessionForAuth.Name = "[REDACTED]"
+		approvalMeta := wc.getSessionApprovalMeta(c, sessionForAuth)
+		canRead, err := wc.canReadBreakglassSession(c, sessionForAuth, approvalMeta)
+		if err != nil {
+			reqLog.Warnw("Token validation: unable to verify session read authorization", "tokenLen", len(token), "error", err)
+			apiresponses.RespondUnauthorizedWithMessage(c, "unable to verify user identity")
+			return
+		}
+		if !canRead {
+			reqLog.Warnw("Token validation: user is not authorized to read session", "tokenLen", len(token))
+			apiresponses.RespondForbidden(c, "not allowed to read this breakglass session")
+			return
+		}
+		canApprove := pendingApproval && approvalMeta.CanApprove
+		alreadyActive := IsSessionAccessActive(ses)
 		valid := true
 		if approvalTimedOut || IsSessionExpired(ses) || IsSessionTerminalState(ses.Status.State) {
 			valid = false

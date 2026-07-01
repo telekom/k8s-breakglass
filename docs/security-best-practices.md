@@ -150,7 +150,7 @@ To reduce accidental credential exposure, the API middleware **strips the Author
 Debug-level log statements redact sensitive data to prevent accidental exposure when verbose logging is enabled:
 
 - JWT group memberships (`rawTokenGroups`) are omitted from all log output; only the count is logged
-- Session approval tokens (the `?token=` query parameter) are logged only as their length (`tokenLen`), not their value
+- Session approval tokens (the `?token=` query parameter) are redacted in request-path logs by recording only their length (`tokenLen`), and token metadata authorization helpers receive a redacted session name before emitting downstream authorization logs. Token metadata validation also requires the caller to be the requester, an authorized approver, or a historical approver before returning session state.
 - OIDC group names from the token claims are logged as `[REDACTED]` in the enriched request logger
 
 ### Issuer Validation (SEC-003)

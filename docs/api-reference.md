@@ -153,7 +153,7 @@ The API provides endpoints for managing breakglass sessions.
 Query sessions with server-side filtering.
 
 ```http
-GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>
+GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>&token=<session-name>
 Authorization: Bearer <token>
 ```
 
@@ -171,6 +171,7 @@ Authorization: Bearer <token>
 | `approvedByMe` | boolean | Sessions the user has already approved |
 | `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
 | `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. |
+| `token` | string | Validate approval-link metadata for a session name. This mode returns metadata for one session instead of the normal session list. |
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:
 
@@ -200,6 +201,24 @@ Authorization: Bearer <token>
 ]
 ```
 
+When `token=<session-name>` is present, the API treats the token value as a
+BreakglassSession `metadata.name` and returns only approval-link metadata:
+
+```json
+{
+  "valid": true,
+  "alreadyActive": false,
+  "canApprove": true
+}
+```
+
+The token metadata response is authorization-gated. The caller must be allowed
+to read the referenced session, for example as the requester, a currently
+authorized approver, or a historical approver. Missing sessions return
+`404 Not Found` with `{"valid": false}`. Existing sessions that the caller may
+not read return `403 Forbidden`. If user identity cannot be verified, the
+endpoint returns `401 Unauthorized`.
+
 **Examples:**
 
 ```bash
@@ -218,6 +237,10 @@ curl -H "Authorization: Bearer <token>" \
 # Sessions you have approved that are still active or timed out
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/breakglassSessions?approvedByMe=true&state=approved,timeout"
+
+# Validate approval-link metadata for a session
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglassSessions?token=session-abc123"
 ```
 
 ### Request Session
