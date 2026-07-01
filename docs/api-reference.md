@@ -168,7 +168,7 @@ Authorization: Bearer <token>
 | `group` | string | Filter by granted group |
 | `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions). Matches the authenticated user's email, preferred username, or subject/user ID; requests with no usable identity return `401 Unauthorized`. |
 | `approver` | boolean | Sessions user can approve. Defaults to `true` only when neither `mine=true` nor `approvedByMe=true` is requested; set `approver=true` explicitly to combine filters. |
-| `approvedByMe` | boolean | Sessions the user has already approved. Requires an email claim because approval history is stored by approver email; missing email returns `401 Unauthorized`. |
+| `approvedByMe` | boolean | Sessions the caller has already approved. This filter matches the caller's email claim against recorded approver identifiers; missing email returns `401 Unauthorized`. |
 | `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
 | `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. Unknown non-empty tokens return `400 Bad Request`. |
 | `token` | string | Validate approval-link metadata for a session name. This mode returns metadata for one session instead of the normal session list. |

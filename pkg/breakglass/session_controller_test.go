@@ -5425,9 +5425,23 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 			return
 		}
 		email := c.GetHeader("X-Test-Email")
-		c.Set("email", email)
-		c.Set("username", strings.TrimSuffix(email, "@example.com"))
-		c.Set("user_id", email)
+		username := c.GetHeader("X-Test-Username")
+		userID := c.GetHeader("X-Test-User-ID")
+		if email != "" {
+			c.Set("email", email)
+		}
+		if username == "" && email != "" {
+			username = strings.TrimSuffix(email, "@example.com")
+		}
+		if username != "" {
+			c.Set("username", username)
+		}
+		if userID == "" && email != "" {
+			userID = email
+		}
+		if userID != "" {
+			c.Set("user_id", userID)
+		}
 		c.Set("groups", []string{"system:authenticated"})
 		c.Next()
 	}
@@ -5442,6 +5456,17 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	serveAs := func(email, sessionName string) (int, map[string]any) {
 		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions/"+sessionName, nil)
 		req.Header.Set("X-Test-Email", email)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+		return w.Result().StatusCode, body
+	}
+	serveWithIdentity := func(username, userID, sessionName string) (int, map[string]any) {
+		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions/"+sessionName, nil)
+		req.Header.Set("X-Test-Username", username)
+		req.Header.Set("X-Test-User-ID", userID)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 
@@ -5480,6 +5505,11 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "reader-sess-3", sessionNameFromBody(body))
 	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize username-based requester")
+
+	status, body = serveWithIdentity("alice", "alice-subject", "reader-sess-3")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "reader-sess-3", sessionNameFromBody(body))
+	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize requester without email claim")
 }
 
 func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {

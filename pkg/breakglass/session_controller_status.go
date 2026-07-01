@@ -850,17 +850,20 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 		SessionState: string(session.Status.State),
 	}
 
-	// Get user email
-	email, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		reqLog.Warnw("Failed to get user email for approval meta", "error", err)
+	email, emailErr := wc.identityProvider.GetUserIdentifier(c, breakglassv1alpha1.UserIdentifierClaimEmail)
+	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	if len(authIdentifiers) == 0 {
+		if emailErr != nil {
+			reqLog.Warnw("Failed to get authenticated identity for approval meta", "error", emailErr)
+		} else {
+			reqLog.Warn("Failed to get authenticated identity for approval meta")
+		}
 		meta.DenialReason = "Unable to verify your identity"
 		return meta
 	}
 
 	// Check if user is the requester. Sessions can store the requester by email,
 	// preferred_username, or sub depending on the spoke cluster identity claim.
-	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
 	meta.IsRequester = matchesAuthIdentifier(session.Spec.User, authIdentifiers)
 
 	// Check session state first
@@ -930,12 +933,14 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 }
 
 func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, session breakglassv1alpha1.BreakglassSession, approvalMeta SessionApprovalMeta) (bool, error) {
-	email, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		return false, err
-	}
-
+	email, emailErr := wc.identityProvider.GetUserIdentifier(c, breakglassv1alpha1.UserIdentifierClaimEmail)
 	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	if len(authIdentifiers) == 0 {
+		if emailErr != nil {
+			return false, emailErr
+		}
+		return false, errAuthenticatedIdentityNotFound
+	}
 	if matchesAuthIdentifier(session.Spec.User, authIdentifiers) {
 		return true, nil
 	}
@@ -944,7 +949,7 @@ func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, 
 		return true, nil
 	}
 
-	if userHasApprovedSession(session, email) {
+	if email != "" && userHasApprovedSession(session, email) {
 		return true, nil
 	}
 
