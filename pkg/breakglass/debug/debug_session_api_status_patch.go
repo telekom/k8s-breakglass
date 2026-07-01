@@ -48,7 +48,7 @@ func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
 func respondDebugSessionStatusPatchError(ctx *gin.Context, reqLog *zap.SugaredLogger, action, responseMessage, sessionName string, err error) {
 	if apierrors.IsConflict(err) {
 		reqLog.Warnw("Debug session status update conflict", "action", action, "session", sessionName, "error", err)
-		apiresponses.RespondConflict(ctx, "debug session was updated concurrently; retry the request")
+		apiresponses.RespondConflict(ctx, "debug session was updated concurrently; refresh the session before retrying")
 		return
 	}
 
