@@ -118,7 +118,7 @@ const pages = [
   { name: "home", path: "/", title: "Request Access" },
   { name: "sessions", path: "/sessions", title: "Session Browser" },
   { name: "pending-approvals", path: "/approvals/pending", title: "Pending Approvals" },
-  { name: "my-requests", path: "/requests/mine", title: "My Pending Requests" },
+  { name: "my-requests", path: "/requests/mine", title: "My Outstanding Requests" },
   { name: "session-review", path: "/sessions/review", title: "Session Review" },
   { name: "debug-sessions", path: "/debug-sessions", title: "Debug Sessions" },
   { name: "debug-session-create", path: "/debug-sessions/create", title: "Create Debug Session" },

@@ -1,10 +1,17 @@
 import { vi, type Mock } from "vitest";
 import BreakglassService from "./breakglass";
 import { createAuthenticatedApiClient } from "@/services/httpClient";
+import { pushError } from "@/services/errors";
 import type { Breakglass, SessionCR } from "@/model/breakglass";
 import type { AxiosInstance } from "axios";
 
 vi.mock("@/services/httpClient");
+vi.mock("@/services/errors", () => ({
+  pushError: vi.fn(),
+  pushSuccess: vi.fn(),
+  dismissError: vi.fn(),
+  useErrors: vi.fn(),
+}));
 const mockedCreateClient = createAuthenticatedApiClient as Mock<typeof createAuthenticatedApiClient>;
 
 type MockAxiosClient = {
@@ -346,7 +353,7 @@ describe("BreakglassService", () => {
     mockClient.get.mockResolvedValueOnce({ data: { items: [{ metadata: { name: "req" } }], total: 1 } });
     const outstanding = await service.fetchMyOutstandingRequests();
     expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", {
-      params: { mine: true, approver: false, state: "pending" },
+      params: { mine: true, approver: false, state: "pending,waitingforscheduledtime" },
     });
     expect(outstanding).toHaveLength(1);
 
@@ -500,6 +507,14 @@ describe("BreakglassService", () => {
     await expect(service.withdrawMyRequest({ metadata: {} } as SessionCR)).rejects.toThrow("Missing session name");
   });
 
+  it("drops scheduled own sessions and errors when metadata is missing", async () => {
+    mockClient.post.mockResolvedValueOnce({ status: 204 });
+    await service.dropMySession({ metadata: { name: "scheduled" } } as SessionCR);
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/scheduled/drop");
+
+    await expect(service.dropMySession({ metadata: {} } as SessionCR)).rejects.toThrow("Missing session name");
+  });
+
   it("rethrows errors when withdrawing requests fails", async () => {
     mockClient.post.mockRejectedValueOnce(new Error("withdraw failed"));
 
@@ -507,6 +522,14 @@ describe("BreakglassService", () => {
       "withdraw failed",
     );
     expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/withdraw");
+  });
+
+  it("rethrows errors when dropping own sessions fails", async () => {
+    mockClient.post.mockRejectedValueOnce(new Error("drop failed"));
+
+    await expect(service.dropMySession({ metadata: { name: "oops" } } as SessionCR)).rejects.toThrow("drop failed");
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/drop");
+    expect(pushError).not.toHaveBeenCalled();
   });
 
   it("sends payloads via testButton helper", async () => {

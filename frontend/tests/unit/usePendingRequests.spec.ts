@@ -48,7 +48,7 @@ describe("usePendingRequests", () => {
     expect(warnMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Missing BreakglassService instance");
   });
 
-  it("loads pending requests and clears errors", async () => {
+  it("loads outstanding requests and clears errors", async () => {
     const request = sampleRequest("req-1");
     const service = createMockService({
       fetchMyOutstandingRequests: vi.fn().mockResolvedValue([request]),
@@ -60,7 +60,9 @@ describe("usePendingRequests", () => {
     expect(service.fetchMyOutstandingRequests).toHaveBeenCalledTimes(1);
     expect(state.requests.value).toEqual([request]);
     expect(state.error.value).toBe("");
-    expect(debugMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Loaded pending requests", { count: 1 });
+    expect(debugMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Loaded outstanding requests", {
+      count: 1,
+    });
   });
 
   it("surfaces fetch failures and logs warning", async () => {
@@ -72,7 +74,7 @@ describe("usePendingRequests", () => {
     await state.loadRequests();
 
     expect(state.error.value).toBe("boom");
-    expect(warnMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Failed to load pending requests", {
+    expect(warnMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Failed to load outstanding requests", {
       errorMessage: "boom",
     });
   });
