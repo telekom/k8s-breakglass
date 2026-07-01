@@ -2574,7 +2574,7 @@ func TestApprovalAuthorizationFallsBackToTargetGroupsWhenResolvedApproverMembers
 	require.True(t, ctrl.checkApprovalAuthorization(c, session).Allowed)
 }
 
-func TestApprovalAuthorizationDoesNotFallbackInLegacyModeWhenResolvedApproverGroupIsEmpty(t *testing.T) {
+func TestApprovalAuthorizationDoesNotFallbackWhenResolvedApproverGroupIsEmpty(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-escalation", Namespace: "default"},
