@@ -999,12 +999,20 @@ func validateStateFilterTokens(tokens []string) []string {
 	if len(tokens) == 0 {
 		return nil
 	}
-	invalid := make([]string, 0)
+	invalidSet := make(map[string]struct{})
 	for _, token := range tokens {
 		if _, supported := sessionStateFilterPredicates[token]; !supported {
-			invalid = append(invalid, token)
+			invalidSet[token] = struct{}{}
 		}
 	}
+	if len(invalidSet) == 0 {
+		return nil
+	}
+	invalid := make([]string, 0, len(invalidSet))
+	for token := range invalidSet {
+		invalid = append(invalid, token)
+	}
+	sort.Strings(invalid)
 	return invalid
 }
 

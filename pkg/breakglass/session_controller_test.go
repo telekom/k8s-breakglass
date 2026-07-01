@@ -4867,7 +4867,8 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 	assertStates := func(t *testing.T, query string, want []string) {
 		t.Helper()
-		req, _ := http.NewRequest(http.MethodGet, query, nil)
+		req, err := http.NewRequest(http.MethodGet, query, nil)
+		require.NoError(t, err)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		res := w.Result()
@@ -4897,7 +4898,8 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 	assertInvalidState := func(t *testing.T, query string, invalidToken string) {
 		t.Helper()
-		req, _ := http.NewRequest(http.MethodGet, query, nil)
+		req, err := http.NewRequest(http.MethodGet, query, nil)
+		require.NoError(t, err)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		res := w.Result()
@@ -4916,12 +4918,14 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 		assert.Equal(t, "BAD_REQUEST", apiErr.Code)
 		assert.Equal(t, "invalid state filter", apiErr.Error)
 		assert.Contains(t, apiErr.Details, invalidToken)
+		assert.Equal(t, 1, strings.Count(apiErr.Details, invalidToken))
 		assert.Contains(t, apiErr.Details, "Supported values:")
 	}
 
 	assertInvalidState(t, "/breakglassSessions?state=not-a-state&mine=true", "notastate")
 	assertInvalidState(t, "/breakglassSessions?state=pending,not-a-state&mine=true", "notastate")
 	assertInvalidState(t, "/breakglassSessions?state=not-a-state&state=still-not-a-state&mine=true", "stillnotastate")
+	assertInvalidState(t, "/breakglassSessions?state=duplicate-invalid&state=duplicate-invalid&mine=true", "duplicateinvalid")
 }
 
 func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
