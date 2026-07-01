@@ -648,7 +648,6 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			return
 		}
 		pendingApproval := IsSessionPendingApproval(ses)
-		approvalTimedOut := IsSessionApprovalTimedOut(ses)
 		sessionForAuth := ses
 		sessionForAuth.Name = "[REDACTED]"
 		approvalMeta := wc.getSessionApprovalMeta(c, sessionForAuth)
@@ -665,10 +664,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 		canApprove := pendingApproval && approvalMeta.CanApprove
 		alreadyActive := IsSessionAccessActive(ses)
-		valid := true
-		if approvalTimedOut || IsSessionExpired(ses) || IsSessionTerminalState(ses.Status.State) {
-			valid = false
-		}
+		valid := isSessionTokenValid(ses)
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
 		return
 	}
