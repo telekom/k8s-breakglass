@@ -412,4 +412,55 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
       await expect(page.locator("#main")).toBeFocused();
     });
   });
+
+  test.describe("Heading Semantics", () => {
+    test("Debug session details uses ordered heading levels", async ({ page }) => {
+      await performMockLogin(page);
+      await page.route("**/api/debugSessions/debug-heading-kubectl", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            metadata: {
+              name: "debug-heading-kubectl",
+              namespace: "breakglass-system",
+              creationTimestamp: new Date().toISOString(),
+              labels: { "breakglass.telekom.de/mode": "kubectl-debug" },
+            },
+            spec: {
+              templateRef: "kubectl-debug",
+              cluster: "t-sec-1st.dtmd11",
+              requestedBy: "mock.user@example.com",
+              requestedByEmail: "mock.user@example.com",
+              requestedDuration: "1h",
+              reason: "Heading accessibility regression coverage",
+            },
+            status: {
+              state: "Active",
+              startsAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+              renewalCount: 0,
+              participants: [],
+              allowedPods: [],
+              allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
+            },
+          }),
+        });
+      });
+      await navigateTo(page, "/debug-sessions/debug-heading-kubectl");
+
+      await expect(page.getByRole("heading", { name: "debug-heading-kubectl", level: 1 })).toBeVisible();
+
+      for (const heading of [
+        "Status",
+        "Session Information",
+        /^Participants/,
+        /^Debug Pods/,
+        "Allowed Pod Operations",
+        "Kubectl Debug Operations",
+      ]) {
+        await expect(page.getByRole("heading", { name: heading, level: 2 })).toBeVisible();
+      }
+    });
+  });
 });
