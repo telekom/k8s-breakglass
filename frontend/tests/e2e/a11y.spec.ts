@@ -469,7 +469,9 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
       await performMockLogin(page);
       await navigateTo(page, "/debug-sessions");
 
-      await expect(page.getByRole("button", { name: "Refresh debug sessions", exact: true })).toBeVisible();
+      const refreshButton = page.getByRole("button", { name: "Refresh debug sessions", exact: true });
+      await expect(refreshButton).toHaveCount(1);
+      await expect(refreshButton).toBeVisible();
     });
   });
 });
