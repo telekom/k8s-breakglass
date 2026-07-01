@@ -989,6 +989,8 @@ ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned o
 
 The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
 
+Status-changing DebugSession actions such as renew, terminate, approve, reject, join, and leave use optimistic locking. If another request updates the same session between the API read and status write, the endpoint returns `409 Conflict`; clients should refresh the session before retrying.
+
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**
@@ -1005,6 +1007,9 @@ Only invited users can join an active, unexpired session, and only when terminal
 
 This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
+If the session changes concurrently while recording the joined participant, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
 ### Leave Debug Session
 
 ```http
@@ -1017,6 +1022,9 @@ excluded from active participant checks and cannot use debug-session pod
 operations.
 
 This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
+If the session changes concurrently while recording `leftAt`, the endpoint
+returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 ### Renew Debug Session
 
@@ -1038,6 +1046,9 @@ Extends the session duration. Subject to template constraints (`maxDuration`,
 `participant` status entry can renew; `viewer` entries and participants with
 `leftAt` set cannot renew sessions.
 
+If the session changes concurrently while updating expiration status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
 ### Terminate Debug Session
 
 ```http
@@ -1047,6 +1058,9 @@ POST /api/debugSessions/:name/terminate
 Terminates the session early. Only the session owner can terminate.
 
 This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
+If the session changes concurrently while recording termination status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 **Response:** Updated `DebugSession` object with `state: Terminated`.
 
@@ -1071,7 +1085,11 @@ Approves a session in `PendingApproval` state.
 `reason` is required when the session's stored `approvalReasonConfig.mandatory`
 is `true`, and must satisfy the configured `minLength` after sanitization.
 
-**Response:** Updated `DebugSession` object with `state: Approved`.
+If the session changes concurrently while recording approval status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
+**Response:** Updated `DebugSession` object with recorded approval fields. The
+controller transitions approved sessions after the API update.
 
 ### Reject Debug Session
 
@@ -1095,7 +1113,10 @@ When present, the rejection body must contain only the known `reason` field and 
 or `approvalReasonConfig.mandatoryForRejection` is `true`, and must satisfy the
 configured `minLength` after sanitization.
 
-**Response:** Updated `DebugSession` object with `state: Rejected`.
+If the session changes concurrently while recording rejection status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
+**Response:** Updated `DebugSession` object with `state: Terminated`.
 
 ### List Debug Session Templates
 

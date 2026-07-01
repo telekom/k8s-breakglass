@@ -1591,6 +1591,10 @@ current caller. The web UI uses these fields to show approve/reject controls
 only to authorized approvers for sessions in `PendingApproval`; unauthorized
 callers may still read visible sessions but do not see approval actions.
 
+Status-changing actions use optimistic locking. If another request changes the
+same `DebugSession` between read and write, the API returns `409 Conflict`; the
+client should refresh the session and retry when appropriate.
+
 ### Kubectl Debug API Endpoints
 
 These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode.

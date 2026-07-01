@@ -48,12 +48,12 @@ func TestSessionActualStartTimeTracking(t *testing.T) {
 		requesterClient := tc.RequesterClient()
 		approverClient := tc.ApproverClient()
 
-		session, err := requesterClient.CreateSession(s.Ctx, t, helpers.SessionRequest{
+		session, err := requesterClient.CreateSessionAndWaitForPending(s.Ctx, t, helpers.SessionRequest{
 			Cluster: s.Cluster,
 			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Test actual start time tracking",
-		})
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Session creation should succeed in E2E environment")
 		s.Cleanup.Add(&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
