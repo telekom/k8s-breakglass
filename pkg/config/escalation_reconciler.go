@@ -543,12 +543,6 @@ func (r *EscalationReconciler) escalationRequestsMatching(
 		})
 	}
 
-	sort.Slice(requests, func(i, j int) bool {
-		if requests[i].Namespace == requests[j].Namespace {
-			return requests[i].Name < requests[j].Name
-		}
-		return requests[i].Namespace < requests[j].Namespace
-	})
 	return requests
 }
 
