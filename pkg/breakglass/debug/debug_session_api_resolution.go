@@ -179,25 +179,16 @@ func (c *DebugSessionAPIController) resolveImpersonation(template *breakglassv1a
 func (c *DebugSessionAPIController) resolveApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, cc *breakglassv1alpha1.ClusterConfig, userGroups []string) *ApprovalInfo {
 	info := &ApprovalInfo{}
 
-	var autoApproveFor *breakglassv1alpha1.AutoApproveConfig
-
-	// Check binding approvers first
-	if binding != nil && binding.Spec.Approvers != nil {
-		info.Required = len(binding.Spec.Approvers.Groups) > 0 || len(binding.Spec.Approvers.Users) > 0
-		info.ApproverGroups = binding.Spec.Approvers.Groups
-		info.ApproverUsers = binding.Spec.Approvers.Users
-		autoApproveFor = binding.Spec.Approvers.AutoApproveFor
-	} else if template.Spec.Approvers != nil {
-		// Check template approvers
-		info.Required = len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0
-		info.ApproverGroups = template.Spec.Approvers.Groups
-		info.ApproverUsers = template.Spec.Approvers.Users
-		autoApproveFor = template.Spec.Approvers.AutoApproveFor
+	approvers := effectiveDebugSessionApprovers(template, binding)
+	if approvers != nil {
+		info.Required = true
+		info.ApproverGroups = approvers.Groups
+		info.ApproverUsers = approvers.Users
 	}
 
 	// Evaluate auto-approve conditions if approval is required
-	if info.Required && autoApproveFor != nil {
-		info.CanAutoApprove = c.evaluateAutoApprove(autoApproveFor, cc.Name, userGroups)
+	if info.Required && approvers.AutoApproveFor != nil {
+		info.CanAutoApprove = c.evaluateAutoApprove(approvers.AutoApproveFor, cc.Name, userGroups)
 	}
 
 	return info
@@ -206,6 +197,14 @@ func (c *DebugSessionAPIController) resolveApproval(template *breakglassv1alpha1
 // evaluateAutoApprove checks if auto-approve conditions are met for the given cluster and user groups.
 // This mirrors the reconciler's checkAutoApprove() logic for API preview purposes.
 func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *breakglassv1alpha1.AutoApproveConfig, clusterName string, userGroups []string) bool {
+	return debugSessionAutoApproveMatches(autoApprove, clusterName, userGroups)
+}
+
+func debugSessionAutoApproveMatches(autoApprove *breakglassv1alpha1.AutoApproveConfig, clusterName string, userGroups []string) bool {
+	if autoApprove == nil {
+		return false
+	}
+
 	// Check cluster patterns
 	for _, pattern := range autoApprove.Clusters {
 		if matched, _ := filepath.Match(pattern, clusterName); matched {
@@ -223,6 +222,16 @@ func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *breakglassv
 	}
 
 	return false
+}
+
+func effectiveDebugSessionApprovers(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionApprovers {
+	if binding != nil && debugSessionApproversConfigured(binding.Spec.Approvers) {
+		return binding.Spec.Approvers
+	}
+	if template != nil && debugSessionApproversConfigured(template.Spec.Approvers) {
+		return template.Spec.Approvers
+	}
+	return nil
 }
 
 // resolveClusterStatus returns cluster health status

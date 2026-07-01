@@ -485,12 +485,13 @@ create_clusters() {
 preload_images_all_clusters() {
   log "Preloading images to all clusters..."
   ensure_tmux_debug_image
+  ensure_busybox_image
   
   local clusters=("$HUB_CLUSTER" "$SPOKE_A_CLUSTER" "$SPOKE_B_CLUSTER")
   local images=(
     "$IMAGE"
     "nicolaka/netshoot"
-    "busybox:latest"
+    "$BUSYBOX_IMAGE"
     "$TMUX_DEBUG_IMAGE"
   )
   

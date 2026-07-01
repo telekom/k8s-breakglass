@@ -212,7 +212,8 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 	r.activeConfigs = validConfigs
 	r.configMutex.Unlock()
 
-	// Call reload callback with ALL valid configs
+	// Call reload callback with ALL valid configs. audit.Service.ReloadMultiple
+	// records successful reload metrics; the reconciler records callback failures.
 	if r.onReloadMultiple != nil {
 		if err := r.onReloadMultiple(ctx, validConfigs); err != nil {
 			r.logger.Errorw("Failed to reload audit configuration with aggregated configs",
@@ -222,16 +223,17 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 				r.onError(ctx, err)
 			}
 			// Record failure event to each config that was part of the reload
-			for _, cfg := range allConfigs.Items {
+			for i := range allConfigs.Items {
+				cfg := &allConfigs.Items[i]
 				if cfg.Spec.Enabled && r.isConfigInList(cfg.Name, validConfigs) {
 					if r.recorder != nil {
-						r.recorder.Eventf(&cfg, nil, corev1.EventTypeWarning, "ReloadFailed", "Reload",
+						r.recorder.Eventf(cfg, nil, corev1.EventTypeWarning, "ReloadFailed", "Reload",
 							"Failed to reload audit configuration: %v", err)
 					}
 				}
 			}
-			metrics.AuditConfigReloads.WithLabelValues("reload_failed").Inc()
-			return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+			return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
 
@@ -248,8 +250,17 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		"configNames", configNames,
 		"totalSinks", totalSinks)
 
-	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
+}
+
+// isConfigInList checks if a config name is in the valid configs list
+func (r *AuditConfigReconciler) isConfigInList(name string, configs []*breakglassv1alpha1.AuditConfig) bool {
+	for _, cfg := range configs {
+		if cfg.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // validateConfig validates the AuditConfig and returns a list of errors
@@ -480,13 +491,4 @@ func (r *AuditConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}).
 		WithEventFilter(specChangePredicate).
 		Complete(r)
-}
-
-func (r *AuditConfigReconciler) isConfigInList(name string, list []*breakglassv1alpha1.AuditConfig) bool {
-	for _, c := range list {
-		if c.Name == name {
-			return true
-		}
-	}
-	return false
 }

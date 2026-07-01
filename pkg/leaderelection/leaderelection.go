@@ -10,16 +10,45 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
+const (
+	leaseDuration = 15 * time.Second
+	renewDeadline = 10 * time.Second
+	retryPeriod   = 2 * time.Second
+)
+
+type leaderElectorRunner interface {
+	Run(context.Context)
+}
+
+type leaderElectorFactory func(leaderelection.LeaderCallbacks) (leaderElectorRunner, error)
+
 func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct{}, resourceLock resourcelock.Interface,
 	hostname, leaseName, leaseNamespace string, log *zap.SugaredLogger, onStarted func(context.Context)) {
 	defer wg.Done()
 
+	callbacks := newLeaderCallbacks(leaderElectedCh, hostname, log, onStarted)
+	factory := func(callbacks leaderelection.LeaderCallbacks) (leaderElectorRunner, error) {
+		return leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+			Lock:          resourceLock,
+			LeaseDuration: leaseDuration,
+			RenewDeadline: renewDeadline,
+			RetryPeriod:   retryPeriod,
+			Callbacks:     callbacks,
+			WatchDog:      nil,
+			Name:          "breakglass-controller",
+		})
+	}
+
+	runLoop(ctx, leaseName, leaseNamespace, hostname, log, callbacks, factory)
+}
+
+func newLeaderCallbacks(leaderElectedCh *chan struct{}, hostname string, log *zap.SugaredLogger,
+	onStarted func(context.Context),
+) leaderelection.LeaderCallbacks {
 	// Protect concurrent access to *leaderElectedCh from OnStartedLeading
 	// and OnStoppedLeading callbacks, which may run on different goroutines.
 	var chMu sync.Mutex
-
-	// Create callbacks for leader election
-	leaderCallbacks := leaderelection.LeaderCallbacks{
+	return leaderelection.LeaderCallbacks{
 		OnStartedLeading: func(ctx context.Context) {
 			log.Infow("This replica acquired leadership, signaling background loops")
 			chMu.Lock()
@@ -60,31 +89,50 @@ func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct
 			}
 		},
 	}
+}
 
-	// Create the LeaderElector which handles the full lifecycle of leader election:
-	// - Acquires the lock when becoming leader (creates/updates the lease)
-	// - Renews the lock at the specified interval to maintain leadership
-	// - Releases the lock when context is cancelled
-	// - Detects when leadership is lost and calls OnStoppedLeading
-	elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-		Lock:          resourceLock,
-		LeaseDuration: 15 * time.Second, // Time the lease is held by leader
-		RenewDeadline: 10 * time.Second, // Deadline for renewing the lease before losing it
-		RetryPeriod:   2 * time.Second,  // Duration to wait between leader election tries
-		Callbacks:     leaderCallbacks,
-		WatchDog:      nil,
-		Name:          "breakglass-controller",
-	})
-	if err != nil {
-		log.Errorw("Failed to create LeaderElector", "error", err)
-		// Don't call Fatalf in library code - let the caller decide how to handle
-		// In cmd/main.go, the failure is already handled by error checking
-		return
+func runLoop(ctx context.Context, leaseName, leaseNamespace, hostname string, log *zap.SugaredLogger,
+	callbacks leaderelection.LeaderCallbacks, factory leaderElectorFactory,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Create the LeaderElector which handles one leadership epoch:
+		// - Acquires the lock when becoming leader (creates/updates the lease)
+		// - Renews the lock at the specified interval to maintain leadership
+		// - Releases the lock when context is cancelled
+		// - Detects when leadership is lost and calls OnStoppedLeading
+		elector, err := factory(callbacks)
+		if err != nil {
+			log.Errorw("Failed to create LeaderElector", "error", err)
+			// Don't call Fatalf in library code - let the caller decide how to handle
+			// In cmd/main.go, the failure is already handled by error checking
+			return
+		}
+
+		log.Infow("Starting leader election", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
+
+		// Run blocks until the process context is cancelled or this process loses
+		// the lease. Losing the lease must not permanently stop this replica from
+		// becoming leader again, so retry until the parent context shuts down.
+		elector.Run(ctx)
+		timer := time.NewTimer(retryPeriod)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		case <-timer.C:
+			log.Infow("Leader election stopped; retrying leadership acquisition",
+				"id", leaseName, "namespace", leaseNamespace, "identity", hostname)
+		}
 	}
-
-	log.Infow("Starting leader election", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
-
-	// Run the leader election - this will block until context is cancelled
-	// It continuously tries to acquire the lease and renews it if successful
-	elector.Run(ctx)
 }

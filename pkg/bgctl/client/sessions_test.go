@@ -46,6 +46,35 @@ func TestSessionsList(t *testing.T) {
 	require.Equal(t, "session-1", result[0].Name)
 }
 
+func TestSessionsList_DecodesItemsEnvelope(t *testing.T) {
+	sessions := []breakglassv1alpha1.BreakglassSession{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-envelope"},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/breakglassSessions", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": sessions,
+			"total": len(sessions),
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+
+	result, err := client.Sessions().List(context.Background(), SessionListOptions{})
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	require.Equal(t, "session-envelope", result[0].Name)
+}
+
 func TestSessionsList_ApproverQuery(t *testing.T) {
 	tests := []struct {
 		name          string

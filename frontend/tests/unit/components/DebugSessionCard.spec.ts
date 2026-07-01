@@ -35,6 +35,13 @@ function makeSession(name: string, state: DebugSessionSummary["state"] = "Pendin
   };
 }
 
+function expectAccessibleLabel(wrapper: ReturnType<typeof mount>, targetId: string | undefined, text: string) {
+  expect(targetId).toBeTruthy();
+  const label = wrapper.find(`label[for="${targetId}"]`);
+  expect(label.exists()).toBe(true);
+  expect(label.text()).toBe(text);
+}
+
 describe("DebugSessionCard", () => {
   it("uses collision-safe label targets for per-card reject controls", async () => {
     const sessions = [makeSession("team/session-b"), makeSession("team-session-b")];
@@ -68,6 +75,9 @@ describe("DebugSessionCard", () => {
     const rejectIds = rejectInputs.map((input) => input.attributes("id"));
 
     expect(new Set(rejectIds).size).toBe(rejectIds.length);
+    for (const input of rejectInputs) {
+      expectAccessibleLabel(wrapper, input.attributes("id"), "Rejection Reason");
+    }
   });
 
   it("uses collision-safe label targets for per-card renew controls", async () => {
@@ -103,9 +113,12 @@ describe("DebugSessionCard", () => {
     const renewIds = renewInputs.map((input) => input.attributes("id"));
 
     expect(new Set(renewIds).size).toBe(renewIds.length);
-    for (const id of renewIds) {
-      expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true);
+    for (const input of renewInputs) {
+      expectAccessibleLabel(wrapper, input.attributes("id"), "Extend By");
     }
+  });
+
+  it("resets the renew duration each time the modal opens", async () => {
     const wrapper = mount(DebugSessionCard, {
       props: {
         session: makeSession("team/session-b", "Active"),

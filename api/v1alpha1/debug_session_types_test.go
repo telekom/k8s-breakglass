@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -1466,12 +1467,12 @@ func TestDebugSession_ValidateUpdate(t *testing.T) {
 		},
 	}
 
-	warnings, err := newSession.ValidateUpdate(ctx, oldSession, newSession)
-	if err != nil {
-		t.Errorf("ValidateUpdate() unexpected error: %v", err)
+	_, err := newSession.ValidateUpdate(ctx, oldSession, newSession)
+	if err == nil {
+		t.Fatal("ValidateUpdate() expected error for immutable spec update")
 	}
-	if len(warnings) > 0 {
-		t.Errorf("ValidateUpdate() unexpected warnings: %v", warnings)
+	if !strings.Contains(err.Error(), "spec is immutable") {
+		t.Errorf("ValidateUpdate() expected immutable spec error, got: %v", err)
 	}
 }
 

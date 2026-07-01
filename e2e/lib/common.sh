@@ -46,8 +46,9 @@ KUBECTL=${KUBECTL:-kubectl}
 KUSTOMIZE=${KUSTOMIZE:-kustomize}
 DOCKER=${DOCKER:-docker}
 OPENSSL=${OPENSSL:-openssl}
-TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:latest}
+TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:e2e}
 TMUX_DEBUG_IMAGE_DIR=${TMUX_DEBUG_IMAGE_DIR:-${E2E_DIR:-}/images/tmux-debug}
+BUSYBOX_IMAGE=${BUSYBOX_IMAGE:-busybox:latest}
 
 # Check if required tools are available
 check_required_tools() {
@@ -228,6 +229,23 @@ ensure_tmux_debug_image() {
   $DOCKER build -t "$image" -f "$TMUX_DEBUG_IMAGE_DIR/Dockerfile" "$TMUX_DEBUG_IMAGE_DIR"
 }
 
+# Ensure the E2E busybox tag exists locally without depending on Docker Hub.
+# CI creates many pods whose specs intentionally reference busybox:latest; tagging
+# the local tmux image keeps those specs stable and avoids flaky setup-time pulls.
+ensure_busybox_image() {
+  local image="$BUSYBOX_IMAGE"
+  if $DOCKER image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$image" = "busybox:latest" ]; then
+    ensure_tmux_debug_image
+    log "Tagging $TMUX_DEBUG_IMAGE as $image for local E2E use"
+    $DOCKER tag "$TMUX_DEBUG_IMAGE" "$image"
+    return 0
+  fi
+  ensure_image_exists "$image"
+}
+
 # Load image into Kind cluster
 # Uses docker save + kind load image-archive to avoid "failed to detect containerd snapshotter" issues
 e2e_load_image_into_kind() {
@@ -239,17 +257,31 @@ e2e_load_image_into_kind() {
   log "Loading image $image into Kind cluster $cluster_name"
   
   # Try direct load first
-  if $KIND load docker-image "$image" --name "$cluster_name" 2>&1 | tee /dev/stderr | grep -q "failed to detect containerd snapshotter"; then
+  local load_output
+  if load_output=$($KIND load docker-image "$image" --name "$cluster_name" 2>&1); then
+    printf '%s\n' "$load_output" >&2
+    log "Successfully loaded $image into Kind cluster $cluster_name"
+    return 0
+  fi
+
+  printf '%s\n' "$load_output" >&2
+  if printf '%s\n' "$load_output" | grep -q "failed to detect containerd snapshotter"; then
     log_warn "Direct load failed due to containerd snapshotter issue, using archive method..."
     local tmp_archive
     tmp_archive=$(mktemp --suffix=.tar)
     if $DOCKER save "$image" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$cluster_name"; then
       log "Successfully loaded $image via archive method"
+      rm -f "$tmp_archive"
+      return 0
     else
-      log_warn "Failed to load image $image via archive method"
+      log_error "Failed to load image $image via archive method"
+      rm -f "$tmp_archive"
+      return 1
     fi
-    rm -f "$tmp_archive"
   fi
+
+  log_error "Failed to load image $image into Kind cluster $cluster_name"
+  return 1
 }
 
 # Load all standard images required for breakglass E2E
@@ -269,6 +301,8 @@ e2e_load_standard_images() {
   e2e_load_image_into_kind "$cluster_name" "python:3.11-slim"
   ensure_tmux_debug_image
   e2e_load_image_into_kind "$cluster_name" "$TMUX_DEBUG_IMAGE"
+  ensure_busybox_image
+  e2e_load_image_into_kind "$cluster_name" "$BUSYBOX_IMAGE"
   
   log "Standard images loaded into cluster $cluster_name"
 }

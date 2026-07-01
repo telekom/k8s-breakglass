@@ -22,6 +22,7 @@ import (
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
@@ -935,13 +936,19 @@ func (s *Server) getMultiIDPConfig(c *gin.Context) {
 
 // isKnownIDPAuthority checks if the given authority URL is from a known IDP configuration
 // This prevents SSRF attacks by ensuring we only proxy to configured Keycloak instances
-func (s *Server) isKnownIDPAuthority(authority string) bool {
+func (s *Server) isKnownIDPAuthority(ctx context.Context, authority string) bool {
 	// Check against cached IDPs
 	if s.idpReconciler != nil {
-		cachedIDPs := s.idpReconciler.GetCachedIdentityProviders()
-		for _, idp := range cachedIDPs {
-			if idp.Spec.OIDC.Authority == authority {
-				return true
+		cachedIDPs, err := s.idpReconciler.GetEnabledIdentityProviders(ctx)
+		if err != nil {
+			if s.log != nil {
+				s.log.Sugar().Warnw("oidc_proxy_idp_authority_lookup_failed", "authority", authority, "error", err)
+			}
+		} else {
+			for _, idp := range cachedIDPs {
+				if idp.Spec.OIDC.Authority == authority {
+					return true
+				}
 			}
 		}
 	}
@@ -974,7 +981,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	}
 
 	customAuthority := strings.TrimSpace(c.Request.Header.Get("X-OIDC-Authority"))
-	targetAuthority, err := s.selectOIDCProxyAuthority(customAuthority)
+	targetAuthority, err := s.selectOIDCProxyAuthority(c.Request.Context(), customAuthority)
 	if err != nil {
 		s.handleOIDCProxyAuthorityError(c, customAuthority, err, start)
 		return
@@ -992,7 +999,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	target := targetURL.String()
 	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target_scheme", targetURL.Scheme, "target_host", targetURL.Host, "target_path", targetURL.Path)
 
-	client, err := s.newOIDCProxyHTTPClient(targetURL.Scheme == "https", targetAuthority.String())
+	client, err := s.newOIDCProxyHTTPClient(c.Request.Context(), targetURL.Scheme == "https", targetAuthority.String())
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_client_error", "error", err)
 		recordOIDCProxyFailure("tls_configuration_error", start)
@@ -1098,7 +1105,7 @@ const (
 	tlsModeCustomCA = "custom_ca"
 )
 
-func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool, authority string) (*http.Client, error) {
+func (s *Server) newOIDCProxyHTTPClient(ctx context.Context, requiresTLS bool, authority string) (*http.Client, error) {
 	transport := &http.Transport{}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 
@@ -1107,54 +1114,27 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool, authority string) (*ht
 		return client, nil
 	}
 
-	var idpName string
-	var authorityURL string
-	var insecureSkipVerify bool
-	var certAuthority string
-
-	found := false
-	if s.idpReconciler != nil && authority != "" {
-		for _, idp := range s.idpReconciler.GetCachedIdentityProviders() {
-			if idp.Spec.OIDC.Authority == authority {
-				idpName = idp.Name
-				authorityURL = idp.Spec.OIDC.Authority
-				insecureSkipVerify = idp.Spec.OIDC.InsecureSkipVerify
-				certAuthority = idp.Spec.OIDC.CertificateAuthority
-				found = true
-				break
-			}
-		}
-	}
-
-	if !found {
-		s.idpMutex.RLock()
-		idpCfg := s.idpConfig
-		s.idpMutex.RUnlock()
-		if idpCfg == nil {
-			return nil, fmt.Errorf("identity provider not loaded")
-		}
-		idpName = idpCfg.Name
-		authorityURL = idpCfg.Authority
-		insecureSkipVerify = idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify)
-		certAuthority = idpCfg.CertificateAuthority
+	idpCfg, err := s.oidcProxyIDPConfigForAuthority(ctx, authority)
+	if err != nil {
+		return nil, err
 	}
 
 	mode := tlsModeSystemCA
 	var tlsConfig *tls.Config
 
-	if insecureSkipVerify {
+	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		s.log.Sugar().Warnw("refusing insecure TLS verification for identity provider",
-			"idpName", idpName,
-			"authority", authorityURL,
+			"idpName", idpCfg.Name,
+			"authority", idpCfg.Authority,
 			"remediation", "configure certificateAuthority for private or self-signed identity provider certificates")
-		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpName)
+		return nil, fmt.Errorf("insecureSkipVerify is not supported for OIDC proxy IDP %s; configure certificateAuthority", idpCfg.Name)
 	}
 
 	switch {
-	case certAuthority != "":
+	case idpCfg.CertificateAuthority != "":
 		roots := x509.NewCertPool()
-		if ok := roots.AppendCertsFromPEM([]byte(certAuthority)); !ok {
-			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpName)
+		if ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
+			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpCfg.Name)
 		}
 		tlsConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 		mode = tlsModeCustomCA
@@ -1173,6 +1153,64 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool, authority string) (*ht
 
 	recordOIDCProxyTLSMode(mode)
 	return client, nil
+}
+
+func (s *Server) oidcProxyIDPConfigForAuthority(ctx context.Context, authority string) (*config.IdentityProviderConfig, error) {
+	var idpLookupErr error
+	if authority != "" && s.idpReconciler != nil {
+		idps, err := s.idpReconciler.GetEnabledIdentityProviders(ctx)
+		if err != nil {
+			idpLookupErr = fmt.Errorf("list enabled identity providers: %w", err)
+			if s.log != nil {
+				s.log.Sugar().Warnw("oidc_proxy_idp_config_lookup_failed", "authority", authority, "error", err)
+			}
+		} else {
+			for _, idp := range idps {
+				if idp.Spec.OIDC.Authority == authority {
+					return identityProviderCRToOIDCProxyConfig(idp), nil
+				}
+			}
+		}
+	}
+
+	s.idpMutex.RLock()
+	idpCfg := s.idpConfig
+	s.idpMutex.RUnlock()
+	if idpCfg == nil {
+		return nil, fmt.Errorf("identity provider not loaded")
+	}
+	if authority != "" && idpCfg.Authority != authority {
+		if idpLookupErr != nil {
+			return nil, idpLookupErr
+		}
+		return nil, fmt.Errorf("identity provider for authority %q not loaded", authority)
+	}
+	return idpCfg, nil
+}
+
+func identityProviderCRToOIDCProxyConfig(idp *breakglassv1alpha1.IdentityProvider) *config.IdentityProviderConfig {
+	cfg := &config.IdentityProviderConfig{
+		Name:                 idp.Name,
+		Issuer:               idp.Spec.Issuer,
+		Type:                 "OIDC",
+		Authority:            idp.Spec.OIDC.Authority,
+		ClientID:             idp.Spec.OIDC.ClientID,
+		ExpectedAudience:     idp.Spec.OIDC.ExpectedAudience,
+		CertificateAuthority: idp.Spec.OIDC.CertificateAuthority,
+		InsecureSkipVerify:   idp.Spec.OIDC.InsecureSkipVerify,
+	}
+	if idp.Spec.Keycloak != nil {
+		cfg.Keycloak = &config.KeycloakRuntimeConfig{
+			BaseURL:              idp.Spec.Keycloak.BaseURL,
+			Realm:                idp.Spec.Keycloak.Realm,
+			ClientID:             idp.Spec.Keycloak.ClientID,
+			CacheTTL:             idp.Spec.Keycloak.CacheTTL,
+			RequestTimeout:       idp.Spec.Keycloak.RequestTimeout,
+			InsecureSkipVerify:   idp.Spec.Keycloak.InsecureSkipVerify,
+			CertificateAuthority: idp.Spec.Keycloak.CertificateAuthority,
+		}
+	}
+	return cfg
 }
 
 func recordOIDCProxyTLSMode(mode string) {

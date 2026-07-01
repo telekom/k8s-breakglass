@@ -486,7 +486,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 	t.Run("session withdraw", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "session must be created first")
 
-		output, err := tc.runCommandWithToken("session", "withdraw", sessionName)
+		output, err := tc.runCommandWithToken("session", "withdraw", sessionName, "--yes")
 		require.NoError(t, err)
 		assert.Contains(t, strings.ToLower(output), "withdraw", "should confirm withdrawal")
 	})
@@ -532,7 +532,7 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 			ConfigPath:   tc.configPath,
 			OutputWriter: buf,
 		})
-		root.SetArgs([]string{"--token", tc.token, "session", "drop", session.Name})
+		root.SetArgs([]string{"--token", tc.token, "session", "drop", session.Name, "--yes"})
 		err = root.Execute()
 		if err != nil {
 			t.Logf("Drop error (may be expected): %v", err)
@@ -742,7 +742,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		require.NoError(t, err)
 
 		// Terminate the session
-		_, err = tc.runCommandWithToken("debug", "session", "terminate", sessionName)
+		_, err = tc.runCommandWithToken("debug", "session", "terminate", sessionName, "--yes")
 		if err != nil {
 			t.Logf("Terminate error: %v", err)
 		}
@@ -1141,7 +1141,7 @@ func TestCLIEdgeCases(t *testing.T) {
 			assert.NotEmpty(t, session.Name)
 
 			// Clean up - withdraw the session
-			_, _ = tc.runCommandWithToken("session", "withdraw", session.Name)
+			_, _ = tc.runCommandWithToken("session", "withdraw", session.Name, "--yes")
 		}
 	})
 }
@@ -1378,7 +1378,7 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
 		// Drop the approved session to allow subsequent tests to create new sessions
-		output, err := runWithToken(requesterToken, "session", "drop", sessionName)
+		output, err := runWithToken(requesterToken, "session", "drop", sessionName, "--yes")
 		if err != nil {
 			// Drop might fail if session expired or other reasons - log but don't fail
 			t.Logf("Drop session result (may be expected to fail): %v, output: %s", err, output)
@@ -1579,7 +1579,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	t.Run("Step6_TerminateDebugSession", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
-		output, err := runWithToken(requesterToken, "debug", "session", "terminate", sessionName)
+		output, err := runWithToken(requesterToken, "debug", "session", "terminate", sessionName, "--yes")
 		if err != nil {
 			t.Logf("Terminate error (may be expected): %v", err)
 		} else {

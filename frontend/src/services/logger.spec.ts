@@ -14,6 +14,8 @@ import { vi, type Mock } from "vitest";
 import { info, warn, error, handleAxiosError } from "@/services/logger";
 
 describe("Logger Service", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
   beforeEach(() => {
     // Save original console methods
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -22,7 +24,34 @@ describe("Logger Service", () => {
   });
 
   afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
+    window.history.replaceState({}, "", "/");
+    window.localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  describe("debug logging enablement", () => {
+    it("ignores query and localStorage debug flags in production", async () => {
+      process.env.NODE_ENV = "production";
+      window.history.replaceState({}, "", "/?debugLogs=true");
+      window.localStorage.setItem("breakglass:debugLogs", "true");
+      vi.resetModules();
+
+      const logger = await import("@/services/logger");
+
+      expect(logger.isDebugLoggingEnabled()).toBe(false);
+    });
+
+    it("honors query debug flags outside production", async () => {
+      process.env.NODE_ENV = "test";
+      window.history.replaceState({}, "", "/?debugLogs=true");
+      vi.resetModules();
+
+      const logger = await import("@/services/logger");
+
+      expect(logger.isDebugLoggingEnabled()).toBe(true);
+      expect(window.localStorage.getItem("breakglass:debugLogs")).toBe("true");
+    });
   });
 
   describe("info() - info logging", () => {

@@ -1056,7 +1056,8 @@ load_image_into_kind "nicolaka/netshoot"
 # Preload tmux debug image for terminal sharing tests
 load_image_into_kind "$TMUX_DEBUG_IMAGE"
 # Preload busybox for debug session tests (used by test-basic-debug template)
-load_image_into_kind "busybox:latest"
+ensure_busybox_image
+load_image_into_kind "$BUSYBOX_IMAGE"
 # Preload the audit webhook receiver image so the in-cluster deployment does not pull it.
 ensure_image_exists "python:3.11-slim"
 load_image_into_kind "python:3.11-slim"

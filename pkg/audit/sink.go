@@ -22,11 +22,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/events"
 )
 
 // Sink defines the interface for audit event destinations.
@@ -303,13 +305,13 @@ func (s *WebhookSink) Name() string {
 
 // KubernetesEventSink creates Kubernetes Events for audit entries.
 type KubernetesEventSink struct {
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 	// Only emit events for these types (empty means all)
 	includeTypes map[EventType]bool
 }
 
 // NewKubernetesEventSink creates a new KubernetesEventSink.
-func NewKubernetesEventSink(recorder record.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
+func NewKubernetesEventSink(recorder events.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
 	typeMap := make(map[EventType]bool)
 	for _, t := range includeTypes {
 		typeMap[t] = true
@@ -333,9 +335,6 @@ func (s *KubernetesEventSink) Write(_ context.Context, event *Event) error {
 		eventType = corev1.EventTypeWarning
 	}
 
-	// Note: Kubernetes Events require an object reference.
-	// The caller should set up the recorder with appropriate object refs.
-	// This is a simplified implementation - in practice you'd need the object.
 	message := fmt.Sprintf("[%s] %s by %s on %s/%s",
 		event.Type,
 		event.Severity,
@@ -350,19 +349,85 @@ func (s *KubernetesEventSink) Write(_ context.Context, event *Event) error {
 		}
 	}
 
-	regarding := &corev1.ObjectReference{
-		Kind:      event.Target.Kind,
-		Name:      event.Target.Name,
-		Namespace: event.Target.Namespace,
-	}
-	if regarding.Kind == "BreakglassSession" || regarding.Kind == "DebugSession" || regarding.Kind == "DebugSessionTemplate" || regarding.Kind == "DebugSessionClusterBinding" {
-		regarding.APIVersion = "breakglass.t-caas.telekom.com/v1alpha1"
-	}
-
 	if s.recorder != nil {
-		s.recorder.Eventf(regarding, eventType, string(event.Type), "%s", message)
+		reason := kubernetesEventReason(event.Type)
+		target := event.Target
+		if target.APIGroup == "" {
+			if apiGroup, ok := event.Details["apiGroup"].(string); ok {
+				target.APIGroup = apiGroup
+			}
+		}
+		s.recorder.Eventf(kubernetesEventTarget(target), nil, eventType, reason, reason, "%s", message)
 	}
 	return nil
+}
+
+func kubernetesEventTarget(target Target) *metav1.PartialObjectMetadata {
+	kind := target.Kind
+	if kind == "" {
+		kind = "AuditEvent"
+	}
+
+	return &metav1.PartialObjectMetadata{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: kubernetesEventTargetAPIVersion(target),
+			Kind:       kind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      target.Name,
+			Namespace: target.Namespace,
+		},
+	}
+}
+
+func kubernetesEventTargetAPIVersion(target Target) string {
+	if strings.Contains(target.APIGroup, "/") {
+		return target.APIGroup
+	}
+	if target.APIGroup == "breakglass.t-caas.telekom.com" || isBreakglassEventTargetKind(target.Kind) {
+		return "breakglass.t-caas.telekom.com/v1alpha1"
+	}
+	if target.APIGroup != "" {
+		return target.APIGroup + "/v1"
+	}
+	return "v1"
+}
+
+func isBreakglassEventTargetKind(kind string) bool {
+	switch kind {
+	case "AuditConfig",
+		"BreakglassEscalation",
+		"BreakglassSession",
+		"ClusterConfig",
+		"DebugPodTemplate",
+		"DebugSession",
+		"DebugSessionClusterBinding",
+		"DebugSessionTemplate",
+		"DenyPolicy",
+		"IdentityProvider",
+		"MailProvider":
+		return true
+	default:
+		return false
+	}
+}
+
+func kubernetesEventReason(eventType EventType) string {
+	parts := strings.FieldsFunc(string(eventType), func(r rune) bool {
+		return r == '.' || r == '_' || r == '-'
+	})
+	var builder strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		builder.WriteString(strings.ToUpper(part[:1]))
+		builder.WriteString(part[1:])
+	}
+	if builder.Len() == 0 {
+		return "AuditEvent"
+	}
+	return builder.String()
 }
 
 // Close is a no-op for KubernetesEventSink.

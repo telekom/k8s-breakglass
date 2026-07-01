@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -73,8 +74,23 @@ func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]b
 	if encoded := params.Encode(); encoded != "" {
 		endpoint = fmt.Sprintf("%s?%s", endpoint, encoded)
 	}
+	var payload json.RawMessage
+	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &payload); err != nil {
+		return nil, err
+	}
+	return decodeSessionsPayload(payload)
+}
+
+func decodeSessionsPayload(payload []byte) ([]breakglassv1alpha1.BreakglassSession, error) {
+	var envelope struct {
+		Items []breakglassv1alpha1.BreakglassSession `json:"items"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err == nil && envelope.Items != nil {
+		return envelope.Items, nil
+	}
+
 	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &sessions); err != nil {
+	if err := json.Unmarshal(payload, &sessions); err != nil {
 		return nil, err
 	}
 	return sessions, nil

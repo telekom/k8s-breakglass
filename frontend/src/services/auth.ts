@@ -47,9 +47,15 @@ const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   },
 };
 
-const resolvedNodeEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env
-  ?.NODE_ENV;
-const isProdBuild = resolvedNodeEnv === "production";
+function isProductionBuild(): boolean {
+  if (import.meta.env.PROD) {
+    return true;
+  }
+
+  return (
+    (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env?.NODE_ENV === "production"
+  );
+}
 
 type UserLoadedHandler = (loadedUser: User) => void;
 
@@ -165,10 +171,6 @@ function getOIDCStorage(): Storage {
   if (!isBrowser) {
     return fallbackStorage;
   }
-  const prefersPersistent = getTokenPersistenceMode() === "persistent";
-  if (prefersPersistent && typeof window.localStorage !== "undefined") {
-    return window.localStorage;
-  }
   return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
 }
 
@@ -236,7 +238,7 @@ function base64UrlEncodeObject(obj: Record<string, unknown>): string {
  * Consumers must NEVER rely on the signature because the header uses alg "none".
  */
 function createMockJWT(payload: Record<string, unknown>): string {
-  if (isProdBuild) {
+  if (isProductionBuild()) {
     throw new Error("Mock JWT generation is disabled in production builds.");
   }
   const header = { alg: "none", typ: "JWT" };
@@ -307,7 +309,7 @@ export default class AuthService {
 
     this.mockMode = options?.mock ?? false;
 
-    if (this.mockMode && isProdBuild) {
+    if (this.mockMode && isProductionBuild()) {
       throw new Error("Mock authentication cannot be enabled in production builds.");
     }
 
@@ -323,9 +325,9 @@ export default class AuthService {
     this.userManager = this.buildUserManager(config.oidcAuthority, config.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
     // Store the initialization promise so callers can await it
-    this.ready = this.userManager.getUser().then((u) => {
+    this.ready = this.userManager.getUser().then(async (u) => {
       if (u) {
-        user.value = u;
+        user.value = await this.stripAndStoreRefreshToken(this.userManager, u);
       }
     });
   }
@@ -421,7 +423,8 @@ export default class AuthService {
     if (this.mockMode) {
       return this.mockUser;
     }
-    return this.userManager.getUser();
+    const data = await this.userManager.getUser();
+    return data ? this.stripAndStoreRefreshToken(this.userManager, data) : null;
   }
 
   public async login(state?: State): Promise<void> {
@@ -526,33 +529,63 @@ export default class AuthService {
     return this.userManager.signinRedirect({ state: resolveState(state) });
   }
 
-  
   public async handleSilentSigninCallback() {
     if (this.mockMode) return;
 
-    const candidateManagers: UserManager[] = [this.userManager];
+    const preferredIdpName = isBrowser ? sessionStorage.getItem("oidc_idp_name") || undefined : undefined;
+    const directAuthority = getCurrentDirectAuthority();
 
-    try {
-      const multiIDP = await getMultiIDPConfig();
-      for (const idp of multiIDP.identityProviders) {
-        if (!idp.enabled) continue;
-        const manager = this.buildUserManager("/api/oidc/authority", idp.oidcClientID || "k8s-breakglass");
-        candidateManagers.push(manager);
+    if (preferredIdpName || directAuthority) {
+      const manager = await this.resolveSilentCallbackManager(preferredIdpName, directAuthority);
+      if (directAuthority) {
+        setCurrentDirectAuthority(directAuthority);
       }
-    } catch (err) {
-      debug("AuthService", "Failed to fetch multiIDP config during silent renew", err);
+      await manager.signinSilentCallback();
+      return;
     }
 
-    let lastError: Error | undefined;
-    for (const manager of candidateManagers) {
-      try {
-        await manager.signinSilentCallback();
-        return;
-      } catch (err) {
-        lastError = err as Error;
+    await this.userManager.signinSilentCallback();
+  }
+
+  private async resolveSilentCallbackManager(
+    preferredIdpName: string | undefined,
+    directAuthority: string | undefined,
+  ): Promise<UserManager> {
+    if (preferredIdpName) {
+      const cached = this.idpManagers.get(preferredIdpName);
+      if (cached) {
+        return cached.manager;
       }
     }
-    throw lastError || new Error("All managers failed silent renew callback");
+
+    if (directAuthority) {
+      for (const cached of this.idpManagers.values()) {
+        if (cached.directAuthority === directAuthority) {
+          return cached.manager;
+        }
+      }
+    }
+
+    const multiIDP = await getMultiIDPConfig();
+    const idp = multiIDP.identityProviders.find((candidate: IDPInfo) => {
+      if (!candidate.enabled || !candidate.oidcAuthority) {
+        return false;
+      }
+      if (preferredIdpName && candidate.name === preferredIdpName) {
+        return true;
+      }
+      return !!directAuthority && candidate.oidcAuthority === directAuthority;
+    });
+    if (!idp?.oidcAuthority) {
+      throw new Error("Failed to process silent renew callback: no matching identity provider found");
+    }
+
+    return this.getOrCreateUserManagerForIDP(
+      idp.name,
+      "/api/oidc/authority",
+      idp.oidcClientID || "k8s-breakglass",
+      idp.oidcAuthority,
+    );
   }
 
   public getIdentityProviderName(): string | undefined {
@@ -617,9 +650,8 @@ export default class AuthService {
    * This can be called manually if the automatic silent renew failed.
    *
    * Strategy:
-   * 1. First try signinSilent() which uses iframe by default
-   * 2. If iframe fails (e.g., CSP frame-ancestors blocks it), try using refresh_token directly
-   *    via signinSilent with silentRequestTimeoutInSeconds set low to fail fast
+   * 1. Remove any stale refresh token from previously persisted user state
+   * 2. Try signinSilent(), which falls back to iframe flow when no refresh token is present
    */
   public async trySilentRenew(): Promise<boolean> {
     if (this.mockMode) {
@@ -633,23 +665,24 @@ export default class AuthService {
       warn("AuthService", "No user found for silent renew");
       return false;
     }
+    await this.stripAndStoreRefreshToken(this.userManager, currentUser);
 
     try {
-      debug("AuthService", "Attempting silent renew (iframe method)");
+      debug("AuthService", "Attempting silent renew without refresh-token fallback");
       const renewedUser = await this.userManager.signinSilent();
       if (renewedUser) {
-        debug("AuthService", "Silent renew successful (iframe)", {
+        const sanitizedUser = await this.stripAndStoreRefreshToken(this.userManager, renewedUser);
+        debug("AuthService", "Silent renew successful", {
           email: renewedUser.profile?.email,
           expiresAt: renewedUser.expires_at,
         });
-        user.value = renewedUser;
+        user.value = sanitizedUser;
         return true;
       }
       warn("AuthService", "Silent renew returned no user");
       return false;
     } catch (iframeError) {
-      // iframe method failed - likely CSP blocking
-      warn("AuthService", "Silent renew via iframe failed, trying refresh token fallback", iframeError);
+      warn("AuthService", "Silent renew failed; user must re-authenticate", iframeError);
       return false;
     }
   }
@@ -768,6 +801,9 @@ export default class AuthService {
         }
 
         const result = await candidate.manager.signinCallback();
+        if (result instanceof User) {
+          await this.stripAndStoreRefreshToken(candidate.manager, result);
+        }
         debug("AuthService", "Successfully processed signin callback with manager", {
           authority: candidate.manager.settings.authority,
           directAuthority,
@@ -877,7 +913,14 @@ export default class AuthService {
           expiresAt: loadedUser.expires_at,
           expiresIn: loadedUser.expires_in,
         });
-        user.value = loadedUser;
+        void this.stripAndStoreRefreshToken(manager, loadedUser)
+          .then((sanitizedUser) => {
+            user.value = sanitizedUser;
+          })
+          .catch((error) => {
+            logError("AuthService", "Failed to store sanitized OIDC user", { error });
+            user.value = loadedUser;
+          });
       });
     }
 
@@ -933,13 +976,30 @@ export default class AuthService {
     this.idpManagers.clear();
     this.userManager = this.buildUserManager(this.baseConfig.oidcAuthority, this.baseConfig.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
-    this.userManager.getUser().then((u) => {
+    this.userManager.getUser().then(async (u) => {
       if (u) {
-        user.value = u;
+        user.value = await this.stripAndStoreRefreshToken(this.userManager, u);
       } else {
         user.value = undefined;
       }
     });
+  }
+
+  private async stripAndStoreRefreshToken(manager: UserManager, loadedUser: User): Promise<User> {
+    if (!loadedUser.refresh_token) {
+      return loadedUser;
+    }
+
+    const originalRefreshToken = loadedUser.refresh_token;
+    delete loadedUser.refresh_token;
+    try {
+      await manager.storeUser(loadedUser);
+      warn("AuthService", "Removed refresh token from persisted OIDC user state");
+    } catch (error) {
+      loadedUser.refresh_token = originalRefreshToken;
+      logError("AuthService", "Failed to persist sanitized OIDC user; using loaded user", { error });
+    }
+    return loadedUser;
   }
 }
 

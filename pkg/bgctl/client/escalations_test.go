@@ -63,6 +63,38 @@ func TestEscalationsList(t *testing.T) {
 	assert.Equal(t, "admin", result[0].Spec.EscalatedGroup)
 }
 
+func TestEscalationsList_DecodesItemsEnvelope(t *testing.T) {
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "escalation-envelope"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup: "admin",
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/breakglassEscalations", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": escalations,
+			"total": len(escalations),
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+
+	result, err := client.Escalations().List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, "escalation-envelope", result[0].Name)
+	assert.Equal(t, "admin", result[0].Spec.EscalatedGroup)
+}
+
 func TestEscalationsGet(t *testing.T) {
 	escalations := []breakglassv1alpha1.BreakglassEscalation{
 		{

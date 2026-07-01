@@ -6,7 +6,6 @@ package escalation
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,8 +16,6 @@ import (
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestHiddenFromUI_EscalationResponse_GroupsRemoved tests that hidden groups are not shown in API response.
@@ -76,9 +73,7 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 	}
 
 	// Parse response
-	var escList []breakglassv1alpha1.BreakglassEscalation
-	err := json.Unmarshal(w.Body.Bytes(), &escList)
-	require.NoError(t, err)
+	escList := decodeEscalationListEnvelope(t, w)
 
 	if len(escList) != 1 {
 		t.Fatalf("expected 1 escalation, got %d", len(escList))

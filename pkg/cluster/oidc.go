@@ -1071,13 +1071,28 @@ func isValidTokenEndpointURL(tokenURL string) bool {
 	if err != nil {
 		return false
 	}
-	if u.Scheme != "https" || u.Host == "" {
+	if u.Host == "" {
 		return false
 	}
 	if u.Fragment != "" || u.User != nil {
 		return false
 	}
-	return true
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		return isLoopbackHost(u.Hostname())
+	default:
+		return false
+	}
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func tokenEndpointHostMatchesIssuer(tokenURL, issuerURL string) bool {
@@ -1092,15 +1107,29 @@ func tokenEndpointHostMatchesIssuer(tokenURL, issuerURL string) bool {
 	if !strings.EqualFold(tURL.Hostname(), iURL.Hostname()) {
 		return false
 	}
+	if !strings.EqualFold(tURL.Scheme, iURL.Scheme) {
+		return false
+	}
 	tPort := tURL.Port()
-	if tPort == "" && tURL.Scheme == "https" {
-		tPort = "443"
+	if tPort == "" {
+		tPort = defaultPortForScheme(tURL.Scheme)
 	}
 	iPort := iURL.Port()
-	if iPort == "" && iURL.Scheme == "https" {
-		iPort = "443"
+	if iPort == "" {
+		iPort = defaultPortForScheme(iURL.Scheme)
 	}
 	return tPort == iPort
+}
+
+func defaultPortForScheme(scheme string) string {
+	switch strings.ToLower(scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 // getClientSecret retrieves the client secret from the referenced secret

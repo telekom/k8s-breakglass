@@ -1214,6 +1214,80 @@ func TestOIDCTokenProvider_DiscoverTokenEndpoint_Success(t *testing.T) {
 	assert.Equal(t, server.URL+"/oauth/token", endpoint)
 }
 
+func TestOIDCTokenProvider_TokenEndpointURLValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		{name: "https endpoint", url: "https://issuer.example.com/oauth/token", expected: true},
+		{name: "localhost http endpoint", url: "http://localhost:8080/oauth/token", expected: true},
+		{name: "ipv4 loopback http endpoint", url: "http://127.0.0.1:8080/oauth/token", expected: true},
+		{name: "ipv6 loopback http endpoint", url: "http://[::1]:8080/oauth/token", expected: true},
+		{name: "non-loopback http endpoint", url: "http://issuer.example.com/oauth/token", expected: false},
+		{name: "userinfo rejected", url: "https://client:secret@issuer.example.com/oauth/token", expected: false},
+		{name: "fragment rejected", url: "https://issuer.example.com/oauth/token#fragment", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isValidTokenEndpointURL(tt.url))
+		})
+	}
+}
+
+func TestTokenEndpointHostMatchesIssuer(t *testing.T) {
+	tests := []struct {
+		name          string
+		tokenEndpoint string
+		issuer        string
+		expected      bool
+	}{
+		{
+			name:          "https same host and implicit port",
+			tokenEndpoint: "https://issuer.example.com/oauth/token",
+			issuer:        "https://issuer.example.com",
+			expected:      true,
+		},
+		{
+			name:          "loopback http issuer and token endpoint",
+			tokenEndpoint: "http://localhost/oauth/token",
+			issuer:        "http://localhost",
+			expected:      true,
+		},
+		{
+			name:          "loopback https issuer cannot downgrade token endpoint to http",
+			tokenEndpoint: "http://localhost/oauth/token",
+			issuer:        "https://localhost",
+			expected:      false,
+		},
+		{
+			name:          "http issuer cannot upgrade token endpoint to https",
+			tokenEndpoint: "https://localhost/oauth/token",
+			issuer:        "http://localhost",
+			expected:      false,
+		},
+		{
+			name:          "same host different explicit port",
+			tokenEndpoint: "https://issuer.example.com:8443/oauth/token",
+			issuer:        "https://issuer.example.com:9443",
+			expected:      false,
+		},
+		{
+			name:          "http default port matches explicit port",
+			tokenEndpoint: "http://localhost:80/oauth/token",
+			issuer:        "http://localhost",
+			expected:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tokenEndpointHostMatchesIssuer(tt.tokenEndpoint, tt.issuer))
+		})
+	}
+}
+
 func TestOIDCTokenProvider_DiscoverTokenEndpoint_MissingTokenEndpoint(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)

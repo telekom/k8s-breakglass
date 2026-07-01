@@ -1429,7 +1429,7 @@ When enabled, participants can attach to shared terminals:
 
 **Tmux image for E2E:**
 - The repository provides a tmux-enabled image at [e2e/images/tmux-debug/Dockerfile](../e2e/images/tmux-debug/Dockerfile)
-- E2E setup scripts build it as `breakglass-tmux-debug:latest` and load it into kind
+- E2E setup scripts build it as `breakglass-tmux-debug:e2e` and load it into kind
 - Override the image name via `TMUX_DEBUG_IMAGE` if needed
 
 ## Approval Workflow

@@ -17,6 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // allSensitiveEventTypes mirrors the cases in IsSensitiveEvent so that
@@ -635,6 +637,76 @@ func TestKubernetesEventSink(t *testing.T) {
 
 	assert.Equal(t, "kubernetes", sink.Name())
 	assert.NoError(t, sink.Close())
+}
+
+func TestKubernetesEventSinkUsesStableEventReason(t *testing.T) {
+	recorder := &capturingEventRecorder{}
+	sink := NewKubernetesEventSink(recorder, nil)
+
+	err := sink.Write(context.Background(), &Event{
+		Type:     EventDebugSessionApprovalTimeout,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "approver@example.com"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      "debug-session-1",
+			Namespace: "breakglass-system",
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "Warning", recorder.eventType)
+	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.reason)
+	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.action)
+	assert.Contains(t, recorder.note, string(EventDebugSessionApprovalTimeout))
+
+	regarding, ok := recorder.regarding.(*metav1.PartialObjectMetadata)
+	require.True(t, ok)
+	assert.Equal(t, "breakglass.t-caas.telekom.com/v1alpha1", regarding.APIVersion)
+	assert.Equal(t, "DebugSession", regarding.Kind)
+	assert.Equal(t, "debug-session-1", regarding.Name)
+	assert.Equal(t, "breakglass-system", regarding.Namespace)
+}
+
+func TestKubernetesEventSinkUsesDetailsAPIGroupFallback(t *testing.T) {
+	recorder := &capturingEventRecorder{}
+	sink := NewKubernetesEventSink(recorder, nil)
+
+	err := sink.Write(context.Background(), &Event{
+		Type:     EventAccessDenied,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "auditor@example.com"},
+		Target: Target{
+			Kind: "RoleBinding",
+			Name: "breakglass-view",
+		},
+		Details: map[string]interface{}{
+			"apiGroup": "rbac.authorization.k8s.io",
+		},
+	})
+	require.NoError(t, err)
+
+	regarding, ok := recorder.regarding.(*metav1.PartialObjectMetadata)
+	require.True(t, ok)
+	assert.Equal(t, "rbac.authorization.k8s.io/v1", regarding.APIVersion)
+	assert.Equal(t, "RoleBinding", regarding.Kind)
+	assert.Equal(t, "breakglass-view", regarding.Name)
+}
+
+type capturingEventRecorder struct {
+	regarding runtime.Object
+	eventType string
+	reason    string
+	action    string
+	note      string
+}
+
+func (r *capturingEventRecorder) Eventf(regarding runtime.Object, _ runtime.Object, eventType, reason, action, note string, args ...interface{}) {
+	r.regarding = regarding
+	r.eventType = eventType
+	r.reason = reason
+	r.action = action
+	r.note = fmt.Sprintf(note, args...)
 }
 
 func BenchmarkManagerEmit(b *testing.B) {

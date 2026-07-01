@@ -385,6 +385,16 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 
 	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
+			Type:               string(breakglassv1alpha1.MailProviderConditionReady),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: latest.Generation,
+			Reason:             "HealthCheckFailed",
+			Message:            fmt.Sprintf("Health check failed: %v", healthErr),
+			LastTransitionTime: metav1.Now(),
+		})
+
+	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
+		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionHealthy),
 			Status:             metav1.ConditionFalse,
 			Reason:             "Unhealthy",
