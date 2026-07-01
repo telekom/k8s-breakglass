@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { navigateWithRouter, performMockLogin } from "./helpers";
 
 /**
  * UI Screenshot Tests for Breakglass Frontend
@@ -43,43 +44,6 @@ async function expectNoHorizontalOverflow(page: Page, context: string) {
   expect(dimensions.bodyScrollWidth, `${context}: body should not overflow horizontally`).toBeLessThanOrEqual(
     dimensions.bodyClientWidth + 1,
   );
-}
-
-// Helper to perform mock login
-async function performMockLogin(page: Page) {
-  await page.goto("/");
-  await page.waitForLoadState("networkidle");
-
-  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH !== undefined, {
-    timeout: 10000,
-  });
-
-  await page.evaluate(() => {
-    const auth = (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH as Record<string, unknown>;
-    if (auth && typeof auth.login === "function") {
-      auth.login({ path: "/", idpName: "production-keycloak" });
-    }
-  });
-
-  await page.waitForTimeout(500);
-  await page.waitForLoadState("networkidle");
-  await page.waitForSelector("#main > :not(.login-gate)", { timeout: 5000 });
-}
-
-// Helper to navigate using Vue Router (preserves mock auth state)
-async function navigateTo(page: Page, path: string) {
-  await page.evaluate((targetPath) => {
-    const router = (window as unknown as Record<string, unknown>).__VUE_ROUTER__ as Record<string, unknown>;
-    if (router && typeof router.push === "function") {
-      router.push(targetPath);
-    } else {
-      window.history.pushState({}, "", targetPath);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    }
-  }, path);
-
-  await page.waitForTimeout(300);
-  await page.waitForLoadState("networkidle");
 }
 
 /** Theme mode type for screenshot tests. */
@@ -138,7 +102,7 @@ for (const pageInfo of pages) {
 
       // Navigate to the page (home is already loaded after login)
       if (pageInfo.path !== "/") {
-        await navigateTo(page, pageInfo.path);
+        await navigateWithRouter(page, pageInfo.path);
       }
 
       await setTheme(page, theme);
@@ -186,7 +150,7 @@ for (const responsive of responsiveTests) {
       await page.setViewportSize({ width: responsive.width, height: responsive.height });
 
       if (responsive.path !== "/") {
-        await navigateTo(page, responsive.path);
+        await navigateWithRouter(page, responsive.path);
       }
 
       await setTheme(page, theme);
