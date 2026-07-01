@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -528,6 +529,10 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 	requesterEmail := ds.Spec.RequestedByEmail
 	if requesterEmail == "" {
 		requesterEmail = ds.Spec.RequestedBy
+	}
+	if !strings.Contains(requesterEmail, "@") {
+		c.log.Warnw("Skipping debug session failed email - no valid email address", "session", ds.Name, "recipient", requesterEmail)
+		return
 	}
 	recipients := []string{requesterEmail}
 

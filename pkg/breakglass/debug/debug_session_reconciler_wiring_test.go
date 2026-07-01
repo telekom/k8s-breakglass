@@ -93,3 +93,15 @@ func TestDebugSessionController_SendDebugSessionFailedEmail(t *testing.T) {
 	assert.Contains(t, messages[0].Body, "Requester Display")
 	assert.NotContains(t, messages[0].Body, "requester-id")
 }
+
+func TestDebugSessionController_SendDebugSessionFailedEmailSkipsNonEmailRequester(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	mockMail := NewMockMailEnqueuer(true)
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com", false)
+
+	session := newTestDebugSession("debug-failed", "node-shell", "prod", "opaque-subject")
+	controller.sendDebugSessionFailedEmail(session, "debug pod failed")
+
+	assert.Empty(t, mockMail.GetMessages())
+}
