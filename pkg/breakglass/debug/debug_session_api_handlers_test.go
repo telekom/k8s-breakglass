@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -3140,6 +3141,53 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 		// Option overlay
 		assert.Equal(t, "nvidia", resolved.NodeSelector["accelerator"])
 	})
+
+	t.Run("rejects option that conflicts with mandatory node selector", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"node-pool": "restricted"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{
+							Name: "general",
+							SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+								NodeSelector: map[string]string{"node-pool": "general"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "general", nil, requester)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "conflicts with mandatory constraints")
+		assert.Contains(t, err.Error(), "nodeSelector")
+	})
+
+	t.Run("rejects binding that conflicts with template mandatory node selector", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"node-pool": "restricted"},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"node-pool": "general"},
+				},
+			},
+		}
+
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "", binding, requester)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "binding scheduling constraints conflict")
+		assert.Contains(t, err.Error(), "nodeSelector")
+	})
 }
 
 // ============================================================================
@@ -3147,8 +3195,23 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 // ============================================================================
 
 func TestMergeSchedulingConstraints(t *testing.T) {
+	nodeSelectorWithTerms := func(count int, key string) *corev1.NodeSelector {
+		terms := make([]corev1.NodeSelectorTerm, 0, count)
+		for i := 0; i < count; i++ {
+			terms = append(terms, corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key:      key,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{fmt.Sprintf("value-%d", i)},
+				}},
+			})
+		}
+		return &corev1.NodeSelector{NodeSelectorTerms: terms}
+	}
+
 	t.Run("nil base and option returns nil", func(t *testing.T) {
-		result := mergeSchedulingConstraints(nil, nil)
+		result, err := mergeSchedulingConstraints(nil, nil)
+		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
@@ -3156,7 +3219,8 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		option := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"key": "value"},
 		}
-		result := mergeSchedulingConstraints(nil, option)
+		result, err := mergeSchedulingConstraints(nil, option)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "value", result.NodeSelector["key"])
 		// Ensure it's a copy
@@ -3168,23 +3232,38 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		base := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"key": "value"},
 		}
-		result := mergeSchedulingConstraints(base, nil)
+		result, err := mergeSchedulingConstraints(base, nil)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "value", result.NodeSelector["key"])
 	})
 
-	t.Run("option overrides base for conflicts", func(t *testing.T) {
+	t.Run("option adds node selector keys without replacing mandatory keys", func(t *testing.T) {
 		base := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"shared": "base-value", "base-only": "base"},
 		}
 		option := &breakglassv1alpha1.SchedulingConstraints{
-			NodeSelector: map[string]string{"shared": "option-value", "option-only": "option"},
+			NodeSelector: map[string]string{"shared": "base-value", "option-only": "option"},
 		}
-		result := mergeSchedulingConstraints(base, option)
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, "option-value", result.NodeSelector["shared"])
+		assert.Equal(t, "base-value", result.NodeSelector["shared"])
 		assert.Equal(t, "base", result.NodeSelector["base-only"])
 		assert.Equal(t, "option", result.NodeSelector["option-only"])
+	})
+
+	t.Run("option cannot replace mandatory node selector value", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"shared": "base-value"},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"shared": "option-value"},
+		}
+		result, err := mergeSchedulingConstraints(base, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "nodeSelector")
 	})
 
 	t.Run("denied nodes are additive", func(t *testing.T) {
@@ -3194,11 +3273,132 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		option := &breakglassv1alpha1.SchedulingConstraints{
 			DeniedNodes: []string{"node-c"},
 		}
-		result := mergeSchedulingConstraints(base, option)
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.DeniedNodes, 3)
 		assert.Contains(t, result.DeniedNodes, "node-a")
 		assert.Contains(t, result.DeniedNodes, "node-c")
+	})
+
+	t.Run("required node affinity is ANDed by cross product", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "pool", Operator: corev1.NodeSelectorOpIn, Values: []string{"debug"}}}},
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "pool", Operator: corev1.NodeSelectorOpIn, Values: []string{"ops"}}}},
+			}},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"a"}}}},
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"b"}}}},
+			}},
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.RequiredNodeAffinity)
+		require.Len(t, result.RequiredNodeAffinity.NodeSelectorTerms, 4)
+		for _, term := range result.RequiredNodeAffinity.NodeSelectorTerms {
+			assert.Len(t, term.MatchExpressions, 2)
+		}
+	})
+
+	t.Run("required node affinity permits single-term fast path up to limit", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(1, "pool"),
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(maxRequiredNodeSelectorTerms, "zone"),
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.RequiredNodeAffinity)
+		require.Len(t, result.RequiredNodeAffinity.NodeSelectorTerms, maxRequiredNodeSelectorTerms)
+		for _, term := range result.RequiredNodeAffinity.NodeSelectorTerms {
+			assert.Len(t, term.MatchExpressions, 2)
+		}
+	})
+
+	t.Run("required node affinity rejects oversized cross product", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(13, "pool"),
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(10, "zone"),
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "would exceed maximum")
+	})
+
+	t.Run("topology spread constraints are additive", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew:           1,
+				TopologyKey:       "kubernetes.io/hostname",
+				WhenUnsatisfiable: corev1.DoNotSchedule,
+			}},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew:           2,
+				TopologyKey:       "topology.kubernetes.io/zone",
+				WhenUnsatisfiable: corev1.ScheduleAnyway,
+			}},
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.TopologySpreadConstraints, 2)
+		assert.Equal(t, "kubernetes.io/hostname", result.TopologySpreadConstraints[0].TopologyKey)
+		assert.Equal(t, "topology.kubernetes.io/zone", result.TopologySpreadConstraints[1].TopologyKey)
+
+		result.TopologySpreadConstraints[0].TopologyKey = "mutated"
+		assert.Equal(t, "kubernetes.io/hostname", base.TopologySpreadConstraints[0].TopologyKey)
+	})
+
+	t.Run("denied node label wildcard cannot be weakened by exact value", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "false"},
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "*", result.DeniedNodeLabels["node-role.kubernetes.io/control-plane"])
+	})
+
+	t.Run("invalid denied node label key is rejected", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"invalid/key/too/many": "true"},
+		}
+
+		result, err := mergeSchedulingConstraints(base, nil)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "deniedNodeLabels key")
+	})
+
+	t.Run("invalid denied node label value is rejected", func(t *testing.T) {
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/debug": "bad/value"},
+		}
+
+		result, err := mergeSchedulingConstraints(nil, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "deniedNodeLabels")
+		assert.Contains(t, err.Error(), "value")
 	})
 }
 

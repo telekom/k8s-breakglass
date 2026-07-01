@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -3301,7 +3302,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		spec := &corev1.PodSpec{
 			NodeSelector: map[string]string{"existing": "selector"},
 		}
-		ctrl.applySchedulingConstraints(spec, nil)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, nil))
 		assert.Equal(t, map[string]string{"existing": "selector"}, spec.NodeSelector)
 	})
 
@@ -3313,7 +3314,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				"zone":      "us-east-1a",
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Equal(t, map[string]string{
 			"node-pool": "debug",
 			"zone":      "us-east-1a",
@@ -3327,7 +3328,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"constraint": "value"},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Equal(t, map[string]string{
 			"existing":   "value",
 			"constraint": "value",
@@ -3341,7 +3342,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"key": "new-value"},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Equal(t, map[string]string{"key": "new-value"}, spec.NodeSelector)
 	})
 
@@ -3356,7 +3357,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				{Key: "new", Value: "value", Effect: corev1.TaintEffectNoSchedule},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Len(t, spec.Tolerations, 2)
 		assert.Equal(t, "existing", spec.Tolerations[0].Key)
 		assert.Equal(t, "new", spec.Tolerations[1].Key)
@@ -3375,7 +3376,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.NodeAffinity)
 		require.NotNil(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution)
@@ -3409,9 +3410,11 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
-		// Both terms should be present (AND logic via multiple terms)
-		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 2)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
+		// Kubernetes ORs node selector terms, so AND requires combining both
+		// expressions into the same resulting term.
+		require.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 1)
+		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions, 2)
 	})
 
 	t.Run("applies preferred node affinity", func(t *testing.T) {
@@ -3428,7 +3431,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.NodeAffinity)
 		assert.Len(t, spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
@@ -3447,7 +3450,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.PodAntiAffinity)
 		assert.Len(t, spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution, 1)
@@ -3470,7 +3473,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.PodAntiAffinity)
 		assert.Len(t, spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
@@ -3510,7 +3513,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 			DeniedNodes:      []string{"node-1"},
 			DeniedNodeLabels: map[string]string{"exclude": "true"},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 
 		// Verify all constraints applied
 		assert.Equal(t, map[string]string{"pool": "debug"}, spec.NodeSelector)
@@ -3524,16 +3527,89 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		assert.Len(t, spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
 	})
 
-	t.Run("handles denied nodes logging", func(t *testing.T) {
-		// This test ensures the code path for denied nodes is covered
+	t.Run("enforces denied exact nodes and labels as required node affinity", func(t *testing.T) {
 		spec := &corev1.PodSpec{}
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
-			DeniedNodes:      []string{"bad-node-1", "bad-node-2"},
-			DeniedNodeLabels: map[string]string{"tainted": "true"},
+			DeniedNodes: []string{"bad-node-2", "bad-node-1"},
+			DeniedNodeLabels: map[string]string{
+				"tainted":                               "true",
+				"node-role.kubernetes.io/control-plane": "*",
+			},
 		}
-		// Should not panic, just log
-		ctrl.applySchedulingConstraints(spec, constraints)
-		// No assertions needed - just verifying no panic
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity)
+		required := spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		require.NotNil(t, required)
+		require.Len(t, required.NodeSelectorTerms, 1)
+		term := required.NodeSelectorTerms[0]
+		require.Len(t, term.MatchFields, 1)
+		assert.Equal(t, "metadata.name", term.MatchFields[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchFields[0].Operator)
+		assert.Equal(t, []string{"bad-node-1", "bad-node-2"}, term.MatchFields[0].Values)
+		require.Len(t, term.MatchExpressions, 2)
+		assert.Equal(t, "node-role.kubernetes.io/control-plane", term.MatchExpressions[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpDoesNotExist, term.MatchExpressions[0].Operator)
+		assert.Empty(t, term.MatchExpressions[0].Values)
+		assert.Equal(t, "tainted", term.MatchExpressions[1].Key)
+		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchExpressions[1].Operator)
+		assert.Equal(t, []string{"true"}, term.MatchExpressions[1].Values)
+
+		selector, err := labels.Parse("tainted notin (true)")
+		require.NoError(t, err)
+		assert.True(t, selector.Matches(labels.Set{}), "Kubernetes NotIn permits nodes without the label key")
+		assert.True(t, selector.Matches(labels.Set{"tainted": "false"}))
+		assert.False(t, selector.Matches(labels.Set{"tainted": "true"}))
+	})
+
+	t.Run("enforces denied wildcard labels as label absence", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+		}
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
+		required := spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		require.NotNil(t, required)
+		require.Len(t, required.NodeSelectorTerms, 1)
+		term := required.NodeSelectorTerms[0]
+		require.Len(t, term.MatchExpressions, 1)
+		assert.Equal(t, "node-role.kubernetes.io/control-plane", term.MatchExpressions[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpDoesNotExist, term.MatchExpressions[0].Operator)
+		assert.Empty(t, term.MatchExpressions[0].Values)
+	})
+
+	t.Run("ignores denied node glob patterns that cannot be rendered as hard affinity", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodes: []string{"control-plane-*"},
+		}
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
+		assert.Nil(t, spec.Affinity)
+	})
+
+	t.Run("rejects invalid denied node label key before rendering", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"invalid/key/too/many": "true"},
+		}
+
+		err := ctrl.applySchedulingConstraints(spec, constraints)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "deniedNodeLabels key")
+		assert.Nil(t, spec.Affinity)
+	})
+
+	t.Run("rejects invalid denied node label value before rendering", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/debug": "bad/value"},
+		}
+
+		err := ctrl.applySchedulingConstraints(spec, constraints)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "deniedNodeLabels")
+		assert.Contains(t, err.Error(), "value")
+		assert.Nil(t, spec.Affinity)
 	})
 
 	t.Run("applies topology spread constraints", func(t *testing.T) {
@@ -3550,7 +3626,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Len(t, spec.TopologySpreadConstraints, 1)
 		assert.Equal(t, int32(1), spec.TopologySpreadConstraints[0].MaxSkew)
 		assert.Equal(t, "topology.kubernetes.io/zone", spec.TopologySpreadConstraints[0].TopologyKey)
@@ -3576,7 +3652,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Len(t, spec.TopologySpreadConstraints, 2)
 		assert.Equal(t, "kubernetes.io/hostname", spec.TopologySpreadConstraints[0].TopologyKey)
 		assert.Equal(t, "topology.kubernetes.io/zone", spec.TopologySpreadConstraints[1].TopologyKey)

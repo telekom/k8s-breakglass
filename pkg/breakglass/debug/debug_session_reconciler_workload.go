@@ -650,10 +650,14 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	// Apply resolved scheduling constraints from session
 	// These are computed at session creation time and take precedence
 	if ds.Spec.ResolvedSchedulingConstraints != nil {
-		c.applySchedulingConstraints(spec, ds.Spec.ResolvedSchedulingConstraints)
+		if err := c.applySchedulingConstraints(spec, ds.Spec.ResolvedSchedulingConstraints); err != nil {
+			return nil, fmt.Errorf("apply resolved scheduling constraints: %w", err)
+		}
 	} else if template.Spec.SchedulingConstraints != nil {
 		// Fallback to template constraints if session doesn't have resolved constraints
-		c.applySchedulingConstraints(spec, template.Spec.SchedulingConstraints)
+		if err := c.applySchedulingConstraints(spec, template.Spec.SchedulingConstraints); err != nil {
+			return nil, fmt.Errorf("apply template scheduling constraints: %w", err)
+		}
 	}
 
 	if template.Spec.ResourceQuota != nil {

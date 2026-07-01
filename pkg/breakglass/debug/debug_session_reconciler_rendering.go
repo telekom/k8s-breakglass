@@ -2,6 +2,8 @@ package debug
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -447,9 +449,12 @@ func (c *DebugSessionController) buildPodDisruptionBudget(ds *breakglassv1alpha1
 
 // applySchedulingConstraints applies SchedulingConstraints to a PodSpec.
 // This merges the constraints with any existing scheduling configuration.
-func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec, constraints *breakglassv1alpha1.SchedulingConstraints) {
+func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec, constraints *breakglassv1alpha1.SchedulingConstraints) error {
 	if constraints == nil {
-		return
+		return nil
+	}
+	if err := validateSchedulingConstraints(constraints, "schedulingConstraints"); err != nil {
+		return err
 	}
 
 	// Apply node selector (merge, constraints take precedence)
@@ -481,11 +486,14 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 			if spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
 				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = constraints.RequiredNodeAffinity.DeepCopy()
 			} else {
-				// AND the node selector terms
-				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(
-					spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
-					constraints.RequiredNodeAffinity.NodeSelectorTerms...,
+				combined, err := andNodeSelectors(
+					spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution,
+					constraints.RequiredNodeAffinity,
 				)
+				if err != nil {
+					return fmt.Errorf("requiredNodeAffinity: %w", err)
+				}
+				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = combined
 			}
 		}
 
@@ -526,16 +534,81 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 		spec.TopologySpreadConstraints = append(spec.TopologySpreadConstraints, constraints.TopologySpreadConstraints...)
 	}
 
-	// Note: deniedNodes and deniedNodeLabels are advisory constraints
-	// They should be enforced via admission webhooks or node anti-affinity rules
-	// Here we convert them to node anti-affinity expressions
 	if len(constraints.DeniedNodes) > 0 || len(constraints.DeniedNodeLabels) > 0 {
-		c.log.Debugw("Denied nodes/labels configured",
-			"deniedNodes", constraints.DeniedNodes,
-			"deniedNodeLabels", constraints.DeniedNodeLabels)
-		// These are enforced at the admission webhook level for hard blocks
-		// For soft enforcement, we could add them as preferredNodeAffinity with negative weight
+		deniedSelector, err := buildDeniedNodeSelector(constraints)
+		if err != nil {
+			return err
+		}
+		if deniedSelector != nil {
+			if spec.Affinity == nil {
+				spec.Affinity = &corev1.Affinity{}
+			}
+			if spec.Affinity.NodeAffinity == nil {
+				spec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+			}
+			combined, err := andNodeSelectors(
+				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution,
+				deniedSelector,
+			)
+			if err != nil {
+				return fmt.Errorf("merge denied node scheduling selector: %w", err)
+			}
+			spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = combined
+		}
 	}
+	return nil
+}
+
+func buildDeniedNodeSelector(constraints *breakglassv1alpha1.SchedulingConstraints) (*corev1.NodeSelector, error) {
+	if constraints == nil || (len(constraints.DeniedNodes) == 0 && len(constraints.DeniedNodeLabels) == 0) {
+		return nil, nil
+	}
+	if err := validateDeniedNodeLabels(constraints.DeniedNodeLabels, "schedulingConstraints"); err != nil {
+		return nil, err
+	}
+
+	term := corev1.NodeSelectorTerm{}
+	if len(constraints.DeniedNodes) > 0 {
+		exactNodes := make([]string, 0, len(constraints.DeniedNodes))
+		for _, node := range constraints.DeniedNodes {
+			if strings.ContainsAny(node, "*?[") {
+				continue
+			}
+			exactNodes = append(exactNodes, node)
+		}
+		if len(exactNodes) > 0 {
+			sort.Strings(exactNodes)
+			term.MatchFields = append(term.MatchFields, corev1.NodeSelectorRequirement{
+				Key:      "metadata.name",
+				Operator: corev1.NodeSelectorOpNotIn,
+				Values:   exactNodes,
+			})
+		}
+	}
+
+	deniedLabelKeys := make([]string, 0, len(constraints.DeniedNodeLabels))
+	for key := range constraints.DeniedNodeLabels {
+		deniedLabelKeys = append(deniedLabelKeys, key)
+	}
+	sort.Strings(deniedLabelKeys)
+	for _, key := range deniedLabelKeys {
+		value := constraints.DeniedNodeLabels[key]
+		requirement := corev1.NodeSelectorRequirement{
+			Key: key,
+		}
+		if value == "*" {
+			requirement.Operator = corev1.NodeSelectorOpDoesNotExist
+		} else {
+			requirement.Operator = corev1.NodeSelectorOpNotIn
+			requirement.Values = []string{value}
+		}
+		term.MatchExpressions = append(term.MatchExpressions, requirement)
+	}
+
+	if len(term.MatchFields) == 0 && len(term.MatchExpressions) == 0 {
+		return nil, nil
+	}
+	return &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{term}}, nil
 }
 
 // convertDebugPodSpec converts our DebugPodSpecInner to corev1.PodSpec
