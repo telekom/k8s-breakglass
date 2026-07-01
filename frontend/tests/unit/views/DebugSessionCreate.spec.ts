@@ -390,6 +390,45 @@ describe("DebugSessionCreate", () => {
       const request = mockCreateSession.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(request).not.toHaveProperty("scheduledStartTime");
     });
+
+    it("blocks required scheduling options when no option is available", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            schedulingOptions: {
+              required: true,
+              options: [],
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        handleSubmit: () => Promise<void>;
+        isValid: boolean;
+        form: {
+          cluster: string;
+          reason: string;
+        };
+      };
+
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Need debugging during maintenance";
+      await flushPromises();
+
+      expect(vm.isValid).toBe(false);
+      await vm.handleSubmit();
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
   });
 
   describe("cluster details display", () => {

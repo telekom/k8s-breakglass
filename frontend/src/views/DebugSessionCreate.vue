@@ -443,7 +443,7 @@ const isValid = computed(() => {
   if (!baseValid) return false;
 
   // Scheduling options validation
-  if (hasSchedulingOptions.value && schedulingOptions.value?.required && !form.selectedSchedulingOption) {
+  if (schedulingOptions.value?.required && !form.selectedSchedulingOption) {
     return false;
   }
 
