@@ -13,6 +13,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -336,6 +337,19 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		// Check if active session has expired
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 			if ds.Status.ExpiresAt != nil && now.After(ds.Status.ExpiresAt.Time) {
+				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.State = breakglassv1alpha1.DebugSessionStateExpired
+					status.Message = "Session expired (cleanup routine)"
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						routine.Log.Debugw("skipping expired debug session status update after concurrent change",
+							append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+						continue
+					}
+					routine.Log.Errorw("error updating expired debug session status",
+						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
 				routine.Log.Infow("Debug session expired, marking as Expired",
 					append(system.NamespacedFields(ds.Name, ds.Namespace),
 						"cluster", ds.Spec.Cluster,
@@ -344,15 +358,6 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"startsAt", ds.Status.StartsAt,
 						"expiresAt", ds.Status.ExpiresAt,
 					)...)
-
-				ds.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-				ds.Status.Message = "Session expired (cleanup routine)"
-
-				if err := ApplyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
-					routine.Log.Errorw("error updating expired debug session status",
-						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
-					continue
-				}
 
 				// Emit audit event for expired debug session
 				if routine.AuditService != nil {
@@ -373,6 +378,19 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval {
 			// If approval times out, mark as failed
 			if ds.Status.Approval != nil && ds.CreationTimestamp.Add(DebugSessionApprovalTimeout).Before(now) {
+				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.State = breakglassv1alpha1.DebugSessionStateFailed
+					status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						routine.Log.Debugw("skipping approval-timeout debug session status update after concurrent change",
+							append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+						continue
+					}
+					routine.Log.Errorw("error updating timed-out debug session status",
+						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
 				routine.Log.Infow("Debug session approval timed out, marking as Failed",
 					append(system.NamespacedFields(ds.Name, ds.Namespace),
 						"cluster", ds.Spec.Cluster,
@@ -381,15 +399,6 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"createdAt", ds.CreationTimestamp,
 						"approvalTimeout", DebugSessionApprovalTimeout.String(),
 					)...)
-
-				ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-				ds.Status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
-
-				if err := ApplyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
-					routine.Log.Errorw("error updating timed-out debug session status",
-						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
-					continue
-				}
 
 				// Emit audit event for approval timeout
 				if routine.AuditService != nil {

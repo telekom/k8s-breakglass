@@ -282,6 +282,16 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 	timeout := breakglass.DebugSessionApprovalTimeout
 	if ds.CreationTimestamp.Add(timeout).Before(time.Now()) {
 		reason := fmt.Sprintf("Approval timed out after %s", timeout)
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.State = breakglassv1alpha1.DebugSessionStateFailed
+			status.Message = reason
+		}); err != nil {
+			if apierrors.IsConflict(err) {
+				c.log.Debugw("skipping approval-timeout status update after concurrent debug session change", "error", err)
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
 		c.log.Errorw("Debug session approval timed out",
 			"debugSession", ds.Name, "namespace", ds.Namespace,
 			"reason", reason)
@@ -291,13 +301,10 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 				auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 			}
 		}
-
-		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-		ds.Status.Message = reason
 		c.sendDebugSessionFailedEmail(ds, reason)
 		metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 
-		return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+		return ctrl.Result{}, nil
 	}
 
 	// Still waiting for approval
@@ -314,8 +321,13 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		if err == nil {
 			until := time.Until(ds.Status.ExpiresAt.Time)
 			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
-				ds.Status.Message = "Session expiring soon"
-				if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.Message = "Session expiring soon"
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						log.Debugw("skipping expiring-soon status update after concurrent debug session change", "error", err)
+						return ctrl.Result{}, nil
+					}
 					return ctrl.Result{}, err
 				}
 			}
@@ -324,20 +336,31 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Check expiration
 	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
-		log.Info("Debug session expired")
 		if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
-			ds.Status.Message = "Session expired (notify-only)"
-			ds.Status.ExpiresAt = nil
-			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.Message = "Session expired (notify-only)"
+				status.ExpiresAt = nil
+			}); err != nil {
+				if apierrors.IsConflict(err) {
+					log.Debugw("skipping notify-only expiration status update after concurrent debug session change", "error", err)
+					return ctrl.Result{}, nil
+				}
 				return ctrl.Result{}, err
 			}
+			log.Info("Debug session expired")
 			return ctrl.Result{}, nil
 		}
-		ds.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-		ds.Status.Message = "Session expired"
-		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.State = breakglassv1alpha1.DebugSessionStateExpired
+			status.Message = "Session expired"
+		}); err != nil {
+			if apierrors.IsConflict(err) {
+				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
+				return ctrl.Result{}, nil
+			}
 			return ctrl.Result{}, err
 		}
+		log.Info("Debug session expired")
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
