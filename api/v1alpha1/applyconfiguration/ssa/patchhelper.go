@@ -152,7 +152,9 @@ func ensureExplicitDebugSessionEmptyStatusLists(applyConfig runtime.ApplyConfigu
 	if !ok || dsConfig.Status == nil {
 		return
 	}
-	if dsConfig.Status.AuxiliaryResourceStatuses == nil || len(dsConfig.Status.AuxiliaryResourceStatuses) > 0 {
+	needsAuxiliary := dsConfig.Status.AuxiliaryResourceStatuses != nil && len(dsConfig.Status.AuxiliaryResourceStatuses) == 0
+	needsPodTemplate := dsConfig.Status.PodTemplateResourceStatuses != nil && len(dsConfig.Status.PodTemplateResourceStatuses) == 0
+	if !needsAuxiliary && !needsPodTemplate {
 		return
 	}
 	status, _ := u.Object["status"].(map[string]interface{})
@@ -160,7 +162,12 @@ func ensureExplicitDebugSessionEmptyStatusLists(applyConfig runtime.ApplyConfigu
 		status = map[string]interface{}{}
 		u.Object["status"] = status
 	}
-	status["auxiliaryResourceStatuses"] = []interface{}{}
+	if needsAuxiliary {
+		status["auxiliaryResourceStatuses"] = []interface{}{}
+	}
+	if needsPodTemplate {
+		status["podTemplateResourceStatuses"] = []interface{}{}
+	}
 }
 
 // ---------------------------------------------------------------------------

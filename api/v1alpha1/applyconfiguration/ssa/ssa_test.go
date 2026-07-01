@@ -590,10 +590,11 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 	})
 }
 
-func TestDebugSessionStatusFromPreservesExplicitEmptyAuxiliaryStatuses(t *testing.T) {
+func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing.T) {
 	status := &breakglassv1alpha1.DebugSessionStatus{
-		State:                     breakglassv1alpha1.DebugSessionStateActive,
-		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{},
+		State:                       breakglassv1alpha1.DebugSessionStateActive,
+		AuxiliaryResourceStatuses:   []breakglassv1alpha1.AuxiliaryResourceStatus{},
+		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{},
 	}
 	applyConfig := ac.DebugSession("test-debug", "default").
 		WithStatus(DebugSessionStatusFrom(status))
@@ -608,6 +609,7 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyAuxiliaryStatuses(t *testin
 	desiredStatus, ok := u.Object["status"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, []interface{}{}, desiredStatus["auxiliaryResourceStatuses"])
+	assert.Equal(t, []interface{}{}, desiredStatus["podTemplateResourceStatuses"])
 
 	currentStatus := map[string]interface{}{
 		"state": string(breakglassv1alpha1.DebugSessionStateActive),
@@ -617,6 +619,16 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyAuxiliaryStatuses(t *testin
 				"kind":         "ConfigMap",
 				"apiVersion":   "v1",
 				"resourceName": "old-config",
+				"namespace":    "default",
+				"created":      true,
+			},
+		},
+		"podTemplateResourceStatuses": []interface{}{
+			map[string]interface{}{
+				"name":         "old-template",
+				"kind":         "ConfigMap",
+				"apiVersion":   "v1",
+				"resourceName": "old-template",
 				"namespace":    "default",
 				"created":      true,
 			},
