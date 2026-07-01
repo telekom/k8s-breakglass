@@ -1083,7 +1083,8 @@ is `true`, and must satisfy the configured `minLength` after sanitization.
 If the session changes concurrently while recording approval status, the
 endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
-**Response:** Updated `DebugSession` object with `state: Approved`.
+**Response:** Updated `DebugSession` object with recorded approval fields. The
+controller transitions approved sessions after the API update.
 
 ### Reject Debug Session
 
@@ -1110,7 +1111,7 @@ configured `minLength` after sanitization.
 If the session changes concurrently while recording rejection status, the
 endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
-**Response:** Updated `DebugSession` object with `state: Rejected`.
+**Response:** Updated `DebugSession` object with `state: Terminated`.
 
 ### List Debug Session Templates
 
