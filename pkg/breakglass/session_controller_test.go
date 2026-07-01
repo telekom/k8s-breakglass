@@ -10137,7 +10137,7 @@ func TestTokenValidation_NonTerminalValidityStates(t *testing.T) {
 	past := metav1.NewTime(now.Add(-time.Hour))
 	newSession := func(name string, state breakglassv1alpha1.BreakglassSessionState, expiresAt metav1.Time) client.Object {
 		return &breakglassv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "cluster",
 				User:         "requester@example.com",
@@ -10155,6 +10155,9 @@ func TestTokenValidation_NonTerminalValidityStates(t *testing.T) {
 		newSession("active-session", breakglassv1alpha1.SessionStateApproved, future),
 		newSession("expired-by-time-session", breakglassv1alpha1.SessionStateApproved, past),
 	}
+	waitingSession := newSession("waiting-session", breakglassv1alpha1.SessionStateWaitingForScheduledTime, future).(*breakglassv1alpha1.BreakglassSession)
+	waitingSession.Spec.ScheduledStartTime = &future
+	sessions = append(sessions, waitingSession)
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
@@ -10186,6 +10189,7 @@ func TestTokenValidation_NonTerminalValidityStates(t *testing.T) {
 		{name: "pending-session", wantValid: true},
 		{name: "active-session", wantValid: true},
 		{name: "expired-by-time-session", wantValid: false},
+		{name: "waiting-session", wantValid: true},
 	}
 
 	for _, tt := range tests {

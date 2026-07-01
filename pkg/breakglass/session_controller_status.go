@@ -645,7 +645,6 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			return
 		}
 		pendingApproval := IsSessionPendingApproval(ses)
-		approvalTimedOut := IsSessionApprovalTimedOut(ses)
 		sessionForAuth := ses
 		sessionForAuth.Name = "[REDACTED]"
 		approvalMeta := wc.getSessionApprovalMeta(c, sessionForAuth)
@@ -662,7 +661,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 		canApprove := pendingApproval && approvalMeta.CanApprove
 		alreadyActive := IsSessionAccessActive(ses)
-		valid := IsSessionValid(ses) && !approvalTimedOut
+		valid := isSessionTokenValid(ses)
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
 		return
 	}
@@ -794,6 +793,19 @@ type EnrichedSessionResponse struct {
 	// ApprovalReason contains the escalation's approval reason configuration (if any)
 	// Now sourced from session.Spec.ApprovalReasonConfig (snapshot at creation time)
 	ApprovalReason *ReasonConfigInfo `json:"approvalReason,omitempty"`
+}
+
+func isSessionTokenValid(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Status.State == "" {
+		return false
+	}
+	if IsSessionTerminalState(session.Status.State) {
+		return false
+	}
+	if IsSessionApprovalTimedOut(session) {
+		return false
+	}
+	return session.Status.State != breakglassv1alpha1.SessionStateApproved || !IsSessionExpired(session)
 }
 
 // enrichSessionsWithApprovalReason adds the approvalReason config from the session's stored snapshot.
