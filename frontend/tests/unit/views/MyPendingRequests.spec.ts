@@ -12,19 +12,24 @@ import MyPendingRequests from "@/views/MyPendingRequests.vue";
 import { AuthKey } from "@/keys";
 import type { SessionCR } from "@/model/breakglass";
 
-const mocks = vi.hoisted(() => ({
-  requests: { __v_isRef: true, value: [] as SessionCR[] },
-  loading: { __v_isRef: true, value: false },
-  error: { __v_isRef: true, value: "" },
-  withdrawTarget: { __v_isRef: true, value: null as SessionCR | null },
-  withdrawDialogOpen: { __v_isRef: true, value: false },
-  loadRequests: vi.fn(),
-  requestWithdraw: vi.fn(),
-  confirmWithdraw: vi.fn(),
-  cancelWithdraw: vi.fn(),
-  withdraw: vi.fn(),
-  drop: vi.fn(),
-}));
+const mocks = await vi.hoisted(async () => {
+  const { ref: vueRef } = await import("vue");
+
+  return {
+    normalizeState: (state?: string) => (state || "").toLowerCase().replace(/[_\s-]/g, ""),
+    requests: vueRef<SessionCR[]>([]),
+    loading: vueRef(false),
+    error: vueRef(""),
+    withdrawTarget: vueRef<SessionCR | null>(null),
+    withdrawDialogOpen: vueRef(false),
+    loadRequests: vi.fn(),
+    requestWithdraw: vi.fn(),
+    confirmWithdraw: vi.fn(),
+    cancelWithdraw: vi.fn(),
+    withdraw: vi.fn(),
+    drop: vi.fn(),
+  };
+});
 
 // Mock services
 vi.mock("@/services/breakglass", () => ({
@@ -54,13 +59,18 @@ vi.mock("@/composables", () => ({
     withdraw: mocks.withdraw,
     drop: mocks.drop,
   }),
-  useWithdrawConfirmation: vi.fn().mockReturnValue({
+  useWithdrawConfirmation: vi.fn((onConfirm) => ({
     withdrawDialogOpen: mocks.withdrawDialogOpen,
     withdrawTarget: mocks.withdrawTarget,
     requestWithdraw: mocks.requestWithdraw,
-    confirmWithdraw: mocks.confirmWithdraw,
+    confirmWithdraw: async () => {
+      mocks.confirmWithdraw();
+      if (mocks.withdrawTarget.value) {
+        await onConfirm(mocks.withdrawTarget.value);
+      }
+    },
     cancelWithdraw: mocks.cancelWithdraw,
-  }),
+  })),
   getSessionKey: vi.fn((session) => session.metadata?.name || "key"),
   getSessionState: vi.fn((session) => session.status?.state || "pending"),
   getSessionUser: vi.fn((session) => session.spec?.user || "user@example.com"),
@@ -68,7 +78,10 @@ vi.mock("@/composables", () => ({
   getSessionGroup: vi.fn((session) => session.spec?.escalatedGroup || "admin-group"),
   formatDateTime: vi.fn((date) => new Date(date).toLocaleString()),
   isFuture: vi.fn((date) => new Date(date) > new Date()),
-  isScheduled: vi.fn((session) => session.status?.state === "WaitingForScheduledTime"),
+  isScheduled: vi.fn((session) => {
+    const state = mocks.normalizeState(session.status?.state);
+    return state === "waitingforscheduledtime" || state === "scheduled";
+  }),
 }));
 
 // Mock common components
@@ -120,7 +133,7 @@ const commonStubs = {
   },
   WithdrawConfirmDialog: {
     template:
-      '<div v-if="opened" data-testid="withdraw-confirm-modal">{{ heading }} {{ message }} {{ confirmLabel }}</div>',
+      '<div v-if="opened" data-testid="withdraw-confirm-modal">{{ heading }} {{ message }} <button data-testid="withdraw-confirm-button" @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
     props: ["opened", "sessionName", "heading", "message", "confirmLabel"],
   },
 };
@@ -258,6 +271,27 @@ describe("MyPendingRequests", () => {
       expect(modal.text()).toContain("Drop Scheduled Session");
       expect(modal.text()).toContain("scheduled start");
       expect(modal.text()).toContain("Drop");
+    });
+
+    it("confirms scheduled outstanding requests through the drop action", async () => {
+      const scheduled = {
+        metadata: { name: "req-awaiting-activation" },
+        spec: {
+          user: "test@example.com",
+          cluster: "edge-hub",
+          grantedGroup: "edge-hotfix",
+          scheduledStartTime: "2026-02-20T12:00:00Z",
+        },
+        status: { state: "WaitingForScheduledTime" },
+      } as SessionCR;
+      mocks.withdrawDialogOpen.value = true;
+      mocks.withdrawTarget.value = scheduled;
+
+      const wrapper = await createWrapper();
+      await wrapper.find('[data-testid="withdraw-confirm-button"]').trigger("click");
+
+      expect(mocks.drop).toHaveBeenCalledWith(scheduled, { skipConfirm: true });
+      expect(mocks.withdraw).not.toHaveBeenCalled();
     });
   });
 });
