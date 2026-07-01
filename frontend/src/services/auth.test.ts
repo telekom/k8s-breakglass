@@ -12,7 +12,7 @@ vi.mock("@/services/logger", () => ({
 }));
 
 import AuthService, { useUser, AuthRedirect, AuthSilentRedirect, __authTestHooks } from "./auth";
-import type { User, UserManager } from "oidc-client-ts";
+import { User, type UserManager } from "oidc-client-ts";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 import type Config from "@/model/config";
 import type { MultiIDPConfig } from "@/model/multiIDP";
@@ -343,34 +343,16 @@ describe("AuthService", () => {
   });
 
   describe("trySilentRenew()", () => {
-    it("removes stale refresh tokens from stored users before silent renew", async () => {
-      const mockUser = new User({
-        profile: {
-          email: "test@example.com",
-          sub: "12345",
-          iss: "https://example.com",
-          aud: "test-client",
-          exp: Math.floor(Date.now() / 1000) + 3600,
-          iat: Math.floor(Date.now() / 1000),
-        },
-        session_state: "",
-        access_token: "access-token",
-        token_type: "Bearer",
-        userState: null,
-        expires_at: Math.floor(Date.now() / 1000) + 3600,
-        refresh_token: "stale-refresh-token",
-      });
-
-      const getUserSpy = vi.spyOn(authService.userManager, "getUser").mockResolvedValue(mockUser);
+    it("does not invoke real OIDC silent renewal or mutate stored users", async () => {
+      const getUserSpy = vi.spyOn(authService.userManager, "getUser");
       const storeUserSpy = vi.spyOn(authService.userManager, "storeUser").mockResolvedValue(undefined);
       const signinSilentSpy = vi.spyOn(authService.userManager, "signinSilent").mockResolvedValue(null);
 
-      await authService.trySilentRenew();
+      await expect(authService.trySilentRenew()).resolves.toBe(false);
 
-      expect(getUserSpy).toHaveBeenCalled();
-      expect(storeUserSpy).toHaveBeenCalledWith(expect.objectContaining({ access_token: "access-token" }));
-      expect(storeUserSpy.mock.calls[0]?.[0]?.refresh_token).toBeUndefined();
-      expect(signinSilentSpy).toHaveBeenCalled();
+      expect(getUserSpy).not.toHaveBeenCalled();
+      expect(storeUserSpy).not.toHaveBeenCalled();
+      expect(signinSilentSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -569,7 +551,7 @@ describe("AuthService", () => {
           registerUserManagerEvents: (manager: UserManager) => void;
         }
       ).registerUserManagerEvents(manager);
-      expect(userRef.value).toStrictEqual(loadedUser);
+      await vi.waitFor(() => expect(userRef.value).toStrictEqual(loadedUser));
 
       expiredHandler?.();
 
