@@ -43,8 +43,10 @@ deny_pattern 'DIGEST="\$\{RAW_MANIFEST_DIGEST\}"' \
   "release provenance must not sign or attest a computed raw-manifest digest"
 deny_pattern 'github\.run_started_at' \
   "github.run_started_at is not a valid GitHub Actions context property"
-deny_pattern 'helm show chart .*([[:space:]]2>[[:space:]]*/dev/null|>[[:space:]]*/dev/null[[:space:]]+2>&1)' \
+deny_pattern 'helm show chart .*([[:space:]]*2>[[:space:]]*/dev/null|>[[:space:]]*/dev/null[[:space:]]*2>&1)' \
   "Helm chart publishing must not suppress remote chart lookup errors"
+deny_pattern 'CHART_(VERSION|APP_VERSION)="\$\(helm show chart' \
+  "release workflow must capture packaged Helm chart metadata once before extracting fields"
 deny_pattern 'grep -Eiq .*no such' \
   "Helm chart missing classifier must not treat DNS/network no-such-host errors as chart-not-present"
 deny_pattern 'already present in GHCR; skipping push' \
@@ -60,6 +62,10 @@ require_pattern 'subject-digest: \$\{\{ steps\.inspect\.outputs\.digest \}\}' \
   "release provenance attestation must use the inspected registry digest output"
 require_pattern 'CHART_APP_VERSION=' \
   "release workflow must read the packaged Helm chart appVersion"
+require_pattern 'CHART_METADATA="\$\(helm show chart "\$\{CHART_PACKAGE\}"\)"' \
+  "release workflow must capture packaged Helm chart metadata once"
+require_pattern '\[ "\$\{CHART_APP_VERSION\}" != "\$\{RELEASE_TAG\}" \]' \
+  "release workflow must fail when packaged Helm chart appVersion does not match the release tag"
 require_pattern 'REMOTE_APP_VERSION=' \
   "release workflow must read the remote Helm chart appVersion before skipping an existing chart version"
 require_pattern 'Failed to determine remote escalation-config:\$\{CHART_VERSION\} appVersion from GHCR metadata' \

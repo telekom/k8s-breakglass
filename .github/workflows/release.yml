@@ -550,8 +550,10 @@ jobs:
           set -euo pipefail
 
           CHART_PACKAGE="$(ls chart-dist/escalation-config-*.tgz | head -n1)"
-          CHART_VERSION="$(helm show chart "${CHART_PACKAGE}" | awk '/^version:/ {print $2}')"
-          CHART_APP_VERSION="$(helm show chart "${CHART_PACKAGE}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
+          RELEASE_TAG="${{ github.ref_name }}"
+          CHART_METADATA="$(helm show chart "${CHART_PACKAGE}")"
+          CHART_VERSION="$(printf '%s\n' "${CHART_METADATA}" | awk '/^version:/ {print $2}')"
+          CHART_APP_VERSION="$(printf '%s\n' "${CHART_METADATA}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
 
           if [ -z "${CHART_VERSION}" ]; then
             echo "Failed to determine chart version from ${CHART_PACKAGE}" >&2
@@ -559,6 +561,10 @@ jobs:
           fi
           if [ -z "${CHART_APP_VERSION}" ]; then
             echo "Failed to determine chart appVersion from ${CHART_PACKAGE}" >&2
+            exit 1
+          fi
+          if [ "${CHART_APP_VERSION}" != "${RELEASE_TAG}" ]; then
+            echo "::error::Packaged escalation-config:${CHART_VERSION} appVersion ${CHART_APP_VERSION} does not match release tag ${RELEASE_TAG}." >&2
             exit 1
           fi
 
