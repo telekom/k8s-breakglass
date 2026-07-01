@@ -84,7 +84,9 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 		"spec.allowed.group",
 		"spec.escalatedGroup",
 		"spec.templateRef.name",
+		"spec.templateSelector.present",
 		"spec.clusters",
+		"spec.clusterSelector.present",
 		"spec.clusterID",
 	}
 
