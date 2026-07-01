@@ -925,6 +925,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 <style scoped>
 .debug-session-details {
   max-width: 1000px;
+  min-width: 0;
 }
 
 .back-link {
@@ -933,8 +934,9 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .details-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
   gap: var(--space-lg);
+  min-width: 0;
 }
 
 .detail-card {
@@ -942,6 +944,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-md);
   padding: var(--space-lg);
+  min-width: 0;
 }
 
 .detail-card h3 {
@@ -962,9 +965,10 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .status-details {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
+  min-width: 0;
 }
 
 .status-item {
@@ -981,6 +985,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .status-item .value {
   font: var(--telekom-text-style-caption);
+  overflow-wrap: anywhere;
 }
 
 .status-item .relative {
@@ -1002,7 +1007,10 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .info-item {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
   padding: var(--space-xs) 0;
   border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
 }
@@ -1012,17 +1020,22 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .info-item dt {
+  flex: 0 1 auto;
+  min-width: 0;
   font: var(--telekom-text-style-caption);
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-additional);
+  overflow-wrap: anywhere;
 }
 
 .info-item dd {
+  min-width: 0;
   margin: 0;
   text-align: right;
   font: var(--telekom-text-style-caption);
   max-width: 60%;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .empty-section {
@@ -1052,11 +1065,15 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .participant-info {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 .participant-user {
   font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .participant-meta {
@@ -1072,20 +1089,31 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .pod-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 .pod-name {
   font: var(--telekom-text-style-caption);
   font-family: monospace;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .pod-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-md);
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   margin-top: var(--space-xs);
+  min-width: 0;
+}
+
+.pod-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .pod-item.pod-has-issues {
@@ -1139,23 +1167,27 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 /* Allowed Pod Operations Section */
 .operations-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: var(--space-md);
   margin-top: var(--space-sm);
+  min-width: 0;
 }
 
 .operation-item {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   padding: var(--space-sm);
   background: var(--telekom-color-background-surface-subtle);
   border-radius: var(--radius-sm);
+  min-width: 0;
 }
 
 .operation-name {
@@ -1167,6 +1199,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   font-family: var(--telekom-typography-font-family-mono);
+  overflow-wrap: anywhere;
 }
 
 /* Kubectl Debug Section */
@@ -1184,6 +1217,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 .kubectl-debug-form {

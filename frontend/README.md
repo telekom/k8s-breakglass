@@ -153,6 +153,8 @@ Visual regression screenshots are captured with Playwright:
 npm run test:screenshots:update
 ```
 
+The responsive screenshot set includes mobile Debug Session browser and detail routes, with browser assertions that the document and body do not overflow horizontally at the mobile viewport width.
+
 The `UI Screenshots` GitHub Actions workflow uploads the screenshot gallery and Playwright report even when generation fails, then fails the job after diagnostics are available. A passing workflow therefore means the screenshots were generated successfully.
 
 ## State Management Architecture

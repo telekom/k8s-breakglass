@@ -708,6 +708,8 @@ select:focus {
 
 .sr-only {
   position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
   width: 1px !important;
   min-width: 1px !important;
   max-width: 1px !important;
@@ -749,6 +751,7 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-lg);
+  min-width: 0;
   padding: var(--card-padding-sm);
   background-color: var(--surface-toolbar);
   border-radius: var(--radius-lg);
@@ -770,7 +773,7 @@ select:focus {
 
 .ui-toolbar-field {
   flex: 1 1 220px;
-  min-width: 220px;
+  min-width: min(100%, 220px);
 }
 
 .ui-toolbar-field > * {
@@ -781,10 +784,11 @@ select:focus {
   display: flex;
   gap: var(--space-md);
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .ui-toolbar-actions > * {
-  min-width: 140px;
+  min-width: min(100%, 140px);
 }
 
 .ui-toolbar-actions > .ui-toolbar-icon-control {
@@ -990,6 +994,16 @@ select:focus {
   .ui-toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .ui-toolbar-field {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .ui-toolbar-actions {
+    width: 100%;
+    margin-left: 0 !important;
   }
 
   .ui-toolbar-field,
