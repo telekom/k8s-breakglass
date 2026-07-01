@@ -539,6 +539,9 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 	requesterName := ds.Spec.RequestedByDisplayName
 	if requesterName == "" {
 		requesterName = ds.Spec.RequestedBy
+		if strings.EqualFold(requesterName, requesterEmail) {
+			requesterName = ""
+		}
 	}
 
 	params := mail.DebugSessionFailedMailParams{
