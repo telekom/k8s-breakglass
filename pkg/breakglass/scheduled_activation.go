@@ -63,9 +63,9 @@ func (ssa *ScheduledSessionActivator) WithAuditService(auditService AuditEmitter
 	return ssa
 }
 
-// ActivateScheduledSessions checks for sessions in WaitingForScheduledTime state
-// whose ScheduledStartTime has arrived, and transitions them to Approved state.
-// This allows the RBAC group to be applied and the session to become usable.
+// ActivateScheduledSessions checks sessions in WaitingForScheduledTime state.
+// Sessions whose ScheduledStartTime has arrived transition to Approved so the RBAC group can be applied.
+// Sessions that can no longer be valid are expired instead of being activated late.
 func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 	// Use indexed query to fetch only sessions waiting for scheduled time
 	sessions, err := ssa.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStateWaitingForScheduledTime)
