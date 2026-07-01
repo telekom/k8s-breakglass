@@ -23,6 +23,14 @@ const SCALE_STUBS = {
 };
 
 function makeSession(name: string, state: DebugSessionSummary["state"] = "PendingApproval"): DebugSessionSummary {
+  const approvalActions =
+    state === "PendingApproval"
+      ? {
+          canApprove: true,
+          canReject: true,
+        }
+      : {};
+
   return {
     name,
     templateRef: "debug-template",
@@ -32,6 +40,7 @@ function makeSession(name: string, state: DebugSessionSummary["state"] = "Pendin
     participants: 0,
     isParticipant: false,
     allowedPods: 1,
+    ...approvalActions,
   };
 }
 
@@ -45,7 +54,7 @@ function expectAccessibleLabel(wrapper: ReturnType<typeof mount>, targetId: stri
 describe("DebugSessionCard", () => {
   it("uses collision-safe label targets for per-card reject controls", async () => {
     const sessions = [makeSession("team/session-b"), makeSession("team-session-b")];
-    const wrapper = mount(
+    const rejectWrapper = mount(
       {
         components: { DebugSessionCard },
         data: () => ({ sessions }),
@@ -66,23 +75,23 @@ describe("DebugSessionCard", () => {
       },
     );
 
-    for (const button of wrapper.findAll('[data-testid="reject-button"]')) {
+    for (const button of rejectWrapper.findAll('[data-testid="reject-button"]')) {
       await button.trigger("click");
     }
 
-    const rejectInputs = wrapper.findAll('[data-testid="reject-reason-input"]');
+    const rejectInputs = rejectWrapper.findAll('[data-testid="reject-reason-input"]');
     expect(rejectInputs).toHaveLength(sessions.length);
     const rejectIds = rejectInputs.map((input) => input.attributes("id"));
 
     expect(new Set(rejectIds).size).toBe(rejectIds.length);
-    for (const input of rejectInputs) {
-      expectAccessibleLabel(wrapper, input.attributes("id"), "Rejection Reason");
+    for (const id of rejectIds) {
+      expectAccessibleLabel(rejectWrapper, id, "Rejection Reason");
     }
   });
 
   it("uses collision-safe label targets for per-card renew controls", async () => {
     const sessions = [makeSession("team/session-b", "Active"), makeSession("team-session-b", "Active")];
-    const wrapper = mount(
+    const renewWrapper = mount(
       {
         components: { DebugSessionCard },
         data: () => ({ sessions }),
@@ -104,22 +113,22 @@ describe("DebugSessionCard", () => {
       },
     );
 
-    for (const button of wrapper.findAll('[data-testid="renew-button"]')) {
+    for (const button of renewWrapper.findAll('[data-testid="renew-button"]')) {
       await button.trigger("click");
     }
 
-    const renewInputs = wrapper.findAll('[data-testid="renew-duration-select"]');
+    const renewInputs = renewWrapper.findAll('[data-testid="renew-duration-select"]');
     expect(renewInputs).toHaveLength(sessions.length);
     const renewIds = renewInputs.map((input) => input.attributes("id"));
 
     expect(new Set(renewIds).size).toBe(renewIds.length);
-    for (const input of renewInputs) {
-      expectAccessibleLabel(wrapper, input.attributes("id"), "Extend By");
+    for (const id of renewIds) {
+      expectAccessibleLabel(renewWrapper, id, "Extend By");
     }
   });
 
   it("resets the renew duration each time the modal opens", async () => {
-    const wrapper = mount(DebugSessionCard, {
+    const renewResetWrapper = mount(DebugSessionCard, {
       props: {
         session: makeSession("team/session-b", "Active"),
         isOwner: true,
@@ -129,9 +138,9 @@ describe("DebugSessionCard", () => {
       },
     });
 
-    await wrapper.find('[data-testid="renew-button"]').trigger("click");
+    await renewResetWrapper.find('[data-testid="renew-button"]').trigger("click");
 
-    let select = wrapper.find('[data-testid="renew-duration-select"]');
+    let select = renewResetWrapper.find('[data-testid="renew-duration-select"]');
     expect(select.attributes("value")).toBe("1h");
 
     const changeEvent = new CustomEvent("scale-change", {
@@ -141,17 +150,17 @@ describe("DebugSessionCard", () => {
     select.element.dispatchEvent(changeEvent);
     await nextTick();
 
-    await wrapper.find('[data-testid="renew-confirm-button"]').trigger("click");
-    expect(wrapper.emitted("renew")?.[0]).toEqual(["2h"]);
+    await renewResetWrapper.find('[data-testid="renew-confirm-button"]').trigger("click");
+    expect(renewResetWrapper.emitted("renew")?.[0]).toEqual(["2h"]);
 
-    await wrapper.find('[data-testid="renew-button"]').trigger("click");
+    await renewResetWrapper.find('[data-testid="renew-button"]').trigger("click");
 
-    select = wrapper.find('[data-testid="renew-duration-select"]');
+    select = renewResetWrapper.find('[data-testid="renew-duration-select"]');
     expect(select.attributes("value")).toBe("1h");
   });
 
   it("offers the same renew durations as the details view", async () => {
-    const wrapper = mount(DebugSessionCard, {
+    const renewDurationsWrapper = mount(DebugSessionCard, {
       props: {
         session: makeSession("team/session-b", "Active"),
         isOwner: true,
@@ -161,9 +170,9 @@ describe("DebugSessionCard", () => {
       },
     });
 
-    await wrapper.find('[data-testid="renew-button"]').trigger("click");
+    await renewDurationsWrapper.find('[data-testid="renew-button"]').trigger("click");
 
-    const renewSelect = wrapper.find('[data-testid="renew-duration-select"]');
+    const renewSelect = renewDurationsWrapper.find('[data-testid="renew-duration-select"]');
     const fourHourOption = renewSelect.find('[value="4h"]');
 
     expect(fourHourOption.exists()).toBe(true);
@@ -171,7 +180,7 @@ describe("DebugSessionCard", () => {
   });
 
   it("resets the reject reason each time the modal opens", async () => {
-    const wrapper = mount(DebugSessionCard, {
+    const rejectResetWrapper = mount(DebugSessionCard, {
       props: {
         session: makeSession("team/session-b"),
       },
@@ -180,16 +189,34 @@ describe("DebugSessionCard", () => {
       },
     });
 
-    await wrapper.find('[data-testid="reject-button"]').trigger("click");
+    await rejectResetWrapper.find('[data-testid="reject-button"]').trigger("click");
 
-    const vm = wrapper.vm as unknown as { rejectReason: string };
+    const vm = rejectResetWrapper.vm as unknown as { rejectReason: string };
     vm.rejectReason = "needs a clearer business reason";
     await nextTick();
     expect(vm.rejectReason).toBe("needs a clearer business reason");
 
-    await wrapper.find('[data-testid="reject-cancel-button"]').trigger("click");
-    await wrapper.find('[data-testid="reject-button"]').trigger("click");
+    await rejectResetWrapper.find('[data-testid="reject-cancel-button"]').trigger("click");
+    await rejectResetWrapper.find('[data-testid="reject-button"]').trigger("click");
 
     expect(vm.rejectReason).toBe("");
+  });
+
+  it("hides approval actions when the API does not authorize them", () => {
+    const approvalActionsWrapper = mount(DebugSessionCard, {
+      props: {
+        session: {
+          ...makeSession("team/session-b"),
+          canApprove: false,
+          canReject: false,
+        },
+      },
+      global: {
+        stubs: SCALE_STUBS,
+      },
+    });
+
+    expect(approvalActionsWrapper.find('[data-testid="approve-button"]').exists()).toBe(false);
+    expect(approvalActionsWrapper.find('[data-testid="reject-button"]').exists()).toBe(false);
   });
 });

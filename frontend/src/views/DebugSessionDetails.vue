@@ -7,7 +7,12 @@ import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { pushError, pushSuccess } from "@/services/toast";
 import { useDateFormatting, useClipboard } from "@/composables";
-import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOperations } from "@/model/debugSession";
+import type {
+  DebugSessionDetailResponse,
+  DebugSessionParticipant,
+  DebugPodInfo,
+  AllowedPodOperations,
+} from "@/model/debugSession";
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
 const { copy: clipboardCopy, copied: clipboardCopied, cleanup: clipboardCleanup } = useClipboard();
@@ -60,7 +65,7 @@ const sessionName = computed(() => {
   const name = route.params.name;
   return typeof name === "string" ? name : "";
 });
-const session = ref<DebugSession | null>(null);
+const session = ref<DebugSessionDetailResponse | null>(null);
 const loading = ref(true);
 const error = ref("");
 
@@ -210,8 +215,12 @@ const canJoin = computed(
 );
 const canTerminate = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
 const canRenew = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
-const canApprove = computed(() => session.value?.status?.state === "PendingApproval");
-const canReject = computed(() => session.value?.status?.state === "PendingApproval");
+const canApprove = computed(
+  () => session.value?.status?.state === "PendingApproval" && session.value?.canApprove === true,
+);
+const canReject = computed(
+  () => session.value?.status?.state === "PendingApproval" && session.value?.canReject === true,
+);
 
 // Check if kubectl-debug operations are available (kubectl-debug or hybrid mode, active session)
 const canUseKubectlDebug = computed(() => {

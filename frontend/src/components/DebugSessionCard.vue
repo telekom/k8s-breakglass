@@ -68,8 +68,8 @@ const canJoin = computed(() => props.session.state === "Active" && !props.isOwne
 const canLeave = computed(() => props.session.state === "Active" && !props.isOwner && props.session.isParticipant);
 const canTerminate = computed(() => props.session.state === "Active" && props.isOwner);
 const canRenew = computed(() => props.session.state === "Active" && props.isOwner);
-const canApprove = computed(() => props.session.state === "PendingApproval");
-const canReject = computed(() => props.session.state === "PendingApproval");
+const canApprove = computed(() => props.session.state === "PendingApproval" && props.session.canApprove === true);
+const canReject = computed(() => props.session.state === "PendingApproval" && props.session.canReject === true);
 
 const expiresIn = computed(() => {
   if (!props.session.expiresAt) return null;

@@ -1552,6 +1552,11 @@ unknown fields, malformed JSON, and trailing JSON values return `400 Bad
 Request`. The join endpoint may omit its body and defaults to the `viewer` role;
 non-empty join bodies must still be strict JSON.
 
+List and detail responses include `canApprove` and `canReject` booleans for the
+current caller. The web UI uses these fields to show approve/reject controls
+only to authorized approvers for sessions in `PendingApproval`; unauthorized
+callers may still read visible sessions but do not see approval actions.
+
 ### Kubectl Debug API Endpoints
 
 These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode.

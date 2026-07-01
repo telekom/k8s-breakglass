@@ -539,14 +539,43 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, resp)
 }
 
+type debugSessionApprovalAuthorizer struct {
+	controller *DebugSessionAPIController
+	templates  map[string]debugSessionApprovalTemplateLookup
+	bindings   map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup
+}
+
+type debugSessionApprovalTemplateLookup struct {
+	template *breakglassv1alpha1.DebugSessionTemplate
+	err      error
+}
+
+type debugSessionApprovalBindingLookup struct {
+	binding *breakglassv1alpha1.DebugSessionClusterBinding
+	err     error
+}
+
+func (c *DebugSessionAPIController) newDebugSessionApprovalAuthorizer() *debugSessionApprovalAuthorizer {
+	return &debugSessionApprovalAuthorizer{
+		controller: c,
+		templates:  make(map[string]debugSessionApprovalTemplateLookup),
+		bindings:   make(map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup),
+	}
+}
+
 // isUserAuthorizedToApprove checks if the user is authorized to approve/reject a debug session
 // The user must be in one of the approver groups/users defined in the session's template or binding.
 // Additionally, the requester of the session is not allowed to self-approve.
 func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username string, userGroupsInterface interface{}) bool {
-	return c.isUserIdentityAuthorizedToApprove(ctx, session, username, "", userGroupsInterface)
+	return c.newDebugSessionApprovalAuthorizer().isUserIdentityAuthorizedToApprove(ctx, session, username, "", userGroupsInterface)
 }
 
 func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username, email string, userGroupsInterface interface{}) bool {
+	return c.newDebugSessionApprovalAuthorizer().isUserIdentityAuthorizedToApprove(ctx, session, username, email, userGroupsInterface)
+}
+
+func (a *debugSessionApprovalAuthorizer) isUserIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username, email string, userGroupsInterface interface{}) bool {
+	c := a.controller
 	// Block self-approval: the user who requested the session cannot approve it
 	if debugSessionRequesterMatches(session, username, email) {
 		c.log.Infow("Blocking self-approval attempt",
@@ -559,8 +588,8 @@ func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx contex
 	// happen to match the same template and cluster.
 	if session.Spec.BindingRef != nil {
 		key := ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}
-		binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
-		if err := c.reader().Get(ctx, key, binding); err != nil {
+		binding, err := a.getBinding(ctx, key)
+		if err != nil {
 			c.log.Warnw("Could not fetch recorded binding while checking debug session approval authorization",
 				"session", session.Name, "binding", key.String(), "error", err)
 			return false
@@ -578,8 +607,8 @@ func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx contex
 	// If template has no resolved approvers info in status, fall back to fetching template
 	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Approvers == nil {
 		// Fetch the template to check approvers
-		template := &breakglassv1alpha1.DebugSessionTemplate{}
-		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+		template, err := a.getTemplate(ctx, session.Spec.TemplateRef)
+		if err != nil {
 			// If we can't fetch template, deny approval (fail closed for security)
 			c.log.Errorw("Could not fetch template to check approvers, denying approval",
 				"session", session.Name, "template", session.Spec.TemplateRef, "error", err)
@@ -596,6 +625,20 @@ func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx contex
 
 	// Use resolved template from status
 	return c.checkApproverIdentityAuthorization(session.Status.ResolvedTemplate.Approvers, username, email, userGroupsInterface)
+}
+
+func (a *debugSessionApprovalAuthorizer) getBinding(ctx context.Context, key ctrlclient.ObjectKey) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
+	if lookup, ok := a.bindings[key]; ok {
+		return lookup.binding, lookup.err
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	err := a.controller.reader().Get(ctx, key, binding)
+	if err != nil {
+		a.bindings[key] = debugSessionApprovalBindingLookup{err: err}
+		return nil, err
+	}
+	a.bindings[key] = debugSessionApprovalBindingLookup{binding: binding}
+	return binding, nil
 }
 
 func debugSessionRequesterMatches(session *breakglassv1alpha1.DebugSession, username, email string) bool {
@@ -624,6 +667,40 @@ func (c *DebugSessionAPIController) checkApproverIdentityAuthorization(approvers
 		return false
 	}
 	return c.checkApproverAuthorization(approvers, email, userGroupsInterface)
+}
+
+func (a *debugSessionApprovalAuthorizer) getTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugSessionTemplate, error) {
+	if lookup, ok := a.templates[name]; ok {
+		return lookup.template, lookup.err
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
+	if err := a.controller.reader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+		a.templates[name] = debugSessionApprovalTemplateLookup{err: err}
+		return nil, err
+	}
+	a.templates[name] = debugSessionApprovalTemplateLookup{template: template}
+	return template, nil
+}
+
+func (c *DebugSessionAPIController) canActOnDebugSessionApproval(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	identity debugSessionReadIdentity,
+	authorizer *debugSessionApprovalAuthorizer,
+) bool {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
+		return false
+	}
+	if identity.username == "" {
+		return false
+	}
+	if debugSessionRequesterMatches(session, identity.username, identity.email) {
+		return false
+	}
+	if authorizer == nil {
+		authorizer = c.newDebugSessionApprovalAuthorizer()
+	}
+	return authorizer.isUserIdentityAuthorizedToApprove(ctx, session, identity.username, identity.email, identity.groups)
 }
 
 // checkApproverAuthorization checks if user is in the approved users/groups

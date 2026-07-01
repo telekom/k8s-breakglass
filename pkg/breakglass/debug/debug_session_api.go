@@ -323,6 +323,8 @@ type DebugSessionSummary struct {
 	IsParticipant          bool                                     `json:"isParticipant"`
 	AllowedPods            int                                      `json:"allowedPods"`
 	AllowedPodOperations   *breakglassv1alpha1.AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+	CanApprove             bool                                     `json:"canApprove"`
+	CanReject              bool                                     `json:"canReject"`
 }
 
 // DebugSessionDetailResponse represents the detailed debug session response
@@ -330,6 +332,10 @@ type DebugSessionDetailResponse struct {
 	breakglassv1alpha1.DebugSession
 	// Warnings contains non-critical issues or notes about defaults that were applied
 	Warnings []string `json:"warnings,omitempty"`
+	// CanApprove indicates whether the current requester may approve this session.
+	CanApprove bool `json:"canApprove"`
+	// CanReject indicates whether the current requester may reject this session.
+	CanReject bool `json:"canReject"`
 }
 
 type debugSessionReadIdentity struct {
@@ -484,7 +490,9 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 
 	// Build response summaries
 	summaries := make([]DebugSessionSummary, 0, len(filtered))
+	approvalAuthorizer := c.newDebugSessionApprovalAuthorizer()
 	for _, s := range filtered {
+		canApprove := c.canActOnDebugSessionApproval(apiCtx, &s, identity, approvalAuthorizer)
 		// Compute isParticipant and activeParticipants in a single pass
 		isParticipant := false
 		activeParticipants := 0
@@ -511,6 +519,8 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			IsParticipant:          isParticipant,
 			AllowedPods:            len(s.Status.AllowedPods),
 			AllowedPodOperations:   s.Status.AllowedPodOperations,
+			CanApprove:             canApprove,
+			CanReject:              canApprove,
 		})
 	}
 
@@ -565,7 +575,12 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{DebugSession: *session})
+	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity, nil)
+	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{
+		DebugSession: *session,
+		CanApprove:   canApprove,
+		CanReject:    canApprove,
+	})
 }
 
 // handleCreateDebugSession creates a new debug session
