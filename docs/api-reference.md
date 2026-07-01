@@ -984,6 +984,8 @@ ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned o
 
 The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
 
+Status-changing DebugSession actions such as renew, terminate, approve, reject, join, and leave use optimistic locking. If another request updates the same session between the API read and status write, the endpoint returns `409 Conflict`; clients should refresh the session before retrying.
+
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**
