@@ -86,7 +86,7 @@ Consumers should be able to:
    helm show chart oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config \
       --version <chart-version>
    ```
-  Confirm the returned `version` is the expected chart version and `appVersion` is the release tag.
+  - Confirm the returned `version` is the expected chart version and `appVersion` is the release tag.
 - Verify SBOM attestation:
   ```bash
   cosign verify-attestation ghcr.io/telekom/k8s-breakglass@<digest> \
