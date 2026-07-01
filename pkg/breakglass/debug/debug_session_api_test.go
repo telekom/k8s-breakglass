@@ -2650,6 +2650,15 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 
 		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
 		w = httptest.NewRecorder()
+		buildRouter(" alice@example.com ", "", nil).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
 		buildRouter("bob@example.com", "bob@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)

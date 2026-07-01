@@ -193,10 +193,8 @@ type debugTemplateRequester struct {
 func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester {
 	requester := debugTemplateRequester{}
 
-	if username, ok := ctx.Get("username"); ok {
-		if value, ok := username.(string); ok {
-			requester.username = value
-		}
+	if username, ok := debugSessionUsernameFromContext(ctx); ok {
+		requester.username = username
 	}
 	if email, ok := ctx.Get("email"); ok {
 		if value, ok := email.(string); ok {
