@@ -94,6 +94,34 @@ func TestDebugSessionController_SendDebugSessionFailedEmail(t *testing.T) {
 	assert.NotContains(t, messages[0].Body, "requester-id")
 }
 
+func TestDebugSessionController_SendDebugSessionFailedEmailTrimsRequesterEmail(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	mockMail := NewMockMailEnqueuer(true)
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com", false)
+
+	session := newTestDebugSession("debug-failed", "node-shell", "prod", "requester-id")
+	session.Spec.RequestedByEmail = "  requester@example.com  "
+	controller.sendDebugSessionFailedEmail(session, "debug pod failed")
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
+}
+
+func TestDebugSessionController_SendDebugSessionFailedEmailSkipsControlCharacterRecipient(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	mockMail := NewMockMailEnqueuer(true)
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com", false)
+
+	session := newTestDebugSession("debug-failed", "node-shell", "prod", "requester-id")
+	session.Spec.RequestedByEmail = "requester@example.com\r\nbcc: attacker@example.com"
+	controller.sendDebugSessionFailedEmail(session, "debug pod failed")
+
+	assert.Empty(t, mockMail.GetMessages())
+}
+
 func TestDebugSessionController_SendDebugSessionFailedEmailLegacyRequesterEmail(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	mockMail := NewMockMailEnqueuer(true)

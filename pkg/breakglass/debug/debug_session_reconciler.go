@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -526,12 +527,12 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 		return
 	}
 
-	requesterEmail := ds.Spec.RequestedByEmail
+	requesterEmail := strings.TrimSpace(ds.Spec.RequestedByEmail)
 	if requesterEmail == "" {
-		requesterEmail = ds.Spec.RequestedBy
+		requesterEmail = strings.TrimSpace(ds.Spec.RequestedBy)
 	}
-	if !strings.Contains(requesterEmail, "@") {
-		c.log.Warnw("Skipping debug session failed email - no valid email address", "session", ds.Name, "recipient", requesterEmail)
+	if !isSafeDebugSessionFailureRecipient(requesterEmail) {
+		c.log.Warnw("Skipping debug session failed email - no valid email address", "session", ds.Name)
 		return
 	}
 	recipients := []string{requesterEmail}
@@ -569,6 +570,13 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 	} else {
 		c.log.Infow("Debug session failed email queued", "session", ds.Name, "requester", ds.Spec.RequestedBy)
 	}
+}
+
+func isSafeDebugSessionFailureRecipient(recipient string) bool {
+	if recipient == "" || !strings.Contains(recipient, "@") {
+		return false
+	}
+	return strings.IndexFunc(recipient, unicode.IsControl) == -1
 }
 
 // shouldEmitAudit checks if audit events should be emitted for this session
