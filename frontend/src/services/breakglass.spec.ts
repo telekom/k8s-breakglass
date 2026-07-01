@@ -1,10 +1,17 @@
 import { vi, type Mock } from "vitest";
 import BreakglassService from "./breakglass";
 import { createAuthenticatedApiClient } from "@/services/httpClient";
+import { pushError } from "@/services/errors";
 import type { Breakglass, SessionCR } from "@/model/breakglass";
 import type { AxiosInstance } from "axios";
 
 vi.mock("@/services/httpClient");
+vi.mock("@/services/errors", () => ({
+  pushError: vi.fn(),
+  pushSuccess: vi.fn(),
+  dismissError: vi.fn(),
+  useErrors: vi.fn(),
+}));
 const mockedCreateClient = createAuthenticatedApiClient as Mock<typeof createAuthenticatedApiClient>;
 
 type MockAxiosClient = {
@@ -522,6 +529,7 @@ describe("BreakglassService", () => {
 
     await expect(service.dropMySession({ metadata: { name: "oops" } } as SessionCR)).rejects.toThrow("drop failed");
     expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/drop");
+    expect(pushError).not.toHaveBeenCalled();
   });
 
   it("sends payloads via testButton helper", async () => {

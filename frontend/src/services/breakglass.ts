@@ -339,6 +339,7 @@ export default class BreakglassService {
     sessionName: string,
     logContext: string,
     errorMessage: string,
+    pushToUI = true,
   ): Promise<AxiosResponse> {
     try {
       debug(logContext, "Dropping breakglass session", { sessionName });
@@ -346,7 +347,7 @@ export default class BreakglassService {
       debug(logContext, "Drop submitted", { status: response.status });
       return response;
     } catch (e) {
-      handleAxiosError(logContext, e, errorMessage);
+      handleAxiosError(logContext, e, errorMessage, pushToUI);
       debug(logContext, "Drop failed", { errorMessage: (e as Error)?.message });
       throw e;
     }
@@ -546,7 +547,7 @@ export default class BreakglassService {
   public async dropMySession(req: SessionCR): Promise<void> {
     const sessionName = req.metadata?.name;
     if (!sessionName) throw new Error("Missing session name");
-    await this.dropSessionByName(sessionName, "BreakglassService.dropMySession", "Failed to drop session");
+    await this.dropSessionByName(sessionName, "BreakglassService.dropMySession", "Failed to drop session", false);
   }
 }
 
