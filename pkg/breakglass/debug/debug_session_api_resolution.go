@@ -686,7 +686,7 @@ func (c *DebugSessionAPIController) canActOnDebugSessionApproval(
 func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakglassv1alpha1.DebugSessionApprovers, username string, userGroupsInterface interface{}) bool {
 	// Check if user is in allowed users list
 	for _, allowedUser := range approvers.Users {
-		if matchPattern(allowedUser, username) {
+		if matchApproverUser(allowedUser, username) {
 			return true
 		}
 	}
@@ -720,6 +720,13 @@ func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakg
 	}
 
 	return false
+}
+
+func matchApproverUser(pattern, username string) bool {
+	if strings.ContainsAny(pattern, "*?[") {
+		return matchPattern(pattern, username)
+	}
+	return strings.EqualFold(strings.TrimSpace(pattern), strings.TrimSpace(username))
 }
 
 // matchPattern checks if a string matches a glob pattern.

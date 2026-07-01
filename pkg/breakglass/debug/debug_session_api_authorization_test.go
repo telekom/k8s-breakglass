@@ -967,6 +967,33 @@ func TestCheckApproverAuthorization_DirectUserMatch(t *testing.T) {
 	assert.False(t, ctrl.checkApproverAuthorization(approvers, "user3@example.com", nil))
 }
 
+func TestCheckApproverAuthorization_DirectUserMatchNormalizesExactEntries(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	approvers := &breakglassv1alpha1.DebugSessionApprovers{
+		Users: []string{" Approver@Example.COM "},
+	}
+
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, "approver@example.com", nil))
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, " APPROVER@example.com ", nil))
+	assert.False(t, ctrl.checkApproverAuthorization(approvers, "other@example.com", nil))
+}
+
+func TestCheckApproverAuthorization_GlobUserMatchKeepsPatternSemantics(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	approvers := &breakglassv1alpha1.DebugSessionApprovers{
+		Users: []string{"*@Example.COM"},
+	}
+
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, "approver@Example.COM", nil))
+	assert.False(t, ctrl.checkApproverAuthorization(approvers, "approver@example.com", nil))
+}
+
 func TestCheckApproverAuthorization_DirectGroupMatch(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
