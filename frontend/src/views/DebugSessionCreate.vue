@@ -43,8 +43,6 @@ const form = reactive<{
   selectedBindingIndex: number; // Index of selected binding option (0 = first/default)
   requestedDuration: string;
   reason: string;
-  scheduledStartTime: string;
-  useScheduledStart: boolean;
   targetNamespace: string;
   selectedSchedulingOption: string;
   extraDeployValues: ExtraDeployValues;
@@ -55,8 +53,6 @@ const form = reactive<{
   selectedBindingIndex: 0,
   requestedDuration: "1h",
   reason: "",
-  scheduledStartTime: "",
-  useScheduledStart: false,
   targetNamespace: "",
   selectedSchedulingOption: "",
   extraDeployValues: {},
@@ -451,10 +447,6 @@ const isValid = computed(() => {
     return false;
   }
 
-  if (hasSchedulingOptions.value && form.useScheduledStart && !form.scheduledStartTime.trim()) {
-    return false;
-  }
-
   return namespaceValid.value && extraDeployValid.value;
 });
 
@@ -549,11 +541,6 @@ async function handleSubmit() {
     if (hasMultipleBindings.value && selectedBindingOption.value) {
       const binding = selectedBindingOption.value.bindingRef;
       request.bindingRef = `${binding.namespace}/${binding.name}`;
-    }
-
-    const scheduledStartTime = form.scheduledStartTime.trim();
-    if (hasSchedulingOptions.value && form.useScheduledStart && scheduledStartTime) {
-      request.scheduledStartTime = new Date(scheduledStartTime).toISOString();
     }
 
     // Include target namespace if user can select it or if it differs from template default
@@ -758,8 +745,6 @@ function handleTemplateChange(ev: Event) {
         :namespace-validation-error="namespaceValidationError"
         :requested-duration="form.requestedDuration"
         :reason="form.reason"
-        :scheduled-start-time="form.scheduledStartTime"
-        :use-scheduled-start="form.useScheduledStart"
         :extra-deploy-values="form.extraDeployValues"
         :show-advanced-options="form.showAdvancedOptions"
         @update:selected-scheduling-option="form.selectedSchedulingOption = $event"
@@ -767,8 +752,6 @@ function handleTemplateChange(ev: Event) {
         @update:extra-deploy-valid="updateExtraDeployValid"
         @update:requested-duration="form.requestedDuration = $event"
         @update:reason="form.reason = $event"
-        @update:scheduled-start-time="form.scheduledStartTime = $event"
-        @update:use-scheduled-start="form.useScheduledStart = $event"
         @update:extra-deploy-values="form.extraDeployValues = $event"
         @update:show-advanced-options="form.showAdvancedOptions = $event"
       />

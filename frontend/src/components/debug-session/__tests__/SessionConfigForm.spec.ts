@@ -24,8 +24,6 @@ const baseProps = {
   targetNamespace: "default",
   requestedDuration: "1h",
   reason: "",
-  scheduledStartTime: "",
-  useScheduledStart: false,
   extraDeployValues: {},
   showAdvancedOptions: false,
 };
@@ -124,62 +122,9 @@ describe("SessionConfigForm", () => {
     expect(wrapper.find('[data-testid="extra-variables-section"]').exists()).toBe(true);
   });
 
-  it("renders schedule checkbox", () => {
+  it("does not render unsupported delayed-start controls", () => {
     const wrapper = factory();
-    expect(wrapper.find('[data-testid="schedule-checkbox"]').exists()).toBe(true);
-  });
-
-  it("shows scheduled time input when useScheduledStart is true", () => {
-    const wrapper = factory({ useScheduledStart: true });
-    expect(wrapper.find('[data-testid="schedule-time-input"]').exists()).toBe(true);
-  });
-
-  it("marks scheduled time input required when scheduling is enabled without a time", () => {
-    const wrapper = factory({ useScheduledStart: true, scheduledStartTime: "" });
-    const input = wrapper.find('[data-testid="schedule-time-input"]');
-
-    expect(input.attributes("required")).toBeDefined();
-    expect(input.attributes("invalid")).toBe("true");
-    expect(input.attributes("helper-text-invalid")).toBe("Scheduled start time is required.");
-  });
-
-  it("marks whitespace-only scheduled time invalid", () => {
-    const wrapper = factory({ useScheduledStart: true, scheduledStartTime: "   " });
-    const input = wrapper.find('[data-testid="schedule-time-input"]');
-
-    expect(input.attributes("invalid")).toBe("true");
-  });
-
-  it("emits scheduled time updates from scale input events", async () => {
-    const wrapper = factory({ useScheduledStart: true, scheduledStartTime: "" });
-    const input = wrapper.find('[data-testid="schedule-time-input"]');
-
-    input.element.dispatchEvent(
-      new CustomEvent("scale-input", {
-        bubbles: true,
-        detail: { value: "2030-01-02T03:04" },
-      }),
-    );
-    await wrapper.vm.$nextTick();
-
-    const emitted = wrapper.emitted("update:scheduledStartTime");
-    expect(emitted?.[emitted.length - 1]).toEqual(["2030-01-02T03:04"]);
-  });
-
-  it("falls back to the event target value for scheduled time changes", async () => {
-    const wrapper = factory({ useScheduledStart: true, scheduledStartTime: "" });
-    const input = wrapper.find('[data-testid="schedule-time-input"]');
-    (input.element as HTMLInputElement).value = "2030-01-02T03:04";
-
-    input.element.dispatchEvent(new CustomEvent("scale-change", { bubbles: true }));
-    await wrapper.vm.$nextTick();
-
-    const emitted = wrapper.emitted("update:scheduledStartTime");
-    expect(emitted?.[emitted.length - 1]).toEqual(["2030-01-02T03:04"]);
-  });
-
-  it("hides scheduled time input when useScheduledStart is false", () => {
-    const wrapper = factory({ useScheduledStart: false });
+    expect(wrapper.find('[data-testid="schedule-checkbox"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="schedule-time-input"]').exists()).toBe(false);
   });
 });

@@ -339,53 +339,7 @@ describe("DebugSessionCreate", () => {
       expect(vm.form.templateRef).toBe("standard-debug");
     });
 
-    it("requires a scheduled start time when scheduling is enabled", async () => {
-      mockGetTemplateClusters.mockResolvedValue({
-        templateName: "standard-debug",
-        templateDisplayName: "Standard Debug",
-        clusters: [
-          {
-            name: "prod-east",
-            displayName: "Production East",
-            schedulingOptions: {
-              required: false,
-              options: [{ name: "maintenance", displayName: "Maintenance window" }],
-            },
-          },
-        ],
-      });
-
-      const wrapper = await createWrapper();
-      const vm = wrapper.vm as unknown as {
-        goToStep2: () => void;
-        handleSubmit: () => Promise<void>;
-        isValid: boolean;
-        form: {
-          cluster: string;
-          reason: string;
-          useScheduledStart: boolean;
-          scheduledStartTime: string;
-        };
-      };
-
-      vm.goToStep2();
-      await flushPromises();
-
-      vm.form.cluster = "prod-east";
-      vm.form.reason = "Need scheduled debugging";
-      vm.form.useScheduledStart = true;
-      vm.form.scheduledStartTime = "";
-      await flushPromises();
-
-      expect(vm.isValid).toBe(false);
-      const createButton = wrapper.find('[data-testid="create-session-button"]');
-      expect(createButton.attributes("disabled")).toBeDefined();
-
-      await vm.handleSubmit();
-      expect(mockCreateSession).not.toHaveBeenCalled();
-    });
-
-    it("sends scheduled start time when scheduling has a value", async () => {
+    it("sends selected scheduling option without unsupported delayed start time", async () => {
       mockGetTemplateClusters.mockResolvedValue({
         templateName: "standard-debug",
         templateDisplayName: "Standard Debug",
@@ -413,19 +367,16 @@ describe("DebugSessionCreate", () => {
         form: {
           cluster: string;
           reason: string;
-          useScheduledStart: boolean;
-          scheduledStartTime: string;
+          selectedSchedulingOption: string;
         };
       };
-      const scheduledStartTime = "2030-01-02T03:04";
 
       vm.goToStep2();
       await flushPromises();
 
       vm.form.cluster = "prod-east";
-      vm.form.reason = "Need scheduled debugging";
-      vm.form.useScheduledStart = true;
-      vm.form.scheduledStartTime = scheduledStartTime;
+      vm.form.reason = "Need debugging on maintenance nodes";
+      vm.form.selectedSchedulingOption = "maintenance";
       await flushPromises();
 
       expect(vm.isValid).toBe(true);
@@ -433,78 +384,9 @@ describe("DebugSessionCreate", () => {
 
       expect(mockCreateSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          scheduledStartTime: new Date(scheduledStartTime).toISOString(),
+          selectedSchedulingOption: "maintenance",
         }),
       );
-    });
-
-    it("does not require a scheduled start time when scheduling options are unavailable", async () => {
-      mockGetTemplateClusters.mockResolvedValue({
-        templateName: "standard-debug",
-        templateDisplayName: "Standard Debug",
-        clusters: [{ name: "prod-east", displayName: "Production East" }],
-      });
-
-      const wrapper = await createWrapper();
-      const vm = wrapper.vm as unknown as {
-        goToStep2: () => void;
-        isValid: boolean;
-        form: {
-          cluster: string;
-          reason: string;
-          useScheduledStart: boolean;
-          scheduledStartTime: string;
-        };
-      };
-
-      vm.goToStep2();
-      await flushPromises();
-
-      vm.form.cluster = "prod-east";
-      vm.form.reason = "Need unscheduled debugging after changing templates";
-      vm.form.useScheduledStart = true;
-      vm.form.scheduledStartTime = "";
-      await flushPromises();
-
-      expect(vm.isValid).toBe(true);
-    });
-
-    it("omits stale scheduled start time when scheduling options are unavailable", async () => {
-      mockGetTemplateClusters.mockResolvedValue({
-        templateName: "standard-debug",
-        templateDisplayName: "Standard Debug",
-        clusters: [{ name: "prod-east", displayName: "Production East" }],
-      });
-      mockCreateSession.mockResolvedValue({
-        metadata: { name: "debug-unscheduled" },
-        warnings: [],
-      });
-
-      const wrapper = await createWrapper();
-      const vm = wrapper.vm as unknown as {
-        goToStep2: () => void;
-        handleSubmit: () => Promise<void>;
-        isValid: boolean;
-        form: {
-          cluster: string;
-          reason: string;
-          useScheduledStart: boolean;
-          scheduledStartTime: string;
-        };
-      };
-
-      vm.goToStep2();
-      await flushPromises();
-
-      vm.form.cluster = "prod-east";
-      vm.form.reason = "Need unscheduled debugging after changing templates";
-      vm.form.useScheduledStart = true;
-      vm.form.scheduledStartTime = "2030-01-02T03:04";
-      await flushPromises();
-
-      expect(vm.isValid).toBe(true);
-      await vm.handleSubmit();
-
       expect(mockCreateSession).toHaveBeenCalledWith(
         expect.not.objectContaining({
           scheduledStartTime: expect.any(String),

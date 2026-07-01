@@ -36,8 +36,6 @@ defineProps<{
   namespaceValidationError?: string;
   requestedDuration: string;
   reason: string;
-  scheduledStartTime: string;
-  useScheduledStart: boolean;
   extraDeployValues: ExtraDeployValues;
   showAdvancedOptions: boolean;
 }>();
@@ -48,8 +46,6 @@ const emit = defineEmits<{
   "update:extraDeployValid": [valid: boolean];
   "update:requestedDuration": [value: string];
   "update:reason": [value: string];
-  "update:scheduledStartTime": [value: string];
-  "update:useScheduledStart": [value: boolean];
   "update:extraDeployValues": [value: ExtraDeployValues];
   "update:showAdvancedOptions": [value: boolean];
 }>();
@@ -58,12 +54,6 @@ function handleDurationChange(ev: Event) {
   const target = ev.target as HTMLSelectElement | null;
   const value = target?.value || "1h";
   emit("update:requestedDuration", value);
-}
-
-function handleScheduledStartInput(ev: Event) {
-  const customEvent = ev as CustomEvent<{ value?: string }>;
-  const target = ev.target as HTMLInputElement | null;
-  emit("update:scheduledStartTime", customEvent.detail?.value ?? target?.value ?? "");
 }
 </script>
 
@@ -257,27 +247,6 @@ function handleScheduledStartInput(ev: Event) {
       />
     </div>
 
-    <div class="schedule-section">
-      <scale-checkbox
-        :checked="useScheduledStart"
-        label="Schedule for later"
-        data-testid="schedule-checkbox"
-        @scale-change="emit('update:useScheduledStart', ($event.target as HTMLInputElement).checked)"
-      ></scale-checkbox>
-
-      <scale-text-field
-        v-if="useScheduledStart"
-        :value="scheduledStartTime"
-        type="datetime-local"
-        label="Scheduled Start Time"
-        required
-        :invalid="useScheduledStart && !scheduledStartTime.trim()"
-        helper-text-invalid="Scheduled start time is required."
-        data-testid="schedule-time-input"
-        @scale-change="handleScheduledStartInput"
-        @scale-input="handleScheduledStartInput"
-      ></scale-text-field>
-    </div>
   </div>
 </template>
 
@@ -486,9 +455,4 @@ function handleScheduledStartInput(ev: Event) {
   margin: 0 0 var(--space-md) 0;
 }
 
-.schedule-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
 </style>

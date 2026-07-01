@@ -207,7 +207,6 @@ export interface CreateDebugSessionRequest {
   requestedDuration?: string;
   reason?: string;
   nodeSelector?: Record<string, string>;
-  scheduledStartTime?: string;
   targetNamespace?: string;
   selectedSchedulingOption?: string;
   extraDeployValues?: ExtraDeployValues; // User-provided variable values
