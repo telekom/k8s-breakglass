@@ -18,6 +18,7 @@ package debug
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -115,13 +116,15 @@ func selectEffectiveDebugSessionBinding(
 			return allowedResult.MatchingBinding, nil
 		}
 		if len(allowedResult.AllBindings) > 0 {
-			return &allowedResult.AllBindings[0], nil
+			bindings := append([]breakglassv1alpha1.DebugSessionClusterBinding(nil), allowedResult.AllBindings...)
+			sortDebugSessionClusterBindings(bindings)
+			return &bindings[0], nil
 		}
 		return nil, nil
 	}
 
-	namespace, name, ok := strings.Cut(bindingRef, "/")
-	if !ok || strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+	namespace, name, ok := parseDebugSessionBindingRef(bindingRef)
+	if !ok {
 		return nil, fmt.Errorf("invalid bindingRef format, expected namespace/name")
 	}
 
@@ -133,4 +136,13 @@ func selectEffectiveDebugSessionBinding(
 	}
 
 	return nil, fmt.Errorf("binding %q does not allow the requested template and cluster", bindingRef)
+}
+
+func sortDebugSessionClusterBindings(bindings []breakglassv1alpha1.DebugSessionClusterBinding) {
+	sort.SliceStable(bindings, func(i, j int) bool {
+		if bindings[i].Namespace != bindings[j].Namespace {
+			return bindings[i].Namespace < bindings[j].Namespace
+		}
+		return bindings[i].Name < bindings[j].Name
+	})
 }
