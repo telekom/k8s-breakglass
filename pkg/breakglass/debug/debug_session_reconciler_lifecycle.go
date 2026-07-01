@@ -9,7 +9,6 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
-	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
@@ -361,6 +360,8 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			ds.Status.DeployedResources = nil
 			ds.Status.AllowedPods = nil
 			ds.Status.KubectlDebugStatus = nil
+			ds.Status.AuxiliaryResourceStatuses = nil
+			ds.Status.PodTemplateResourceStatuses = nil
 			return c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
@@ -378,6 +379,8 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			ds.Status.DeployedResources = nil
 			ds.Status.AllowedPods = nil
 			ds.Status.KubectlDebugStatus = nil
+			ds.Status.AuxiliaryResourceStatuses = nil
+			ds.Status.PodTemplateResourceStatuses = nil
 			return c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds)
 		}
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
@@ -429,6 +432,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	base *breakglassv1alpha1.DebugSession,
 	ds *breakglassv1alpha1.DebugSession,
 ) error {
+	if ds.Generation > 0 {
+		ds.Status.ObservedGeneration = ds.Generation
+	}
 	return c.client.Status().Patch(ctx, ds, ctrlclient.MergeFrom(base))
 }
 

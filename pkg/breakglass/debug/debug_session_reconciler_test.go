@@ -4911,6 +4911,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 
 	t.Run("missing_cluster_config_clears_kubectl_debug_status", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
+		session.Generation = 3
 		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
 			CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 				{
@@ -4927,6 +4928,12 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "app-copy", Namespace: "default"},
 		}
+		session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{Name: "debug-config", Kind: "ConfigMap", Namespace: "default", Created: true},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "Secret", ResourceName: "debug-secret", Namespace: "default", Created: true},
+		}
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -4949,16 +4956,26 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Empty(t, updated.Status.DeployedResources)
 		assert.Empty(t, updated.Status.AllowedPods)
 		assert.Nil(t, updated.Status.KubectlDebugStatus)
+		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
 	})
 
 	t.Run("missing_rest_config_clears_deployed_tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
+		session.Generation = 5
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
 		}
+		session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{Name: "debug-config", Kind: "ConfigMap", Namespace: "default", Created: true},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "Secret", ResourceName: "debug-secret", Namespace: "default", Created: true},
+		}
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -4981,6 +4998,9 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Empty(t, updated.Status.DeployedResources)
 		assert.Empty(t, updated.Status.AllowedPods)
 		assert.Nil(t, updated.Status.KubectlDebugStatus)
+		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
 	})
 }
 
