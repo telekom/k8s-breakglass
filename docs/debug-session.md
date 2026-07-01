@@ -1204,6 +1204,14 @@ Both pod templates and auxiliary resources support multi-document YAML for creat
 - **Constraint overrides**: Customize durations, namespaces, and approval requirements per cluster
 - **Impersonation**: Deploy debug pods using a constrained ServiceAccount
 
+When a request omits `bindingRef`, the API can still default to an applicable
+binding for the target cluster. If the selected binding defines `spec.allowed`
+users or groups, those requester rules replace the template requester allowlist
+for that matched cluster. A caller who is allowed by the template but not by the
+selected binding is rejected instead of receiving that binding's constraints,
+labels, approvers, or impersonation settings. Bindings without `spec.allowed`
+requester rules still inherit the template requester allowlist.
+
 ### Basic Binding
 
 ```yaml
@@ -1419,10 +1427,11 @@ constraints:
 
 Requested durations must be positive and cannot exceed the effective
 `maxDuration`. When a request selects a `DebugSessionClusterBinding` through
-`bindingRef`, or the API/reconciler defaults to an applicable binding for the
-target cluster, that binding's duration constraints override the template
-constraints for that session. Renewals extend the current expiration time, but
-the renewed expiration cannot move past `status.startsAt + maxDuration`.
+`bindingRef`, or the API/reconciler defaults to a requester-authorized
+applicable binding for the target cluster, that binding's duration constraints
+override the template constraints for that session. Renewals extend the current
+expiration time, but the renewed expiration cannot move past
+`status.startsAt + maxDuration`.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 
