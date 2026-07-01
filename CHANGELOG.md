@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Scheduled activation stale-state guard**: Scheduled activation now re-reads each waiting session before granting access and skips sessions that already left `WaitingForScheduledTime`, preserving concurrent terminal transitions.
 - **DebugSession operation authorization**: Usernames loaded from request context are trimmed before debug-session read and kubectl-debug authorization checks, and viewer participants now receive `403 Forbidden` for mutating kubectl-debug endpoints.
 - **DebugSession reconciler audit and failure mail wiring**: Lifecycle audit events and requester failure emails now use the configured audit and mail services, while invalid failure-mail recipients are rejected before enqueueing.
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
