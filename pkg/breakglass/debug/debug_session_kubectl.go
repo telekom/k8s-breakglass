@@ -434,12 +434,11 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	// Add debug container if image specified
 	if debugImage != "" {
 		debugContainer := corev1.Container{
-			Name:            "debugger",
-			Image:           debugImage,
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			Command:         []string{"sleep", "infinity"},
-			TTY:             true,
-			Stdin:           true,
+			Name:    "debugger",
+			Image:   debugImage,
+			Command: []string{"sleep", "infinity"},
+			TTY:     true,
+			Stdin:   true,
 		}
 		copyPod.Spec.Containers = append(copyPod.Spec.Containers, debugContainer)
 	}

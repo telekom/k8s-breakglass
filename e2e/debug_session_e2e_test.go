@@ -1316,7 +1316,7 @@ func TestDebugSession_E2E_PodCopy(t *testing.T) {
 	copyResult, err := api.CreatePodCopy(ctx, t, session.Name, helpers.PodCopyRequest{
 		Namespace:  "default",
 		PodName:    targetPod.Name,
-		DebugImage: "busybox:latest",
+		DebugImage: helpers.GetTmuxDebugImage(),
 	})
 
 	if err != nil {

@@ -1045,7 +1045,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		assert.Len(t, pod.Spec.Containers, 2)
 		assert.Equal(t, "debugger", pod.Spec.Containers[1].Name)
 		assert.Equal(t, "busybox:latest", pod.Spec.Containers[1].Image)
-		assert.Equal(t, corev1.PullIfNotPresent, pod.Spec.Containers[1].ImagePullPolicy)
+		assert.Empty(t, pod.Spec.Containers[1].ImagePullPolicy)
 
 		// Check labels
 		assert.Equal(t, testSession.Name, pod.Labels[DebugSessionLabelKey])
