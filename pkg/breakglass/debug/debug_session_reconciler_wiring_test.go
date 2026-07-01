@@ -31,7 +31,7 @@ import (
 
 func TestDebugSessionController_WithAuditServiceUsesReloadedManager(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
-	auditService := audit.NewService(fakeClient, zap.NewNop(), "breakglass")
+	auditService := audit.NewService(fakeClient, nil, zap.NewNop(), "breakglass")
 	t.Cleanup(func() {
 		require.NoError(t, auditService.Close())
 	})
