@@ -18,6 +18,7 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,8 +27,22 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type scheduledSessionStateChangedError struct {
+	name  string
+	state breakglassv1alpha1.BreakglassSessionState
+}
+
+func (e *scheduledSessionStateChangedError) Error() string {
+	return fmt.Sprintf("session state changed to %s", e.state)
+}
 
 // ScheduledSessionActivator handles activation of scheduled sessions.
 // When a session's ScheduledStartTime is reached, it transitions from WaitingForScheduledTime to Approved
@@ -67,27 +82,46 @@ func (ssa *ScheduledSessionActivator) WithAuditService(auditService AuditEmitter
 // Sessions whose ScheduledStartTime has arrived transition to Approved so the RBAC group can be applied.
 // Sessions that can no longer be valid are expired instead of being activated late.
 func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
+	ctx := context.Background()
+
 	// Use indexed query to fetch only sessions waiting for scheduled time
-	sessions, err := ssa.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStateWaitingForScheduledTime)
+	sessions, err := ssa.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateWaitingForScheduledTime)
 	if err != nil {
-		ssa.log.Error("error listing sessions for scheduled activation", zap.String("error", err.Error()))
+		ssa.log.Errorw("error listing sessions for scheduled activation", "error", err)
 		return
 	}
 
 	now := time.Now()
 	for _, ses := range sessions {
+		listedMissingScheduledTime := ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero()
+		if !listedMissingScheduledTime && now.Before(ses.Spec.ScheduledStartTime.Time) {
+			// Not yet time for this session; avoid a live read until the cached
+			// scheduledStartTime says this session may need a state transition.
+			continue
+		}
+
+		operation := "activation"
+		if listedMissingScheduledTime {
+			operation = "expiry"
+		}
+		current, ok := ssa.currentWaitingScheduledSession(ctx, ses, operation)
+		if !ok {
+			continue
+		}
+		ses = current
+
 		// Sanity check: session should have a scheduledStartTime
 		if ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero() {
 			ssa.log.Errorw("expiring session in WaitingForScheduledTime state with no ScheduledStartTime",
 				"session", ses.Name,
 				"namespace", ses.Namespace)
-			ssa.expireScheduledSession(ses, now, "missingScheduledStartTime", "MissingScheduledStartTime", "Session expired: WaitingForScheduledTime with no ScheduledStartTime set")
+			ssa.expireScheduledSession(ctx, ses, now, "missingScheduledStartTime", "MissingScheduledStartTime", "Session expired: WaitingForScheduledTime with no ScheduledStartTime set")
 			continue
 		}
 
 		scheduledTime := ses.Spec.ScheduledStartTime.Time
 		if now.Before(scheduledTime) {
-			// Not yet time for this session
+			// Live state moved the scheduled start into the future after the list read.
 			continue
 		}
 		if !ses.Status.ExpiresAt.IsZero() && !now.Before(ses.Status.ExpiresAt.Time) {
@@ -97,7 +131,7 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 				"scheduledStartTime", scheduledTime,
 				"expiresAt", ses.Status.ExpiresAt.Time,
 				"now", now)
-			ssa.expireScheduledSession(ses, now, "scheduledSessionExpiredBeforeActivation", "ScheduledSessionExpiredBeforeActivation", "Session expired before its scheduled activation was processed")
+			ssa.expireScheduledSession(ctx, ses, now, "scheduledSessionExpiredBeforeActivation", "ScheduledSessionExpiredBeforeActivation", "Session expired before its scheduled activation was processed")
 			continue
 		}
 
@@ -122,11 +156,16 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 		})
 
 		// Update session status in cluster
-		if err := ssa.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err != nil {
-			ssa.log.Errorw("failed to activate scheduled session",
-				"session", ses.Name,
-				"namespace", ses.Namespace,
-				"error", err)
+		if err := ssa.updateWaitingScheduledSessionStatus(ctx, ses); err != nil {
+			if apierrors.IsConflict(err) {
+				ssa.log.Infow("skipping scheduled session activation because state changed before update",
+					"session", ses.Name, "namespace", ses.Namespace, "error", err)
+			} else {
+				ssa.log.Errorw("failed to activate scheduled session",
+					"session", ses.Name,
+					"namespace", ses.Namespace,
+					"error", err)
+			}
 			continue
 		}
 
@@ -148,7 +187,58 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 	}
 }
 
-func (ssa *ScheduledSessionActivator) expireScheduledSession(session breakglassv1alpha1.BreakglassSession, now time.Time, reasonEnded, conditionReason, message string) {
+func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
+	ctx context.Context,
+	session breakglassv1alpha1.BreakglassSession,
+) error {
+	key := client.ObjectKeyFromObject(&session)
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := breakglassv1alpha1.BreakglassSession{}
+		if err := ssa.sessionManager.Reader().Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
+			return &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
+		}
+
+		base := current.DeepCopy()
+		applyScheduledSessionStatusTransition(&current, session)
+		patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+		return ssa.sessionManager.Client.Status().Patch(ctx, &current, patch)
+	})
+	if err == nil {
+		return nil
+	}
+	var stateChanged *scheduledSessionStateChangedError
+	if errors.As(err, &stateChanged) {
+		return apierrors.NewConflict(schema.GroupResource{
+			Group:    breakglassv1alpha1.GroupVersion.Group,
+			Resource: "breakglasssessions",
+		}, stateChanged.name, stateChanged)
+	}
+	return err
+}
+
+func applyScheduledSessionStatusTransition(current *breakglassv1alpha1.BreakglassSession, desired breakglassv1alpha1.BreakglassSession) {
+	current.Status.State = desired.Status.State
+	current.Status.ObservedGeneration = current.Generation
+	if !desired.Status.ActualStartTime.IsZero() {
+		current.Status.ActualStartTime = desired.Status.ActualStartTime
+	}
+	if desired.Status.State == breakglassv1alpha1.SessionStateExpired {
+		current.Status.ReasonEnded = desired.Status.ReasonEnded
+		current.Status.ExpiresAt = desired.Status.ExpiresAt
+		current.Status.RetainedUntil = desired.Status.RetainedUntil
+	}
+	for _, condition := range desired.Status.Conditions {
+		switch condition.Type {
+		case "ScheduledStartTimeReached", string(breakglassv1alpha1.SessionConditionTypeExpired):
+			meta.SetStatusCondition(&current.Status.Conditions, condition)
+		}
+	}
+}
+
+func (ssa *ScheduledSessionActivator) expireScheduledSession(ctx context.Context, session breakglassv1alpha1.BreakglassSession, now time.Time, reasonEnded, conditionReason, message string) {
 	session.Status.State = breakglassv1alpha1.SessionStateExpired
 	session.Status.ReasonEnded = reasonEnded
 	if session.Status.ExpiresAt.IsZero() || now.Before(session.Status.ExpiresAt.Time) {
@@ -163,12 +253,46 @@ func (ssa *ScheduledSessionActivator) expireScheduledSession(session breakglassv
 		Reason:             conditionReason,
 		Message:            message,
 	})
-	if err := ssa.sessionManager.UpdateBreakglassSessionStatus(context.Background(), session); err != nil {
-		ssa.log.Errorw("failed to expire scheduled session",
-			"session", session.Name, "namespace", session.Namespace, "reason", reasonEnded, "error", err)
+	if err := ssa.updateWaitingScheduledSessionStatus(ctx, session); err != nil {
+		if apierrors.IsConflict(err) {
+			ssa.log.Infow("skipping scheduled session expiry because state changed before update",
+				"session", session.Name, "namespace", session.Namespace, "reason", reasonEnded, "error", err)
+		} else {
+			ssa.log.Errorw("failed to expire scheduled session",
+				"session", session.Name, "namespace", session.Namespace, "reason", reasonEnded, "error", err)
+		}
 		return
 	}
 	metrics.SessionExpired.WithLabelValues(session.Spec.Cluster).Inc()
+}
+
+func (ssa *ScheduledSessionActivator) currentWaitingScheduledSession(
+	ctx context.Context,
+	listed breakglassv1alpha1.BreakglassSession,
+	operation string,
+) (breakglassv1alpha1.BreakglassSession, bool) {
+	current := breakglassv1alpha1.BreakglassSession{}
+	if err := ssa.sessionManager.Reader().Get(ctx, client.ObjectKey{Name: listed.Name, Namespace: listed.Namespace}, &current); err != nil {
+		if apierrors.IsNotFound(err) {
+			ssa.log.Infow("skipping scheduled session "+operation+" because live session was deleted",
+				"session", listed.Name,
+				"namespace", listed.Namespace)
+		} else {
+			ssa.log.Errorw("skipping scheduled session "+operation+" because live session could not be read",
+				"session", listed.Name,
+				"namespace", listed.Namespace,
+				"error", err)
+		}
+		return listed, false
+	}
+	if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
+		ssa.log.Infow("skipping scheduled session "+operation+" because state changed",
+			"session", current.Name,
+			"namespace", current.Namespace,
+			"state", current.Status.State)
+		return current, false
+	}
+	return current, true
 }
 
 func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(session breakglassv1alpha1.BreakglassSession) {

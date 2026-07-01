@@ -57,6 +57,7 @@ Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**
 - The state field is the only determinant for terminal state detection
 - Automatic expiry routines re-check live state before writing terminal status, so a concurrent withdraw, rejection, drop, or cancellation keeps its original terminal audit reason.
 - Scheduled sessions whose `expiresAt` is already in the past when cleanup reaches their `scheduledStartTime` are marked `Expired` instead of being activated
+- Scheduled activation re-reads the live session before granting access and skips the object if it has already left `WaitingForScheduledTime`.
 
 ### Timestamp Semantics
 
