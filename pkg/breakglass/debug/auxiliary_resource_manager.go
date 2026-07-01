@@ -43,6 +43,7 @@ type AuxiliaryResourceManager struct {
 	log              *zap.SugaredLogger
 	client           client.Client
 	auditManager     *audit.Manager
+	auditProvider    func() *audit.Manager
 	readinessChecker *utils.ReadinessChecker
 }
 
@@ -58,6 +59,19 @@ func NewAuxiliaryResourceManager(log *zap.SugaredLogger, cli client.Client) *Aux
 // SetAuditManager sets the audit manager for emitting audit events.
 func (m *AuxiliaryResourceManager) SetAuditManager(am *audit.Manager) {
 	m.auditManager = am
+	m.auditProvider = nil
+}
+
+// SetAuditManagerProvider sets a reload-aware audit manager provider.
+func (m *AuxiliaryResourceManager) SetAuditManagerProvider(provider func() *audit.Manager) {
+	m.auditProvider = provider
+}
+
+func (m *AuxiliaryResourceManager) currentAuditManager() *audit.Manager {
+	if m.auditProvider != nil {
+		return m.auditProvider()
+	}
+	return m.auditManager
 }
 
 // DeployAuxiliaryResources deploys all enabled auxiliary resources for a session.
@@ -609,8 +623,8 @@ func (m *AuxiliaryResourceManager) deployResource(
 			"namespace", obj.GetNamespace())
 
 		// Emit audit event
-		if m.auditManager != nil {
-			m.auditManager.DebugSessionResourceDeployed(
+		if auditManager := m.currentAuditManager(); auditManager != nil {
+			auditManager.DebugSessionResourceDeployed(
 				ctx,
 				session.Name,
 				session.Namespace,
@@ -719,8 +733,8 @@ func (m *AuxiliaryResourceManager) deleteResource(
 		"namespace", status.Namespace)
 
 	// Emit audit event for resource cleanup
-	if m.auditManager != nil {
-		m.auditManager.DebugSessionResourceCleanup(
+	if auditManager := m.currentAuditManager(); auditManager != nil {
+		auditManager.DebugSessionResourceCleanup(
 			ctx,
 			session.Name,
 			session.Namespace,

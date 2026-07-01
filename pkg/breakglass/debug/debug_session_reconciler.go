@@ -23,7 +23,9 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -61,6 +63,7 @@ type DebugSessionController struct {
 	log          *zap.SugaredLogger
 	client       ctrlclient.Client
 	ccProvider   *cluster.ClientProvider
+	auditService *audit.Service
 	auditManager *audit.Manager
 	mailService  breakglass.MailEnqueuer
 	auxiliaryMgr *AuxiliaryResourceManager
@@ -82,6 +85,19 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 // WithAuditManager sets the audit manager for the controller
 func (c *DebugSessionController) WithAuditManager(am *audit.Manager) *DebugSessionController {
 	c.auditManager = am
+	c.auditService = nil
+	if c.auxiliaryMgr != nil {
+		c.auxiliaryMgr.SetAuditManager(am)
+	}
+	return c
+}
+
+// WithAuditService sets the reloadable audit service for the controller.
+func (c *DebugSessionController) WithAuditService(auditService *audit.Service) *DebugSessionController {
+	c.auditService = auditService
+	if c.auxiliaryMgr != nil {
+		c.auxiliaryMgr.SetAuditManagerProvider(c.currentAuditManager)
+	}
 	return c
 }
 
@@ -92,6 +108,13 @@ func (c *DebugSessionController) WithMailService(mailService breakglass.MailEnqu
 	c.baseURL = baseURL
 	c.disableEmail = disableEmail
 	return c
+}
+
+func (c *DebugSessionController) currentAuditManager() *audit.Manager {
+	if c.auditService != nil {
+		return c.auditService.Manager()
+	}
+	return c.auditManager
 }
 
 // SetupWithManager sets up the controller with the Manager
@@ -263,8 +286,10 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 			"debugSession", ds.Name, "namespace", ds.Namespace,
 			"reason", reason)
 
-		if c.shouldEmitAudit(ds) && c.auditManager != nil {
-			c.auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+			}
 		}
 
 		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
@@ -467,19 +492,21 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	)
 
 	// Emit audit event if audit is enabled for this session
-	if c.shouldEmitAudit(ds) && c.auditManager != nil {
-		c.auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
-			"template":       ds.Spec.TemplateRef,
-			"requested_by":   ds.Spec.RequestedBy,
-			"previous_state": string(ds.Status.State),
-		})
-		// Send to webhook destinations if configured
-		c.sendToWebhookDestinations(ctx, ds, "DebugSessionFailed", map[string]interface{}{
-			"session":   ds.Name,
-			"namespace": ds.Namespace,
-			"cluster":   ds.Spec.Cluster,
-			"reason":    reason,
-		})
+	if c.shouldEmitAudit(ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
+				"template":       ds.Spec.TemplateRef,
+				"requested_by":   ds.Spec.RequestedBy,
+				"previous_state": string(ds.Status.State),
+			})
+			// Send to webhook destinations if configured
+			c.sendToWebhookDestinations(ctx, ds, "DebugSessionFailed", map[string]interface{}{
+				"session":   ds.Name,
+				"namespace": ds.Namespace,
+				"cluster":   ds.Spec.Cluster,
+				"reason":    reason,
+			})
+		}
 	}
 
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
@@ -500,11 +527,27 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 		return
 	}
 
-	recipients := []string{ds.Spec.RequestedBy}
+	requesterEmail := strings.TrimSpace(ds.Spec.RequestedByEmail)
+	if requesterEmail == "" {
+		requesterEmail = strings.TrimSpace(ds.Spec.RequestedBy)
+	}
+	if !isSafeDebugSessionFailureRecipient(requesterEmail) {
+		c.log.Warnw("Skipping debug session failed email - no valid email address", "session", ds.Name)
+		return
+	}
+	recipients := []string{requesterEmail}
+
+	requesterName := ds.Spec.RequestedByDisplayName
+	if requesterName == "" {
+		requesterName = ds.Spec.RequestedBy
+		if strings.EqualFold(requesterName, requesterEmail) {
+			requesterName = ""
+		}
+	}
 
 	params := mail.DebugSessionFailedMailParams{
-		RequesterName:  ds.Spec.RequestedBy,
-		RequesterEmail: ds.Spec.RequestedBy,
+		RequesterName:  requesterName,
+		RequesterEmail: requesterEmail,
 		SessionID:      ds.Name,
 		Cluster:        ds.Spec.Cluster,
 		TemplateName:   ds.Spec.TemplateRef,
@@ -527,6 +570,15 @@ func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *breakglassv1alp
 	} else {
 		c.log.Infow("Debug session failed email queued", "session", ds.Name, "requester", ds.Spec.RequestedBy)
 	}
+}
+
+func isSafeDebugSessionFailureRecipient(recipient string) bool {
+	if recipient == "" || !strings.Contains(recipient, "@") {
+		return false
+	}
+	return strings.IndexFunc(recipient, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r) || strings.ContainsRune(",;<>", r)
+	}) == -1
 }
 
 // shouldEmitAudit checks if audit events should be emitted for this session

@@ -199,14 +199,16 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 			"node", pod.Spec.NodeName,
 		)
 
-		if c.shouldEmitAudit(ds) && c.auditManager != nil {
-			c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, reason, message)
-			c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
-				"pod":       pod.Name,
-				"namespace": pod.Namespace,
-				"reason":    reason,
-				"message":   message,
-			})
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, reason, message)
+				c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
+					"pod":       pod.Name,
+					"namespace": pod.Namespace,
+					"reason":    reason,
+					"message":   message,
+				})
+			}
 		}
 		metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, reason).Inc()
 	}
@@ -231,15 +233,17 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 				"lastTerminationReason", lastTerminationReason,
 			)
 
-			if c.shouldEmitAudit(ds) && c.auditManager != nil {
-				c.auditManager.DebugSessionPodRestarted(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, cs.RestartCount, lastTerminationReason)
-				c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodRestarted", map[string]interface{}{
-					"pod":                   pod.Name,
-					"namespace":             pod.Namespace,
-					"container":             cs.Name,
-					"restartCount":          cs.RestartCount,
-					"lastTerminationReason": lastTerminationReason,
-				})
+			if c.shouldEmitAudit(ds) {
+				if auditManager := c.currentAuditManager(); auditManager != nil {
+					auditManager.DebugSessionPodRestarted(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, cs.RestartCount, lastTerminationReason)
+					c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodRestarted", map[string]interface{}{
+						"pod":                   pod.Name,
+						"namespace":             pod.Namespace,
+						"container":             cs.Name,
+						"restartCount":          cs.RestartCount,
+						"lastTerminationReason": lastTerminationReason,
+					})
+				}
 			}
 			metrics.DebugSessionPodRestarts.WithLabelValues(ds.Spec.Cluster, ds.Name).Inc()
 		}
@@ -263,15 +267,17 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 					"waitingMessage", waitingMessage,
 				)
 
-				if c.shouldEmitAudit(ds) && c.auditManager != nil {
-					c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, waitingReason, waitingMessage)
-					c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
-						"pod":       pod.Name,
-						"namespace": pod.Namespace,
-						"container": cs.Name,
-						"reason":    waitingReason,
-						"message":   waitingMessage,
-					})
+				if c.shouldEmitAudit(ds) {
+					if auditManager := c.currentAuditManager(); auditManager != nil {
+						auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, waitingReason, waitingMessage)
+						c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
+							"pod":       pod.Name,
+							"namespace": pod.Namespace,
+							"container": cs.Name,
+							"reason":    waitingReason,
+							"message":   waitingMessage,
+						})
+					}
 				}
 				metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, waitingReason).Inc()
 			}

@@ -142,6 +142,8 @@ func Setup(
 	ccProvider *cluster.ClientProvider,
 	auditService *audit.Service,
 	mailService *mail.Service,
+	frontendConfig config.Frontend,
+	disableEmail bool,
 	escalationManager *escalation.EscalationManager,
 	enableControllers bool,
 	log *zap.SugaredLogger,
@@ -312,7 +314,9 @@ func Setup(
 
 		// Register DebugSession Reconciler with controller-runtime manager
 		log.Debugw("Setting up DebugSession reconciler")
-		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider)
+		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider).
+			WithAuditService(auditService).
+			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 		}
