@@ -6289,6 +6289,55 @@ func TestDebugSessionAPIController_StatusPatchOptimisticLockRejectsStaleParticip
 	assert.Equal(t, "owner@example.com", updated.Status.Participants[0].User)
 }
 
+func TestDebugSessionAPIController_StatusPatchOptimisticLockUpdatesStatus(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	joinedAt := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "status-lock-session",
+			Namespace:       "default",
+			Generation:      3,
+			ResourceVersion: "1",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "production",
+			TemplateRef: "standard-debug",
+			RequestedBy: "owner@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "owner@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: joinedAt},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	err := ctrl.patchDebugSessionStatusWithOptimisticLock(context.Background(), session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		status.Message = "terminated by owner@example.com"
+	})
+	require.NoError(t, err)
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), client.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &updated)
+	require.NoError(t, err)
+
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updated.Status.State)
+	assert.Equal(t, "terminated by owner@example.com", updated.Status.Message)
+	assert.Equal(t, int64(3), updated.Status.ObservedGeneration)
+	require.Len(t, updated.Status.Participants, 1)
+	assert.Equal(t, "owner@example.com", updated.Status.Participants[0].User)
+}
+
 // TestDebugSessionAPIController_HandleRenewDebugSession tests the handleRenewDebugSession handler
 func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 	scheme := testScheme()
