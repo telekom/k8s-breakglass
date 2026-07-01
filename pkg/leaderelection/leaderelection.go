@@ -123,7 +123,7 @@ func runLoop(ctx context.Context, leaseName, leaseNamespace, hostname string, lo
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-time.After(retryPeriod):
 			log.Infow("Leader election stopped; retrying leadership acquisition",
 				"id", leaseName, "namespace", leaseNamespace, "identity", hostname)
 		}

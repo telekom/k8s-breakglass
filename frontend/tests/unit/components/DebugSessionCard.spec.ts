@@ -35,6 +35,13 @@ function makeSession(name: string, state: DebugSessionSummary["state"] = "Pendin
   };
 }
 
+function expectAccessibleLabel(wrapper: ReturnType<typeof mount>, targetId: string | undefined, text: string) {
+  expect(targetId).toBeTruthy();
+  const label = wrapper.find(`label[for="${targetId}"]`);
+  expect(label.exists()).toBe(true);
+  expect(label.text()).toBe(text);
+}
+
 describe("DebugSessionCard", () => {
   it("uses collision-safe label targets for per-card reject controls", async () => {
     const sessions = [makeSession("team/session-b"), makeSession("team-session-b")];
@@ -69,7 +76,7 @@ describe("DebugSessionCard", () => {
 
     expect(new Set(rejectIds).size).toBe(rejectIds.length);
     for (const input of rejectInputs) {
-      expect(input.attributes("label")).toBe("Rejection Reason");
+      expectAccessibleLabel(wrapper, input.attributes("id"), "Rejection Reason");
     }
   });
 
@@ -107,7 +114,7 @@ describe("DebugSessionCard", () => {
 
     expect(new Set(renewIds).size).toBe(renewIds.length);
     for (const input of renewInputs) {
-      expect(input.attributes("label")).toBe("Extend By");
+      expectAccessibleLabel(wrapper, input.attributes("id"), "Extend By");
     }
   });
 
