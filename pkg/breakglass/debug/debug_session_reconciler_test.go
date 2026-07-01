@@ -4880,7 +4880,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
 	})
 
-	t.Run("returns_kubectl_cleanup_error_with_rest_config_error", func(t *testing.T) {
+	t.Run("empty_kubectl_cleanup_skips_target_cluster_client", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-kubectl-rest-config", "test-template", "test-cluster", "user@example.com")
 		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
@@ -4903,10 +4903,11 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to get client for cluster test-cluster")
-		assert.Contains(t, err.Error(), "failed to get REST config")
-		assert.Contains(t, err.Error(), "no authentication method configured for cluster test-cluster")
+		require.NoError(t, err)
+
+		current := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), current))
+		assert.Nil(t, current.Status.KubectlDebugStatus)
 	})
 
 	t.Run("missing_cluster_config_clears_kubectl_debug_status", func(t *testing.T) {

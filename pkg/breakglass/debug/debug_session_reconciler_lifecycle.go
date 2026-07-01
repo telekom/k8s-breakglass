@@ -368,6 +368,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, err)
 	}
 
+	if len(ds.Status.DeployedResources) == 0 &&
+		len(ds.Status.AuxiliaryResourceStatuses) == 0 &&
+		len(ds.Status.PodTemplateResourceStatuses) == 0 {
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
+		}
+		return errors.Join(cleanupErrors...)
+	}
+
 	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
