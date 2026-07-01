@@ -3,6 +3,7 @@ package debug
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -25,7 +26,7 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 	// Start with template's namespace constraints
 	nc := template.Spec.NamespaceConstraints
 
-	// If binding has namespace constraints, use them to extend/override template's
+	// If binding has namespace constraints, merge them without widening the template.
 	if binding != nil && binding.Spec.NamespaceConstraints != nil {
 		nc = c.mergeNamespaceConstraints(template.Spec.NamespaceConstraints, binding.Spec.NamespaceConstraints)
 		c.log.Debugw("Merged namespace constraints from binding",
@@ -75,11 +76,30 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 	// If user didn't request a specific namespace, use the default
 	if requestedNamespace == "" {
 		if nc.DefaultNamespace != "" {
-			c.log.Debugw("No namespace requested, using template default",
+			if err := validateEffectiveNamespaceConstraintFilters(nc.DefaultNamespace, template, binding); err != nil {
+				c.log.Debugw("Default namespace rejected by namespace constraints",
+					"template", template.Name,
+					"defaultNamespace", nc.DefaultNamespace,
+					"bindingUsed", binding != nil,
+					"error", err,
+				)
+				return "", err
+			}
+			c.log.Debugw("No namespace requested, using effective default namespace",
 				"template", template.Name,
 				"resolvedNamespace", nc.DefaultNamespace,
+				"bindingUsed", binding != nil,
 			)
 			return nc.DefaultNamespace, nil
+		}
+		if err := validateEffectiveNamespaceConstraintFilters("breakglass-debug", template, binding); err != nil {
+			c.log.Debugw("Fallback namespace rejected by namespace constraints",
+				"template", template.Name,
+				"fallbackNamespace", "breakglass-debug",
+				"bindingUsed", binding != nil,
+				"error", err,
+			)
+			return "", err
 		}
 		c.log.Debugw("No namespace requested and no template default, using fallback",
 			"template", template.Name,
@@ -91,6 +111,15 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 	// If the requested namespace matches the default, allow it even when user namespace selection is disabled.
 	// This handles the case where the frontend sends the default namespace value in the request.
 	if nc.DefaultNamespace != "" && requestedNamespace == nc.DefaultNamespace {
+		if err := validateEffectiveNamespaceConstraintFilters(nc.DefaultNamespace, template, binding); err != nil {
+			c.log.Debugw("Requested default namespace rejected by namespace constraints",
+				"template", template.Name,
+				"defaultNamespace", nc.DefaultNamespace,
+				"bindingUsed", binding != nil,
+				"error", err,
+			)
+			return "", err
+		}
 		c.log.Debugw("Requested namespace matches default, allowing",
 			"template", template.Name,
 			"requestedNamespace", requestedNamespace,
@@ -109,35 +138,20 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 		return "", fmt.Errorf("template does not allow user-specified namespaces")
 	}
 
-	// Validate against allowed namespaces
-	if nc.AllowedNamespaces != nil && !nc.AllowedNamespaces.IsEmpty() {
-		if !matchNamespaceFilter(requestedNamespace, nc.AllowedNamespaces) {
-			c.log.Debugw("Namespace not in allowed list",
-				"template", template.Name,
-				"requestedNamespace", requestedNamespace,
-				"allowedPatterns", nc.AllowedNamespaces.Patterns,
-			)
-			return "", fmt.Errorf("namespace '%s' is not in the allowed namespaces", requestedNamespace)
-		}
-	}
-
-	// Validate against denied namespaces
-	if nc.DeniedNamespaces != nil && !nc.DeniedNamespaces.IsEmpty() {
-		if matchNamespaceFilter(requestedNamespace, nc.DeniedNamespaces) {
-			c.log.Debugw("Namespace is in denied list",
-				"template", template.Name,
-				"requestedNamespace", requestedNamespace,
-				"deniedPatterns", nc.DeniedNamespaces.Patterns,
-			)
-			return "", fmt.Errorf("namespace '%s' is explicitly denied", requestedNamespace)
-		}
+	if err := validateEffectiveNamespaceConstraintFilters(requestedNamespace, template, binding); err != nil {
+		c.log.Debugw("Namespace rejected by effective namespace constraints",
+			"template", template.Name,
+			"requestedNamespace", requestedNamespace,
+			"error", err,
+		)
+		return "", err
 	}
 
 	return requestedNamespace, nil
 }
 
 // mergeNamespaceConstraints merges template and binding namespace constraints.
-// Binding constraints can extend what template allows (e.g., enable user namespaces).
+// Binding constraints can only narrow what the template allows.
 // Returns a new NamespaceConstraints with merged values.
 func (c *DebugSessionAPIController) mergeNamespaceConstraints(
 	templateNC, bindingNC *breakglassv1alpha1.NamespaceConstraints,
@@ -155,65 +169,177 @@ func (c *DebugSessionAPIController) mergeNamespaceConstraints(
 		return templateNC.DeepCopy()
 	}
 
-	// Merge both - binding extends template
+	// Merge both - binding narrows template permissions.
 	merged := templateNC.DeepCopy()
 
-	// AllowUserNamespace: binding can enable it even if template disables
-	if bindingNC.AllowUserNamespace {
-		merged.AllowUserNamespace = true
-	}
+	// AllowUserNamespace: binding cannot enable user-selected namespaces when
+	// the template disabled them. A false binding value is ambiguous because it
+	// is also the zero value, so it is not treated as an override here.
+	merged.AllowUserNamespace = templateNC.AllowUserNamespace
 
-	// DefaultNamespace: binding can override template's default
-	if bindingNC.DefaultNamespace != "" {
+	// DefaultNamespace: binding can change the default only to a namespace that
+	// remains allowed by both template and binding filters.
+	if bindingNC.DefaultNamespace != "" &&
+		namespaceAllowedByConstraintFilters(bindingNC.DefaultNamespace, templateNC) &&
+		namespaceAllowedByConstraintFilters(bindingNC.DefaultNamespace, bindingNC) {
 		merged.DefaultNamespace = bindingNC.DefaultNamespace
 	}
 
-	// AllowedNamespaces: binding can add to allowed list
+	// AllowedNamespaces: binding filters are the option-specific boundary shown
+	// to clients. Runtime validation still evaluates both template and binding
+	// filters separately, so bindings cannot widen the template boundary.
+	if merged.AllowedNamespaces == nil || merged.AllowedNamespaces.IsEmpty() {
+		merged.AllowedNamespaces = nil
+	}
 	if bindingNC.AllowedNamespaces != nil && !bindingNC.AllowedNamespaces.IsEmpty() {
-		if merged.AllowedNamespaces == nil {
-			merged.AllowedNamespaces = bindingNC.AllowedNamespaces.DeepCopy()
-		} else {
-			// Merge patterns (union)
-			patternSet := make(map[string]bool)
-			for _, p := range merged.AllowedNamespaces.Patterns {
-				patternSet[p] = true
-			}
-			for _, p := range bindingNC.AllowedNamespaces.Patterns {
-				if !patternSet[p] {
-					merged.AllowedNamespaces.Patterns = append(merged.AllowedNamespaces.Patterns, p)
-				}
-			}
-		}
+		merged.AllowedNamespaces = bindingNC.AllowedNamespaces.DeepCopy()
 	}
 
-	// DeniedNamespaces: use the binding's denied list as an override (more permissive for the user).
-	// The binding's denied namespaces replace the template's entirely.
+	// DeniedNamespaces: binding can add denies, never remove template denies.
 	if bindingNC.DeniedNamespaces != nil && !bindingNC.DeniedNamespaces.IsEmpty() {
-		merged.DeniedNamespaces = bindingNC.DeniedNamespaces.DeepCopy()
+		merged.DeniedNamespaces = mergeNamespaceFilters(merged.DeniedNamespaces, bindingNC.DeniedNamespaces)
 	}
 
 	return merged
 }
 
-// matchNamespaceFilter checks if a namespace matches a NamespaceFilter.
-// Only evaluates patterns; label selector matching requires runtime access to namespaces.
+func mergeAllowedNamespaceFiltersForResponse(
+	templateFilter, bindingFilter *breakglassv1alpha1.NamespaceFilter,
+) *breakglassv1alpha1.NamespaceFilter {
+	if templateFilter == nil || templateFilter.IsEmpty() {
+		if bindingFilter == nil || bindingFilter.IsEmpty() {
+			return nil
+		}
+		return bindingFilter.DeepCopy()
+	}
+	if bindingFilter == nil || bindingFilter.IsEmpty() {
+		return templateFilter.DeepCopy()
+	}
+
+	merged := &breakglassv1alpha1.NamespaceFilter{}
+	for _, pattern := range bindingFilter.Patterns {
+		if namespacePatternSubsetOfAny(pattern, templateFilter.Patterns) {
+			merged.Patterns = append(merged.Patterns, pattern)
+		}
+	}
+	if merged.IsEmpty() {
+		return nil
+	}
+	return merged
+}
+
+func namespacePatternSubsetOfAny(pattern string, allowedPatterns []string) bool {
+	for _, allowed := range allowedPatterns {
+		if namespacePatternSubsetOf(pattern, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func namespacePatternSubsetOf(pattern, allowedPattern string) bool {
+	if allowedPattern == "*" || pattern == allowedPattern {
+		return true
+	}
+	if !namespacePatternHasGlob(pattern) {
+		return matchPattern(allowedPattern, pattern)
+	}
+	allowedPrefix, allowedOK := namespaceTrailingStarPrefix(allowedPattern)
+	patternPrefix, patternOK := namespaceTrailingStarPrefix(pattern)
+	return allowedOK && patternOK && strings.HasPrefix(patternPrefix, allowedPrefix)
+}
+
+func namespacePatternHasGlob(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?[")
+}
+
+func namespaceTrailingStarPrefix(pattern string) (string, bool) {
+	if strings.Count(pattern, "*") != 1 || !strings.HasSuffix(pattern, "*") {
+		return "", false
+	}
+	prefix := strings.TrimSuffix(pattern, "*")
+	if strings.ContainsAny(prefix, "?[") {
+		return "", false
+	}
+	return prefix, true
+}
+
+func namespaceAllowedByConstraintFilters(namespace string, constraints *breakglassv1alpha1.NamespaceConstraints) bool {
+	return validateNamespaceConstraintFilters(namespace, constraints) == nil
+}
+
+func validateEffectiveNamespaceConstraintFilters(
+	namespace string,
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+) error {
+	if template != nil {
+		if err := validateNamespaceConstraintFilters(namespace, template.Spec.NamespaceConstraints); err != nil {
+			return err
+		}
+	}
+	if binding != nil {
+		if err := validateNamespaceConstraintFilters(namespace, binding.Spec.NamespaceConstraints); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateNamespaceConstraintFilters(namespace string, constraints *breakglassv1alpha1.NamespaceConstraints) error {
+	if constraints == nil {
+		return nil
+	}
+	if constraints.AllowedNamespaces != nil && !constraints.AllowedNamespaces.IsEmpty() &&
+		!matchNamespaceFilter(namespace, constraints.AllowedNamespaces) {
+		return fmt.Errorf("namespace '%s' is not in the allowed namespaces", namespace)
+	}
+	if constraints.DeniedNamespaces != nil && !constraints.DeniedNamespaces.IsEmpty() &&
+		matchNamespaceFilter(namespace, constraints.DeniedNamespaces) {
+		return fmt.Errorf("namespace '%s' is explicitly denied", namespace)
+	}
+	return nil
+}
+
+func mergeNamespaceFilters(
+	base, extra *breakglassv1alpha1.NamespaceFilter,
+) *breakglassv1alpha1.NamespaceFilter {
+	if base == nil || base.IsEmpty() {
+		if extra == nil {
+			return nil
+		}
+		return extra.DeepCopy()
+	}
+	if extra == nil || extra.IsEmpty() {
+		return base.DeepCopy()
+	}
+
+	merged := base.DeepCopy()
+	patternSet := make(map[string]bool, len(merged.Patterns))
+	for _, pattern := range merged.Patterns {
+		patternSet[pattern] = true
+	}
+	for _, pattern := range extra.Patterns {
+		if !patternSet[pattern] {
+			merged.Patterns = append(merged.Patterns, pattern)
+		}
+	}
+	merged.SelectorTerms = append(merged.SelectorTerms, extra.SelectorTerms...)
+	return merged
+}
+
+// matchNamespaceFilter checks if a namespace name matches a NamespaceFilter.
+// Selector terms require namespace labels and are ignored by this name-only
+// validation path.
 func matchNamespaceFilter(namespace string, filter *breakglassv1alpha1.NamespaceFilter) bool {
 	if filter == nil || filter.IsEmpty() {
 		return false
 	}
 
-	// Check patterns
 	for _, pattern := range filter.Patterns {
 		if matchPattern(pattern, namespace) {
 			return true
 		}
-	}
-
-	// Note: SelectorTerms require runtime namespace label access
-	// For now, if only selector terms are specified, we allow it
-	// (actual validation happens at deployment time)
-	if len(filter.Patterns) == 0 && filter.HasSelectorTerms() {
-		return true // Defer to runtime validation
 	}
 
 	return false

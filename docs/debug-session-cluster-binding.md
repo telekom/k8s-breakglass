@@ -825,13 +825,13 @@ Understanding the difference between cluster name matching and `ClusterConfig` l
 
 ### Configuration Merge Rules
 
-When a binding is found (explicit or auto-discovered), its configuration is merged with the template's configuration. The merge follows a **binding-extends-template** pattern:
+When a binding is found (explicit or auto-discovered), its configuration is merged with the template's configuration. Most binding fields specialize the template for a cluster or team; namespace constraints are combined restrictively so bindings cannot widen template namespace boundaries.
 
 | Configuration Area | Merge Behavior |
 |-------------------|----------------|
 | **constraints** | Field-level merge: binding fields override template fields |
 | **schedulingConstraints** | Full replacement: binding takes precedence |
-| **namespaceConstraints** | Field-level merge with extension: see details below |
+| **namespaceConstraints** | Restrictive merge: bindings can narrow, but not widen, template namespace boundaries |
 | **schedulingOptions** | Full replacement: binding takes precedence |
 | **impersonation** | Full replacement: binding takes precedence |
 | **approvers** | Full replacement: binding takes precedence |
@@ -890,16 +890,16 @@ schedulingConstraints:
     node-type: team-a
 ```
 
-#### Namespace Constraints Merge (Field-Level with Extension)
+#### Namespace Constraints Merge (Restrictive)
 
-Namespace constraints use **field-level merging** where the binding can **extend** template permissions. This allows bindings to grant additional access beyond what the template allows:
+Namespace constraints are enforced as a restrictive combination of the template and binding. Bindings can narrow where a debug session runs, but they cannot grant namespace access that the template does not already allow:
 
 | Field | Merge Behavior |
 |-------|----------------|
-| `allowUserNamespace` | Binding `true` overrides template `false` (extension) |
-| `defaultNamespace` | Binding value overrides template value |
-| `allowedNamespaces.patterns` | Combined (union) from both template and binding |
-| `deniedNamespaces.patterns` | Binding replaces template (binding can be more permissive) |
+| `allowUserNamespace` | Binding cannot enable user-selected namespaces when the template disables them |
+| `defaultNamespace` | Binding value is used only when it remains allowed by both template and binding filters |
+| `allowedNamespaces.patterns` | Requested namespaces must match the template boundary and any binding filter |
+| `deniedNamespaces.patterns` | Template denies are preserved; binding denies are added |
 
 ```yaml
 # Template: restrictive base
@@ -910,27 +910,27 @@ spec:
     allowedNamespaces:
       patterns: ["debug-*"]          # Only debug-* namespaces allowed
 
-# Binding: extends template permissions
+# Binding: narrows template permissions
 spec:
   namespaceConstraints:
-    allowUserNamespace: true         # Enable user-specified namespaces
+    allowUserNamespace: true         # Cannot override a template false value
     allowedNamespaces:
-      patterns: ["breakglass-*"]     # Add breakglass-* to allowed patterns
+      patterns: ["debug-team-a-*"]   # Further restrict debug-* namespaces
 
-# Effective result (merged)
+# Effective result
 namespaceConstraints:
-  allowUserNamespace: true           # From binding (extends access)
+  allowUserNamespace: false          # Template boundary is preserved
   defaultNamespace: "debug"          # From template (not overridden by binding)
   allowedNamespaces:
-    patterns:
-      - "debug-*"                    # From template
-      - "breakglass-*"               # From binding (combined)
+    patterns: ["debug-*"]            # Template boundary; binding filter is checked too
 ```
 
 **Important:** This merge behavior is designed for **least-privilege delegation**:
 - Templates define base security policies (e.g., `allowUserNamespace: false`)
-- Bindings can selectively grant more access per-cluster or per-team
-- Bindings cannot make templates *more* restrictive than defined
+- Bindings can selectively narrow access per-cluster or per-team
+- Bindings cannot make templates more permissive than defined
+
+`allowUserNamespace` is a v1alpha1 boolean field, so a binding cannot distinguish an omitted value from an explicit `false`. Bindings therefore cannot disable user-selected namespaces when the template already enables them. To narrow that path, restrict the effective namespace set with `allowedNamespaces` / `deniedNamespaces`, or use a template with `allowUserNamespace: false`.
 
 **Example: Production vs. Development Access**
 
@@ -943,7 +943,7 @@ spec:
       patterns: ["breakglass-debug"]
 
 ---
-# Binding for development clusters: more permissive
+# Binding for development clusters: narrower namespace scope
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:
@@ -956,11 +956,11 @@ spec:
     matchLabels:
       breakglass.t-caas.telekom.com/persona: developer
   namespaceConstraints:
-    allowUserNamespace: true
+    allowUserNamespace: true         # Does not override the template false value
     allowedNamespaces:
       patterns: ["debug-*", "test-*"]
-  # Result: dev clusters allow user-specified namespaces matching
-  # debug-*, test-*, or breakglass-debug
+  # Result: user-specified namespaces remain disabled because the template disables them.
+  # If the template allowed user namespaces, requests would need to match both filters.
 
 ---
 # Binding for production clusters: uses template restrictions
