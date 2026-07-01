@@ -13,8 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DebugSession reconciler audit and failure mail wiring**: Lifecycle audit events and requester failure emails now use the configured audit and mail services, while invalid failure-mail recipients are rejected before enqueueing.
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
 - **Frontend modal dismissal**: Approval, review, and withdraw modals now keep destructive actions mounted while requests are in flight, and support Escape or modal-close dismissal only when closing is safe.
-### Fixed
-
+- **Frontend: review owner actions**: Session review cards now match owners from profile email and preferred username claims so owners see the correct Drop/Cancel actions. (#859)
 - Prevent unbound growth of BreakglassSession status conditions by deduplicating updates.
 
 - Fixed single resource table formatting in `bgctl` commands.
