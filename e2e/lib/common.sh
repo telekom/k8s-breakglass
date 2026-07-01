@@ -48,6 +48,7 @@ DOCKER=${DOCKER:-docker}
 OPENSSL=${OPENSSL:-openssl}
 TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:e2e}
 TMUX_DEBUG_IMAGE_DIR=${TMUX_DEBUG_IMAGE_DIR:-${E2E_DIR:-}/images/tmux-debug}
+BUSYBOX_IMAGE=${BUSYBOX_IMAGE:-busybox:latest}
 
 # Check if required tools are available
 check_required_tools() {
@@ -228,6 +229,23 @@ ensure_tmux_debug_image() {
   $DOCKER build -t "$image" -f "$TMUX_DEBUG_IMAGE_DIR/Dockerfile" "$TMUX_DEBUG_IMAGE_DIR"
 }
 
+# Ensure the E2E busybox tag exists locally without depending on Docker Hub.
+# CI creates many pods whose specs intentionally reference busybox:latest; tagging
+# the local tmux image keeps those specs stable and avoids flaky setup-time pulls.
+ensure_busybox_image() {
+  local image="$BUSYBOX_IMAGE"
+  if $DOCKER image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$image" = "busybox:latest" ]; then
+    ensure_tmux_debug_image
+    log "Tagging $TMUX_DEBUG_IMAGE as $image for local E2E use"
+    $DOCKER tag "$TMUX_DEBUG_IMAGE" "$image"
+    return 0
+  fi
+  ensure_image_exists "$image"
+}
+
 # Load image into Kind cluster
 # Uses docker save + kind load image-archive to avoid "failed to detect containerd snapshotter" issues
 e2e_load_image_into_kind() {
@@ -283,6 +301,8 @@ e2e_load_standard_images() {
   e2e_load_image_into_kind "$cluster_name" "python:3.11-slim"
   ensure_tmux_debug_image
   e2e_load_image_into_kind "$cluster_name" "$TMUX_DEBUG_IMAGE"
+  ensure_busybox_image
+  e2e_load_image_into_kind "$cluster_name" "$BUSYBOX_IMAGE"
   
   log "Standard images loaded into cluster $cluster_name"
 }
