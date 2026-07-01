@@ -474,9 +474,11 @@ allowedIdentityProvidersForApprovers:
 - While approver group membership status is not populated yet, approval falls
   back to target-cluster group lookup for the missing groups. If that lookup
   cannot expose identity-provider groups and returns no groups or only
-  Kubernetes `system:*` groups, the authenticated request-token groups are used. Once
-  `status.approverGroupMembers` contains an approver group entry, that resolved
-  member list is authoritative for that group.
+  Kubernetes `system:*` groups, the authenticated request-token groups are used.
+  Once `status.approverGroupMembers` contains an approver group entry, that
+  resolved member list is authoritative for that group.
+- Approval endpoints deny requests when an approver allowlist is configured but
+  the authenticated caller's IDP is missing or not listed.
 
 #### Example: Restrict to Corporate OIDC only
 

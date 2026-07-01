@@ -67,6 +67,8 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 				apiresponses.RespondForbidden(c, authResult.Message)
 			case ApprovalDenialDomainNotAllowed:
 				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialIdentityProviderNotAllowed:
+				apiresponses.RespondForbidden(c, authResult.Message)
 			case ApprovalDenialNotAnApprover:
 				apiresponses.RespondForbidden(c, authResult.Message)
 			case ApprovalDenialNoMatchingEscalation:

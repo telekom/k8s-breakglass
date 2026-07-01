@@ -45,6 +45,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
 	requestContextGroups := approverGroupsFromRequestContext(c)
+	approverIdentityProvider := c.GetString("identity_provider_name")
 
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
@@ -113,9 +114,14 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	}
 
 	// Track the most specific denial reason encountered during evaluation.
-	// Priority: SelfApprovalBlocked > DomainNotAllowed > NotAnApprover > NoMatchingEscalation
+	// Priority: SelfApprovalBlocked > DomainNotAllowed > IdentityProviderNotAllowed
+	// until a matching escalation allows the approver identity provider. If that
+	// escalation still does not list the caller as an approver, NotAnApprover
+	// replaces IdentityProviderNotAllowed. NoMatchingEscalation is returned only
+	// when no escalation matches the session's granted group.
 	var mostSpecificDenial ApprovalCheckResult
 	foundMatchingEscalation := false
+	foundMatchingEscalationWithAllowedApproverIDP := false
 
 	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGroup", system.RedactGroupName(session.Spec.GrantedGroup), "candidateEscalationCount", len(escalations), "approverEmail", email)
 	for _, esc := range escalations {
@@ -174,6 +180,25 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			}
 		}
 
+		if !isApproverIdentityProviderAllowed(approverIdentityProvider, esc.Spec.AllowedIdentityProvidersForApprovers) {
+			reqLog.Warnw("Approver authenticated with disallowed identity provider",
+				"escalation", esc.Name,
+				"approver", email,
+				"identityProvider", approverIdentityProvider,
+				"allowedIdentityProviderCount", len(esc.Spec.AllowedIdentityProvidersForApprovers))
+			if !foundMatchingEscalationWithAllowedApproverIDP &&
+				mostSpecificDenial.Reason != ApprovalDenialSelfApprovalBlocked &&
+				mostSpecificDenial.Reason != ApprovalDenialDomainNotAllowed {
+				mostSpecificDenial = ApprovalCheckResult{
+					Allowed: false,
+					Reason:  ApprovalDenialIdentityProviderNotAllowed,
+					Message: "Your identity provider is not allowed to approve this escalation",
+				}
+			}
+			continue
+		}
+		foundMatchingEscalationWithAllowedApproverIDP = true
+
 		// Direct user approver check
 		if slices.Contains(esc.Spec.Approvers.Users, email) {
 			reqLog.Debugw("User is session approver (direct user)", "session", session.Name, "escalation", esc.Name, "user", email)
@@ -230,7 +255,8 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				"session", session.Name, "escalation", esc.Name, "user", email, "userGroupCount", len(approverGroups), "approverUserCount", len(esc.Spec.Approvers.Users), "approverGroupCount", len(esc.Spec.Approvers.Groups))
 		}
 		// Track not-an-approver as lowest priority denial
-		if mostSpecificDenial.Reason == ApprovalDenialNone {
+		if mostSpecificDenial.Reason == ApprovalDenialNone ||
+			mostSpecificDenial.Reason == ApprovalDenialIdentityProviderNotAllowed {
 			mostSpecificDenial = ApprovalCheckResult{
 				Allowed: false,
 				Reason:  ApprovalDenialNotAnApprover,
@@ -308,6 +334,16 @@ func shouldUseRequestContextApproverGroups(targetClusterGroups, requestContextGr
 		}
 	}
 	return true
+}
+
+func isApproverIdentityProviderAllowed(identityProvider string, allowedIdentityProviders []string) bool {
+	if len(allowedIdentityProviders) == 0 {
+		return true
+	}
+	if identityProvider == "" {
+		return false
+	}
+	return slices.Contains(allowedIdentityProviders, identityProvider)
 }
 
 // isSessionApprover returns true if the current user is authorized to approve/reject the session.

@@ -72,6 +72,8 @@ const (
 	ApprovalDenialSelfApprovalBlocked ApprovalDenialReason = "SELF_APPROVAL_BLOCKED"
 	// ApprovalDenialDomainNotAllowed indicates the approver's email domain is not in the allowed list.
 	ApprovalDenialDomainNotAllowed ApprovalDenialReason = "DOMAIN_NOT_ALLOWED"
+	// ApprovalDenialIdentityProviderNotAllowed indicates the approver authenticated through a disallowed IdentityProvider.
+	ApprovalDenialIdentityProviderNotAllowed ApprovalDenialReason = "IDP_NOT_ALLOWED"
 	// ApprovalDenialNotAnApprover indicates the user is not in any approver group/list for matching escalations.
 	ApprovalDenialNotAnApprover ApprovalDenialReason = "NOT_AN_APPROVER"
 	// ApprovalDenialNoMatchingEscalation indicates no escalation was found for the session's granted group.
