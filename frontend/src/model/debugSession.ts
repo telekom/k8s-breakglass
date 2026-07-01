@@ -175,7 +175,6 @@ export interface DebugSession {
     requestedDuration?: string;
     reason?: string;
     nodeSelector?: Record<string, string>;
-    scheduledStartTime?: string;
   };
   status?: {
     state: DebugSessionState;

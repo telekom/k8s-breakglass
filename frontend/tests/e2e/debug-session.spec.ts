@@ -303,8 +303,8 @@ test.describe.serial("Debug Session Creation", () => {
     // Debug session scheduling options control pod placement, not delayed activation.
     const scheduleCheckbox = page.locator('[data-testid="schedule-checkbox"]');
     const scheduleTimeInput = page.locator('[data-testid="schedule-time-input"]');
-    await expect(scheduleCheckbox).not.toBeVisible();
-    await expect(scheduleTimeInput).not.toBeVisible();
+    await expect(scheduleCheckbox).toHaveCount(0);
+    await expect(scheduleTimeInput).toHaveCount(0);
   });
 
   test("template selection shows template info", async ({ page }) => {
