@@ -1098,7 +1098,10 @@ configured `minLength` after sanitization.
 GET /api/debugSessions/templates
 ```
 
-Returns templates the current user has access to (based on group membership).
+Returns templates the current requester can use directly through
+`DebugSessionTemplate.spec.allowed` or indirectly through at least one active
+matching `DebugSessionClusterBinding`. User, email, group, and binding-granted
+access are all considered before a template is included in the response.
 
 **Query Parameters:**
 - `includeHidden` (optional, boolean): When `true`, includes templates marked `hidden`.
