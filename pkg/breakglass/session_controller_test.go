@@ -10131,7 +10131,7 @@ func TestTokenValidation_ExistingSessionAllowsHistoricalApprover(t *testing.T) {
 	assert.False(t, body.CanApprove)
 }
 
-func TestTokenValidation_NonTerminalValidityStates(t *testing.T) {
+func TestTokenValidation_StateAndExpiryValidity(t *testing.T) {
 	now := time.Now()
 	future := metav1.NewTime(now.Add(time.Hour))
 	past := metav1.NewTime(now.Add(-time.Hour))
