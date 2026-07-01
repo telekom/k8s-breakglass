@@ -4954,7 +4954,7 @@ func TestClusterConfig_BlockSelfApproval_CrossNamespacePreventsSelfApproval(t *t
 	}
 
 	pending := &breakglassv1alpha1.BreakglassSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-self-approve"},
+		ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-self-approve", Namespace: "tenant-a"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "platform-cluster",
 			User:         "self@example.com",
@@ -5020,7 +5020,7 @@ func TestClusterConfig_AllowedApproverDomains_CrossNamespaceRestrictsDomain(t *t
 	}
 
 	pending := &breakglassv1alpha1.BreakglassSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-domain-approve"},
+		ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-domain-approve", Namespace: "tenant-a"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "domain-cluster",
 			User:         "requester@example.com",
@@ -5086,7 +5086,7 @@ func TestClusterConfig_DuplicateNameFailsClosedForApprovalPolicy(t *testing.T) {
 	}
 
 	pending := &breakglassv1alpha1.BreakglassSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "duplicate-clusterconfig-session"},
+		ObjectMeta: metav1.ObjectMeta{Name: "duplicate-clusterconfig-session", Namespace: "tenant-a"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "duplicate-cluster",
 			User:         "requester@example.com",
@@ -5150,7 +5150,7 @@ func TestClusterConfig_DuplicateNameFailsClosedForApprovalPolicy(t *testing.T) {
 
 func TestClusterConfigLookupErrorUsesLookupFailedApprovalPolicyMessage(t *testing.T) {
 	pending := &breakglassv1alpha1.BreakglassSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "lookup-error-session"},
+		ObjectMeta: metav1.ObjectMeta{Name: "lookup-error-session", Namespace: "tenant-a"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:      "lookup-error-cluster",
 			User:         "requester@example.com",

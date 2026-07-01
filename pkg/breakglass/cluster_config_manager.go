@@ -73,7 +73,7 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 		}
 		switch len(matching) {
 		case 0:
-			// continue to fallback for legacy behavior
+			return nil, apierrors.NewNotFound(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "clusterconfigs"}, name)
 		case 1:
 			return matching[0], nil
 		default:
