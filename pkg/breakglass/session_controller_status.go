@@ -44,9 +44,11 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// responses so unauthorized callers cannot learn session details from
 	// terminal-state or malformed-body errors.
 	allowOwnerReject := false
+	authenticatedActor := ""
 	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
-		if requesterEmail, err := wc.identityProvider.GetEmail(c); err == nil {
-			if requesterEmail == bs.Spec.User && IsSessionPendingApproval(bs) {
+		if actor, authIdentifiers, err := wc.authenticatedUserIdentifiers(c); err == nil {
+			authenticatedActor = actor
+			if matchesAuthIdentifier(bs.Spec.User, authIdentifiers) && IsSessionPendingApproval(bs) {
 				allowOwnerReject = true
 			}
 		}
@@ -219,10 +221,11 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		}
 		// record approver
 		approverEmail, _ := wc.identityProvider.GetEmail(c)
-		if approverEmail != "" {
-			bs.Status.Approver = approverEmail
+		approver := firstNonEmpty(approverEmail, authenticatedActor)
+		if approver != "" {
+			bs.Status.Approver = approver
 			// append to approvers history if not already present
-			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approverEmail)
+			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approver)
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -240,10 +243,10 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
 
 		// record approver (rejector)
-		rejectorEmail, _ := wc.identityProvider.GetEmail(c)
-		if rejectorEmail != "" {
-			bs.Status.Approver = rejectorEmail
-			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, rejectorEmail)
+		rejector := authenticatedActor
+		if rejector != "" {
+			bs.Status.Approver = rejector
+			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, rejector)
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -259,7 +262,8 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		return
 	}
 
-	username, _ := wc.identityProvider.GetEmail(c)
+	username := c.GetString("email")
+	username = firstNonEmpty(username, authenticatedActor)
 	bs.SetCondition(metav1.Condition{
 		Type:               string(sesCondition),
 		Status:             metav1.ConditionTrue,
@@ -283,10 +287,11 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// Get approver identity for audit events
 	approver := wc.identityProvider.GetUsername(c)
 	if approver == "" {
-		if email, err := wc.identityProvider.GetEmail(c); err == nil {
+		if email := c.GetString("email"); email != "" {
 			approver = email
 		}
 	}
+	approver = firstNonEmpty(approver, authenticatedActor)
 
 	// Track metrics for session lifecycle events
 	switch sesCondition {
