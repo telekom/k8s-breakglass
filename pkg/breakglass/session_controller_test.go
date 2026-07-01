@@ -1957,6 +1957,14 @@ func TestFilterBreakglassSessionsMineUsesAlternateIdentifiersWhenEmailMissing(t 
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	identityProvider := &trackingIdentityProvider{
+		username: "bob",
+		identity: "subject-123",
+		userIdentifierErr: map[breakglassv1alpha1.UserIdentifierClaimType]error{
+			breakglassv1alpha1.UserIdentifierClaimEmail: fmt.Errorf("email claim not found in token"),
+		},
+	}
+	ctrl.identityProvider = identityProvider
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1975,6 +1983,62 @@ func TestFilterBreakglassSessionsMineUsesAlternateIdentifiersWhenEmailMissing(t 
 		got = append(got, session.Name)
 	}
 	assert.ElementsMatch(t, []string{"username-owned-session", "subject-owned-session"}, got)
+	assert.Zero(t, identityProvider.getEmailCalls)
+	assert.Equal(t, 1, identityProvider.userIdentifierCalls[breakglassv1alpha1.UserIdentifierClaimEmail])
+}
+
+type trackingIdentityProvider struct {
+	email               string
+	username            string
+	identity            string
+	getEmailCalls       int
+	userIdentifierCalls map[breakglassv1alpha1.UserIdentifierClaimType]int
+	userIdentifierErr   map[breakglassv1alpha1.UserIdentifierClaimType]error
+}
+
+func (p *trackingIdentityProvider) GetEmail(_ *gin.Context) (string, error) {
+	p.getEmailCalls++
+	if p.email == "" {
+		return "", fmt.Errorf("email claim not found in token")
+	}
+	return p.email, nil
+}
+
+func (p *trackingIdentityProvider) GetUsername(_ *gin.Context) string {
+	return p.username
+}
+
+func (p *trackingIdentityProvider) GetIdentity(_ *gin.Context) string {
+	return p.identity
+}
+
+func (p *trackingIdentityProvider) GetUserIdentifier(_ *gin.Context, claimType breakglassv1alpha1.UserIdentifierClaimType) (string, error) {
+	if p.userIdentifierCalls == nil {
+		p.userIdentifierCalls = map[breakglassv1alpha1.UserIdentifierClaimType]int{}
+	}
+	p.userIdentifierCalls[claimType]++
+	if err := p.userIdentifierErr[claimType]; err != nil {
+		return "", err
+	}
+	switch claimType {
+	case breakglassv1alpha1.UserIdentifierClaimEmail:
+		if p.email == "" {
+			return "", fmt.Errorf("email claim not found in token")
+		}
+		return p.email, nil
+	case breakglassv1alpha1.UserIdentifierClaimPreferredUsername:
+		if p.username == "" {
+			return "", fmt.Errorf("preferred_username claim not found in token")
+		}
+		return p.username, nil
+	case breakglassv1alpha1.UserIdentifierClaimSub:
+		if p.identity == "" {
+			return "", fmt.Errorf("sub claim not found in token")
+		}
+		return p.identity, nil
+	default:
+		return "", fmt.Errorf("unsupported user identifier claim type: %s", claimType)
+	}
 }
 
 func TestFilterBreakglassSessionsApprovedByMeRequiresEmailClaim(t *testing.T) {

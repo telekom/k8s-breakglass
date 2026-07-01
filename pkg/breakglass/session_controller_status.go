@@ -719,7 +719,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	var userEmail string
 	var emailErr error
 	if includeMine || includeApprovedByMe {
-		userEmail, emailErr = wc.identityProvider.GetEmail(c)
+		userEmail, emailErr = wc.identityProvider.GetUserIdentifier(c, breakglassv1alpha1.UserIdentifierClaimEmail)
 		if includeApprovedByMe && emailErr != nil {
 			reqLog.Warnw("Email claim required for approvedByMe session filter", "error", emailErr)
 			apiresponses.RespondUnauthorizedWithMessage(c, "email claim is required for approvedByMe filter")
