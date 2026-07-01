@@ -491,6 +491,19 @@ func IsSessionAccessActive(session breakglassv1alpha1.BreakglassSession) bool {
 	return IsSessionValid(session)
 }
 
+func isSessionTokenValid(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Status.State == "" {
+		return false
+	}
+	if IsSessionTerminalState(session.Status.State) {
+		return false
+	}
+	if IsSessionApprovalTimedOut(session) {
+		return false
+	}
+	return session.Status.State != breakglassv1alpha1.SessionStateApproved || !IsSessionExpired(session)
+}
+
 // isOwnedByEscalation checks if a session is owned by the given escalation by matching
 // the owner reference UID. This ensures sessions from different escalations that grant
 // the same group are counted separately.

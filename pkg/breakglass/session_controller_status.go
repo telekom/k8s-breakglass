@@ -795,19 +795,6 @@ type EnrichedSessionResponse struct {
 	ApprovalReason *ReasonConfigInfo `json:"approvalReason,omitempty"`
 }
 
-func isSessionTokenValid(session breakglassv1alpha1.BreakglassSession) bool {
-	if session.Status.State == "" {
-		return false
-	}
-	if IsSessionTerminalState(session.Status.State) {
-		return false
-	}
-	if IsSessionApprovalTimedOut(session) {
-		return false
-	}
-	return session.Status.State != breakglassv1alpha1.SessionStateApproved || !IsSessionExpired(session)
-}
-
 // enrichSessionsWithApprovalReason adds the approvalReason config from the session's stored snapshot.
 // Sessions now store reason configs at creation time, so no escalation lookup is needed.
 func (wc *BreakglassSessionController) enrichSessionsWithApprovalReason(_ context.Context, sessions []breakglassv1alpha1.BreakglassSession, _ *zap.SugaredLogger) []EnrichedSessionResponse {
