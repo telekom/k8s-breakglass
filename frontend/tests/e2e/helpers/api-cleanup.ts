@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 interface CleanupSession {
   metadata?: {
