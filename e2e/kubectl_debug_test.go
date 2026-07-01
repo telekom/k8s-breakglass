@@ -176,9 +176,10 @@ func TestTerminalSharingMode(t *testing.T) {
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
-							Name:    "debug",
-							Image:   helpers.GetTmuxDebugImage(),
-							Command: []string{"sleep", "infinity"},
+							Name:            "debug",
+							Image:           helpers.GetTmuxDebugImage(),
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Command:         []string{"sleep", "infinity"},
 						},
 					},
 				},

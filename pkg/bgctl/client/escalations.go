@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -18,11 +19,11 @@ func (c *Client) Escalations() *EscalationService {
 
 func (e *EscalationService) List(ctx context.Context) ([]breakglassv1alpha1.BreakglassEscalation, error) {
 	endpoint := "api/breakglassEscalations"
-	var escs []breakglassv1alpha1.BreakglassEscalation
-	if err := e.client.do(ctx, http.MethodGet, endpoint, nil, &escs); err != nil {
+	var payload json.RawMessage
+	if err := e.client.do(ctx, http.MethodGet, endpoint, nil, &payload); err != nil {
 		return nil, err
 	}
-	return escs, nil
+	return decodeEscalationsPayload(payload)
 }
 
 func (e *EscalationService) Get(ctx context.Context, name string) (*breakglassv1alpha1.BreakglassEscalation, error) {
@@ -55,4 +56,19 @@ func (e *EscalationService) ListClusters(ctx context.Context) ([]string, error) 
 		clusters = append(clusters, c)
 	}
 	return clusters, nil
+}
+
+func decodeEscalationsPayload(payload []byte) ([]breakglassv1alpha1.BreakglassEscalation, error) {
+	var envelope struct {
+		Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err == nil && envelope.Items != nil {
+		return envelope.Items, nil
+	}
+
+	var escs []breakglassv1alpha1.BreakglassEscalation
+	if err := json.Unmarshal(payload, &escs); err != nil {
+		return nil, err
+	}
+	return escs, nil
 }

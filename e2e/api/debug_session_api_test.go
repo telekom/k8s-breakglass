@@ -964,7 +964,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
-						{Name: "debug", Image: helpers.GetTmuxDebugImage(), Command: []string{"sleep", "infinity"}},
+						{Name: "debug", Image: helpers.GetTmuxDebugImage(), ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "infinity"}},
 					},
 					RestartPolicy: corev1.RestartPolicyAlways,
 				},
@@ -3014,7 +3014,7 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
-						{Name: "debug", Image: helpers.GetTmuxDebugImage(), Command: []string{"sleep", "infinity"}},
+						{Name: "debug", Image: helpers.GetTmuxDebugImage(), ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "infinity"}},
 					},
 				},
 			},

@@ -46,7 +46,7 @@ KUBECTL=${KUBECTL:-kubectl}
 KUSTOMIZE=${KUSTOMIZE:-kustomize}
 DOCKER=${DOCKER:-docker}
 OPENSSL=${OPENSSL:-openssl}
-TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:latest}
+TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:e2e}
 TMUX_DEBUG_IMAGE_DIR=${TMUX_DEBUG_IMAGE_DIR:-${E2E_DIR:-}/images/tmux-debug}
 
 # Check if required tools are available
