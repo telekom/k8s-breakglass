@@ -17,7 +17,7 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 24
+const ExpectedIndexCount = 25
 
 const (
 	BreakglassEscalationClusterConfigRefsField        = "spec.clusterConfigRefs"
