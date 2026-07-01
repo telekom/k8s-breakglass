@@ -576,7 +576,9 @@ func isSafeDebugSessionFailureRecipient(recipient string) bool {
 	if recipient == "" || !strings.Contains(recipient, "@") {
 		return false
 	}
-	return strings.IndexFunc(recipient, unicode.IsControl) == -1
+	return strings.IndexFunc(recipient, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r) || strings.ContainsRune(",;<>", r)
+	}) == -1
 }
 
 // shouldEmitAudit checks if audit events should be emitted for this session

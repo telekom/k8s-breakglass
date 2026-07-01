@@ -122,6 +122,25 @@ func TestDebugSessionController_SendDebugSessionFailedEmailSkipsControlCharacter
 	assert.Empty(t, mockMail.GetMessages())
 }
 
+func TestIsSafeDebugSessionFailureRecipientRejectsUnsafeRecipientLists(t *testing.T) {
+	tests := []struct {
+		name      string
+		recipient string
+	}{
+		{name: "space separated", recipient: "requester@example.com attacker@example.com"},
+		{name: "tab separated", recipient: "requester@example.com\tattacker@example.com"},
+		{name: "comma separated", recipient: "requester@example.com,attacker@example.com"},
+		{name: "semicolon separated", recipient: "requester@example.com;attacker@example.com"},
+		{name: "display name wrapper", recipient: "Requester <requester@example.com>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.False(t, isSafeDebugSessionFailureRecipient(tt.recipient))
+		})
+	}
+}
+
 func TestDebugSessionController_SendDebugSessionFailedEmailLegacyRequesterEmail(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
 	mockMail := NewMockMailEnqueuer(true)
