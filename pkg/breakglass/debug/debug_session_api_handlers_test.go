@@ -3618,7 +3618,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 	}
 
 	t.Run("returns clusters for template without bindings", func(t *testing.T) {
-		router, _ := setupTestRouter(t, template, clusterA, clusterB)
+		_, ctrl := setupTestRouter(t, template, clusterA, clusterB)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3654,7 +3655,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 				Reason: "ConnectionFailed",
 			},
 		}
-		router, _ := setupTestRouter(t, template, clusterA, unreadyCluster)
+		_, ctrl := setupTestRouter(t, template, clusterA, unreadyCluster)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3711,7 +3713,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, template, clusterA, clusterB, binding)
+		_, ctrl := setupTestRouter(t, template, clusterA, clusterB, binding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3779,7 +3782,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 	})
 
 	t.Run("filters clusters by environment query param", func(t *testing.T) {
-		router, _ := setupTestRouter(t, template, clusterA, clusterB)
+		_, ctrl := setupTestRouter(t, template, clusterA, clusterB)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters?environment=production", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3843,7 +3847,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, template, clusterA, binding1, binding2)
+		_, ctrl := setupTestRouter(t, template, clusterA, binding1, binding2)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3926,7 +3931,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, template, clusterA, visibleBinding, hiddenBinding)
+		_, ctrl := setupTestRouter(t, template, clusterA, visibleBinding, hiddenBinding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3953,6 +3959,134 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 
 		require.Len(t, clusterADetail.BindingOptions, 1)
 		assert.Equal(t, "binding-visible", clusterADetail.BindingOptions[0].BindingRef.Name)
+	})
+
+	t.Run("filters binding options by requester allowlist", func(t *testing.T) {
+		bindingSRE := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-sre",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{Name: "tenant-safe", DisplayName: "Tenant Safe"},
+						{Name: "platform-node", DisplayName: "Platform Node", AllowedGroups: []string{"platform-admins"}},
+					},
+				},
+			},
+		}
+		bindingPlatform := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-platform",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"platform-admins"},
+				},
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+					MaxDuration: "12h",
+				},
+				Impersonation: &breakglassv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &breakglassv1alpha1.ServiceAccountReference{
+						Name:      "platform-debug",
+						Namespace: "kube-system",
+					},
+				},
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"platform-approver@example.com"},
+				},
+			},
+		}
+		bindingOnlyTemplate := template.DeepCopy()
+		bindingOnlyTemplate.Spec.Allowed = nil
+
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, bindingSRE, bindingPlatform)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NotContains(t, w.Body.String(), "binding-platform")
+		assert.NotContains(t, w.Body.String(), "platform-debug")
+		assert.NotContains(t, w.Body.String(), "platform-approver@example.com")
+		assert.NotContains(t, w.Body.String(), "platform-node")
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		require.Len(t, resp.Clusters, 1)
+		require.NotNil(t, resp.Clusters[0].BindingRef)
+		assert.Equal(t, "binding-sre", resp.Clusters[0].BindingRef.Name)
+		require.Len(t, resp.Clusters[0].BindingOptions, 1)
+		assert.Equal(t, "binding-sre", resp.Clusters[0].BindingOptions[0].BindingRef.Name)
+		require.NotNil(t, resp.Clusters[0].BindingOptions[0].SchedulingOptions)
+		require.Len(t, resp.Clusters[0].BindingOptions[0].SchedulingOptions.Options, 1)
+		assert.Equal(t, "tenant-safe", resp.Clusters[0].BindingOptions[0].SchedulingOptions.Options[0].Name)
+	})
+
+	t.Run("omits clusters when required binding scheduling options are unavailable", func(t *testing.T) {
+		bindingSRE := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-sre",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Required: true,
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{
+							Name:          "platform-node",
+							DisplayName:   "Platform Node",
+							AllowedGroups: []string{"platform-admins"},
+						},
+					},
+				},
+			},
+		}
+		bindingOnlyTemplate := template.DeepCopy()
+		bindingOnlyTemplate.Spec.Allowed = nil
+
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, bindingSRE)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NotContains(t, w.Body.String(), "binding-sre")
+		assert.NotContains(t, w.Body.String(), "platform-node")
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Empty(t, resp.Clusters)
 	})
 
 	t.Run("omits cluster available only through hidden binding", func(t *testing.T) {
@@ -3982,7 +4116,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, bindingOnlyTemplate, clusterA, hiddenBinding)
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, hiddenBinding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/binding-only-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3996,5 +4131,44 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.Empty(t, resp.Clusters)
+	})
+
+	t.Run("forbids cluster discovery when only bindings exist and requester matches none", func(t *testing.T) {
+		restrictedBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-platform",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"platform-admins"},
+				},
+				Impersonation: &breakglassv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &breakglassv1alpha1.ServiceAccountReference{
+						Name:      "platform-debug",
+						Namespace: "kube-system",
+					},
+				},
+			},
+		}
+		bindingOnlyTemplate := template.DeepCopy()
+		bindingOnlyTemplate.Spec.Allowed = nil
+
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, restrictedBinding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "mallory@example.com", "mallory@example.com", []string{"tenant-users"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.NotContains(t, w.Body.String(), "binding-platform")
+		assert.NotContains(t, w.Body.String(), "platform-debug")
 	})
 }

@@ -1273,6 +1273,13 @@ GET /api/debugSessions/templates/:name/clusters
 
 Only ready cluster configurations are offered as debug targets. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, no ready condition, or a duplicate `metadata.name` in another namespace are hidden from this response and `POST /api/debugSessions` rejects new debug sessions that target them. `DebugSessionClusterBinding` objects with `spec.hidden: true` are also omitted from this UI discovery response, but callers that already know the binding name can still use it through an explicit `bindingRef` in `POST /api/debugSessions`.
 
+Template and cluster discovery is requester-specific. The API returns a
+template only when the authenticated requester can use the template directly or
+through at least one active matching `DebugSessionClusterBinding`. Cluster
+entries, binding options, scheduling options, and extra deploy variables that
+the requester cannot use at session creation time are omitted from discovery
+responses.
+
 Response includes per-cluster details:
 
 ```json

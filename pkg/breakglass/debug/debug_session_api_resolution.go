@@ -81,37 +81,16 @@ func buildConstraintsSummary(sc *breakglassv1alpha1.SchedulingConstraints) *Sche
 	return summary
 }
 
-// resolveSchedulingOptions resolves scheduling options from binding or template
-func (c *DebugSessionAPIController) resolveSchedulingOptions(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *SchedulingOptionsResponse {
+func (c *DebugSessionAPIController) resolveSchedulingOptionsForRequester(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, requester debugTemplateRequester) *SchedulingOptionsResponse {
 	var so *breakglassv1alpha1.SchedulingOptions
 
-	// Binding options take precedence
 	if binding != nil && binding.Spec.SchedulingOptions != nil {
 		so = binding.Spec.SchedulingOptions
 	} else if template.Spec.SchedulingOptions != nil {
 		so = template.Spec.SchedulingOptions
 	}
 
-	if so == nil {
-		return nil
-	}
-
-	response := &SchedulingOptionsResponse{
-		Required: so.Required,
-		Options:  make([]SchedulingOptionResponse, 0, len(so.Options)),
-	}
-
-	for _, opt := range so.Options {
-		response.Options = append(response.Options, SchedulingOptionResponse{
-			Name:                  opt.Name,
-			DisplayName:           opt.DisplayName,
-			Description:           opt.Description,
-			Default:               opt.Default,
-			SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
-		})
-	}
-
-	return response
+	return buildSchedulingOptionsResponseForRequester(so, requester)
 }
 
 // resolveNamespaceConstraints builds API-visible namespace constraint hints.

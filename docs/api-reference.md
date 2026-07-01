@@ -1103,7 +1103,10 @@ configured `minLength` after sanitization.
 GET /api/debugSessions/templates
 ```
 
-Returns templates the current user has access to (based on group membership).
+Returns templates the current requester can use directly through
+`DebugSessionTemplate.spec.allowed` or indirectly through at least one active
+matching `DebugSessionClusterBinding`. User, email, group, and binding-granted
+access are all considered before a template is included in the response.
 
 **Query Parameters:**
 - `includeHidden` (optional, boolean): When `true`, includes templates marked `hidden`.
@@ -1197,7 +1200,11 @@ Returns templates the current user has access to (based on group membership).
 GET /api/debugSessions/templates/:name
 ```
 
-Returns full `DebugSessionTemplate` CRD object.
+Returns the same flattened template summary shape as the list endpoint. The
+requester must be allowed by the template itself or by at least one active
+`DebugSessionClusterBinding` that references the template; otherwise the
+endpoint returns `403 Forbidden`. Scheduling options and extra deploy variables
+that are restricted to other users or groups are omitted from the response.
 
 ### Get Template Clusters
 
@@ -1206,6 +1213,13 @@ GET /api/debugSessions/templates/:name/clusters
 ```
 
 Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions. `DebugSessionClusterBinding` resources with `spec.hidden: true` are omitted from this discovery response and cannot become the default `bindingRef` here, but explicit `POST /api/debugSessions` requests may still use a hidden binding by providing `bindingRef`.
+
+The response is filtered for the authenticated requester. A template is readable
+only when the requester is allowed by `DebugSessionTemplate.spec.allowed` or by
+at least one active matching `DebugSessionClusterBinding.spec.allowed`. Cluster
+and `bindingOptions` entries are returned only for direct template or binding
+paths the requester can use at session creation time. Restricted scheduling
+options are omitted.
 
 **Response (200 OK):**
 

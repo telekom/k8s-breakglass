@@ -493,6 +493,12 @@ When creating a session via the UI, the template clusters API returns per-cluste
 GET /api/debugSessions/templates/:name/clusters
 ```
 
+The API filters results for the authenticated requester before returning
+binding details. A binding appears only when it is active, matches the selected
+template and cluster, and the requester matches `binding.spec.allowed`. If a
+template is visible only through bindings, direct template allowlist metadata is
+not exposed to callers who cannot use the template directly.
+
 Response includes binding information:
 
 ```json

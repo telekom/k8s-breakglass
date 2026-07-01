@@ -549,7 +549,7 @@ func TestValidateSelectValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := validateSelectValue(tt.value, tt.options, nil, field.NewPath("test"))
+			errs := validateSelectValue(tt.value, tt.options, nil, false, field.NewPath("test"))
 			if tt.wantErr {
 				assert.NotEmpty(t, errs)
 			} else {
@@ -606,7 +606,7 @@ func TestValidateMultiSelectValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := validateMultiSelectValue(tt.value, tt.options, tt.validation, nil, field.NewPath("test"))
+			errs := validateMultiSelectValue(tt.value, tt.options, tt.validation, nil, false, field.NewPath("test"))
 			if tt.wantErr {
 				assert.NotEmpty(t, errs)
 			} else {
@@ -727,7 +727,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 			wantErrors: 0,
 		},
 		{
-			name:   "nil userGroups skips group checks",
+			name:   "nil userGroups denied for restricted variable",
 			values: map[string]apiextensionsv1.JSON{"sensitive": {Raw: []byte(`true`)}},
 			variables: []ExtraDeployVariable{
 				{
@@ -737,10 +737,11 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 				},
 			},
 			userGroups: nil,
-			wantErrors: 0,
+			wantErrors: 1,
+			errContain: "restricted",
 		},
 		{
-			name:   "empty userGroups skips group checks",
+			name:   "empty userGroups denied for restricted variable",
 			values: map[string]apiextensionsv1.JSON{"sensitive": {Raw: []byte(`true`)}},
 			variables: []ExtraDeployVariable{
 				{
@@ -750,7 +751,42 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 				},
 			},
 			userGroups: []string{},
-			wantErrors: 0,
+			wantErrors: 1,
+			errContain: "restricted",
+		},
+		{
+			name:   "nil userGroups denied for restricted select option",
+			values: map[string]apiextensionsv1.JSON{"nodeType": {Raw: []byte(`"gpu"`)}},
+			variables: []ExtraDeployVariable{
+				{
+					Name:      "nodeType",
+					InputType: InputTypeSelect,
+					Options: []SelectOption{
+						{Value: "standard"},
+						{Value: "gpu", AllowedGroups: []string{"gpu-users"}},
+					},
+				},
+			},
+			userGroups: nil,
+			wantErrors: 1,
+			errContain: "gpu",
+		},
+		{
+			name:   "empty userGroups denied for restricted multiSelect option",
+			values: map[string]apiextensionsv1.JSON{"features": {Raw: []byte(`["basic","privileged"]`)}},
+			variables: []ExtraDeployVariable{
+				{
+					Name:      "features",
+					InputType: InputTypeMultiSelect,
+					Options: []SelectOption{
+						{Value: "basic"},
+						{Value: "privileged", AllowedGroups: []string{"admin"}},
+					},
+				},
+			},
+			userGroups: []string{},
+			wantErrors: 1,
+			errContain: "privileged",
 		},
 		{
 			name:   "production environment requires platform team",
