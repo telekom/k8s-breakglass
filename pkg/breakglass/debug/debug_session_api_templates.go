@@ -390,8 +390,9 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	// Fetch all bindings to determine which templates have available clusters
 	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
 	if err := c.reader().List(apiCtx, bindingList); err != nil {
-		reqLog.Warnw("Failed to list bindings for template cluster resolution", "error", err)
-		// Continue without binding resolution
+		reqLog.Errorw("Failed to list bindings for template cluster resolution", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list bindings")
+		return
 	}
 
 	requester := debugTemplateRequesterFromContext(ctx)
@@ -505,9 +506,8 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 
-	// Fetch the template
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			apiresponses.RespondNotFoundSimple(ctx, "template not found")
 			return
@@ -520,7 +520,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	requester := debugTemplateRequesterFromContext(ctx)
 
 	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
-	if err := c.client.List(apiCtx, &bindingList); err != nil {
+	if err := c.reader().List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list cluster bindings", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list bindings")
 		return
@@ -536,7 +536,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	}
 
 	var clusterConfigList breakglassv1alpha1.ClusterConfigList
-	if err := c.client.List(apiCtx, &clusterConfigList); err != nil {
+	if err := c.reader().List(apiCtx, &clusterConfigList); err != nil {
 		reqLog.Errorw("Failed to list cluster configs", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list clusters")
 		return
@@ -593,6 +593,9 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 		if !requester.canRequest(effectiveDebugSessionAllowed(template, binding)) {
 			continue
 		}
+		if !debugSchedulingOptionsAvailableForRequester(template, binding, requester) {
+			continue
+		}
 		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
 		for _, clusterName := range bindingClusters {
 			if clusterMap[clusterName] != nil {
@@ -602,7 +605,10 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 	}
 
 	// Also check template's direct allowed.clusters patterns
-	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) && template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) &&
+		debugSchedulingOptionsAvailableForRequester(template, nil, requester) &&
+		template.Spec.Allowed != nil &&
+		len(template.Spec.Allowed.Clusters) > 0 {
 		resolvedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
 		for _, clusterName := range resolvedClusters {
 			if clusterMap[clusterName] != nil {
@@ -693,6 +699,9 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 		if !requester.canRequest(effectiveDebugSessionAllowed(template, binding)) {
 			continue
 		}
+		if !debugSchedulingOptionsAvailableForRequester(template, binding, requester) {
+			continue
+		}
 		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
 		for _, clusterName := range bindingClusters {
 			clusterBindings[clusterName] = append(clusterBindings[clusterName], binding)
@@ -720,7 +729,10 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 	}
 
 	// Then, resolve clusters from template's allowed.clusters (fallback, no binding)
-	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) && template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) &&
+		debugSchedulingOptionsAvailableForRequester(template, nil, requester) &&
+		template.Spec.Allowed != nil &&
+		len(template.Spec.Allowed.Clusters) > 0 {
 		allClusterNames := make([]string, 0, len(clusterMap))
 		for name := range clusterMap {
 			allClusterNames = append(allClusterNames, name)
@@ -744,6 +756,23 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 	}
 
 	return result
+}
+
+func debugSchedulingOptionsAvailableForRequester(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	requester debugTemplateRequester,
+) bool {
+	var schedulingOptions *breakglassv1alpha1.SchedulingOptions
+	if binding != nil && binding.Spec.SchedulingOptions != nil {
+		schedulingOptions = binding.Spec.SchedulingOptions
+	} else if template.Spec.SchedulingOptions != nil {
+		schedulingOptions = template.Spec.SchedulingOptions
+	}
+	if schedulingOptions == nil || !schedulingOptions.Required {
+		return true
+	}
+	return len(buildSchedulingOptionsResponseForRequester(schedulingOptions, requester).Options) > 0
 }
 
 // buildClusterDetailWithBindings creates a cluster detail with all matching binding options.

@@ -4041,6 +4041,54 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 		assert.Equal(t, "tenant-safe", resp.Clusters[0].BindingOptions[0].SchedulingOptions.Options[0].Name)
 	})
 
+	t.Run("omits clusters when required binding scheduling options are unavailable", func(t *testing.T) {
+		bindingSRE := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-sre",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Required: true,
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{
+							Name:          "platform-node",
+							DisplayName:   "Platform Node",
+							AllowedGroups: []string{"platform-admins"},
+						},
+					},
+				},
+			},
+		}
+		bindingOnlyTemplate := template.DeepCopy()
+		bindingOnlyTemplate.Spec.Allowed = nil
+
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, bindingSRE)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NotContains(t, w.Body.String(), "binding-sre")
+		assert.NotContains(t, w.Body.String(), "platform-node")
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Empty(t, resp.Clusters)
+	})
+
 	t.Run("omits cluster available only through hidden binding", func(t *testing.T) {
 		bindingOnlyTemplate := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{

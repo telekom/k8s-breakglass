@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -2469,6 +2470,34 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		assert.Equal(t, 2, response.Total)
 	})
 
+	t.Run("list templates fails closed when bindings cannot be listed", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templates[0]).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, ok := list.(*breakglassv1alpha1.DebugSessionClusterBindingList); ok {
+						return fmt.Errorf("binding list unavailable")
+					}
+					return c.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
 	t.Run("list templates with allowed groups filter", func(t *testing.T) {
 		// Add a template with group restriction
 		templateWithGroups := templates[0].DeepCopy()
@@ -3139,6 +3168,59 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 		assert.ElementsMatch(t, []string{"prod-east", "prod-west"}, response.AllowedClusters)
 		assert.True(t, response.HasAvailableClusters)
 		assert.Equal(t, 2, response.AvailableClusterCount)
+	})
+
+	t.Run("get existing template excludes clusters when required scheduling options are unavailable", func(t *testing.T) {
+		clusterTemplate := template.DeepCopy()
+		clusterTemplate.Name = "restricted-scheduling-template"
+		clusterTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Clusters: []string{"prod-*"},
+			Groups:   []string{"*"},
+		}
+		clusterTemplate.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{
+			Required: true,
+			Options: []breakglassv1alpha1.SchedulingOption{
+				{
+					Name:          "platform-node",
+					DisplayName:   "Platform Node",
+					AllowedGroups: []string{"platform-admins"},
+				},
+			},
+		}
+		prodEast := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(clusterTemplate, prodEast).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("groups", []string{"tenant-users"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/restricted-scheduling-template", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response DebugSessionTemplateResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.False(t, response.HasAvailableClusters)
+		assert.Equal(t, 0, response.AvailableClusterCount)
+		require.NotNil(t, response.SchedulingOptions)
+		assert.True(t, response.SchedulingOptions.Required)
+		assert.Empty(t, response.SchedulingOptions.Options)
 	})
 
 	t.Run("get non-existent template", func(t *testing.T) {
