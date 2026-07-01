@@ -71,7 +71,7 @@ func TestFailTimedOutDebugSessionApproval_StatusApplyError(t *testing.T) {
 		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
 		WithAuditService(mockAudit)
 
-	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h")
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h", time.Now())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, expectedErr)
@@ -121,7 +121,7 @@ func TestFailTimedOutDebugSessionApproval_UsesAPIReaderForLatestDecision(t *test
 		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
 		WithAuditService(mockAudit)
 
-	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), stale, "approver@example.com", "Approval timed out after 24h")
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), stale, "approver@example.com", "Approval timed out after 24h", time.Now())
 
 	require.Error(t, err)
 	assert.True(t, apierrors.IsConflict(err))
@@ -132,6 +132,43 @@ func TestFailTimedOutDebugSessionApproval_UsesAPIReaderForLatestDecision(t *test
 	require.NoError(t, cachedClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: stale.Name}, &stored))
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, stored.Status.State)
 	assert.Nil(t, stored.Status.Approval)
+}
+
+func TestFailTimedOutDebugSessionApproval_UsesHandlerTimestampForLatestTimeout(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "timed-out-debug-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(now.Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "production",
+			TemplateRef: "standard-debug",
+			RequestedBy: "developer@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	mockMail := NewMockMailEnqueuer(true)
+	mockAudit := NewMockAuditEmitter(true)
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil).
+		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
+		WithAuditService(mockAudit)
+
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h", now)
+
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, session.Status.State)
+	assert.Len(t, mockMail.GetMessages(), 1)
+	assert.Len(t, mockAudit.GetEvents(), 1)
 }
 
 func TestFailTimedOutDebugSessionApproval_LatestDecisionReturnsConflict(t *testing.T) {
@@ -168,7 +205,7 @@ func TestFailTimedOutDebugSessionApproval_LatestDecisionReturnsConflict(t *testi
 		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
 		WithAuditService(mockAudit)
 
-	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), stale, "approver@example.com", "Approval timed out after 24h")
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), stale, "approver@example.com", "Approval timed out after 24h", time.Now())
 
 	require.Error(t, err)
 	assert.True(t, apierrors.IsConflict(err))
@@ -211,7 +248,7 @@ func TestFailTimedOutDebugSessionApproval_AlreadyFailedTimeoutIsIdempotent(t *te
 		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
 		WithAuditService(mockAudit)
 
-	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h")
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h", time.Now())
 
 	require.NoError(t, err)
 	assert.Empty(t, mockMail.GetMessages())
@@ -253,7 +290,7 @@ func TestFailTimedOutDebugSessionApproval_RespectsTemplateAuditDisabled(t *testi
 		WithMailService(mockMail, "Breakglass", "https://breakglass.example.com").
 		WithAuditService(mockAudit)
 
-	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h")
+	err := ctrl.failTimedOutDebugSessionApproval(context.Background(), session, "approver@example.com", "Approval timed out after 24h", time.Now())
 
 	require.NoError(t, err)
 	require.Len(t, mockMail.GetMessages(), 1)

@@ -438,8 +438,9 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		return
 	}
 
-	if timedOut, reason := debugSessionApprovalTimedOut(session, time.Now()); timedOut {
-		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason); err != nil {
+	timeoutNow := time.Now()
+	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason, timeoutNow); err != nil {
 			if apierrors.IsConflict(err) {
 				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 				return
@@ -543,8 +544,9 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	if timedOut, reason := debugSessionApprovalTimedOut(session, time.Now()); timedOut {
-		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason); err != nil {
+	timeoutNow := time.Now()
+	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser.(string), reason, timeoutNow); err != nil {
 			if apierrors.IsConflict(err) {
 				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 				return
@@ -628,7 +630,7 @@ func debugSessionApprovalDecisionConflict(session *breakglassv1alpha1.DebugSessi
 	}, session.Name, errors.New("debug session approval has already been decided"))
 }
 
-func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context.Context, session *breakglassv1alpha1.DebugSession, actor, reason string) error {
+func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context.Context, session *breakglassv1alpha1.DebugSession, actor, reason string, now time.Time) error {
 	latest := &breakglassv1alpha1.DebugSession{}
 	if err := c.reader().Get(ctx, ctrlclient.ObjectKeyFromObject(session), latest); err != nil {
 		return fmt.Errorf("load latest debug session before approval timeout: %w", err)
@@ -641,7 +643,7 @@ func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context
 	if debugSessionApprovalDecisionRecorded(latest) {
 		return debugSessionApprovalDecisionConflict(latest)
 	}
-	if timedOut, latestReason := debugSessionApprovalTimedOut(latest, time.Now()); !timedOut {
+	if timedOut, latestReason := debugSessionApprovalTimedOut(latest, now); !timedOut {
 		return debugSessionApprovalDecisionConflict(latest)
 	} else if reason == "" {
 		reason = latestReason
