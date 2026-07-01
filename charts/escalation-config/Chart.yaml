@@ -4,7 +4,7 @@ description: |
   Helm chart to create BreakglassEscalation, ClusterConfig, DebugSessionClusterBinding, and DenyPolicy CRs.
   Supports single and multi-IDP configurations for flexible authentication.
 type: application
-version: 0.3.0
+version: 0.3.1
 appVersion: "0.2.0"
 icon: https://raw.githubusercontent.com/telekom/k8s-breakglass/main/frontend/public/favicon.svg
 keywords:
