@@ -124,6 +124,7 @@ func (wc *BreakglassSessionController) ExpireIdleSessions(ctx context.Context) {
 					"session", ses.Name, "attempt", attempt+1, "error", err)
 
 				if updated, _, ok, err := wc.prepareIdleExpiredSession(ctx, ses); err != nil {
+					lastErr = fmt.Errorf("prepare idle-expired session after status update attempt %d failed: %w", attempt+1, err)
 					break
 				} else if ok {
 					ses = updated
