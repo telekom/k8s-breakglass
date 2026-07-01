@@ -34,8 +34,9 @@ const mocks = await vi.hoisted(async () => {
 // Mock services
 vi.mock("@/services/breakglass", () => ({
   default: class MockBreakglassService {
-    getMyPendingRequests = vi.fn().mockResolvedValue([]);
-    withdrawSession = vi.fn().mockResolvedValue({});
+    searchSessions = vi.fn().mockResolvedValue([]);
+    withdrawMyRequest = vi.fn().mockResolvedValue(undefined);
+    dropMySession = vi.fn().mockResolvedValue(undefined);
   },
 }));
 
@@ -75,7 +76,7 @@ vi.mock("@/composables", () => ({
   getSessionState: vi.fn((session) => session.status?.state || "pending"),
   getSessionUser: vi.fn((session) => session.spec?.user || "user@example.com"),
   getSessionCluster: vi.fn((session) => session.spec?.cluster || "test-cluster"),
-  getSessionGroup: vi.fn((session) => session.spec?.escalatedGroup || "admin-group"),
+  getSessionGroup: vi.fn((session) => session.spec?.grantedGroup || "admin-group"),
   formatDateTime: vi.fn((date) => new Date(date).toLocaleString()),
   isFuture: vi.fn((date) => new Date(date) > new Date()),
   isScheduled: vi.fn((session) => {
