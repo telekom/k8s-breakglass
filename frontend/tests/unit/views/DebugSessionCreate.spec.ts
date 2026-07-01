@@ -299,6 +299,22 @@ describe("DebugSessionCreate", () => {
       expect(errorState.text()).not.toContain("raw backend message");
     });
 
+    it("does not surface unstructured string template load errors", async () => {
+      const wrapper = await createWrapper(defaultTemplates(), {
+        templateLoadError: {
+          response: {
+            data: "<html><body>proxy failure details</body></html>",
+            status: 502,
+          },
+          message: "Request failed with status code 502",
+        },
+      });
+
+      const errorState = wrapper.find('[data-testid="debug-session-template-error-state"]');
+      expect(errorState.text()).toContain("Debug session templates could not be loaded");
+      expect(errorState.text()).not.toContain("proxy failure details");
+    });
+
     it("retries template loading from the error state", async () => {
       const templates = defaultTemplates();
       const wrapper = await createWrapper(templates, {
