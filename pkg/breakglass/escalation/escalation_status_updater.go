@@ -509,7 +509,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				var err error
 				markEscalationStatusObserved(updated)
 				if clearCachedMembers {
-					err = u.K8sClient.Status().Update(ctx, updated)
+					err = u.patchStatus(ctx, updated)
 				} else {
 					err = u.applyStatus(ctx, updated)
 				}
@@ -638,11 +638,17 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		}
 
 		if changed {
+			if len(updated.Status.ApproverGroupMembers) == 0 {
+				updated.Status.ApproverGroupMembers = nil
+			}
+			if len(updated.Status.IDPGroupMemberships) == 0 {
+				updated.Status.IDPGroupMemberships = nil
+			}
 			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
 			markEscalationStatusObserved(updated)
 			var err error
 			if prunedCachedMembers {
-				err = u.K8sClient.Status().Update(ctx, updated)
+				err = u.patchStatus(ctx, updated)
 			} else {
 				err = u.applyStatus(ctx, updated)
 			}
@@ -681,6 +687,18 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 
 func (u EscalationStatusUpdater) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
 	return ssa.ApplyBreakglassEscalationStatus(ctx, u.K8sClient, escalation)
+}
+
+func (u EscalationStatusUpdater) patchStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
+	current := &breakglassv1alpha1.BreakglassEscalation{}
+	if err := u.K8sClient.Get(ctx, client.ObjectKeyFromObject(escalation), current); err != nil {
+		return err
+	}
+
+	base := current.DeepCopy()
+	current.Status = escalation.Status
+	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+	return u.K8sClient.Status().Patch(ctx, current, patch)
 }
 
 func markEscalationStatusObserved(escalation *breakglassv1alpha1.BreakglassEscalation) {

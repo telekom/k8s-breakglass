@@ -697,8 +697,8 @@ func TestEscalationStatusUpdaterPrunesRemovedApproverGroupsWithStatusUpdate(t *t
 	err = baseClient.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
 	assert.NoError(t, err)
 
-	assert.Equal(t, 1, trackingClient.statusWriter.updates)
-	assert.Zero(t, trackingClient.statusWriter.patches)
+	assert.Zero(t, trackingClient.statusWriter.updates)
+	assert.Equal(t, 1, trackingClient.statusWriter.patches)
 	assert.Equal(t, map[string][]string{
 		"admin": {"alice@example.com"},
 	}, updated.Status.ApproverGroupMembers)
@@ -708,6 +708,75 @@ func TestEscalationStatusUpdaterPrunesRemovedApproverGroupsWithStatusUpdate(t *t
 		},
 	}, updated.Status.IDPGroupMemberships)
 	assert.Equal(t, int64(4), updated.Status.ObservedGeneration)
+}
+
+func TestEscalationStatusUpdaterDoesNotPersistEmptyApproverGroupMembersAfterFullPrune(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	baseClient := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
+		Build()
+	trackingClient := newStatusUpdateTrackingClient(baseClient)
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "fully-pruned-approver-groups",
+			Namespace:  "default",
+			Generation: 5,
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin-group",
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"my-cluster"},
+			},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Groups: []string{"admin"},
+			},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ObservedGeneration: 1,
+			ApproverGroupMembers: map[string][]string{
+				"removed": {"stale@example.com"},
+			},
+			IDPGroupMemberships: map[string]map[string][]string{
+				"idp-a": {
+					"removed": {"stale@example.com"},
+				},
+			},
+		},
+	}
+
+	err := baseClient.Create(context.Background(), escalation)
+	assert.NoError(t, err)
+
+	updater := EscalationStatusUpdater{
+		Log:       logger.Sugar(),
+		K8sClient: trackingClient,
+		Resolver: &MockGroupMemberResolverForTest{
+			err: errors.New("resolver unavailable"),
+		},
+	}
+
+	updater.runOnce(context.Background(), logger.Sugar())
+
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
+	err = baseClient.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated)
+	assert.NoError(t, err)
+
+	assert.Zero(t, trackingClient.statusWriter.updates)
+	assert.Equal(t, 1, trackingClient.statusWriter.patches)
+	assert.Nil(t, updated.Status.ApproverGroupMembers)
+	assert.Nil(t, updated.Status.IDPGroupMemberships)
+	assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, "GroupSyncFailed", condition.Reason)
+	}
 }
 
 func TestExplicitIDPsWithoutLoaderReportLegacyResolverCondition(t *testing.T) {
