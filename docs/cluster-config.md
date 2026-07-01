@@ -21,7 +21,7 @@ When a `ClusterConfig` is created, the controller automatically adds a finalizer
 **What happens when a ClusterConfig is deleted:**
 
 1. The finalizer prevents immediate deletion
-2. All active `BreakglassSession` resources targeting this cluster through `spec.cluster` or `spec.clusterConfigRef` are marked as **Expired** and receive terminal retention
+2. All non-terminal `BreakglassSession` resources targeting this cluster through `spec.cluster` or `spec.clusterConfigRef` are marked as **Expired** and receive terminal retention
 3. All non-terminal `DebugSession` resources targeting this cluster are marked as **Terminated** so their controller cleanup removes debug pods and auxiliary resources
 4. If any session status update fails, the finalizer remains and reconciliation retries
 5. The finalizer is removed, allowing the `ClusterConfig` to be deleted
@@ -32,7 +32,7 @@ This ensures that:
 - Session state is accurately reflected in the UI
 
 **Terminal states that are preserved:**
-- BreakglassSessions in `Expired`, `Rejected`, `Withdrawn`, or `ApprovalTimeout` states are not modified
+- BreakglassSessions in `Expired`, `Rejected`, `Withdrawn`, `IdleExpired`, or `ApprovalTimeout` states are not modified
 - DebugSessions in `Terminated` or `Expired` states are not modified; `Failed` sessions are transitioned to `Terminated` so cleanup can remove any remaining debug resources.
 
 ### Metrics
