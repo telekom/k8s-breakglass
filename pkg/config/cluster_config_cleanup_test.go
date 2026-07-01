@@ -159,10 +159,10 @@ func TestClusterConfigReconciler_ListFailureBlocksCleanup(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
 	})
 
-	// Should return error and requeue after delay
+	// Should return error; controller-runtime retries errors through its rate limiter.
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated list failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Verify the ClusterConfig still exists with its finalizer
 	var updated breakglassv1alpha1.ClusterConfig
@@ -173,7 +173,7 @@ func TestClusterConfigReconciler_ListFailureBlocksCleanup(t *testing.T) {
 
 // TestClusterConfigReconciler_MixedSessionAndDebugSessionCleanup tests that when
 // both BreakglassSessions and DebugSessions exist, both are properly terminated.
-// Note: DebugSessions are set to "Failed" state when cluster is deleted.
+// DebugSessions are set to "Terminated" so their controller cleanup path removes resources.
 func TestClusterConfigReconciler_MixedSessionAndDebugSessionCleanup(t *testing.T) {
 	scheme := newTestClusterConfigReconcilerScheme()
 	ctx := context.Background()
@@ -240,12 +240,12 @@ func TestClusterConfigReconciler_MixedSessionAndDebugSessionCleanup(t *testing.T
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updatedBgSession.Status.State,
 		"BreakglassSession should be marked as Expired")
 
-	// Verify DebugSession is failed (cluster deletion sets state to Failed)
+	// Verify DebugSession is terminated so cleanup can run
 	var updatedDebugSession breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "debug-session-1", Namespace: "default"}, &updatedDebugSession)
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updatedDebugSession.Status.State,
-		"DebugSession should be marked as Failed (cluster deleted)")
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedDebugSession.Status.State,
+		"DebugSession should be marked as Terminated (cluster deleted)")
 	assert.Contains(t, updatedDebugSession.Status.Message, "test-cluster",
 		"DebugSession message should reference the deleted cluster")
 }
@@ -574,7 +574,7 @@ func TestClusterConfigReconciler_GetListError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "simulated network timeout")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Finalizer should still be present
 	var updated breakglassv1alpha1.ClusterConfig

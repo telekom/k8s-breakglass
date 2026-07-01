@@ -75,6 +75,7 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 	// Verify all expected fields were indexed
 	expectedFields := []string{
 		"spec.cluster",
+		"spec.clusterConfigRef",
 		"spec.user",
 		"spec.grantedGroup",
 		"metadata.name",
@@ -126,6 +127,10 @@ func TestRegisterCommonFieldIndexes_FailureOnField(t *testing.T) {
 		{
 			name:        "fail on spec.cluster",
 			failOnField: "spec.cluster",
+		},
+		{
+			name:        "fail on spec.clusterConfigRef",
+			failOnField: "spec.clusterConfigRef",
 		},
 		{
 			name:        "fail on spec.user",
@@ -187,9 +192,10 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster:      "test-cluster",
-			User:         "test-user@example.com",
-			GrantedGroup: "admin-access",
+			Cluster:          "test-cluster",
+			ClusterConfigRef: "test-cluster-config",
+			User:             "test-user@example.com",
+			GrantedGroup:     "admin-access",
 		},
 	}
 
@@ -201,6 +207,19 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 		assert.Equal(t, []string{"test-cluster"}, result)
 
 		// Test with empty cluster
+		emptySession := &breakglassv1alpha1.BreakglassSession{}
+		result = fn(emptySession)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusterConfigRef index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.clusterConfigRef"]
+		require.NotNil(t, fn)
+
+		result := fn(session)
+		assert.Equal(t, []string{"test-cluster-config"}, result)
+
+		// Test with empty clusterConfigRef
 		emptySession := &breakglassv1alpha1.BreakglassSession{}
 		result = fn(emptySession)
 		assert.Nil(t, result)
@@ -522,9 +541,10 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster:      "indexed-cluster",
-			User:         "indexed-user@example.com",
-			GrantedGroup: "indexed-group",
+			Cluster:          "indexed-cluster",
+			ClusterConfigRef: "indexed-cluster-config-ref",
+			User:             "indexed-user@example.com",
+			GrantedGroup:     "indexed-group",
 		},
 	}
 
@@ -561,12 +581,24 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 			}
 			return nil
 		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
 		Build()
 
 	// Verify we can query by indexed field
 	ctx := context.Background()
 	var sessions breakglassv1alpha1.BreakglassSessionList
 	err = cli.List(ctx, &sessions, client.MatchingFields{"spec.cluster": "indexed-cluster"})
+	require.NoError(t, err)
+	assert.Len(t, sessions.Items, 1)
+	assert.Equal(t, "indexed-session", sessions.Items[0].Name)
+
+	sessions = breakglassv1alpha1.BreakglassSessionList{}
+	err = cli.List(ctx, &sessions, client.MatchingFields{"spec.clusterConfigRef": "indexed-cluster-config-ref"})
 	require.NoError(t, err)
 	assert.Len(t, sessions.Items, 1)
 	assert.Equal(t, "indexed-session", sessions.Items[0].Name)
@@ -628,6 +660,7 @@ func TestIsIndexRegistered(t *testing.T) {
 
 	// After registration
 	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.cluster"))
+	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.clusterConfigRef"))
 	assert.True(t, IsIndexRegistered("BreakglassEscalation", "spec.allowed.cluster"))
 	assert.True(t, IsIndexRegistered("ClusterConfig", "metadata.name"))
 	assert.False(t, IsIndexRegistered("NonExistent", "field"))

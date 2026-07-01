@@ -18,8 +18,8 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
@@ -29,6 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -83,18 +84,23 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if controllerutil.ContainsFinalizer(clusterConfig, ClusterConfigFinalizer) {
 			log.Infow("ClusterConfig is being deleted, cleaning up sessions", "cluster", clusterName)
 
+			var cleanupErrs []error
 			// Terminate all BreakglassSessions for this cluster
 			if err := r.terminateBreakglassSessionsForCluster(ctx, clusterName, log); err != nil {
 				log.Errorw("Failed to terminate BreakglassSessions for cluster", "cluster", clusterName, "error", err)
-				// Requeue to retry cleanup
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+				cleanupErrs = append(cleanupErrs, err)
 			}
 
 			// Terminate all DebugSessions for this cluster
 			if err := r.terminateDebugSessionsForCluster(ctx, clusterName, log); err != nil {
 				log.Errorw("Failed to terminate DebugSessions for cluster", "cluster", clusterName, "error", err)
-				// Requeue to retry cleanup
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+				cleanupErrs = append(cleanupErrs, err)
+			}
+
+			if err := errors.Join(cleanupErrs...); err != nil {
+				// Returning the error keeps deletion blocked and lets controller-runtime
+				// retry through its rate limiter.
+				return ctrl.Result{}, err
 			}
 
 			// Remove the finalizer to allow deletion (retry on conflict)
@@ -167,17 +173,16 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // terminateBreakglassSessionsForCluster finds all BreakglassSessions targeting the given cluster
 // and terminates them by setting their state to Expired.
 func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx context.Context, clusterName string, log *zap.SugaredLogger) error {
-	// List all BreakglassSessions for this cluster using the spec.cluster index
-	sessionList := &breakglassv1alpha1.BreakglassSessionList{}
-	if err := r.List(ctx, sessionList, client.MatchingFields{"spec.cluster": clusterName}); err != nil {
+	sessionList, err := r.listBreakglassSessionsForCluster(ctx, clusterName)
+	if err != nil {
 		return fmt.Errorf("failed to list BreakglassSessions for cluster %s: %w", clusterName, err)
 	}
 
 	now := metav1.Now()
 	terminatedCount := 0
-	for i := range sessionList.Items {
-		session := &sessionList.Items[i]
-
+	var terminateErrs []error
+	for i := range sessionList {
+		session := &sessionList[i]
 		// Skip already terminal sessions
 		if session.Status.State == breakglassv1alpha1.SessionStateExpired ||
 			session.Status.State == breakglassv1alpha1.SessionStateIdleExpired ||
@@ -194,10 +199,20 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 		// Update the session status to Expired
 		session.Status.State = breakglassv1alpha1.SessionStateExpired
 		session.Status.ExpiresAt = now
+		session.Status.ReasonEnded = "clusterDeleted"
+		session.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "ExpiredByClusterDeletion",
+			Message:            "Session expired because its ClusterConfig is being deleted.",
+		})
+		retainFor := utils.ParseRetainFor(session.Spec, log)
+		session.Status.RetainedUntil = metav1.NewTime(now.Time.Add(retainFor))
 
 		if err := ssa.ApplyBreakglassSessionStatus(ctx, r.Client, session); err != nil {
 			log.Warnw("Failed to terminate BreakglassSession", "session", session.Name, "error", err)
-			// Continue with other sessions even if one fails
+			terminateErrs = append(terminateErrs, fmt.Errorf("terminate BreakglassSession %s/%s: %w", session.Namespace, session.Name, err))
 			continue
 		}
 		terminatedCount++
@@ -209,11 +224,31 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 			"cluster", clusterName, "count", terminatedCount)
 	}
 
-	return nil
+	return errors.Join(terminateErrs...)
+}
+
+func (r *ClusterConfigReconciler) listBreakglassSessionsForCluster(ctx context.Context, clusterName string) ([]breakglassv1alpha1.BreakglassSession, error) {
+	sessionsByName := make(map[types.NamespacedName]breakglassv1alpha1.BreakglassSession)
+	for _, field := range []string{"spec.cluster", "spec.clusterConfigRef"} {
+		sessionList := &breakglassv1alpha1.BreakglassSessionList{}
+		if err := r.List(ctx, sessionList, client.MatchingFields{field: clusterName}); err != nil {
+			return nil, fmt.Errorf("list BreakglassSessions by %s: %w", field, err)
+		}
+		for _, session := range sessionList.Items {
+			sessionsByName[types.NamespacedName{Namespace: session.Namespace, Name: session.Name}] = session
+		}
+	}
+
+	sessions := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessionsByName))
+	for _, session := range sessionsByName {
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
 }
 
 // terminateDebugSessionsForCluster finds all DebugSessions targeting the given cluster
-// and terminates them by setting their state to Failed.
+// and terminates them. Terminated sessions are reconciled through the DebugSession
+// cleanup path, so deployed debug pods and auxiliary resources are removed.
 func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.Context, clusterName string, log *zap.SugaredLogger) error {
 	// List all DebugSessions for this cluster using the spec.cluster index
 	sessionList := &breakglassv1alpha1.DebugSessionList{}
@@ -222,12 +257,12 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	}
 
 	terminatedCount := 0
+	var terminateErrs []error
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 
-		// Skip already terminal sessions
-		if session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+		// Skip sessions that are already in cleanup or already cleaned up.
+		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
 			continue
 		}
@@ -236,17 +271,18 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			"session", session.Name, "namespace", session.Namespace, "cluster", clusterName,
 			"previousState", session.Status.State)
 
-		// Update the session status to Failed
-		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		// Update the session status to Terminated so the debug-session reconciler
+		// performs resource cleanup.
+		session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 		session.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
 
 		if err := ssa.ApplyDebugSessionStatus(ctx, r.Client, session); err != nil {
 			log.Warnw("Failed to terminate DebugSession", "session", session.Name, "error", err)
-			// Continue with other sessions even if one fails
+			terminateErrs = append(terminateErrs, fmt.Errorf("terminate DebugSession %s/%s: %w", session.Namespace, session.Name, err))
 			continue
 		}
 		terminatedCount++
-		metrics.DebugSessionsFailed.WithLabelValues(clusterName, "cluster_deleted").Inc()
+		metrics.DebugSessionsTerminated.WithLabelValues(clusterName, "cluster_deleted").Inc()
 	}
 
 	if terminatedCount > 0 {
@@ -254,7 +290,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			"cluster", clusterName, "count", terminatedCount)
 	}
 
-	return nil
+	return errors.Join(terminateErrs...)
 }
 
 // SetupWithManager sets up the controller with the Manager.

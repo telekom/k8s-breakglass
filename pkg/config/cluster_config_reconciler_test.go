@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,6 +52,12 @@ func newTestClusterConfigFakeClient(scheme *runtime.Scheme, objs ...client.Objec
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
 			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
 				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
 			}
 			return nil
 		}).
@@ -236,11 +243,27 @@ func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T
 			Namespace: "default",
 		},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster: "test-cluster",
-			User:    "test-user2@example.com",
+			Cluster:   "test-cluster",
+			User:      "test-user2@example.com",
+			RetainFor: "2h",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+
+	refSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "clusterconfig-ref-session",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:          "display-cluster-name",
+			ClusterConfigRef: "test-cluster",
+			User:             "test-user-ref@example.com",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
 		},
 	}
 
@@ -275,7 +298,7 @@ func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T
 	}
 
 	fakeClient := newTestClusterConfigFakeClient(scheme,
-		clusterConfig, pendingSession, approvedSession, otherClusterSession, expiredSession)
+		clusterConfig, pendingSession, approvedSession, refSession, otherClusterSession, expiredSession)
 	logger := zap.NewNop().Sugar()
 
 	r := &ClusterConfigReconciler{
@@ -296,12 +319,28 @@ func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "pending-session", Namespace: "default"}, &pending)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, pending.Status.State)
+	assert.Equal(t, "clusterDeleted", pending.Status.ReasonEnded)
+	assert.False(t, pending.Status.RetainedUntil.IsZero(), "terminated session should get retention")
+	expiredCondition := pending.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpired))
+	require.NotNil(t, expiredCondition)
+	assert.Equal(t, metav1.ConditionTrue, expiredCondition.Status)
+	assert.Equal(t, "ExpiredByClusterDeletion", expiredCondition.Reason)
 
 	// Verify approved session was terminated (expired)
 	var approved breakglassv1alpha1.BreakglassSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "approved-session", Namespace: "default"}, &approved)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, approved.Status.State)
+	assert.Equal(t, "clusterDeleted", approved.Status.ReasonEnded)
+	require.False(t, approved.Status.ExpiresAt.IsZero(), "terminated session should get expiry")
+	assert.WithinDuration(t, approved.Status.ExpiresAt.Time.Add(2*time.Hour), approved.Status.RetainedUntil.Time, time.Second)
+
+	// Verify session linked by spec.clusterConfigRef was terminated even when spec.cluster differs
+	var byRef breakglassv1alpha1.BreakglassSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "clusterconfig-ref-session", Namespace: "default"}, &byRef)
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, byRef.Status.State)
+	assert.False(t, byRef.Status.RetainedUntil.IsZero(), "clusterConfigRef-linked session should get retention")
 
 	// Verify other cluster session was NOT touched
 	var other breakglassv1alpha1.BreakglassSession
@@ -320,6 +359,134 @@ func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T
 	var updated breakglassv1alpha1.ClusterConfig
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
 	assert.True(t, apierrors.IsNotFound(err), "ClusterConfig should be deleted after finalizer removal")
+}
+
+func TestClusterConfigReconciler_BreakglassCleanupUsesIndexedLists(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+	var breakglassSessionSelectors []string
+
+	byCluster := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "by-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	byRef := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "by-ref", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:          "display-cluster",
+			ClusterConfigRef: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+	byBoth := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "by-both", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:          "test-cluster",
+			ClusterConfigRef: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(byCluster, byRef, byBoth).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, innerClient client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); ok {
+					listOptions := &client.ListOptions{}
+					for _, opt := range opts {
+						opt.ApplyToList(listOptions)
+					}
+					if listOptions.FieldSelector == nil {
+						return errors.New("BreakglassSession cleanup used an unfiltered list")
+					}
+					breakglassSessionSelectors = append(breakglassSessionSelectors, listOptions.FieldSelector.String())
+				}
+				return innerClient.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	r := &ClusterConfigReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Log:    zap.NewNop().Sugar(),
+	}
+
+	require.NoError(t, r.terminateBreakglassSessionsForCluster(ctx, "test-cluster", zap.NewNop().Sugar()))
+	assert.ElementsMatch(t, []string{"spec.cluster=test-cluster", "spec.clusterConfigRef=test-cluster"}, breakglassSessionSelectors)
+
+	for _, name := range []string{"by-cluster", "by-ref", "by-both"} {
+		var session breakglassv1alpha1.BreakglassSession
+		require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, &session))
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, session.Status.State, name)
+	}
+}
+
+func TestClusterConfigCleanupRetainForUsesBreakglassParser(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+
+	tests := []struct {
+		name     string
+		retain   string
+		log      *zap.SugaredLogger
+		expected time.Duration
+	}{
+		{
+			name:     "empty uses default",
+			retain:   "",
+			log:      logger,
+			expected: utils.DefaultRetainForDuration,
+		},
+		{
+			name:     "valid duration",
+			retain:   "2h",
+			log:      logger,
+			expected: 2 * time.Hour,
+		},
+		{
+			name:     "invalid duration with logger uses default",
+			retain:   "not-a-duration",
+			log:      logger,
+			expected: utils.DefaultRetainForDuration,
+		},
+		{
+			name:     "non-positive duration without logger uses default",
+			retain:   "0s",
+			log:      nil,
+			expected: utils.DefaultRetainForDuration,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := breakglassv1alpha1.BreakglassSessionSpec{RetainFor: tt.retain}
+
+			assert.Equal(t, tt.expected, utils.ParseRetainFor(spec, tt.log))
+		})
+	}
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
@@ -380,7 +547,8 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 		},
 	}
 
-	// Already failed session - should be skipped
+	// Failed sessions may still have tracked resources, so they should be
+	// moved into the terminated cleanup path.
 	failedDebugSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "failed-debug",
@@ -411,19 +579,19 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, reconcile.Result{}, result)
 
-	// Verify active debug session was terminated (failed)
+	// Verify active debug session was terminated so cleanup can run
 	var active breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "active-debug", Namespace: "default"}, &active)
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, active.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, active.Status.State)
 	assert.Contains(t, active.Status.Message, "ClusterConfig")
 	assert.Contains(t, active.Status.Message, "deleted")
 
-	// Verify pending debug session was terminated (failed)
+	// Verify pending debug session was terminated so cleanup can run
 	var pending breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "pending-debug", Namespace: "default"}, &pending)
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, pending.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, pending.Status.State)
 
 	// Verify other cluster session was NOT touched
 	var other breakglassv1alpha1.DebugSession
@@ -431,11 +599,13 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, other.Status.State)
 
-	// Verify already failed session state unchanged
+	// Verify failed session was terminated so cleanup can run
 	var failed breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "failed-debug", Namespace: "default"}, &failed)
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, failed.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, failed.Status.State)
+	assert.Contains(t, failed.Status.Message, "ClusterConfig")
+	assert.Contains(t, failed.Status.Message, "deleted")
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesBothSessionTypes(t *testing.T) {
@@ -508,7 +678,7 @@ func TestClusterConfigReconciler_DeleteTerminatesBothSessionTypes(t *testing.T) 
 	var debug breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "debug-session", Namespace: "default"}, &debug)
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, debug.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, debug.Status.State)
 
 	// When finalizer is removed from an object with DeletionTimestamp,
 	// the fake client automatically deletes the object
@@ -564,12 +734,11 @@ func TestClusterConfigReconciler_SkipsTerminalStates(t *testing.T) {
 		})
 	}
 
-	// Add debug sessions in terminal states
+	// Add debug sessions that are already in cleanup terminal states.
 	debugTerminalStates := []struct {
 		name  string
 		state breakglassv1alpha1.DebugSessionState
 	}{
-		{"debug-failed", breakglassv1alpha1.DebugSessionStateFailed},
 		{"debug-terminated", breakglassv1alpha1.DebugSessionStateTerminated},
 		{"debug-expired", breakglassv1alpha1.DebugSessionStateExpired},
 	}
@@ -707,9 +876,9 @@ func TestClusterConfigReconciler_MultipleNamespaces(t *testing.T) {
 }
 
 // TestClusterConfigReconciler_CleanupFailureBlocksDeletion tests that when session listing
-// fails, the finalizer is NOT removed and deletion is blocked with a requeue.
+// fails, the finalizer is NOT removed and deletion is blocked for retry.
 // This ensures the ClusterConfig cannot be deleted until all sessions are properly cleaned up.
-// Note: Individual session update failures are logged but don't block deletion (best-effort cleanup).
+// Individual session update failures block deletion so cleanup can retry.
 func TestClusterConfigReconciler_CleanupFailureBlocksDeletion(t *testing.T) {
 	scheme := newTestClusterConfigReconcilerScheme()
 	ctx := context.Background()
@@ -756,10 +925,10 @@ func TestClusterConfigReconciler_CleanupFailureBlocksDeletion(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
 	})
 
-	// Should return error and requeue after delay
+	// Should return error; controller-runtime retries errors through its rate limiter.
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated list failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Verify the ClusterConfig still exists with its finalizer
 	// (deletion should be blocked because cleanup failed)
@@ -767,6 +936,168 @@ func TestClusterConfigReconciler_CleanupFailureBlocksDeletion(t *testing.T) {
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
 	require.NoError(t, err, "ClusterConfig should still exist because cleanup failed")
 	assert.Contains(t, updated.Finalizers, ClusterConfigFinalizer, "Finalizer should still be present")
+}
+
+func TestClusterConfigReconciler_BreakglassStatusPatchFailureBlocksDeletion(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-cluster",
+			Namespace:         "default",
+			Finalizers:        []string{ClusterConfigFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{ClusterID: "test-cluster-id"},
+	}
+	failingSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "failing-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "test-cluster"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved},
+	}
+	okSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ok-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "test-cluster"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	debugSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+	}
+
+	statusPatchError := errors.New("simulated breakglass status patch failure")
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterConfig, failingSession, okSession, debugSession).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.DebugSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if subResource == "status" && obj.GetName() == "failing-session" {
+					return statusPatchError
+				}
+				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+
+	r := &ClusterConfigReconciler{Client: fakeClient, Scheme: scheme, Log: zap.NewNop().Sugar()}
+	result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"}})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "simulated breakglass status patch failure")
+	assert.Equal(t, reconcile.Result{}, result)
+
+	var updatedCluster breakglassv1alpha1.ClusterConfig
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedCluster)
+	require.NoError(t, err)
+	assert.Contains(t, updatedCluster.Finalizers, ClusterConfigFinalizer)
+
+	var ok breakglassv1alpha1.BreakglassSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "ok-session", Namespace: "default"}, &ok)
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, ok.Status.State)
+
+	var debug breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "debug-session", Namespace: "default"}, &debug)
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, debug.Status.State)
+}
+
+func TestClusterConfigReconciler_DebugStatusPatchFailureBlocksDeletion(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-cluster",
+			Namespace:         "default",
+			Finalizers:        []string{ClusterConfigFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{ClusterID: "test-cluster-id"},
+	}
+	failingSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "failing-debug", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+	}
+	okSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ok-debug", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
+	}
+
+	statusPatchError := errors.New("simulated debug status patch failure")
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterConfig, failingSession, okSession).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.DebugSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if subResource == "status" && obj.GetName() == "failing-debug" {
+					return statusPatchError
+				}
+				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+
+	r := &ClusterConfigReconciler{Client: fakeClient, Scheme: scheme, Log: zap.NewNop().Sugar()}
+	result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"}})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "simulated debug status patch failure")
+	assert.Equal(t, reconcile.Result{}, result)
+
+	var updatedCluster breakglassv1alpha1.ClusterConfig
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedCluster)
+	require.NoError(t, err)
+	assert.Contains(t, updatedCluster.Finalizers, ClusterConfigFinalizer)
+
+	var ok breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "ok-debug", Namespace: "default"}, &ok)
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, ok.Status.State)
 }
 
 // TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion tests that when DebugSession
@@ -800,6 +1131,12 @@ func TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion(t *tes
 			}
 			return nil
 		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, client client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 				// Fail List operations for DebugSessions to simulate cleanup failure
@@ -823,10 +1160,10 @@ func TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion(t *tes
 		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
 	})
 
-	// Should return error and requeue after delay
+	// Should return error; controller-runtime retries errors through its rate limiter.
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated debug session list failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Verify the ClusterConfig still exists with its finalizer
 	var updated breakglassv1alpha1.ClusterConfig
