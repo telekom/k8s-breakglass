@@ -575,6 +575,11 @@ jobs:
           if [ "${REMOTE_CHART_LOOKUP_STATUS}" -eq 0 ]; then
             REMOTE_CHART_METADATA="${REMOTE_CHART_LOOKUP_OUTPUT}"
             REMOTE_APP_VERSION="$(printf '%s\n' "${REMOTE_CHART_METADATA}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
+            if [ -z "${REMOTE_APP_VERSION}" ]; then
+              echo "::error::Failed to determine remote escalation-config:${CHART_VERSION} appVersion from GHCR metadata." >&2
+              printf '%s\n' "${REMOTE_CHART_METADATA}" >&2
+              exit 1
+            fi
             if [ "${REMOTE_APP_VERSION}" = "${CHART_APP_VERSION}" ]; then
               echo "Chart escalation-config:${CHART_VERSION} already present in GHCR with appVersion ${REMOTE_APP_VERSION}; skipping push."
               exit 0

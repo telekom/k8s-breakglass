@@ -62,6 +62,8 @@ require_pattern 'CHART_APP_VERSION=' \
   "release workflow must read the packaged Helm chart appVersion"
 require_pattern 'REMOTE_APP_VERSION=' \
   "release workflow must read the remote Helm chart appVersion before skipping an existing chart version"
+require_pattern 'Failed to determine remote escalation-config:\$\{CHART_VERSION\} appVersion from GHCR metadata' \
+  "release workflow must fail clearly when remote chart metadata lacks appVersion"
 require_pattern 'REMOTE_CHART_LOOKUP_STATUS=' \
   "release workflow must preserve the remote chart lookup exit status"
 require_pattern 'Failed to inspect existing escalation-config' \
