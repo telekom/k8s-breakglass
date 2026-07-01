@@ -61,6 +61,18 @@ func indexClusterBindingTemplateRef(obj client.Object) []string {
 	return []string{binding.Spec.TemplateRef.Name}
 }
 
+func indexClusterBindingTemplateSelector(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || binding.Spec.TemplateSelector == nil {
+		return nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
+	if err != nil || selector.Empty() {
+		return nil
+	}
+	return []string{debugBindingSelectorPresenceValue}
+}
+
 func indexClusterBindingClusters(obj client.Object) []string {
 	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
 	if !ok || binding == nil || len(binding.Spec.Clusters) == 0 {
@@ -73,6 +85,18 @@ func indexClusterBindingClusters(obj client.Object) []string {
 		}
 	}
 	return clusters
+}
+
+func indexClusterBindingClusterSelector(obj client.Object) []string {
+	binding, ok := obj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+	if !ok || binding == nil || binding.Spec.ClusterSelector == nil {
+		return nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	if err != nil || selector.Empty() {
+		return nil
+	}
+	return []string{debugBindingSelectorPresenceValue}
 }
 
 func TestDebugSessionClusterBindingReconciler_Reconcile_NotFound(t *testing.T) {
@@ -707,6 +731,7 @@ func TestDebugSessionClusterBindingReconciler_BindingsForTemplate(t *testing.T) 
 		WithScheme(scheme).
 		WithObjects(template, exactBinding, selectorBinding, otherBinding, emptySelectorBinding).
 		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingTemplateRefIndex, indexClusterBindingTemplateRef).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingTemplateSelectorIndex, indexClusterBindingTemplateSelector).
 		Build()
 
 	requests := r.bindingsForTemplate(context.Background(), template)
@@ -760,6 +785,7 @@ func TestDebugSessionClusterBindingReconciler_BindingsForClusterConfig(t *testin
 		WithScheme(scheme).
 		WithObjects(cluster, exactBinding, selectorBinding, otherBinding, emptySelectorBinding).
 		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingClustersIndex, indexClusterBindingClusters).
+		WithIndex(&breakglassv1alpha1.DebugSessionClusterBinding{}, debugBindingClusterSelectorIndex, indexClusterBindingClusterSelector).
 		Build()
 
 	requests := r.bindingsForClusterConfig(context.Background(), cluster)

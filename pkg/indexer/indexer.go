@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -15,7 +16,7 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 17
+const ExpectedIndexCount = 19
 
 // registeredIndexes tracks which indexes have been successfully registered.
 // Uses sync.Map because RegisterCommonFieldIndexes may be called concurrently
@@ -209,6 +210,22 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return err
 	}
 
+	if err := register("DebugSessionClusterBinding", "spec.templateSelector", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.templateSelector", func(rawObj client.Object) []string {
+			binding, ok := rawObj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+			if !ok || binding == nil || binding.Spec.TemplateSelector == nil {
+				return nil
+			}
+			selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
+			if err != nil || selector.Empty() {
+				return nil
+			}
+			return []string{"true"}
+		})
+	}); err != nil {
+		return err
+	}
+
 	if err := register("DebugSessionClusterBinding", "spec.clusters", func() error {
 		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.clusters", func(rawObj client.Object) []string {
 			binding, ok := rawObj.(*breakglassv1alpha1.DebugSessionClusterBinding)
@@ -222,6 +239,22 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 				}
 			}
 			return clusters
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("DebugSessionClusterBinding", "spec.clusterSelector", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.DebugSessionClusterBinding{}, "spec.clusterSelector", func(rawObj client.Object) []string {
+			binding, ok := rawObj.(*breakglassv1alpha1.DebugSessionClusterBinding)
+			if !ok || binding == nil || binding.Spec.ClusterSelector == nil {
+				return nil
+			}
+			selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+			if err != nil || selector.Empty() {
+				return nil
+			}
+			return []string{"true"}
 		})
 	}); err != nil {
 		return err

@@ -43,8 +43,11 @@ import (
 )
 
 const (
-	debugBindingTemplateRefIndex = "spec.templateRef.name"
-	debugBindingClustersIndex    = "spec.clusters"
+	debugBindingTemplateRefIndex      = "spec.templateRef.name"
+	debugBindingTemplateSelectorIndex = "spec.templateSelector"
+	debugBindingClustersIndex         = "spec.clusters"
+	debugBindingClusterSelectorIndex  = "spec.clusterSelector"
+	debugBindingSelectorPresenceValue = "true"
 )
 
 // DebugSessionClusterBindingReconciler watches DebugSessionClusterBinding CRs and validates
@@ -473,7 +476,7 @@ func (r *DebugSessionClusterBindingReconciler) bindingsForTemplate(ctx context.C
 	}
 
 	selectorBindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := r.client.List(ctx, selectorBindings); err != nil {
+	if err := r.client.List(ctx, selectorBindings, client.MatchingFields{debugBindingTemplateSelectorIndex: debugBindingSelectorPresenceValue}); err != nil {
 		r.logger.Warnw("Failed to list DebugSessionClusterBindings for template selector mapping",
 			"template", template.Name,
 			"error", err)
@@ -526,7 +529,7 @@ func (r *DebugSessionClusterBindingReconciler) bindingsForClusterConfig(ctx cont
 	}
 
 	selectorBindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := r.client.List(ctx, selectorBindings); err != nil {
+	if err := r.client.List(ctx, selectorBindings, client.MatchingFields{debugBindingClusterSelectorIndex: debugBindingSelectorPresenceValue}); err != nil {
 		r.logger.Warnw("Failed to list DebugSessionClusterBindings for cluster selector mapping",
 			"cluster", cluster.Name,
 			"clusterNamespace", cluster.Namespace,
