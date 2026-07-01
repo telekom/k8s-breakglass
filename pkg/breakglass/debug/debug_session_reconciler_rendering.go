@@ -449,9 +449,12 @@ func (c *DebugSessionController) buildPodDisruptionBudget(ds *breakglassv1alpha1
 
 // applySchedulingConstraints applies SchedulingConstraints to a PodSpec.
 // This merges the constraints with any existing scheduling configuration.
-func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec, constraints *breakglassv1alpha1.SchedulingConstraints) {
+func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec, constraints *breakglassv1alpha1.SchedulingConstraints) error {
 	if constraints == nil {
-		return
+		return nil
+	}
+	if err := validateSchedulingConstraints(constraints, "schedulingConstraints"); err != nil {
+		return err
 	}
 
 	// Apply node selector (merge, constraints take precedence)
@@ -483,10 +486,14 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 			if spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
 				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = constraints.RequiredNodeAffinity.DeepCopy()
 			} else {
-				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = andNodeSelectors(
+				combined, err := andNodeSelectors(
 					spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution,
 					constraints.RequiredNodeAffinity,
 				)
+				if err != nil {
+					return fmt.Errorf("requiredNodeAffinity: %w", err)
+				}
+				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = combined
 			}
 		}
 
@@ -528,7 +535,10 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 	}
 
 	if len(constraints.DeniedNodes) > 0 || len(constraints.DeniedNodeLabels) > 0 {
-		deniedSelector := buildDeniedNodeSelector(constraints)
+		deniedSelector, err := buildDeniedNodeSelector(constraints)
+		if err != nil {
+			return err
+		}
 		if deniedSelector != nil {
 			if spec.Affinity == nil {
 				spec.Affinity = &corev1.Affinity{}
@@ -536,17 +546,25 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 			if spec.Affinity.NodeAffinity == nil {
 				spec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
 			}
-			spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = andNodeSelectors(
+			combined, err := andNodeSelectors(
 				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution,
 				deniedSelector,
 			)
+			if err != nil {
+				return fmt.Errorf("deniedNodeLabels: %w", err)
+			}
+			spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = combined
 		}
 	}
+	return nil
 }
 
-func buildDeniedNodeSelector(constraints *breakglassv1alpha1.SchedulingConstraints) *corev1.NodeSelector {
+func buildDeniedNodeSelector(constraints *breakglassv1alpha1.SchedulingConstraints) (*corev1.NodeSelector, error) {
 	if constraints == nil || (len(constraints.DeniedNodes) == 0 && len(constraints.DeniedNodeLabels) == 0) {
-		return nil
+		return nil, nil
+	}
+	if err := validateDeniedNodeLabels(constraints.DeniedNodeLabels, "schedulingConstraints"); err != nil {
+		return nil, err
 	}
 
 	term := corev1.NodeSelectorTerm{}
@@ -588,9 +606,9 @@ func buildDeniedNodeSelector(constraints *breakglassv1alpha1.SchedulingConstrain
 	}
 
 	if len(term.MatchFields) == 0 && len(term.MatchExpressions) == 0 {
-		return nil
+		return nil, nil
 	}
-	return &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{term}}
+	return &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{term}}, nil
 }
 
 // convertDebugPodSpec converts our DebugPodSpecInner to corev1.PodSpec

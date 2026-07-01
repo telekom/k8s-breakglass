@@ -7,7 +7,10 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
+
+const maxRequiredNodeSelectorTerms = 128
 
 type schedulingOptionRequester struct {
 	Username string
@@ -367,6 +370,9 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 		}
 		baseConstraints = mergedBase
 	}
+	if err := validateSchedulingConstraints(baseConstraints, "base schedulingConstraints"); err != nil {
+		return nil, "", err
+	}
 
 	// Resolve effective scheduling options: binding takes precedence over template
 	var effectiveOpts *breakglassv1alpha1.SchedulingOptions
@@ -465,6 +471,12 @@ func isSchedulingOptionAllowedForRequester(opt *breakglassv1alpha1.SchedulingOpt
 // mergeSchedulingConstraints merges base constraints with option constraints.
 // Option constraints are additive and must not weaken base constraints.
 func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConstraints) (*breakglassv1alpha1.SchedulingConstraints, error) {
+	if err := validateSchedulingConstraints(base, "base schedulingConstraints"); err != nil {
+		return nil, err
+	}
+	if err := validateSchedulingConstraints(option, "option schedulingConstraints"); err != nil {
+		return nil, err
+	}
 	if base == nil && option == nil {
 		return nil, nil
 	}
@@ -527,7 +539,11 @@ func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConst
 
 	// For node affinity, option's required affinity is ANDed with base.
 	if option.RequiredNodeAffinity != nil {
-		merged.RequiredNodeAffinity = andNodeSelectors(merged.RequiredNodeAffinity, option.RequiredNodeAffinity)
+		combined, err := andNodeSelectors(merged.RequiredNodeAffinity, option.RequiredNodeAffinity)
+		if err != nil {
+			return nil, fmt.Errorf("requiredNodeAffinity: %w", err)
+		}
+		merged.RequiredNodeAffinity = combined
 	}
 
 	// Preferred affinities are additive
@@ -550,21 +566,82 @@ func mergeSchedulingConstraints(base, option *breakglassv1alpha1.SchedulingConst
 	return merged, nil
 }
 
-func andNodeSelectors(left, right *corev1.NodeSelector) *corev1.NodeSelector {
+func validateSchedulingConstraints(constraints *breakglassv1alpha1.SchedulingConstraints, context string) error {
+	if constraints == nil {
+		return nil
+	}
+	if constraints.RequiredNodeAffinity != nil && len(constraints.RequiredNodeAffinity.NodeSelectorTerms) > maxRequiredNodeSelectorTerms {
+		return fmt.Errorf("%s requiredNodeAffinity has %d nodeSelectorTerms, maximum is %d",
+			context, len(constraints.RequiredNodeAffinity.NodeSelectorTerms), maxRequiredNodeSelectorTerms)
+	}
+	if err := validateDeniedNodeLabels(constraints.DeniedNodeLabels, context); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateDeniedNodeLabels(deniedNodeLabels map[string]string, context string) error {
+	if len(deniedNodeLabels) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(deniedNodeLabels))
+	for key := range deniedNodeLabels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if errs := validation.IsQualifiedName(key); len(errs) > 0 {
+			return fmt.Errorf("%s deniedNodeLabels key %q is invalid: %s", context, key, strings.Join(errs, "; "))
+		}
+		value := deniedNodeLabels[key]
+		if value == "*" {
+			continue
+		}
+		if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
+			return fmt.Errorf("%s deniedNodeLabels[%q] value %q is invalid: %s", context, key, value, strings.Join(errs, "; "))
+		}
+	}
+	return nil
+}
+
+func andNodeSelectors(left, right *corev1.NodeSelector) (*corev1.NodeSelector, error) {
 	if left == nil {
 		if right == nil {
-			return nil
+			return nil, nil
 		}
-		return right.DeepCopy()
+		return right.DeepCopy(), nil
 	}
 	if right == nil {
-		return left.DeepCopy()
+		return left.DeepCopy(), nil
 	}
 	if len(left.NodeSelectorTerms) == 0 {
-		return right.DeepCopy()
+		return right.DeepCopy(), nil
 	}
 	if len(right.NodeSelectorTerms) == 0 {
-		return left.DeepCopy()
+		return left.DeepCopy(), nil
+	}
+	if nodeSelectorTermProductExceedsLimit(len(left.NodeSelectorTerms), len(right.NodeSelectorTerms), maxRequiredNodeSelectorTerms) {
+		return nil, fmt.Errorf("combining %d and %d nodeSelectorTerms would exceed maximum of %d resulting terms",
+			len(left.NodeSelectorTerms), len(right.NodeSelectorTerms), maxRequiredNodeSelectorTerms)
+	}
+
+	if len(left.NodeSelectorTerms) == 1 {
+		out := &corev1.NodeSelector{
+			NodeSelectorTerms: make([]corev1.NodeSelectorTerm, 0, len(right.NodeSelectorTerms)),
+		}
+		for _, rightTerm := range right.NodeSelectorTerms {
+			out.NodeSelectorTerms = append(out.NodeSelectorTerms, andNodeSelectorTerms(left.NodeSelectorTerms[0], rightTerm))
+		}
+		return out, nil
+	}
+	if len(right.NodeSelectorTerms) == 1 {
+		out := &corev1.NodeSelector{
+			NodeSelectorTerms: make([]corev1.NodeSelectorTerm, 0, len(left.NodeSelectorTerms)),
+		}
+		for _, leftTerm := range left.NodeSelectorTerms {
+			out.NodeSelectorTerms = append(out.NodeSelectorTerms, andNodeSelectorTerms(leftTerm, right.NodeSelectorTerms[0]))
+		}
+		return out, nil
 	}
 
 	out := &corev1.NodeSelector{
@@ -572,15 +649,26 @@ func andNodeSelectors(left, right *corev1.NodeSelector) *corev1.NodeSelector {
 	}
 	for _, leftTerm := range left.NodeSelectorTerms {
 		for _, rightTerm := range right.NodeSelectorTerms {
-			term := corev1.NodeSelectorTerm{}
-			term.MatchExpressions = append(term.MatchExpressions, leftTerm.MatchExpressions...)
-			term.MatchExpressions = append(term.MatchExpressions, rightTerm.MatchExpressions...)
-			term.MatchFields = append(term.MatchFields, leftTerm.MatchFields...)
-			term.MatchFields = append(term.MatchFields, rightTerm.MatchFields...)
-			out.NodeSelectorTerms = append(out.NodeSelectorTerms, term)
+			out.NodeSelectorTerms = append(out.NodeSelectorTerms, andNodeSelectorTerms(leftTerm, rightTerm))
 		}
 	}
-	return out
+	return out, nil
+}
+
+func nodeSelectorTermProductExceedsLimit(leftTerms, rightTerms, limit int) bool {
+	if leftTerms == 0 || rightTerms == 0 {
+		return false
+	}
+	return leftTerms > limit/rightTerms
+}
+
+func andNodeSelectorTerms(leftTerm, rightTerm corev1.NodeSelectorTerm) corev1.NodeSelectorTerm {
+	term := corev1.NodeSelectorTerm{}
+	term.MatchExpressions = append(term.MatchExpressions, leftTerm.MatchExpressions...)
+	term.MatchExpressions = append(term.MatchExpressions, rightTerm.MatchExpressions...)
+	term.MatchFields = append(term.MatchFields, leftTerm.MatchFields...)
+	term.MatchFields = append(term.MatchFields, rightTerm.MatchFields...)
+	return term
 }
 
 // resolveClusterPatterns expands cluster patterns (e.g., "*", "prod-*") to actual cluster names.

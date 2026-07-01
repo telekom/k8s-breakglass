@@ -3195,6 +3195,20 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 // ============================================================================
 
 func TestMergeSchedulingConstraints(t *testing.T) {
+	nodeSelectorWithTerms := func(count int, key string) *corev1.NodeSelector {
+		terms := make([]corev1.NodeSelectorTerm, 0, count)
+		for i := 0; i < count; i++ {
+			terms = append(terms, corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key:      key,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{fmt.Sprintf("value-%d", i)},
+				}},
+			})
+		}
+		return &corev1.NodeSelector{NodeSelectorTerms: terms}
+	}
+
 	t.Run("nil base and option returns nil", func(t *testing.T) {
 		result, err := mergeSchedulingConstraints(nil, nil)
 		require.NoError(t, err)
@@ -3291,6 +3305,38 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		}
 	})
 
+	t.Run("required node affinity permits single-term fast path up to limit", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(1, "pool"),
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(maxRequiredNodeSelectorTerms, "zone"),
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.RequiredNodeAffinity)
+		require.Len(t, result.RequiredNodeAffinity.NodeSelectorTerms, maxRequiredNodeSelectorTerms)
+		for _, term := range result.RequiredNodeAffinity.NodeSelectorTerms {
+			assert.Len(t, term.MatchExpressions, 2)
+		}
+	})
+
+	t.Run("required node affinity rejects oversized cross product", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(13, "pool"),
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(10, "zone"),
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "would exceed maximum")
+	})
+
 	t.Run("topology spread constraints are additive", func(t *testing.T) {
 		base := &breakglassv1alpha1.SchedulingConstraints{
 			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
@@ -3330,6 +3376,29 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "*", result.DeniedNodeLabels["node-role.kubernetes.io/control-plane"])
+	})
+
+	t.Run("invalid denied node label key is rejected", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"invalid/key/too/many": "true"},
+		}
+
+		result, err := mergeSchedulingConstraints(base, nil)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "deniedNodeLabels key")
+	})
+
+	t.Run("invalid denied node label value is rejected", func(t *testing.T) {
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/debug": "bad/value"},
+		}
+
+		result, err := mergeSchedulingConstraints(nil, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "deniedNodeLabels")
+		assert.Contains(t, err.Error(), "value")
 	})
 }
 
