@@ -1587,6 +1587,43 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("clears empty status without spoke client", func(t *testing.T) {
+		session := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "ephemeral-only-session",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateTerminated,
+				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					EphemeralContainersInjected: []breakglassv1alpha1.EphemeralContainerRef{
+						{
+							PodName:       "app-pod",
+							Namespace:     "default",
+							ContainerName: "debugger",
+						},
+					},
+				},
+			},
+		}
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{err: assert.AnError})
+
+		err := handler.CleanupKubectlDebugResources(context.Background(), session)
+		require.NoError(t, err)
+
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "breakglass", Name: "ephemeral-only-session"}, &stored))
+		assert.Nil(t, stored.Status.KubectlDebugStatus)
+	})
+
 	t.Run("returns error when GetClient fails", func(t *testing.T) {
 		hubClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -1738,6 +1775,64 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		require.Len(t, stored.Status.Participants, 1)
 		assert.Equal(t, "active@example.com", stored.Status.Participants[0].User)
 		assert.Nil(t, stored.Status.KubectlDebugStatus)
+	})
+
+	t.Run("preserves copied pods when deletion fails", func(t *testing.T) {
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod-copy",
+					Namespace: "default",
+				},
+			}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(_ context.Context, _ ctrlclient.WithWatch, _ ctrlclient.Object, _ ...ctrlclient.DeleteOption) error {
+					return errors.New("delete denied")
+				},
+			}).
+			Build()
+
+		session := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateTerminated,
+				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					CopiedPods: []breakglassv1alpha1.CopiedPodRef{
+						{CopyName: "pod-copy", CopyNamespace: "default"},
+					},
+				},
+			},
+		}
+
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		mockProvider := &mockClientProvider{
+			clients: map[string]ctrlclient.Client{
+				"test-cluster": targetClient,
+			},
+		}
+		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+
+		err := handler.CleanupKubectlDebugResources(context.Background(), session)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "delete copied pod")
+
+		var updated breakglassv1alpha1.DebugSession
+		require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "breakglass", Name: "test-session"}, &updated))
+		require.NotNil(t, updated.Status.KubectlDebugStatus)
+		require.Len(t, updated.Status.KubectlDebugStatus.CopiedPods, 1)
+		assert.Equal(t, "pod-copy", updated.Status.KubectlDebugStatus.CopiedPods[0].CopyName)
 	})
 
 	t.Run("wraps ErrClusterConfigNotFound for reconciler handling", func(t *testing.T) {

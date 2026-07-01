@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -34,10 +35,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -4876,6 +4879,361 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		err := controller.cleanupResources(context.Background(), session)
 		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
 	})
+
+	t.Run("empty_kubectl_cleanup_skips_target_cluster_client", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-kubectl-rest-config", "test-template", "test-cluster", "user@example.com")
+		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster",
+				Namespace: "default",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session, clusterConfig).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:        zap.NewNop().Sugar(),
+			client:     fakeClient,
+			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		require.NoError(t, err)
+
+		current := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), current))
+		assert.Nil(t, current.Status.KubectlDebugStatus)
+	})
+
+	t.Run("missing_cluster_config_clears_kubectl_debug_status", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
+		session.Generation = 3
+		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+			CopiedPods: []breakglassv1alpha1.CopiedPodRef{
+				{
+					OriginalPod:       "app",
+					OriginalNamespace: "default",
+					CopyName:          "app-copy",
+					CopyNamespace:     "default",
+				},
+			},
+		}
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "app-copy", Namespace: "default", Source: "kubectl-debug-copy"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "app-copy", Namespace: "default"},
+		}
+		session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{Name: "debug-config", Kind: "ConfigMap", Namespace: "default", Created: true},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "Secret", ResourceName: "debug-secret", Namespace: "default", Created: true},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:        zap.NewNop().Sugar(),
+			client:     fakeClient,
+			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		require.NoError(t, err)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Empty(t, updated.Status.DeployedResources)
+		assert.Empty(t, updated.Status.AllowedPods)
+		assert.Nil(t, updated.Status.KubectlDebugStatus)
+		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
+	})
+
+	t.Run("missing_rest_config_clears_deployed_tracking", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
+		session.Generation = 5
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+		session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{Name: "debug-config", Kind: "ConfigMap", Namespace: "default", Created: true},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "Secret", ResourceName: "debug-secret", Namespace: "default", Created: true},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:        zap.NewNop().Sugar(),
+			client:     fakeClient,
+			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		require.NoError(t, err)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Empty(t, updated.Status.DeployedResources)
+		assert.Empty(t, updated.Status.AllowedPods)
+		assert.Nil(t, updated.Status.KubectlDebugStatus)
+		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
+	})
+}
+
+func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
+	scheme := testScheme()
+
+	t.Run("deletes node debug pod and clears tracking", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-node-pod", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node-debug-pod",
+					Namespace: "default",
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.NoError(t, err)
+		assert.Empty(t, session.Status.DeployedResources)
+		assert.Empty(t, session.Status.AllowedPods)
+
+		var pod corev1.Pod
+		err = targetClient.Get(context.Background(), types.NamespacedName{Name: "node-debug-pod", Namespace: "default"}, &pod)
+		assert.True(t, apierrors.IsNotFound(err), "node debug pod should be deleted, got: %v", err)
+	})
+
+	t.Run("preserves failed deployed resource for retry", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-delete-failure", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node-debug-pod",
+					Namespace: "default",
+				},
+			}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.DeleteOption) error {
+					return apierrors.NewForbidden(corev1.Resource("pods"), obj.GetName(), assert.AnError)
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "delete debug resource Pod default/node-debug-pod")
+		require.Len(t, session.Status.DeployedResources, 1)
+		assert.Equal(t, "node-debug-pod", session.Status.DeployedResources[0].Name)
+		assert.Len(t, session.Status.AllowedPods, 1)
+	})
+
+	t.Run("preserves skipped refs while dependent cleanup failed", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-skipped-refs", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", Namespace: "default", Source: "auxiliary:config"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", Namespace: "default", Source: "pod-template"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "ConfigMap", ResourceName: "pod-template-config", Namespace: "default", Created: true},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node-debug-pod",
+					Namespace: "default",
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, true, true)
+		require.NoError(t, err)
+		require.Len(t, session.Status.DeployedResources, 2)
+		assert.Equal(t, "auxiliary:config", session.Status.DeployedResources[0].Source)
+		assert.Equal(t, "pod-template", session.Status.DeployedResources[1].Source)
+		assert.Empty(t, session.Status.AllowedPods, "allowed pods are cleared when only non-Pod cleanup refs remain")
+	})
+
+	t.Run("filters allowed pods to remaining pod refs", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-filter-allowed-pods", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "remaining-config", Namespace: "default", Source: "pod-template"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "failed-delete-pod", Namespace: "default"},
+			{Name: "deleted-pod", Namespace: "default"},
+			{Name: "untracked-pod", Namespace: "default"},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "failed-delete-pod",
+						Namespace: "default",
+					},
+				},
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "deleted-pod",
+						Namespace: "default",
+					},
+				},
+			).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if obj.GetName() == "failed-delete-pod" {
+						return apierrors.NewForbidden(corev1.Resource("pods"), obj.GetName(), assert.AnError)
+					}
+					return cl.Delete(ctx, obj, opts...)
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, true)
+		require.Error(t, err)
+		require.Len(t, session.Status.DeployedResources, 2)
+		assert.Equal(t, "failed-delete-pod", session.Status.DeployedResources[0].Name)
+		assert.Equal(t, "remaining-config", session.Status.DeployedResources[1].Name)
+		require.Len(t, session.Status.AllowedPods, 1)
+		assert.Equal(t, "failed-delete-pod", session.Status.AllowedPods[0].Name)
+	})
+
+	t.Run("preserves unsupported resource kind for retry", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-unsupported-kind", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "batch/v1", Kind: "Job", Name: "unsupported-job", Namespace: "default", Source: "workload"},
+		}
+
+		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `unsupported deployed resource kind "Job"`)
+		require.Len(t, session.Status.DeployedResources, 1)
+		assert.Equal(t, "unsupported-job", session.Status.DeployedResources[0].Name)
+	})
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-pod-template-failure", "test-template", "test-cluster", "user@example.com")
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{
+			Kind:         "ConfigMap",
+			APIVersion:   "v1",
+			ResourceName: "debug-script",
+			Namespace:    "default",
+			Created:      true,
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "debug-script",
+				Namespace: "default",
+			},
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.DeleteOption) error {
+				return apierrors.NewForbidden(corev1.Resource("configmaps"), obj.GetName(), assert.AnError)
+			},
+		}).
+		Build()
+
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete pod template resource ConfigMap default/debug-script")
+	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
+	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "forbidden")
+	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesPreservesParseFailures(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-pod-template-parse-failure", "test-template", "test-cluster", "user@example.com")
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{
+			Kind:         "ConfigMap",
+			APIVersion:   "invalid/group/version",
+			ResourceName: "debug-script",
+			Namespace:    "default",
+			Created:      true,
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse GVK for pod template resource default/debug-script")
+	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
+	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "failed to parse GVK")
+	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
 }
 
 // TestDebugSessionController_Reconcile_FailSessionCleanup tests the full reconcile loop

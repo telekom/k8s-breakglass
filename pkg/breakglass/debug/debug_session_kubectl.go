@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -666,10 +667,21 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 		return nil
 	}
 
+	if len(ds.Status.KubectlDebugStatus.CopiedPods) == 0 {
+		// Ephemeral containers cannot be removed; without copied pods there is
+		// no spoke-cluster cleanup to perform.
+		return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.KubectlDebugStatus = nil
+		})
+	}
+
 	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 	if err != nil {
 		return fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
 	}
+
+	var cleanupErrors []error
+	remainingCopiedPods := make([]breakglassv1alpha1.CopiedPodRef, 0, len(ds.Status.KubectlDebugStatus.CopiedPods))
 
 	// Cleanup copied pods
 	for _, cp := range ds.Status.KubectlDebugStatus.CopiedPods {
@@ -680,13 +692,25 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 			},
 		}
 		if err := targetClient.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
-			// Log but continue cleanup
+			remainingCopiedPods = append(remainingCopiedPods, cp)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue
 		}
 	}
 
 	// Note: Ephemeral containers cannot be removed, they remain until pod deletion
-	// Clear the status
+	if len(remainingCopiedPods) > 0 {
+		if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			if status.KubectlDebugStatus == nil {
+				status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+			}
+			status.KubectlDebugStatus.CopiedPods = remainingCopiedPods
+		}); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("preserve kubectl-debug cleanup status: %w", err))
+		}
+		return errors.Join(cleanupErrors...)
+	}
+
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.KubectlDebugStatus = nil
 	})
