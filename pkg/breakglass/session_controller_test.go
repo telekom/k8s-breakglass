@@ -1807,6 +1807,290 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	}
 }
 
+func TestFilterBreakglassSessionsExplicitOwnershipFiltersDoNotIncludeImplicitApproverMatches(t *testing.T) {
+	now := time.Now()
+	owned := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "owned-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-filter",
+			User:         "bob@example.com",
+			GrantedGroup: "owned",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(now.Add(time.Hour)),
+		},
+	}
+	approvable := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approvable-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-filter",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(now.Add(time.Hour)),
+		},
+	}
+	approvedByMe := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-by-me-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-filter",
+			User:         "carol@example.com",
+			GrantedGroup: "approved",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			Approvers: []string{"bob@example.com"},
+		},
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-approvable"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"cl-filter"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "approvable",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"bob@example.com"}},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(owned, approvable, approvedByMe, escalation).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", "bob@example.com")
+		c.Set("username", "bob")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	assertSessionNames := func(path string, want []string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		res := w.Result()
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
+
+		got := make([]string, 0, len(sessions))
+		for _, session := range sessions {
+			got = append(got, session.Name)
+		}
+		assert.ElementsMatch(t, want, got)
+	}
+
+	assertSessionNames("/breakglassSessions?mine=true", []string{"owned-session"})
+	assertSessionNames("/breakglassSessions?mine=true&approver=true", []string{"owned-session", "approvable-session"})
+	assertSessionNames("/breakglassSessions?approvedByMe=true", []string{"approved-by-me-session"})
+	assertSessionNames("/breakglassSessions?approvedByMe=true&approver=true", []string{"approved-by-me-session", "approvable-session"})
+}
+
+func TestFilterBreakglassSessionsMineUsesAlternateIdentifiersWhenEmailMissing(t *testing.T) {
+	usernameOwned := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "username-owned-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-filter",
+			User:         "bob",
+			GrantedGroup: "owned",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	subjectOwned := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "subject-owned-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-filter",
+			User:         "subject-123",
+			GrantedGroup: "owned",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	emailOnly := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "email-only-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-filter",
+			User:         "bob@example.com",
+			GrantedGroup: "owned",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(usernameOwned, subjectOwned, emailOnly).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("username", "bob")
+		c.Set("user_id", "subject-123")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	identityProvider := &trackingIdentityProvider{
+		username: "bob",
+		identity: "subject-123",
+		userIdentifierErr: map[breakglassv1alpha1.UserIdentifierClaimType]error{
+			breakglassv1alpha1.UserIdentifierClaimEmail: fmt.Errorf("email claim not found in token"),
+		},
+	}
+	ctrl.identityProvider = identityProvider
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
+	got := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		got = append(got, session.Name)
+	}
+	assert.ElementsMatch(t, []string{"username-owned-session", "subject-owned-session"}, got)
+	assert.Zero(t, identityProvider.getEmailCalls)
+	assert.Equal(t, 1, identityProvider.userIdentifierCalls[breakglassv1alpha1.UserIdentifierClaimEmail])
+}
+
+type trackingIdentityProvider struct {
+	email               string
+	username            string
+	identity            string
+	getEmailCalls       int
+	userIdentifierCalls map[breakglassv1alpha1.UserIdentifierClaimType]int
+	userIdentifierErr   map[breakglassv1alpha1.UserIdentifierClaimType]error
+}
+
+func (p *trackingIdentityProvider) GetEmail(_ *gin.Context) (string, error) {
+	p.getEmailCalls++
+	if p.email == "" {
+		return "", fmt.Errorf("email claim not found in token")
+	}
+	return p.email, nil
+}
+
+func (p *trackingIdentityProvider) GetUsername(_ *gin.Context) string {
+	return p.username
+}
+
+func (p *trackingIdentityProvider) GetIdentity(_ *gin.Context) string {
+	return p.identity
+}
+
+func (p *trackingIdentityProvider) GetUserIdentifier(_ *gin.Context, claimType breakglassv1alpha1.UserIdentifierClaimType) (string, error) {
+	if p.userIdentifierCalls == nil {
+		p.userIdentifierCalls = map[breakglassv1alpha1.UserIdentifierClaimType]int{}
+	}
+	p.userIdentifierCalls[claimType]++
+	if err := p.userIdentifierErr[claimType]; err != nil {
+		return "", err
+	}
+	switch claimType {
+	case breakglassv1alpha1.UserIdentifierClaimEmail:
+		if p.email == "" {
+			return "", fmt.Errorf("email claim not found in token")
+		}
+		return p.email, nil
+	case breakglassv1alpha1.UserIdentifierClaimPreferredUsername:
+		if p.username == "" {
+			return "", fmt.Errorf("preferred_username claim not found in token")
+		}
+		return p.username, nil
+	case breakglassv1alpha1.UserIdentifierClaimSub:
+		if p.identity == "" {
+			return "", fmt.Errorf("sub claim not found in token")
+		}
+		return p.identity, nil
+	default:
+		return "", fmt.Errorf("unsupported user identifier claim type: %s", claimType)
+	}
+}
+
+func TestFilterBreakglassSessionsApprovedByMeRequiresEmailClaim(t *testing.T) {
+	approved := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-by-me-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-filter",
+			User:         "carol@example.com",
+			GrantedGroup: "approved",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			Approvers: []string{"bob@example.com"},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(approved).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("username", "bob")
+		c.Set("user_id", "subject-123")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?approvedByMe=true", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	require.Equal(t, http.StatusUnauthorized, res.StatusCode)
+
+	body, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "UNAUTHORIZED")
+	assert.Contains(t, string(body), "email claim is required")
+}
+
 // TestApproveByNonApprover_ReturnsUnauthorized
 //
 // Purpose:
@@ -5141,9 +5425,23 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 			return
 		}
 		email := c.GetHeader("X-Test-Email")
-		c.Set("email", email)
-		c.Set("username", strings.TrimSuffix(email, "@example.com"))
-		c.Set("user_id", email)
+		username := c.GetHeader("X-Test-Username")
+		userID := c.GetHeader("X-Test-User-ID")
+		if email != "" {
+			c.Set("email", email)
+		}
+		if username == "" && email != "" {
+			username = strings.TrimSuffix(email, "@example.com")
+		}
+		if username != "" {
+			c.Set("username", username)
+		}
+		if userID == "" && email != "" {
+			userID = email
+		}
+		if userID != "" {
+			c.Set("user_id", userID)
+		}
 		c.Set("groups", []string{"system:authenticated"})
 		c.Next()
 	}
@@ -5158,6 +5456,17 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	serveAs := func(email, sessionName string) (int, map[string]any) {
 		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions/"+sessionName, nil)
 		req.Header.Set("X-Test-Email", email)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+		return w.Result().StatusCode, body
+	}
+	serveWithIdentity := func(username, userID, sessionName string) (int, map[string]any) {
+		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions/"+sessionName, nil)
+		req.Header.Set("X-Test-Username", username)
+		req.Header.Set("X-Test-User-ID", userID)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 
@@ -5196,6 +5505,11 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "reader-sess-3", sessionNameFromBody(body))
 	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize username-based requester")
+
+	status, body = serveWithIdentity("alice", "alice-subject", "reader-sess-3")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "reader-sess-3", sessionNameFromBody(body))
+	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize requester without email claim")
 }
 
 func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
@@ -5410,9 +5724,9 @@ func TestOwnerRejectRecordsSubjectActorWhenEmailAndUsernameMissing(t *testing.T)
 	require.Equal(t, "owner-subject", events[0].Actor.User)
 }
 
-// Test that when identity provider fails to return email and mine=true is requested,
-// the handler returns HTTP 500.
-func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
+// Test that when no usable identity is available and mine=true is requested,
+// the handler returns HTTP 401 instead of treating the auth-negative case as internal.
+func TestGetSessions_MissingIdentityForMineReturns401(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
@@ -5440,9 +5754,11 @@ func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
-	if res.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("expected 500 InternalServerError when identity provider fails, got %d", res.StatusCode)
-	}
+	require.Equal(t, http.StatusUnauthorized, res.StatusCode)
+	body, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "UNAUTHORIZED")
+	assert.Contains(t, string(body), "user identity not found")
 }
 
 // Test that blockSelfApproval in ClusterConfig prevents a user from approving their own session

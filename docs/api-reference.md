@@ -166,9 +166,9 @@ Authorization: Bearer <token>
 | `cluster` | string | Filter by cluster name |
 | `user` | string | Filter by user |
 | `group` | string | Filter by granted group |
-| `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions) |
-| `approver` | boolean | Sessions user can approve (default: `true`) |
-| `approvedByMe` | boolean | Sessions the user has already approved |
+| `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions). Matches the authenticated user's email, preferred username, or subject/user ID; requests with no usable identity return `401 Unauthorized`. |
+| `approver` | boolean | Sessions user can approve. Defaults to `true` only when neither `mine=true` nor `approvedByMe=true` is requested; set `approver=true` explicitly to combine filters. |
+| `approvedByMe` | boolean | Sessions the caller has already approved. This filter matches the caller's email claim against recorded approver identifiers; missing email returns `401 Unauthorized`. |
 | `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
 | `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. Unknown non-empty tokens return `400 Bad Request`. |
 | `token` | string | Validate approval-link metadata for a session name. This mode returns metadata for one session instead of the normal session list. |
@@ -225,6 +225,10 @@ endpoint returns `401 Unauthorized`.
 # Your pending sessions
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/breakglassSessions?cluster=prod&mine=true&state=pending"
+
+# Your sessions plus sessions you can approve
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglassSessions?mine=true&approver=true"
 
 # All approved sessions for a group
 curl -H "Authorization: Bearer <token>" \
