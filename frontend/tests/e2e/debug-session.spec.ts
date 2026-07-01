@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test, expect } from "@playwright/test";
-import { AuthHelper, TEST_USERS, fillScaleTextField } from "./helpers";
+import { AuthHelper, TEST_USERS, fillScaleTextarea, fillScaleTextField } from "./helpers";
 
 // Debug session tests share user authentication and session state.
 // Serial execution prevents race conditions when interacting with forms and actions.
@@ -314,6 +314,27 @@ test.describe.serial("Debug Session Creation", () => {
     // Now datetime input should be visible
     scheduleTimeInput = page.locator('[data-testid="schedule-time-input"]');
     await expect(scheduleTimeInput).toBeVisible();
+
+    await fillScaleTextField(page, '[data-testid="schedule-time-input"]', "2030-01-02T03:04");
+
+    await expect
+      .poll(async () =>
+        scheduleTimeInput.evaluate(
+          (el) => el.getAttribute("invalid") === "true" || (el as HTMLElement & { invalid?: boolean }).invalid === true,
+        ),
+      )
+      .toBe(false);
+
+    await fillScaleTextarea(page, '[data-testid="reason-input"]', "Need scheduled debug access for incident follow-up");
+
+    const createButton = page.locator('[data-testid="create-session-button"]');
+    await expect
+      .poll(async () =>
+        createButton.evaluate(
+          (el) => el.hasAttribute("disabled") || (el as HTMLElement & { disabled?: boolean }).disabled === true,
+        ),
+      )
+      .toBe(false);
   });
 
   test("template selection shows template info", async ({ page }) => {

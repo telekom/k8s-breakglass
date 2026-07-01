@@ -447,11 +447,11 @@ const isValid = computed(() => {
   if (!baseValid) return false;
 
   // Scheduling options validation
-  if (schedulingOptions.value?.required && !form.selectedSchedulingOption) {
+  if (hasSchedulingOptions.value && schedulingOptions.value?.required && !form.selectedSchedulingOption) {
     return false;
   }
 
-  if (form.useScheduledStart && !form.scheduledStartTime.trim()) {
+  if (hasSchedulingOptions.value && form.useScheduledStart && !form.scheduledStartTime.trim()) {
     return false;
   }
 
@@ -552,7 +552,7 @@ async function handleSubmit() {
     }
 
     const scheduledStartTime = form.scheduledStartTime.trim();
-    if (form.useScheduledStart && scheduledStartTime) {
+    if (hasSchedulingOptions.value && form.useScheduledStart && scheduledStartTime) {
       request.scheduledStartTime = new Date(scheduledStartTime).toISOString();
     }
 

@@ -59,6 +59,12 @@ function handleDurationChange(ev: Event) {
   const value = target?.value || "1h";
   emit("update:requestedDuration", value);
 }
+
+function handleScheduledStartInput(ev: Event) {
+  const customEvent = ev as CustomEvent<{ value?: string }>;
+  const target = ev.target as HTMLInputElement | null;
+  emit("update:scheduledStartTime", customEvent.detail?.value ?? target?.value ?? "");
+}
 </script>
 
 <template>
@@ -268,7 +274,8 @@ function handleDurationChange(ev: Event) {
         :invalid="useScheduledStart && !scheduledStartTime.trim()"
         helper-text-invalid="Scheduled start time is required."
         data-testid="schedule-time-input"
-        @scale-change="emit('update:scheduledStartTime', ($event.target as HTMLInputElement).value)"
+        @scale-change="handleScheduledStartInput"
+        @scale-input="handleScheduledStartInput"
       ></scale-text-field>
     </div>
   </div>
