@@ -2544,7 +2544,7 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 			},
 		}
 
-		buildRouter := func(username, email string, groups []string) *gin.Engine {
+		buildRouter := func(username, email string, groups interface{}) *gin.Engine {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(userTemplate).
@@ -2604,6 +2604,20 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		assert.Equal(t, "targetPool", response.Templates[0].ExtraDeployVariables[1].Name)
 		require.Len(t, response.Templates[0].ExtraDeployVariables[1].Options, 1)
 		assert.Equal(t, "tenant", response.Templates[0].ExtraDeployVariables[1].Options[0].Value)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []interface{}{"platform-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		require.Len(t, response.Templates[0].SchedulingOptions.Options, 3)
+		require.Len(t, response.Templates[0].ExtraDeployVariables, 3)
+		assert.Equal(t, "privilegedMode", response.Templates[0].ExtraDeployVariables[1].Name)
+		require.Len(t, response.Templates[0].ExtraDeployVariables[2].Options, 2)
+		assert.Equal(t, "platform", response.Templates[0].ExtraDeployVariables[2].Options[1].Value)
 
 		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
 		w = httptest.NewRecorder()
@@ -8003,6 +8017,49 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		assert.Contains(t, response.Name, "debug-")
 		assert.NotNil(t, response.Spec.ExtraDeployValues)
 		assert.Len(t, response.Spec.ExtraDeployValues, 5)
+	})
+
+	t.Run("create session rejects restricted extraDeployValues with empty groups", func(t *testing.T) {
+		restrictedTemplate := templateWithVariables.DeepCopy()
+		restrictedTemplate.Spec.ExtraDeployVariables = append(restrictedTemplate.Spec.ExtraDeployVariables, breakglassv1alpha1.ExtraDeployVariable{
+			Name:          "privilegedMode",
+			InputType:     breakglassv1alpha1.InputTypeBoolean,
+			AllowedGroups: []string{"platform-admins"},
+		})
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, readyProductionCluster.DeepCopy()).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Set("groups", []string{})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"customName": "valid-name",
+				"privilegedMode": true
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "privilegedMode")
+		assert.Contains(t, w.Body.String(), "restricted")
 	})
 
 	t.Run("create session fails with invalid boolean value", func(t *testing.T) {

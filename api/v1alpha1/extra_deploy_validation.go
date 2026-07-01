@@ -119,8 +119,8 @@ func ValidateExtraDeployValues(
 	variables []ExtraDeployVariable,
 	fldPath *field.Path,
 ) field.ErrorList {
-	// Call the full validation without group restrictions
-	return ValidateExtraDeployValuesWithGroups(values, variables, nil, fldPath)
+	// Call the shared validation without group restrictions.
+	return validateExtraDeployValues(values, variables, nil, false, fldPath)
 }
 
 // ValidateExtraDeployValuesWithGroups validates user-provided values against variable definitions,
@@ -132,12 +132,20 @@ func ValidateExtraDeployValues(
 // - Select/multiSelect values are from allowed options
 // - User has access to restricted variables (via allowedGroups on variable)
 // - User has access to restricted options (via allowedGroups on SelectOption)
-//
-// If userGroups is nil or empty, group restrictions are not enforced.
 func ValidateExtraDeployValuesWithGroups(
 	values map[string]apiextensionsv1.JSON,
 	variables []ExtraDeployVariable,
 	userGroups []string,
+	fldPath *field.Path,
+) field.ErrorList {
+	return validateExtraDeployValues(values, variables, userGroups, true, fldPath)
+}
+
+func validateExtraDeployValues(
+	values map[string]apiextensionsv1.JSON,
+	variables []ExtraDeployVariable,
+	userGroups []string,
+	enforceGroupRestrictions bool,
 	fldPath *field.Path,
 ) field.ErrorList {
 	allErrs := field.ErrorList{}
@@ -172,7 +180,7 @@ func ValidateExtraDeployValuesWithGroups(
 		}
 
 		// Check allowedGroups on the variable itself (applies to all input types)
-		if len(varDef.AllowedGroups) > 0 && len(userGroups) > 0 {
+		if enforceGroupRestrictions && len(varDef.AllowedGroups) > 0 {
 			if !groupsIntersect(userGroups, varDef.AllowedGroups) {
 				allErrs = append(allErrs, field.Forbidden(valuePath,
 					fmt.Sprintf("variable %q is restricted; requires membership in one of: %v", name, varDef.AllowedGroups)))
@@ -181,7 +189,7 @@ func ValidateExtraDeployValuesWithGroups(
 		}
 
 		// Validate value type and constraints (including allowedGroups on SelectOptions)
-		errs := validateVariableValue(jsonVal, varDef, userGroups, valuePath)
+		errs := validateVariableValue(jsonVal, varDef, userGroups, enforceGroupRestrictions, valuePath)
 		allErrs = append(allErrs, errs...)
 	}
 
@@ -207,6 +215,7 @@ func validateVariableValue(
 	value apiextensionsv1.JSON,
 	varDef ExtraDeployVariable,
 	userGroups []string,
+	enforceGroupRestrictions bool,
 	fldPath *field.Path,
 ) field.ErrorList {
 	allErrs := field.ErrorList{}
@@ -230,10 +239,10 @@ func validateVariableValue(
 		allErrs = append(allErrs, validateStorageSizeValue(value, varDef.Validation, fldPath)...)
 
 	case InputTypeSelect:
-		allErrs = append(allErrs, validateSelectValue(value, varDef.Options, userGroups, fldPath)...)
+		allErrs = append(allErrs, validateSelectValue(value, varDef.Options, userGroups, enforceGroupRestrictions, fldPath)...)
 
 	case InputTypeMultiSelect:
-		allErrs = append(allErrs, validateMultiSelectValue(value, varDef.Options, varDef.Validation, userGroups, fldPath)...)
+		allErrs = append(allErrs, validateMultiSelectValue(value, varDef.Options, varDef.Validation, userGroups, enforceGroupRestrictions, fldPath)...)
 	}
 
 	return allErrs
@@ -392,7 +401,7 @@ func validateStorageSizeValue(value apiextensionsv1.JSON, validation *VariableVa
 }
 
 // validateSelectValue validates a select input value.
-func validateSelectValue(value apiextensionsv1.JSON, options []SelectOption, userGroups []string, fldPath *field.Path) field.ErrorList {
+func validateSelectValue(value apiextensionsv1.JSON, options []SelectOption, userGroups []string, enforceGroupRestrictions bool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	var strVal string
@@ -414,7 +423,7 @@ func validateSelectValue(value apiextensionsv1.JSON, options []SelectOption, use
 				return allErrs
 			}
 			// Check allowedGroups on the selected option
-			if len(opt.AllowedGroups) > 0 && len(userGroups) > 0 {
+			if enforceGroupRestrictions && len(opt.AllowedGroups) > 0 {
 				if !groupsIntersect(userGroups, opt.AllowedGroups) {
 					allErrs = append(allErrs, field.Forbidden(fldPath,
 						fmt.Sprintf("option %q is restricted; requires membership in one of: %v", strVal, opt.AllowedGroups)))
@@ -434,7 +443,7 @@ func validateSelectValue(value apiextensionsv1.JSON, options []SelectOption, use
 }
 
 // validateMultiSelectValue validates a multiSelect input value.
-func validateMultiSelectValue(value apiextensionsv1.JSON, options []SelectOption, validation *VariableValidation, userGroups []string, fldPath *field.Path) field.ErrorList {
+func validateMultiSelectValue(value apiextensionsv1.JSON, options []SelectOption, validation *VariableValidation, userGroups []string, enforceGroupRestrictions bool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	var arrVal []string
@@ -469,7 +478,7 @@ func validateMultiSelectValue(value apiextensionsv1.JSON, options []SelectOption
 			allErrs = append(allErrs, field.NotSupported(fldPath.Index(i), sel, validList))
 		} else if opt, exists := optionMap[sel]; exists {
 			// Check allowedGroups on the selected option
-			if len(opt.AllowedGroups) > 0 && len(userGroups) > 0 {
+			if enforceGroupRestrictions && len(opt.AllowedGroups) > 0 {
 				if !groupsIntersect(userGroups, opt.AllowedGroups) {
 					allErrs = append(allErrs, field.Forbidden(fldPath.Index(i),
 						fmt.Sprintf("option %q is restricted; requires membership in one of: %v", sel, opt.AllowedGroups)))

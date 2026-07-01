@@ -203,17 +203,8 @@ func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester 
 			requester.email = value
 		}
 	}
-	if groups, ok := ctx.Get("groups"); ok {
-		switch value := groups.(type) {
-		case []string:
-			requester.groups = value
-		case []interface{}:
-			for _, group := range value {
-				if groupName, ok := group.(string); ok {
-					requester.groups = append(requester.groups, groupName)
-				}
-			}
-		}
+	if groups, ok := ctx.Get("groups"); ok && groups != nil {
+		requester.groups = debugSessionGroupsFromContext(groups)
 	}
 
 	return requester
