@@ -5007,10 +5007,7 @@ func TestClusterConfig_BlockSelfApproval_CrossNamespacePreventsSelfApproval(t *t
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed decode response: %v", err)
-	}
+	sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
 	if len(sessions) != 0 {
 		t.Fatalf("expected no sessions visible because cross-namespace ClusterConfig blocks self-approval, got: %#v", sessions)
 	}
@@ -5076,10 +5073,7 @@ func TestClusterConfig_AllowedApproverDomains_CrossNamespaceRestrictsDomain(t *t
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed decode response: %v", err)
-	}
+	sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
 	if len(sessions) != 0 {
 		t.Fatalf("expected no sessions visible because cross-namespace ClusterConfig restricts approver domains, got: %#v", sessions)
 	}
@@ -5148,10 +5142,7 @@ func TestClusterConfig_DuplicateNameFailsClosedForApprovalPolicy(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 	}
-	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
-		t.Fatalf("failed decode response: %v", err)
-	}
+	sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
 	if len(sessions) != 0 {
 		t.Fatalf("expected no sessions visible when ClusterConfig name is ambiguous, got: %#v", sessions)
 	}
