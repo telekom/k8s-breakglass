@@ -351,7 +351,13 @@ func (s *KubernetesEventSink) Write(_ context.Context, event *Event) error {
 
 	if s.recorder != nil {
 		reason := kubernetesEventReason(event.Type)
-		s.recorder.Eventf(kubernetesEventTarget(event.Target), nil, eventType, reason, reason, "%s", message)
+		target := event.Target
+		if target.APIGroup == "" {
+			if apiGroup, ok := event.Details["apiGroup"].(string); ok {
+				target.APIGroup = apiGroup
+			}
+		}
+		s.recorder.Eventf(kubernetesEventTarget(target), nil, eventType, reason, reason, "%s", message)
 	}
 	return nil
 }

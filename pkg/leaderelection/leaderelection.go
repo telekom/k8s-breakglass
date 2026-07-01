@@ -120,10 +120,17 @@ func runLoop(ctx context.Context, leaseName, leaseNamespace, hostname string, lo
 		// the lease. Losing the lease must not permanently stop this replica from
 		// becoming leader again, so retry until the parent context shuts down.
 		elector.Run(ctx)
+		timer := time.NewTimer(retryPeriod)
 		select {
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return
-		case <-time.After(retryPeriod):
+		case <-timer.C:
 			log.Infow("Leader election stopped; retrying leadership acquisition",
 				"id", leaseName, "namespace", leaseNamespace, "identity", hostname)
 		}

@@ -668,6 +668,31 @@ func TestKubernetesEventSinkUsesStableEventReason(t *testing.T) {
 	assert.Equal(t, "breakglass-system", regarding.Namespace)
 }
 
+func TestKubernetesEventSinkUsesDetailsAPIGroupFallback(t *testing.T) {
+	recorder := &capturingEventRecorder{}
+	sink := NewKubernetesEventSink(recorder, nil)
+
+	err := sink.Write(context.Background(), &Event{
+		Type:     EventAccessDenied,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "auditor@example.com"},
+		Target: Target{
+			Kind: "RoleBinding",
+			Name: "breakglass-view",
+		},
+		Details: map[string]interface{}{
+			"apiGroup": "rbac.authorization.k8s.io",
+		},
+	})
+	require.NoError(t, err)
+
+	regarding, ok := recorder.regarding.(*metav1.PartialObjectMetadata)
+	require.True(t, ok)
+	assert.Equal(t, "rbac.authorization.k8s.io/v1", regarding.APIVersion)
+	assert.Equal(t, "RoleBinding", regarding.Kind)
+	assert.Equal(t, "breakglass-view", regarding.Name)
+}
+
 type capturingEventRecorder struct {
 	regarding runtime.Object
 	eventType string
