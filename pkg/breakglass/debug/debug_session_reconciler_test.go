@@ -842,6 +842,91 @@ func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrPartic
 	assert.Equal(t, allowedPods, fetchedSession.Status.AllowedPods)
 }
 
+func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
+	scheme := testScheme()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns"},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", Namespace: "debug-ns"},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, secret).Build()
+	session := newTestDebugSession("aux-readiness", "test-template", "test-cluster", "user@example.com")
+	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+		{
+			Name:         "ready-config",
+			Kind:         "ConfigMap",
+			APIVersion:   "v1",
+			ResourceName: "ready-config",
+			Namespace:    "debug-ns",
+			Created:      true,
+			AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+				{
+					Kind:         "Secret",
+					APIVersion:   "v1",
+					ResourceName: "ready-secret",
+					Namespace:    "debug-ns",
+				},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	controller := &DebugSessionController{
+		log:          zap.NewNop().Sugar(),
+		auxiliaryMgr: NewAuxiliaryResourceManager(zap.NewNop().Sugar(), nil),
+	}
+
+	require.NoError(t, controller.updateAuxiliaryResourceReadiness(context.Background(), session, targetClient))
+	require.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	require.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+	require.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	require.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+
+	require.NoError(t, breakglass.ApplyDebugSessionStatus(context.Background(), fakeClient, session))
+
+	var persisted breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      "aux-readiness",
+		Namespace: "breakglass",
+	}, &persisted))
+	require.Len(t, persisted.Status.AuxiliaryResourceStatuses, 1)
+	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.Equal(t, "Current", persisted.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+	require.Len(t, persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources, 1)
+	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "Current", persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+}
+
+func TestStartAuxiliaryStatusTracking(t *testing.T) {
+	t.Run("configured resources force explicit empty status list", func(t *testing.T) {
+		session := newTestDebugSession("aux-empty-status", "test-template", "test-cluster", "user@example.com")
+
+		statuses := startAuxiliaryStatusTracking(session, true)
+
+		if statuses == nil {
+			t.Fatal("expected non-nil auxiliary status slice")
+		}
+		if session.Status.AuxiliaryResourceStatuses == nil {
+			t.Fatal("expected non-nil session auxiliary status slice")
+		}
+		assert.Empty(t, statuses)
+		assert.Empty(t, session.Status.AuxiliaryResourceStatuses)
+	})
+
+	t.Run("unconfigured resources leave status untouched", func(t *testing.T) {
+		session := newTestDebugSession("aux-no-status", "test-template", "test-cluster", "user@example.com")
+
+		statuses := startAuxiliaryStatusTracking(session, false)
+
+		assert.Nil(t, statuses)
+		assert.Nil(t, session.Status.AuxiliaryResourceStatuses)
+	})
+}
+
 func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 	scheme := testScheme()
 

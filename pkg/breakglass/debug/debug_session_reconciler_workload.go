@@ -200,6 +200,17 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
+	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
+	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
+	if auxiliaryResourcesConfigured {
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
+		auxStatuses = append(auxStatuses, beforeStatuses...)
+		ds.Status.AuxiliaryResourceStatuses = auxStatuses
+		if auxErr != nil {
+			return fmt.Errorf("failed to deploy auxiliary resources before workload: %w", auxErr)
+		}
+	}
+
 	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
@@ -222,18 +233,25 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		"namespace", targetNs,
 		"kind", gvk.Kind)
 
-	// Deploy auxiliary resources if configured
-	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
-		auxStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResources(ctx, ds, &template.Spec, binding, targetClient, targetNs)
-		if auxErr != nil {
-			// Log but don't fail the session - auxiliary resources are optional
-			log.Warnw("Failed to deploy some auxiliary resources", "error", auxErr)
-		}
-		// Add deployed auxiliary resources to status
+	if auxiliaryResourcesConfigured {
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
+		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
+		if auxErr != nil {
+			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
+		}
 	}
 
 	return nil
+}
+
+func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliaryResourcesConfigured bool) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	if !auxiliaryResourcesConfigured {
+		return nil
+	}
+	statuses := []breakglassv1alpha1.AuxiliaryResourceStatus{}
+	ds.Status.AuxiliaryResourceStatuses = statuses
+	return statuses
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.

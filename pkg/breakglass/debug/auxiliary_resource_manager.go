@@ -70,6 +70,33 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	targetClient client.Client,
 	targetNamespace string,
 ) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
+	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, nil)
+}
+
+// DeployAuxiliaryResourcesForPhase deploys enabled auxiliary resources for one createBefore phase.
+func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForPhase(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	targetClient client.Client,
+	targetNamespace string,
+	createBefore bool,
+) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
+	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, func(auxRes breakglassv1alpha1.AuxiliaryResource) bool {
+		return auxRes.CreateBefore == createBefore
+	})
+}
+
+func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	targetClient client.Client,
+	targetNamespace string,
+	shouldDeploy func(breakglassv1alpha1.AuxiliaryResource) bool,
+) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	if template == nil || len(template.AuxiliaryResources) == 0 {
 		return nil, nil
 	}
@@ -86,9 +113,9 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	var statuses []breakglassv1alpha1.AuxiliaryResourceStatus
 	var deployErrors []error
 
-	// Deploy resources that should be created before debug pods
+	// Deploy selected resources. Callers can pass a phase filter to honor createBefore.
 	for _, auxRes := range enabledResources {
-		if !auxRes.CreateBefore {
+		if shouldDeploy != nil && !shouldDeploy(auxRes) {
 			continue
 		}
 
@@ -96,13 +123,11 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 		statuses = append(statuses, status)
 
 		if err != nil {
-			log.Warnw("Failed to deploy auxiliary resource",
-				"resource", auxRes.Name,
-				"category", auxRes.Category,
-				"error", err)
+			failurePolicy := effectiveAuxiliaryResourceFailurePolicy(auxRes)
+			logAuxiliaryResourceDeployFailure(log, auxRes, failurePolicy, err)
 			deployErrors = append(deployErrors, err)
 
-			if auxRes.FailurePolicy == breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
+			if failurePolicy == breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
 				metrics.AuxiliaryResourceDeployments.WithLabelValues(session.Spec.Cluster, auxRes.Category, "failure").Inc()
 				return statuses, fmt.Errorf("failed to deploy required auxiliary resource %s: %w", auxRes.Name, err)
 			}
@@ -137,6 +162,13 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 	for i, status := range session.Status.AuxiliaryResourceStatuses {
 		if !status.Created || status.Deleted {
+			continue
+		}
+		if !shouldDeleteAuxiliaryResource(session, status.Name) {
+			log.Debugw("Skipping auxiliary resource cleanup because deleteAfter is false",
+				"resource", status.Name,
+				"resourceName", status.ResourceName,
+				"namespace", status.Namespace)
 			continue
 		}
 
@@ -195,6 +227,18 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 	log.Info("All auxiliary resources cleaned up")
 	return nil
+}
+
+func shouldDeleteAuxiliaryResource(session *breakglassv1alpha1.DebugSession, name string) bool {
+	if session.Status.ResolvedTemplate == nil {
+		return true
+	}
+	for _, auxRes := range session.Status.ResolvedTemplate.AuxiliaryResources {
+		if auxRes.Name == name {
+			return auxRes.DeleteAfter
+		}
+	}
+	return true
 }
 
 // filterEnabledResources determines which auxiliary resources should be deployed.
@@ -273,6 +317,41 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 	}
 
 	return enabled
+}
+
+func effectiveAuxiliaryResourceFailurePolicy(auxRes breakglassv1alpha1.AuxiliaryResource) breakglassv1alpha1.AuxiliaryResourceFailurePolicy {
+	if auxRes.Optional {
+		return breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore
+	}
+	if auxRes.FailurePolicy == "" {
+		return breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail
+	}
+	return auxRes.FailurePolicy
+}
+
+func logAuxiliaryResourceDeployFailure(
+	log *zap.SugaredLogger,
+	auxRes breakglassv1alpha1.AuxiliaryResource,
+	failurePolicy breakglassv1alpha1.AuxiliaryResourceFailurePolicy,
+	err error,
+) {
+	fields := []interface{}{
+		"resource", auxRes.Name,
+		"category", auxRes.Category,
+		"failurePolicy", failurePolicy,
+		"error", err,
+	}
+
+	switch failurePolicy {
+	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn:
+		log.Warnw("Auxiliary resource deployment failed", fields...)
+	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore:
+		log.Debugw("Ignoring auxiliary resource deployment failure", fields...)
+	case breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail:
+		log.Errorw("Required auxiliary resource deployment failed", fields...)
+	default:
+		log.Warnw("Auxiliary resource deployment failed with unknown failure policy", fields...)
+	}
 }
 
 // buildRenderContext creates the context used for template rendering.
@@ -548,6 +627,9 @@ func (m *AuxiliaryResourceManager) deployResource(
 			status.APIVersion = obj.GetAPIVersion()
 			status.ResourceName = obj.GetName()
 			status.Namespace = obj.GetNamespace()
+			status.Created = true
+			now := time.Now().UTC().Format(time.RFC3339)
+			status.CreatedAt = &now
 		} else {
 			// Track additional resources from multi-document YAML
 			status.AdditionalResources = append(status.AdditionalResources, breakglassv1alpha1.AdditionalResourceRef{
@@ -558,10 +640,6 @@ func (m *AuxiliaryResourceManager) deployResource(
 			})
 		}
 	}
-
-	status.Created = true
-	now := time.Now().UTC().Format(time.RFC3339)
-	status.CreatedAt = &now
 
 	if len(deployedResources) > 1 {
 		m.log.Infow("Deployed multiple resources from single auxiliary resource",
@@ -819,61 +897,62 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 	log := m.log.With("session", session.Name, "namespace", session.Namespace)
 
 	allReady = true
-	for i, status := range session.Status.AuxiliaryResourceStatuses {
-		// Skip if not created, already ready, or deleted
-		if !status.Created || status.Ready || status.Deleted {
-			if status.Created && !status.Ready && !status.Deleted {
-				allReady = false
-			}
+	for i := range session.Status.AuxiliaryResourceStatuses {
+		status := &session.Status.AuxiliaryResourceStatuses[i]
+		// Skip if not created or deleted.
+		if !status.Created || status.Deleted {
 			continue
 		}
 
 		// Check primary resource readiness
-		primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
-		session.Status.AuxiliaryResourceStatuses[i].ReadinessStatus = primaryReady.readinessStatus
-		if primaryReady.ready {
-			session.Status.AuxiliaryResourceStatuses[i].Ready = true
-			now := time.Now().UTC().Format(time.RFC3339)
-			session.Status.AuxiliaryResourceStatuses[i].ReadyAt = &now
-			log.Infow("Auxiliary resource is ready",
-				"resource", status.Name,
-				"kind", status.Kind,
-				"name", status.ResourceName)
-		} else if primaryReady.failed {
-			session.Status.AuxiliaryResourceStatuses[i].Error = primaryReady.message
-			log.Warnw("Auxiliary resource failed",
-				"resource", status.Name,
-				"kind", status.Kind,
-				"name", status.ResourceName,
-				"message", primaryReady.message)
-			allReady = false
-		} else {
-			log.Debugw("Auxiliary resource not ready yet",
-				"resource", status.Name,
-				"kind", status.Kind,
-				"name", status.ResourceName,
-				"status", primaryReady.readinessStatus,
-				"message", primaryReady.message)
-			allReady = false
+		if !status.Ready {
+			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
+			status.ReadinessStatus = primaryReady.readinessStatus
+			if primaryReady.ready {
+				status.Ready = true
+				now := time.Now().UTC().Format(time.RFC3339)
+				status.ReadyAt = &now
+				log.Infow("Auxiliary resource is ready",
+					"resource", status.Name,
+					"kind", status.Kind,
+					"name", status.ResourceName)
+			} else if primaryReady.failed {
+				status.Error = primaryReady.message
+				log.Warnw("Auxiliary resource failed",
+					"resource", status.Name,
+					"kind", status.Kind,
+					"name", status.ResourceName,
+					"message", primaryReady.message)
+				allReady = false
+			} else {
+				log.Debugw("Auxiliary resource not ready yet",
+					"resource", status.Name,
+					"kind", status.Kind,
+					"name", status.ResourceName,
+					"status", primaryReady.readinessStatus,
+					"message", primaryReady.message)
+				allReady = false
+			}
 		}
 
 		// Check additional resources from multi-document YAML templates
-		for j, addlRes := range status.AdditionalResources {
+		for j := range status.AdditionalResources {
+			addlRes := &status.AdditionalResources[j]
 			if addlRes.Ready || addlRes.Deleted {
 				continue
 			}
 
 			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace)
-			session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].ReadinessStatus = addlReady.readinessStatus
+			addlRes.ReadinessStatus = addlReady.readinessStatus
 
 			if addlReady.ready {
-				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Ready = true
+				addlRes.Ready = true
 				log.Infow("Additional auxiliary resource is ready",
 					"resource", status.Name,
 					"kind", addlRes.Kind,
 					"name", addlRes.ResourceName)
 			} else if addlReady.failed {
-				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Error = addlReady.message
+				addlRes.Error = addlReady.message
 				log.Warnw("Additional auxiliary resource failed",
 					"resource", status.Name,
 					"kind", addlRes.Kind,

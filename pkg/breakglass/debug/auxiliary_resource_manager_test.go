@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -333,6 +334,264 @@ func TestDeployAuxiliaryResources_EmptyResources(t *testing.T) {
 	assert.Nil(t, statuses)
 }
 
+func TestDeployAuxiliaryResources_AllResourcesDisabledClearsStaleStatuses(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+				{Name: "old-config", Kind: "ConfigMap", Created: true},
+			},
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+			{
+				Name:           "new-config",
+				Category:       "debug-config",
+				TemplateString: "kind: ConfigMap\nmetadata:\n  name: new-config\n",
+			},
+		},
+	}
+
+	statuses, err := mgr.DeployAuxiliaryResources(
+		context.Background(),
+		session,
+		template,
+		nil,
+		nil,
+		"target-ns",
+	)
+
+	require.NoError(t, err)
+	require.Empty(t, statuses)
+	session.Status.AuxiliaryResourceStatuses = statuses
+	assert.Empty(t, session.Status.AuxiliaryResourceStatuses)
+}
+
+func TestDeployAuxiliaryResourcesForPhaseHonorsCreateBefore(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	mgr := newTestAuxiliaryResourceManager()
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "phase-session", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "user@example.com",
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		RequiredAuxiliaryResourceCategories: []string{"before", "after"},
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+			{
+				Name:           "before-config",
+				Category:       "before",
+				CreateBefore:   true,
+				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: before-config\n",
+			},
+			{
+				Name:           "after-config",
+				Category:       "after",
+				CreateBefore:   false,
+				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: after-config\n",
+			},
+		},
+	}
+
+	beforeStatuses, err := mgr.DeployAuxiliaryResourcesForPhase(context.Background(), session, template, nil, fakeClient, "debug-ns", true)
+	require.NoError(t, err)
+	require.Len(t, beforeStatuses, 1)
+	assert.Equal(t, "before-config", beforeStatuses[0].Name)
+
+	afterStatuses, err := mgr.DeployAuxiliaryResourcesForPhase(context.Background(), session, template, nil, fakeClient, "debug-ns", false)
+	require.NoError(t, err)
+	require.Len(t, afterStatuses, 1)
+	assert.Equal(t, "after-config", afterStatuses[0].Name)
+
+	var beforeCM corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "before-config"}, &beforeCM))
+	var afterCM corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "after-config"}, &afterCM))
+}
+
+func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	tests := []struct {
+		name        string
+		resource    breakglassv1alpha1.AuxiliaryResource
+		expectError bool
+	}{
+		{
+			name: "default policy fails closed",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:         "default-fail",
+				Category:     "config",
+				CreateBefore: true,
+			},
+			expectError: true,
+		},
+		{
+			name: "explicit fail policy returns error",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "explicit-fail",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+			},
+			expectError: true,
+		},
+		{
+			name: "ignore policy continues",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "ignore",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore,
+			},
+		},
+		{
+			name: "warn policy continues",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "warn",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn,
+			},
+		},
+		{
+			name: "deprecated optional continues",
+			resource: breakglassv1alpha1.AuxiliaryResource{
+				Name:          "optional",
+				Category:      "config",
+				CreateBefore:  true,
+				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+				Optional:      true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				Build()
+			mgr := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), fakeClient)
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-session",
+					Namespace: "breakglass-system",
+				},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					Cluster: "prod",
+				},
+			}
+			template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+				AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{tt.resource},
+				AuxiliaryResourceDefaults: map[string]bool{
+					tt.resource.Name: true,
+				},
+			}
+
+			statuses, err := mgr.DeployAuxiliaryResources(context.Background(), session, template, nil, fakeClient, "debug-ns")
+			require.Len(t, statuses, 1)
+			assert.Contains(t, statuses[0].Error, "no template defined")
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to deploy required auxiliary resource")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestLogAuxiliaryResourceDeployFailure_FailPolicyLogsError(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	logger := zap.New(core).Sugar()
+	resource := breakglassv1alpha1.AuxiliaryResource{
+		Name:     "required-config",
+		Category: "debug-config",
+	}
+
+	logAuxiliaryResourceDeployFailure(
+		logger,
+		resource,
+		breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+		assert.AnError,
+	)
+
+	entries := logs.FilterMessage("Required auxiliary resource deployment failed").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	assert.Equal(t, "required-config", fields["resource"])
+	assert.Equal(t, "debug-config", fields["category"])
+	assert.Equal(t, breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail, fields["failurePolicy"])
+	assert.Equal(t, assert.AnError.Error(), fields["error"])
+}
+
+func TestDeployAuxiliaryResources_ReturnsPartialStatusesOnRequiredFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+	mgr := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), fakeClient)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster: "prod",
+		},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+			{
+				Name:         "created-config",
+				Category:     "config",
+				CreateBefore: true,
+				TemplateString: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: created-config
+`,
+			},
+			{
+				Name:         "required-fail",
+				Category:     "config",
+				CreateBefore: true,
+			},
+		},
+		AuxiliaryResourceDefaults: map[string]bool{
+			"created-config": true,
+			"required-fail":  true,
+		},
+	}
+
+	statuses, err := mgr.DeployAuxiliaryResources(context.Background(), session, template, nil, fakeClient, "debug-ns")
+
+	require.Error(t, err)
+	require.Len(t, statuses, 2)
+	assert.Equal(t, "created-config", statuses[0].Name)
+	assert.True(t, statuses[0].Created)
+	assert.Equal(t, "ConfigMap", statuses[0].Kind)
+	assert.Equal(t, "created-config", statuses[0].ResourceName)
+	assert.Equal(t, "debug-ns", statuses[0].Namespace)
+	assert.Equal(t, "required-fail", statuses[1].Name)
+	assert.False(t, statuses[1].Created)
+	assert.Contains(t, statuses[1].Error, "no template defined")
+}
+
 func TestCleanupAuxiliaryResources_NoResources(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
@@ -363,6 +622,44 @@ func TestCleanupAuxiliaryResources_AlreadyDeleted(t *testing.T) {
 
 	err := mgr.CleanupAuxiliaryResources(context.Background(), session, nil)
 	assert.NoError(t, err)
+}
+
+func TestCleanupAuxiliaryResources_RespectsDeleteAfterFalse(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "kept-config", Namespace: "debug-ns"},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
+	mgr := newTestAuxiliaryResourceManager()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "cleanup-session", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+					{Name: "keep-config", DeleteAfter: false},
+				},
+			},
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "keep-config",
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "kept-config",
+					Namespace:    "debug-ns",
+					Created:      true,
+				},
+			},
+		},
+	}
+
+	require.NoError(t, mgr.CleanupAuxiliaryResources(context.Background(), session, fakeClient))
+	require.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	var fetched corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "kept-config"}, &fetched))
 }
 
 func TestAddAuxiliaryResourceToDeployedResources(t *testing.T) {
@@ -1422,6 +1719,67 @@ func TestCheckAuxiliaryResourcesReadiness_AlreadyReady(t *testing.T) {
 	assert.True(t, allReady)
 }
 
+func TestCheckAuxiliaryResourcesReadiness_RechecksAdditionalResourcesWhenPrimaryReady(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	readyAt := "2024-01-01T00:00:00Z"
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "multi-doc-config",
+					Created:      true,
+					Ready:        true,
+					ReadyAt:      &readyAt,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "primary-cm",
+					Namespace:    "default",
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "late-cm",
+							Namespace:    "default",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+	require.NoError(t, err)
+	assert.False(t, allReady)
+	assert.False(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "NotFound", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+
+	require.NoError(t, fakeClient.Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "late-cm",
+			Namespace: "default",
+		},
+	}))
+
+	allReady, err = mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+	require.NoError(t, err)
+	assert.True(t, allReady)
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+}
+
 func TestCheckAuxiliaryResourcesReadiness_NotCreated(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
@@ -1845,6 +2203,14 @@ name: invalid - no indentation
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "doc 2")
 	assert.Contains(t, status.Error, "YAML parsing failed")
+	assert.True(t, status.Created, "first applied document must remain cleanup-visible after a later document fails")
+	assert.NotNil(t, status.CreatedAt)
+	assert.Equal(t, "ConfigMap", status.Kind)
+	assert.Equal(t, "valid-config", status.ResourceName)
+	assert.Equal(t, "debug-ns", status.Namespace)
+
+	var applied corev1.ConfigMap
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "valid-config"}, &applied))
 }
 
 func TestDeployResource_MultiDocumentYAML_ConditionalAllExcluded(t *testing.T) {

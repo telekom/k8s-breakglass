@@ -60,3 +60,40 @@ func (c *DebugSessionController) patchDebugSessionAllowedPods(
 	}
 	return nil
 }
+
+func (c *DebugSessionController) patchDebugSessionAllowedPodsAndAuxiliaryStatuses(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	allowedPods []breakglassv1alpha1.AllowedPodRef,
+	auxiliaryResourceStatuses []breakglassv1alpha1.AuxiliaryResourceStatus,
+) error {
+	patch := struct {
+		Status struct {
+			AllowedPods               []breakglassv1alpha1.AllowedPodRef           `json:"allowedPods"`
+			AuxiliaryResourceStatuses []breakglassv1alpha1.AuxiliaryResourceStatus `json:"auxiliaryResourceStatuses"`
+		} `json:"status"`
+	}{}
+	patch.Status.AllowedPods = allowedPods
+	patch.Status.AuxiliaryResourceStatuses = auxiliaryResourceStatuses
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshal DebugSession allowed pods and auxiliary statuses patch: %w", err)
+	}
+
+	target := &breakglassv1alpha1.DebugSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: breakglassv1alpha1.GroupVersion.String(),
+			Kind:       "DebugSession",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ds.Name,
+			Namespace: ds.Namespace,
+		},
+	}
+
+	if err := c.client.Status().Patch(ctx, target, ctrlclient.RawPatch(types.MergePatchType, patchBytes)); err != nil {
+		return fmt.Errorf("patch DebugSession allowed pods and auxiliary statuses: %w", err)
+	}
+	return nil
+}
