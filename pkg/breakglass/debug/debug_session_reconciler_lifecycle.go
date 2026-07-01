@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -346,7 +347,6 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if c.ccProvider == nil {
 		return nil
 	}
-	cleanupBase := ds.DeepCopy()
 
 	// Clean up kubectl-debug resources (if any)
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
@@ -362,7 +362,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			ds.Status.KubectlDebugStatus = nil
 			ds.Status.AuxiliaryResourceStatuses = nil
 			ds.Status.PodTemplateResourceStatuses = nil
-			return c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds)
+			return c.patchDebugSessionCleanupStatus(ctx, ds)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		cleanupErrors = append(cleanupErrors, err)
@@ -381,7 +381,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			ds.Status.KubectlDebugStatus = nil
 			ds.Status.AuxiliaryResourceStatuses = nil
 			ds.Status.PodTemplateResourceStatuses = nil
-			return c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds)
+			return c.patchDebugSessionCleanupStatus(ctx, ds)
 		}
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return errors.Join(cleanupErrors...)
@@ -412,7 +412,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		if err := c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds); err != nil {
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 		}
 		return errors.Join(cleanupErrors...)
@@ -421,7 +421,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
-	if err := c.patchDebugSessionCleanupStatus(ctx, cleanupBase, ds); err != nil {
+	if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 	}
 	return errors.Join(cleanupErrors...)
@@ -429,13 +429,42 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	ctx context.Context,
-	base *breakglassv1alpha1.DebugSession,
 	ds *breakglassv1alpha1.DebugSession,
 ) error {
-	if ds.Generation > 0 {
-		ds.Status.ObservedGeneration = ds.Generation
+	desiredStatus := ds.Status
+	var patchedStatus breakglassv1alpha1.DebugSessionStatus
+	var patchedResourceVersion string
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &breakglassv1alpha1.DebugSession{}
+		if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), current); err != nil {
+			return err
+		}
+
+		base := current.DeepCopy()
+		current.Status.DeployedResources = desiredStatus.DeployedResources
+		current.Status.AllowedPods = desiredStatus.AllowedPods
+		current.Status.KubectlDebugStatus = desiredStatus.KubectlDebugStatus
+		current.Status.AuxiliaryResourceStatuses = desiredStatus.AuxiliaryResourceStatuses
+		current.Status.PodTemplateResourceStatuses = desiredStatus.PodTemplateResourceStatuses
+		if current.Generation > 0 {
+			current.Status.ObservedGeneration = current.Generation
+		}
+
+		if err := c.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+		patchedStatus = current.Status
+		patchedResourceVersion = current.ResourceVersion
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("patch debug session cleanup status: %w", err)
 	}
-	return c.client.Status().Patch(ctx, ds, ctrlclient.MergeFrom(base))
+
+	ds.Status = patchedStatus
+	ds.ResourceVersion = patchedResourceVersion
+	return nil
 }
 
 func (c *DebugSessionController) cleanupDeployedResources(
@@ -510,12 +539,16 @@ func (c *DebugSessionController) cleanupDeployedResources(
 			continue
 		}
 
-		if err := targetClient.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
-			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "error", err)
+		if err := targetClient.Delete(ctx, obj); err != nil {
+			if apierrors.IsNotFound(err) {
+				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
+				continue
+			}
+			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace, "error", err)
 			remainingDeployedResources = append(remainingDeployedResources, ref)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err))
 		} else {
-			log.Infow("Deleted debug resource", "kind", ref.Kind, "name", ref.Name)
+			log.Infow("Deleted debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 		}
 	}
 
@@ -532,12 +565,12 @@ func allowedPodsForRemainingDeployedPods(
 		return nil
 	}
 
-	remainingPodRefs := make(map[string]struct{})
+	remainingPodRefs := make(map[[2]string]struct{})
 	for _, ref := range remainingDeployedResources {
 		if ref.Kind != "Pod" {
 			continue
 		}
-		remainingPodRefs[ref.Namespace+"\x00"+ref.Name] = struct{}{}
+		remainingPodRefs[[2]string{ref.Namespace, ref.Name}] = struct{}{}
 	}
 	if len(remainingPodRefs) == 0 {
 		return nil
@@ -545,7 +578,7 @@ func allowedPodsForRemainingDeployedPods(
 
 	filtered := make([]breakglassv1alpha1.AllowedPodRef, 0, len(allowedPods))
 	for _, pod := range allowedPods {
-		if _, ok := remainingPodRefs[pod.Namespace+"\x00"+pod.Name]; ok {
+		if _, ok := remainingPodRefs[[2]string{pod.Namespace, pod.Name}]; ok {
 			filtered = append(filtered, pod)
 		}
 	}
