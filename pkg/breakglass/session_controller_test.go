@@ -4901,6 +4901,9 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		res := w.Result()
+		defer func() {
+			assert.NoError(t, res.Body.Close())
+		}()
 		if res.StatusCode != http.StatusBadRequest {
 			t.Fatalf("expected 400 Bad Request, got %d", res.StatusCode)
 		}
