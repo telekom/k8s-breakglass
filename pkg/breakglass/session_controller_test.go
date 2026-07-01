@@ -293,9 +293,10 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 
 func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
 	now := time.Now()
+	namespace := "default"
 	makeTimedOutSession := func(name string) *breakglassv1alpha1.BreakglassSession {
 		return &breakglassv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:      "timeout-cluster",
 				User:         "requester@example.com",
@@ -311,7 +312,7 @@ func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
 	approveSession := makeTimedOutSession("timed-out-approve")
 	rejectSession := makeTimedOutSession("timed-out-reject")
 	escalation := &breakglassv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{Name: "timeout-escalation"},
+		ObjectMeta: metav1.ObjectMeta{Name: "timeout-escalation", Namespace: namespace},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: []string{"timeout-cluster"},
@@ -383,7 +384,7 @@ func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
 			}
 
 			var got breakglassv1alpha1.BreakglassSession
-			if err := cli.Get(context.Background(), client.ObjectKey{Name: tc.session}, &got); err != nil {
+			if err := cli.Get(context.Background(), client.ObjectKey{Name: tc.session, Namespace: namespace}, &got); err != nil {
 				t.Fatalf("failed to get session: %v", err)
 			}
 			if got.Status.State != breakglassv1alpha1.SessionStatePending {

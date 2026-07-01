@@ -1,4 +1,3 @@
-// IsSessionApprovalTimedOut returns true if the session is still pending and TimeoutAt has passed.
 package breakglass
 
 import (
@@ -7,6 +6,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+// IsSessionApprovalTimedOut returns true if the session is still pending and TimeoutAt has passed.
 func IsSessionApprovalTimedOut(session breakglassv1alpha1.BreakglassSession) bool {
 	return isSessionApprovalTimedOutAt(session, time.Now())
 }
