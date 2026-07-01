@@ -551,7 +551,7 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 				deniedSelector,
 			)
 			if err != nil {
-				return fmt.Errorf("deniedNodeLabels: %w", err)
+				return fmt.Errorf("merge denied node scheduling selector: %w", err)
 			}
 			spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = combined
 		}
