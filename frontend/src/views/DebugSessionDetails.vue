@@ -72,6 +72,8 @@ const sessionName = computed(() => {
 const session = ref<DebugSessionDetailResponse | null>(null);
 const loading = ref(true);
 const error = ref("");
+let fetchRequestID = 0;
+let routeRefreshRequestID = 0;
 
 // Polling interval for refreshing session/pod state (10 seconds for active sessions)
 const POLL_INTERVAL_MS = 10000;
@@ -112,28 +114,44 @@ const rejectDialogOpen = ref(false);
 const rejectReason = ref("");
 
 async function fetchSession() {
+  const requestID = ++fetchRequestID;
+  const requestedName = sessionName.value;
   loading.value = true;
   error.value = "";
 
-  if (!sessionName.value) {
+  if (!requestedName) {
+    session.value = null;
     error.value = "Missing session name in URL";
     loading.value = false;
     return;
   }
 
   try {
-    session.value = await debugSessionService.getSession(sessionName.value);
+    const nextSession = await debugSessionService.getSession(requestedName);
+    if (requestID === fetchRequestID && requestedName === sessionName.value) {
+      session.value = nextSession;
+    }
   } catch (e: unknown) {
-    error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug session";
+    if (requestID === fetchRequestID && requestedName === sessionName.value) {
+      session.value = null;
+      error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug session";
+    }
   } finally {
-    loading.value = false;
+    if (requestID === fetchRequestID && requestedName === sessionName.value) {
+      loading.value = false;
+    }
   }
 }
 
 // Silently refresh session data without showing loading state
 async function refreshSession() {
+  const requestedName = sessionName.value;
+  if (!requestedName) return;
   try {
-    session.value = await debugSessionService.getSession(sessionName.value);
+    const nextSession = await debugSessionService.getSession(requestedName);
+    if (requestedName === sessionName.value) {
+      session.value = nextSession;
+    }
   } catch {
     // Ignore errors during background refresh
   }
@@ -156,7 +174,17 @@ function stopPolling() {
 }
 
 onMounted(() => {
-  fetchSession().then(() => startPolling());
+  void fetchSession();
+});
+
+watch(sessionName, async (nextName, previousName) => {
+  if (nextName === previousName) return;
+  const requestID = ++routeRefreshRequestID;
+  stopPolling();
+  session.value = null;
+  await fetchSession();
+  if (requestID !== routeRefreshRequestID || nextName !== sessionName.value) return;
+  startPolling();
 });
 
 watch(
@@ -172,6 +200,7 @@ watch(
 );
 
 onUnmounted(() => {
+  routeRefreshRequestID++;
   stopPolling();
   clipboardCleanup();
 });

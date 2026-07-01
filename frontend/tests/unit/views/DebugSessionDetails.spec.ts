@@ -4,7 +4,7 @@
  * @vitest-environment jsdom
  */
 
-import { ref } from "vue";
+import { reactive, ref } from "vue";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { shallowMount, mount, flushPromises } from "@vue/test-utils";
 import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
@@ -16,7 +16,7 @@ const mockJoinSession = vi.fn();
 const mockCopy = vi.fn().mockResolvedValue(true);
 const mockCleanup = vi.fn();
 const mockCopied = ref(false);
-const mockRouteParams = { name: "dbg-1" };
+const mockRouteParams = reactive<{ name?: string | string[] }>({ name: "dbg-1" });
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({
@@ -126,6 +126,82 @@ describe("DebugSessionDetails", () => {
     vi.advanceTimersByTime(30000);
     await flushPromises();
     expect(mockGetSession).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reloads details when navigating between debug session route names", async () => {
+    mockGetSession.mockImplementation(async (name: string) => ({
+      status: { state: "Terminated" },
+      metadata: { name },
+      spec: { cluster: `cluster-${name}` },
+    }));
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSession).toHaveBeenCalledWith("dbg-1");
+    expect(wrapper.findComponent({ name: "PageHeader" }).props("title")).toBe("dbg-1");
+
+    mockRouteParams.name = "dbg-2";
+    await flushPromises();
+
+    expect(mockGetSession).toHaveBeenCalledWith("dbg-2");
+    expect(wrapper.findComponent({ name: "PageHeader" }).props("title")).toBe("dbg-2");
+  });
+
+  it("does not start polling when a route refresh completes after unmount", async () => {
+    let resolveRouteRefresh: (session: unknown) => void = () => {};
+    mockGetSession.mockImplementation((name: string) => {
+      if (name === "dbg-1") {
+        return Promise.resolve({
+          status: { state: "Terminated" },
+          metadata: { name },
+          spec: { cluster: `cluster-${name}` },
+        });
+      }
+      return new Promise((resolve) => {
+        resolveRouteRefresh = resolve;
+      });
+    });
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    mockRouteParams.name = "dbg-2";
+    await flushPromises();
+    expect(mockGetSession).toHaveBeenCalledWith("dbg-2");
+
+    wrapper.unmount();
+    wrapper = null;
+    resolveRouteRefresh({
+      status: { state: "Active" },
+      metadata: { name: "dbg-2" },
+      spec: { cluster: "cluster-dbg-2" },
+    });
+    await flushPromises();
+
     expect(vi.getTimerCount()).toBe(0);
   });
 
