@@ -52,17 +52,23 @@ func TestKubectlDebuggingMode(t *testing.T) {
 		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName: "E2E Kubectl Debug",
 			Mode:        breakglassv1alpha1.DebugSessionModeKubectlDebug,
-			Rules: breakglassv1alpha1.DebugSessionRules{
-				AutoApprove: true,
-			},
 			KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
-				EphemeralContainers: &breakglassv1alpha1.EphemeralContainerConfig{
+				EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
 					Enabled:        true,
 					AllowedImages:  []string{"busybox", "alpine"},
 					RequireNonRoot: false,
 				},
 				NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
 					Enabled: true,
+				},
+			},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
+			},
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
 				},
 			},
 		},
@@ -150,16 +156,22 @@ func TestTerminalSharingMode(t *testing.T) {
 			Mode:            breakglassv1alpha1.DebugSessionModeWorkload,
 			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			TargetNamespace: "default",
-			Rules: breakglassv1alpha1.DebugSessionRules{
-				AutoApprove: true,
-			},
-			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateRef{
+			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
 				Name: "netshoot-base",
 			},
 			TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{
 				Enabled:         true,
 				Provider:        "tmux",
 				MaxParticipants: 5,
+			},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
+			},
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
 			},
 		},
 	}
@@ -172,7 +184,7 @@ func TestTerminalSharingMode(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Netshoot Base",
-			Template: breakglassv1alpha1.DebugPodSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -213,7 +225,7 @@ func TestTerminalSharingMode(t *testing.T) {
 	err = cli.Get(ctx, client.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &activeSession)
 	require.NoError(t, err)
 	require.NotNil(t, activeSession.Status.TerminalSharing, "Terminal sharing status should be set")
-	require.Equal(t, "tmux", activeSession.Status.TerminalSharing.Provider)
+	require.True(t, activeSession.Status.TerminalSharing.Enabled)
 	require.NotEmpty(t, activeSession.Status.TerminalSharing.AttachCommand)
 
 	t.Logf("Terminal sharing configured with attach command: %s", activeSession.Status.TerminalSharing.AttachCommand)

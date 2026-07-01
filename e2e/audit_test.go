@@ -178,9 +178,10 @@ func TestAuditLogging(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// 1. Create a Breakglass Session
-	// Use unique name to avoid collisions and for filtering audit logs
-	sessionName := helpers.GenerateUniqueName("audit-test")
-	t.Logf("Creating session for audit test: %s", sessionName)
+	// Use a unique marker in the request reason to correlate audit logs without
+	// pretending it is the API-generated session name.
+	sessionMarker := helpers.GenerateUniqueName("audit-test")
+	t.Logf("Creating session for audit test with marker: %s", sessionMarker)
 
 	tc := helpers.NewTestContext(t, ctx)
 	requesterClient := tc.RequesterClient()
@@ -204,14 +205,15 @@ func TestAuditLogging(t *testing.T) {
 		}
 	}
 
-	// Create via API
-	session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
+	// Create via API and wait until the status subresource is ready for approval.
+	session, err := requesterClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   "audit-test-group", // Must match test-audit-escalation's escalatedGroup in e2e/fixtures/escalations/audit-test.yaml
-		Reason:  "Audit logging test",
-	})
+		Reason:  fmt.Sprintf("Audit logging test %s", sessionMarker),
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
+	t.Logf("Created audit test session: %s/%s (marker: %s)", session.Namespace, session.Name, sessionMarker)
 
 	// Add to cleanup
 	cleanup.Add(&breakglassv1alpha1.BreakglassSession{
@@ -219,7 +221,7 @@ func TestAuditLogging(t *testing.T) {
 	})
 
 	// 2. Approve the session
-	t.Logf("Approving session: %s", sessionName)
+	t.Logf("Approving session: %s/%s", session.Namespace, session.Name)
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 	require.NoError(t, err)
 

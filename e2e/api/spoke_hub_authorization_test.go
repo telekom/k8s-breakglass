@@ -191,12 +191,12 @@ func (s *SpokeHubAuthorizationSuite) TestUserWithApprovedSessionAllowed() {
 	t.Logf("✓ Employee: %s", testUser.Email)
 
 	t.Log("Step 2: Employee requests breakglass access via API")
-	session, err := userAPI.CreateSession(s.ctx, t, helpers.SessionRequest{
+	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-pods-reader",
 		Reason:  "E2E Test - Complete user journey - investigating pod issues",
-	})
+	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err, "Employee should be able to create session via API")
 	s.cleanup.Add(session)
 	t.Logf("✓ Session created via API: %s (state: Pending)", session.Name)
@@ -260,12 +260,12 @@ func (s *SpokeHubAuthorizationSuite) TestSessionClusterScopeEnforced() {
 
 	// Create session for spoke-cluster-a ONLY via API
 	t.Logf("Step 1: Employee requests access to %s only via API", spokeA)
-	session, err := userAPI.CreateSession(s.ctx, t, helpers.SessionRequest{
+	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
 		Cluster: spokeA,
 		User:    testUser.Email,
 		Group:   "breakglass-pods-admin",
 		Reason:  "E2E Test - Cluster scope verification",
-	})
+	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err)
 	s.cleanup.Add(session)
 
@@ -324,12 +324,12 @@ func (s *SpokeHubAuthorizationSuite) TestDenyPolicyEnforcedOnSpoke() {
 
 	// Create session with limited access group via API
 	t.Log("Step 1: User requests limited access (with DenyPolicy for secrets) via API")
-	session, err := userAPI.CreateSession(s.ctx, t, helpers.SessionRequest{
+	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-limited-access",
 		Reason:  "E2E Test - DenyPolicy enforcement verification",
-	})
+	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err)
 	s.cleanup.Add(session)
 
@@ -409,12 +409,12 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 
 	// Create a normal session via API
 	t.Log("Step 1: Creating session via API")
-	session, err := userAPI.CreateSession(s.ctx, t, helpers.SessionRequest{
+	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-read-only",
 		Reason:  "E2E Test - Session expiry verification",
-	})
+	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err, "Failed to create session via API")
 	s.cleanup.Add(session)
 	t.Logf("✓ Created session via API: %s", session.Name)
@@ -526,12 +526,12 @@ func (s *SpokeHubAuthorizationSuite) TestMultipleUsersIndependentSessions() {
 
 	// Only testUser has a session, not userWithoutSession
 	t.Log("Step 1: First user requests and gets session approved via API")
-	session, err := userAPI.CreateSession(s.ctx, t, helpers.SessionRequest{
+	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
 		Cluster: spokeCluster,
 		User:    testUser.Email,
 		Group:   "breakglass-emergency-admin",
 		Reason:  "E2E Test - Multi-user session isolation",
-	})
+	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err)
 	s.cleanup.Add(session)
 
