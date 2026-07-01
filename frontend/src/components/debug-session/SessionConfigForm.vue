@@ -246,7 +246,6 @@ function handleDurationChange(ev: Event) {
         @validation-change="emit('update:extraDeployValid', $event)"
       />
     </div>
-
   </div>
 </template>
 
@@ -454,5 +453,4 @@ function handleDurationChange(ev: Event) {
   color: var(--telekom-color-text-and-icon-additional);
   margin: 0 0 var(--space-md) 0;
 }
-
 </style>
