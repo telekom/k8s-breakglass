@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
@@ -88,15 +87,17 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Terminate all BreakglassSessions for this cluster
 			if err := r.terminateBreakglassSessionsForCluster(ctx, clusterName, log); err != nil {
 				log.Errorw("Failed to terminate BreakglassSessions for cluster", "cluster", clusterName, "error", err)
-				// Requeue to retry cleanup
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+				// Returning the error keeps deletion blocked and lets controller-runtime
+				// retry through its rate limiter.
+				return ctrl.Result{}, err
 			}
 
 			// Terminate all DebugSessions for this cluster
 			if err := r.terminateDebugSessionsForCluster(ctx, clusterName, log); err != nil {
 				log.Errorw("Failed to terminate DebugSessions for cluster", "cluster", clusterName, "error", err)
-				// Requeue to retry cleanup
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+				// Returning the error keeps deletion blocked and lets controller-runtime
+				// retry through its rate limiter.
+				return ctrl.Result{}, err
 			}
 
 			// Remove the finalizer to allow deletion (retry on conflict)

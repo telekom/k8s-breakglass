@@ -326,7 +326,8 @@ func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "approved-session", Namespace: "default"}, &approved)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, approved.Status.State)
-	assert.WithinDuration(t, time.Now().Add(2*time.Hour), approved.Status.RetainedUntil.Time, 5*time.Second)
+	require.False(t, approved.Status.ExpiresAt.IsZero(), "terminated session should get expiry")
+	assert.WithinDuration(t, approved.Status.ExpiresAt.Time.Add(2*time.Hour), approved.Status.RetainedUntil.Time, time.Second)
 
 	// Verify session linked by spec.clusterConfigRef was terminated even when spec.cluster differs
 	var byRef breakglassv1alpha1.BreakglassSession
@@ -869,7 +870,7 @@ func TestClusterConfigReconciler_MultipleNamespaces(t *testing.T) {
 }
 
 // TestClusterConfigReconciler_CleanupFailureBlocksDeletion tests that when session listing
-// fails, the finalizer is NOT removed and deletion is blocked with a requeue.
+// fails, the finalizer is NOT removed and deletion is blocked for retry.
 // This ensures the ClusterConfig cannot be deleted until all sessions are properly cleaned up.
 // Individual session update failures block deletion so cleanup can retry.
 func TestClusterConfigReconciler_CleanupFailureBlocksDeletion(t *testing.T) {
@@ -918,10 +919,10 @@ func TestClusterConfigReconciler_CleanupFailureBlocksDeletion(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
 	})
 
-	// Should return error and requeue after delay
+	// Should return error; controller-runtime retries errors through its rate limiter.
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated list failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Verify the ClusterConfig still exists with its finalizer
 	// (deletion should be blocked because cleanup failed)
@@ -994,7 +995,7 @@ func TestClusterConfigReconciler_BreakglassStatusPatchFailureBlocksDeletion(t *t
 
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated breakglass status patch failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	var updatedCluster breakglassv1alpha1.ClusterConfig
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedCluster)
@@ -1070,7 +1071,7 @@ func TestClusterConfigReconciler_DebugStatusPatchFailureBlocksDeletion(t *testin
 
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated debug status patch failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	var updatedCluster breakglassv1alpha1.ClusterConfig
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedCluster)
@@ -1143,10 +1144,10 @@ func TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion(t *tes
 		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
 	})
 
-	// Should return error and requeue after delay
+	// Should return error; controller-runtime retries errors through its rate limiter.
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated debug session list failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Verify the ClusterConfig still exists with its finalizer
 	var updated breakglassv1alpha1.ClusterConfig

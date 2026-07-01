@@ -159,10 +159,10 @@ func TestClusterConfigReconciler_ListFailureBlocksCleanup(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
 	})
 
-	// Should return error and requeue after delay
+	// Should return error; controller-runtime retries errors through its rate limiter.
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "simulated list failure")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Verify the ClusterConfig still exists with its finalizer
 	var updated breakglassv1alpha1.ClusterConfig
@@ -574,7 +574,7 @@ func TestClusterConfigReconciler_GetListError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "simulated network timeout")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	// Finalizer should still be present
 	var updated breakglassv1alpha1.ClusterConfig
