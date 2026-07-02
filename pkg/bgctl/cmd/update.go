@@ -68,7 +68,10 @@ one is published, extracts the bgctl binary, and replaces the current binary.`,
   bgctl update --yes
   bgctl update --version v1.2.3 --yes`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			versionTag, _ := cmd.Flags().GetString("version")
+			versionTag, err := cmd.Flags().GetString("version")
+			if err != nil {
+				return err
+			}
 			return runUpdate(cmd, versionTag)
 		},
 	}
@@ -105,8 +108,14 @@ func newUpdateRollbackCommand() *cobra.Command {
 		Use:   "rollback",
 		Short: "Rollback to previous version",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			versionTag, _ := cmd.Flags().GetString("version")
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			versionTag, err := cmd.Flags().GetString("version")
+			if err != nil {
+				return err
+			}
+			dryRun, err := cmd.Flags().GetBool("dry-run")
+			if err != nil {
+				return err
+			}
 			if versionTag != "" {
 				return runUpdate(cmd, versionTag)
 			}
@@ -137,11 +146,16 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	if strings.EqualFold(os.Getenv("BGCTL_DISABLE_UPDATE"), "true") {
 		return fmt.Errorf("update disabled by BGCTL_DISABLE_UPDATE")
 	}
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	confirm, _ := cmd.Flags().GetBool("yes")
+	dryRun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return err
+	}
+	confirm, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		return err
+	}
 
 	var release *githubRelease
-	var err error
 	if versionTag == "" {
 		updateStatusf("Checking latest bgctl release...")
 		release, err = fetchLatestRelease(ctx)
