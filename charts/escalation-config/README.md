@@ -552,7 +552,7 @@ The chart can install the phase-1 ValidatingAdmissionPolicy resources that mirro
 
 The rendered policy and binding names are static. A second release with this option enabled will collide with the first release, and uninstalling the enabled release removes the cluster-wide policy and binding resources for every namespace that relies on them. If these objects are already managed by `config/components/vap`, keep this chart value disabled, or delete/adopt those cluster-scoped resources before enabling Helm management.
 
-They are disabled by default:
+They are disabled by default. Enable them explicitly for the single release that should own the cluster-scoped policies:
 
 ```yaml
 validatingAdmissionPolicy:
