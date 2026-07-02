@@ -9,6 +9,9 @@ SPDX-License-Identifier: Apache-2.0
 {{- fail "validatingAdmissionPolicy.enabled requires Kubernetes 1.30 or newer" }}
 {{- end }}
 {{- $actions := default (list "Warn" "Audit") $vap.validationActions }}
+{{- if and (has "Deny" $actions) (has "Warn" $actions) }}
+{{- fail "validatingAdmissionPolicy.validationActions cannot combine Deny and Warn" }}
+{{- end }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -28,34 +31,34 @@ spec:
         resources: ["breakglasssessions"]
   validations:
     - expression: >-
-        has(oldSelf) || object.spec.cluster.size() > 0
+        oldObject != null || object.spec.cluster.size() > 0
       message: "spec.cluster is required"
       reason: Invalid
     - expression: >-
-        has(oldSelf) || object.spec.user.size() > 0
+        oldObject != null || object.spec.user.size() > 0
       message: "spec.user is required"
       reason: Invalid
     - expression: >-
-        has(oldSelf) || object.spec.grantedGroup.size() > 0
+        oldObject != null || object.spec.grantedGroup.size() > 0
       message: "spec.grantedGroup is required"
       reason: Invalid
     - expression: >-
-        has(oldSelf) || object.spec.requestReason.size() >= 10
+        oldObject != null || object.spec.requestReason.size() >= 10
       message: "spec.requestReason must be at least 10 characters"
       reason: Invalid
     - expression: >-
-        !has(oldSelf) || object.spec == oldSelf.spec
+        oldObject == null || object.spec == oldObject.spec
       message: "spec is immutable after creation"
       reason: Invalid
     - expression: >-
-        !has(oldSelf) ||
-        !has(oldSelf.status) ||
-        !has(oldSelf.status.state) ||
-        oldSelf.status.state == "" ||
-        oldSelf.status.state == object.status.state ||
-        (oldSelf.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) ||
-        (oldSelf.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) ||
-        (oldSelf.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])
+        oldObject == null ||
+        !has(oldObject.status) ||
+        !has(oldObject.status.state) ||
+        oldObject.status.state == "" ||
+        oldObject.status.state == object.status.state ||
+        (oldObject.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) ||
+        (oldObject.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) ||
+        (oldObject.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])
       message: "invalid state transition"
       reason: Invalid
 ---
@@ -101,13 +104,13 @@ spec:
     - expression: >-
         !has(object.spec.allowed) ||
         !has(object.spec.allowed.groups) ||
-        object.spec.allowed.groups.size() == object.spec.allowed.groups.toSet().size()
+        object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))
       message: "spec.allowed.groups must not contain duplicates"
       reason: Invalid
     - expression: >-
         !has(object.spec.allowed) ||
         !has(object.spec.allowed.clusters) ||
-        object.spec.allowed.clusters.size() == object.spec.allowed.clusters.toSet().size()
+        object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))
       message: "spec.allowed.clusters must not contain duplicates"
       reason: Invalid
     - expression: >-
@@ -148,7 +151,7 @@ spec:
       reason: Invalid
     - expression: >-
         !has(object.spec.identityProviderRefs) ||
-        object.spec.identityProviderRefs.size() == object.spec.identityProviderRefs.toSet().size()
+        object.spec.identityProviderRefs.all(ref, object.spec.identityProviderRefs.exists_one(x, x == ref))
       message: "spec.identityProviderRefs must not contain duplicates"
       reason: Invalid
 ---

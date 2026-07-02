@@ -384,6 +384,23 @@ jobs:
       - name: Template validation
         run: |
           helm template test-release charts/escalation-config --values charts/escalation-config/ci/test-values.yaml --debug
+      - name: Template optional ValidatingAdmissionPolicy resources
+        run: |
+          helm template test-release charts/escalation-config \
+            --show-only templates/validatingadmissionpolicy.yaml \
+            --values charts/escalation-config/ci/test-values.yaml \
+            --set validatingAdmissionPolicy.enabled=true \
+            --kube-version 1.30.0 \
+            --debug >/tmp/escalation-config-vap.yaml
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+      - name: Server dry-run optional ValidatingAdmissionPolicy resources
+        run: |
+          kind create cluster --name vap-validation --image "${KIND_NODE_IMAGE}" --wait 120s
+          kubectl apply --dry-run=server -f /tmp/escalation-config-vap.yaml
 
   build-image:
     name: Build Image
