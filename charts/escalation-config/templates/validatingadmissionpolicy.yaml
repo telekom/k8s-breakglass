@@ -43,13 +43,6 @@ spec:
       message: "spec.grantedGroup is required"
       reason: Invalid
     - expression: >-
-        oldObject != null ||
-        !has(object.spec.requestReason) ||
-        object.spec.requestReason.size() == 0 ||
-        object.spec.requestReason.size() >= 10
-      message: "spec.requestReason must be at least 10 characters when supplied"
-      reason: Invalid
-    - expression: >-
         oldObject == null || object.spec == oldObject.spec
       message: "spec is immutable after creation"
       reason: Invalid
@@ -126,6 +119,11 @@ spec:
         (!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) &&
         (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)
       message: "allowedIdentityProviders cannot be used together with allowedIdentityProvidersForRequests or allowedIdentityProvidersForApprovers"
+      reason: Invalid
+    - expression: >-
+        (!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) ==
+        (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)
+      message: "allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
       reason: Invalid
 ---
 apiVersion: admissionregistration.k8s.io/v1

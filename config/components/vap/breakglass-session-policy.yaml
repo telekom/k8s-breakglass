@@ -52,15 +52,6 @@ spec:
       message: "spec.grantedGroup is required"
       reason: Invalid
 
-    # Reason must be at least 10 characters when supplied
-    - expression: >-
-        oldObject != null ||
-        !has(object.spec.requestReason) ||
-        object.spec.requestReason.size() == 0 ||
-        object.spec.requestReason.size() >= 10
-      message: "spec.requestReason must be at least 10 characters when supplied"
-      reason: Invalid
-
     # --- UPDATE-only validations ---
 
     # Spec is immutable after creation
