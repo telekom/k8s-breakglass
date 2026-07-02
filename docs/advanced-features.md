@@ -331,10 +331,13 @@ API errors are returned in consistent JSON format:
 ```json
 {
   "error": "User email not found in token",
-  "cid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "meta": "metadata about the error"
+  "code": "UNAUTHORIZED",
+  "details": "metadata about the error"
 }
 ```
+
+Use the `X-Request-ID` response header, not the JSON body, as the correlation ID
+for logs and support requests.
 
 ### HTTP Status Codes
 
