@@ -116,6 +116,10 @@ func newUpdateRollbackCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			confirm, err := cmd.Flags().GetBool("yes")
+			if err != nil {
+				return err
+			}
 			if versionTag != "" {
 				return runUpdate(cmd, versionTag)
 			}
@@ -127,6 +131,15 @@ func newUpdateRollbackCommand() *cobra.Command {
 			if dryRun {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would rollback to %s\n", oldPath)
 				return nil
+			}
+			rt, err := getRuntime(cmd)
+			if err != nil {
+				rt = &runtimeState{writer: cmd.OutOrStdout()}
+			} else if rt.writer == nil {
+				rt.writer = cmd.OutOrStdout()
+			}
+			if err := confirmAction(cmd, rt, "rollback bgctl to", oldPath, confirm); err != nil {
+				return err
 			}
 			if _, err := os.Stat(oldPath); err != nil {
 				return fmt.Errorf("rollback binary not found: %s", oldPath)
@@ -183,7 +196,11 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	} else if rt.writer == nil {
 		rt.writer = cmd.OutOrStdout()
 	}
-	if err := confirmAction(cmd, rt, "update bgctl to", release.TagName, confirm); err != nil {
+	action := "update bgctl to"
+	if cmd.Name() == "rollback" {
+		action = "rollback bgctl to"
+	}
+	if err := confirmAction(cmd, rt, action, release.TagName, confirm); err != nil {
 		return err
 	}
 

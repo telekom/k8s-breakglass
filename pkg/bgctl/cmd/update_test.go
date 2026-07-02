@@ -223,6 +223,26 @@ func TestUpdateRollbackDryRunWritesToCommandOutput(t *testing.T) {
 	assert.Contains(t, output.String(), ".old")
 }
 
+func TestUpdateRollbackPreviousRequiresConfirmationInNonInteractiveMode(t *testing.T) {
+	oldCurrentExecutable := currentExecutable
+	t.Cleanup(func() { currentExecutable = oldCurrentExecutable })
+
+	currentExecutable = func() (string, error) {
+		return filepath.Join(t.TempDir(), "bgctl"), nil
+	}
+
+	cmd := NewUpdateCommand()
+	cmd.SetContext(context.WithValue(context.Background(), runtimeKey{}, &runtimeState{
+		nonInteractive: true,
+		writer:         io.Discard,
+	}))
+	cmd.SetArgs([]string{"rollback"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "confirmation required")
+}
+
 func TestUpdateCommandRequiresConfirmationInNonInteractiveMode(t *testing.T) {
 	oldClient := updateHTTPClient
 	oldStatusWriter := updateStatusWriter
@@ -251,6 +271,38 @@ func TestUpdateCommandRequiresConfirmationInNonInteractiveMode(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "confirmation required")
+}
+
+func TestUpdateRollbackVersionPromptUsesRollbackAction(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.28","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/rollback-bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+
+	var prompt bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetContext(context.WithValue(context.Background(), runtimeKey{}, &runtimeState{
+		writer: &prompt,
+	}))
+	cmd.SetIn(strings.NewReader("n\n"))
+	cmd.SetArgs([]string{"rollback", "--version", "v0.1.0-beta.28"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canceled")
+	assert.Contains(t, prompt.String(), "rollback bgctl to v0.1.0-beta.28")
 }
 
 func TestUpdateCommandRunsInstallFlowWithStatusMessages(t *testing.T) {
