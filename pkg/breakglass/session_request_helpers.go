@@ -37,8 +37,14 @@ type escalationResolutionResult struct {
 	selectedDenyPolicies []string
 }
 
+type duplicateSessionConflictResponse struct {
+	Error   string                               `json:"error"`
+	Code    string                               `json:"code"`
+	Session breakglassv1alpha1.BreakglassSession `json:"session"`
+}
+
 func respondDuplicateSessionConflict(c *gin.Context, message string, ses breakglassv1alpha1.BreakglassSession) {
-	c.JSON(http.StatusConflict, gin.H{"error": message, "code": "CONFLICT", "session": ses})
+	c.JSON(http.StatusConflict, duplicateSessionConflictResponse{Error: message, Code: "CONFLICT", Session: ses})
 }
 
 // sessionCreateParams bundles the inputs needed for session creation and persistence.
