@@ -83,6 +83,55 @@ func TestUpdateStatusf(t *testing.T) {
 	assert.Equal(t, "Downloading bgctl_linux_amd64.tar.gz...\n", buf.String())
 }
 
+func captureStdout(t *testing.T, run func()) string {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = writer
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	run()
+
+	require.NoError(t, writer.Close())
+	output, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	return string(output)
+}
+
+func TestUpdateCommandUsesVersionFlagForDryRun(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	var requestedPath string
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedPath = req.URL.EscapedPath()
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.29","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+
+	output := captureStdout(t, func() {
+		cmd := NewUpdateCommand()
+		cmd.SetArgs([]string{"--version", "v0.1.0-beta.29", "--dry-run"})
+
+		require.NoError(t, cmd.Execute())
+	})
+
+	assert.True(t, strings.HasSuffix(requestedPath, "/releases/tags/v0.1.0-beta.29"), "unexpected release lookup path: %s", requestedPath)
+	assert.Contains(t, output, "Would download https://example.com/bgctl.tar.gz")
+}
+
 func TestDownloadFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -291,7 +340,7 @@ func TestFetchReleaseByTagEscapesPathSegment(t *testing.T) {
 
 	_, err := fetchReleaseByTag(context.Background(), "v1.0.0/../x")
 	require.NoError(t, err)
-	assert.True(t, strings.HasSuffix(escapedPath, "/releases/tags/1.0.0%2F..%2Fx"), "unexpected escaped path: %s", escapedPath)
+	assert.True(t, strings.HasSuffix(escapedPath, "/releases/tags/v1.0.0%2F..%2Fx"), "unexpected escaped path: %s", escapedPath)
 }
 
 func TestVerifyChecksum(t *testing.T) {

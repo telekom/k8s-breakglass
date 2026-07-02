@@ -66,7 +66,8 @@ one is published, extracts the bgctl binary, and replaces the current binary.`,
   bgctl update --yes
   bgctl update --version v1.2.3 --yes`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runUpdate(cmd, "")
+			versionTag, _ := cmd.Flags().GetString("version")
+			return runUpdate(cmd, versionTag)
 		},
 	}
 
@@ -235,7 +236,7 @@ func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
 }
 
 func fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) {
-	releaseURL := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", url.PathEscape(strings.TrimPrefix(tag, "v")))
+	releaseURL := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", url.PathEscape(tag))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
 	if err != nil {
 		return nil, err
