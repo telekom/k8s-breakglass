@@ -229,7 +229,11 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	if err := replaceBinaryFunc(exe, extracted); err != nil {
 		return err
 	}
-	updateStatusf("Updated bgctl to %s", release.TagName)
+	completion := "Updated bgctl to"
+	if cmd.Name() == "rollback" {
+		completion = "Rolled back bgctl to"
+	}
+	updateStatusf("%s %s", completion, release.TagName)
 	return nil
 }
 

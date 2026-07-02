@@ -564,6 +564,62 @@ func TestUpdateCommandRunsInstallFlowWithStatusMessages(t *testing.T) {
 	assert.Contains(t, status.String(), "Updated bgctl to v0.1.0-beta.30")
 }
 
+func TestUpdateRollbackVersionRunsInstallFlowWithRollbackStatus(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	oldCurrentExecutable := currentExecutable
+	oldReplaceBinary := replaceBinaryFunc
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+		currentExecutable = oldCurrentExecutable
+		replaceBinaryFunc = oldReplaceBinary
+	})
+
+	archivePath := filepath.Join(t.TempDir(), assetFileName())
+	require.NoError(t, writeTarGz(archivePath, map[string]string{
+		"bgctl": "binary",
+	}))
+	archiveBytes, err := os.ReadFile(archivePath)
+	require.NoError(t, err)
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer downloadServer.Close()
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.28","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + downloadServer.URL + `/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	executablePath := filepath.Join(t.TempDir(), "bgctl")
+	currentExecutable = func() (string, error) {
+		return executablePath, nil
+	}
+	replaceBinaryFunc = func(exe, replacement string) error {
+		assert.Equal(t, executablePath, exe)
+		content, readErr := os.ReadFile(replacement)
+		require.NoError(t, readErr)
+		assert.Equal(t, "binary", string(content))
+		return nil
+	}
+
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"rollback", "--version", "v0.1.0-beta.28", "--yes"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, status.String(), "Rolled back bgctl to v0.1.0-beta.28")
+	assert.NotContains(t, status.String(), "Updated bgctl to v0.1.0-beta.28")
+}
+
 func TestUpdateCommandReturnsDownloadError(t *testing.T) {
 	oldClient := updateHTTPClient
 	oldDownloadClient := updateDownloadHTTPClient
