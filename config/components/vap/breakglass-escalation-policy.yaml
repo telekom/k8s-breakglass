@@ -29,14 +29,18 @@ spec:
   validations:
     # At least one approver group or user must be specified
     - expression: >-
-        !has(object.spec.approvers) ||
-        (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
-        (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+        has(object.spec.approvers) &&
+        (
+          (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
+          (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+        )
       message: "at least one approver group or user must be specified"
       reason: Invalid
 
     # escalatedGroup must use identifier format
     - expression: >-
+        has(object.spec.escalatedGroup) &&
+        object.spec.escalatedGroup.size() > 0 &&
         object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')
       message: "spec.escalatedGroup must match identifier format [a-zA-Z0-9._:-]+"
       reason: Invalid

@@ -36,26 +36,29 @@ spec:
 
     # Cluster must be non-empty
     - expression: >-
-        oldObject != null || object.spec.cluster.size() > 0
+        oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)
       message: "spec.cluster is required"
       reason: Invalid
 
     # User must be non-empty
     - expression: >-
-        oldObject != null || object.spec.user.size() > 0
+        oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)
       message: "spec.user is required"
       reason: Invalid
 
     # GrantedGroup must be non-empty
     - expression: >-
-        oldObject != null || object.spec.grantedGroup.size() > 0
+        oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)
       message: "spec.grantedGroup is required"
       reason: Invalid
 
-    # Reason must be at least 10 characters
+    # Reason must be at least 10 characters when supplied
     - expression: >-
-        oldObject != null || object.spec.requestReason.size() >= 10
-      message: "spec.requestReason must be at least 10 characters"
+        oldObject != null ||
+        !has(object.spec.requestReason) ||
+        object.spec.requestReason.size() == 0 ||
+        object.spec.requestReason.size() >= 10
+      message: "spec.requestReason must be at least 10 characters when supplied"
       reason: Invalid
 
     # --- UPDATE-only validations ---
