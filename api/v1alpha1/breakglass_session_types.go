@@ -80,20 +80,20 @@ type BreakglassSessionSpec struct {
 
 	// maxValidFor is the maximum amount of time the session will be active for after it is approved.
 	// +default="1h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
 
 	// idleTimeout is the duration of inactivity (no authorization requests) after which the session
 	// is automatically expired with state IdleExpired. If not set, idle timeout is not enforced.
 	// Parsed by ParseDuration; supports day units (e.g., "15m", "1h", "1d").
-	// Must be at least 1m and must be less than or equal to maxValidFor when both are set.
+	// Must be at least 1m and must be less than or equal to maxValidFor; when maxValidFor is omitted, admission validates against the default 1h.
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	IdleTimeout string `json:"idleTimeout,omitempty"`
 
 	// retainFor is the amount of time to wait before removing the session object after it was expired.
 	// +default="720h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
 	RetainFor string `json:"retainFor,omitempty"`
 
 	// clusterConfigRef references the ClusterConfig object associated with this session (if different from spec.cluster parsing result).

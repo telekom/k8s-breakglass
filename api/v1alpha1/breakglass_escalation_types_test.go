@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -405,6 +406,46 @@ func TestBreakglassEscalationValidateCreate_EmptyClusterConfigRefsEntry(t *testi
 	_, err := esc.ValidateCreate(context.Background(), esc)
 	if err == nil {
 		t.Fatal("expected error when clusterConfigRefs has empty entry")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_InvalidAllowedClusterGlob(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed: BreakglassEscalationAllowed{
+				Clusters: []string{"prod-["},
+			},
+			Approvers: BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when allowed.clusters has invalid glob")
+	}
+	if !strings.Contains(err.Error(), "invalid cluster glob pattern") {
+		t.Fatalf("expected invalid cluster glob pattern error, got %v", err)
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_InvalidClusterConfigRefGlob(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:    "ops",
+			ClusterConfigRefs: []string{"prod-["},
+			Approvers:         BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when clusterConfigRefs has invalid glob")
+	}
+	if !strings.Contains(err.Error(), "invalid cluster glob pattern") {
+		t.Fatalf("expected invalid cluster glob pattern error, got %v", err)
 	}
 }
 

@@ -1,12 +1,11 @@
 package v1alpha1
 
 import (
-	"path/filepath"
-
 	"context"
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +28,12 @@ var dayPattern = regexp.MustCompile(`^(\d+)d(.*)$`)
 // maxDurationDays is the upper bound for day values in ParseDuration to prevent
 // integer overflow when converting to time.Duration (int64 nanoseconds).
 const maxDurationDays = 365
+
+// defaultBreakglassMaxValidFor mirrors the +default markers on
+// BreakglassEscalationSpec.MaxValidFor and BreakglassSessionSpec.MaxValidFor.
+// Test coverage pins those markers to this value so admission validation cannot
+// drift from Kubernetes defaulting silently.
+const defaultBreakglassMaxValidFor = "1h"
 
 // ParseDuration parses a duration string with extended support for day units.
 // Go's time.ParseDuration only supports up to hours (h), but this function
@@ -427,69 +432,137 @@ func validateIdentityProviderFields(
 	return errs
 }
 
-// validateTimeoutRelationships ensures that timeout values have proper relationships:
-// - approvalTimeout must be less than or equal to maxValidFor (if both are set)
-// - All timeout values must be positive durations
+// validateTimeoutRelationships ensures timeout values use valid durations and relationships:
+// - approvalTimeout and idleTimeout must not exceed the effective maxValidFor
+// - idleTimeout must be at least one minute
+// - maxValidFor, approvalTimeout, retainFor, and idleTimeout must be positive when set
 func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
 	var errs field.ErrorList
 
-	// Get durations - these have defaults ("1h") in the spec comments
 	maxValidFor := spec.MaxValidFor
 	approvalTimeout := spec.ApprovalTimeout
 
-	// Helper to parse and validate duration string (supports day units like "7d", "90d")
-	parseDuration := func(durationStr string, fieldName string, path *field.Path) (time.Duration, *field.Error) {
-		if durationStr == "" {
-			return 0, nil // Not set, return zero
-		}
-
-		duration, err := ParseDuration(durationStr)
-		if err != nil {
-			return 0, field.Invalid(path, durationStr, fmt.Sprintf("invalid duration format: %v", err))
-		}
-
-		if duration <= 0 {
-			return 0, field.Invalid(path, durationStr, fieldName+" must be greater than 0")
-		}
-
-		return duration, nil
-	}
-
 	// Parse and validate maxValidFor
-	maxValidForDuration, maxValidForErr := parseDuration(maxValidFor, "maxValidFor", specPath.Child("maxValidFor"))
+	maxValidForDuration, maxValidForErr := parsePositiveDurationField(maxValidFor, "maxValidFor", specPath.Child("maxValidFor"))
 	if maxValidForErr != nil {
 		errs = append(errs, maxValidForErr)
-		return errs // Can't compare if maxValidFor is invalid
 	}
+	effectiveMaxValidFor, effectiveMaxValidForLabel := effectiveMaxValidForDuration(maxValidFor, maxValidForDuration)
 
 	// Parse and validate approvalTimeout
-	approvalTimeoutDuration, approvalTimeoutErr := parseDuration(approvalTimeout, "approvalTimeout", specPath.Child("approvalTimeout"))
+	approvalTimeoutDuration, approvalTimeoutErr := parsePositiveDurationField(approvalTimeout, "approvalTimeout", specPath.Child("approvalTimeout"))
 	if approvalTimeoutErr != nil {
 		errs = append(errs, approvalTimeoutErr)
-	} else if approvalTimeout != "" && approvalTimeoutDuration > maxValidForDuration {
+	} else if approvalTimeout != "" && maxValidForErr == nil && approvalTimeoutDuration > effectiveMaxValidFor {
 		errs = append(errs, field.Invalid(
 			specPath.Child("approvalTimeout"),
 			approvalTimeout,
-			fmt.Sprintf("approvalTimeout (%v) must be less than or equal to maxValidFor (%v)", approvalTimeout, maxValidFor),
+			fmt.Sprintf("approvalTimeout (%s) must be less than or equal to maxValidFor (%s)", approvalTimeout, effectiveMaxValidForLabel),
 		))
+	}
+
+	// Parse and validate retainFor
+	retainFor := spec.RetainFor
+	if _, retainForErr := parsePositiveDurationField(retainFor, "retainFor", specPath.Child("retainFor")); retainForErr != nil {
+		errs = append(errs, retainForErr)
 	}
 
 	// Parse and validate idleTimeout
 	idleTimeout := spec.IdleTimeout
-	idleTimeoutDuration, idleTimeoutErr := parseDuration(idleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
+	idleTimeoutDuration, idleTimeoutErr := parsePositiveDurationField(idleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
 	if idleTimeoutErr != nil {
 		errs = append(errs, idleTimeoutErr)
 	} else if idleTimeout != "" {
 		if idleTimeoutDuration < time.Minute {
 			errs = append(errs, field.Invalid(specPath.Child("idleTimeout"), idleTimeout,
 				"idleTimeout must be at least 1m"))
-		} else if maxValidForDuration > 0 && idleTimeoutDuration > maxValidForDuration {
+		} else if maxValidForErr == nil && idleTimeoutDuration > effectiveMaxValidFor {
 			errs = append(errs, field.Invalid(specPath.Child("idleTimeout"), idleTimeout,
-				fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", idleTimeout, maxValidFor)))
+				fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", idleTimeout, effectiveMaxValidForLabel)))
 		}
 	}
 
 	return errs
+}
+
+func parsePositiveDurationField(durationStr string, fieldName string, path *field.Path) (time.Duration, *field.Error) {
+	if durationStr == "" {
+		return 0, nil
+	}
+
+	duration, err := ParseDuration(durationStr)
+	if err != nil {
+		return 0, field.Invalid(path, durationStr, fmt.Sprintf("invalid duration format: %v", err))
+	}
+
+	if duration <= 0 {
+		return 0, field.Invalid(path, durationStr, fieldName+" must be positive")
+	}
+
+	return duration, nil
+}
+
+func effectiveMaxValidForDuration(raw string, parsed time.Duration) (time.Duration, string) {
+	if raw != "" {
+		return parsed, raw
+	}
+	defaultDuration, err := ParseDuration(defaultBreakglassMaxValidFor)
+	if err != nil {
+		// This is a compile-time constant; keep the fallback defensive.
+		return time.Hour, "default " + defaultBreakglassMaxValidFor
+	}
+	return defaultDuration, "default " + defaultBreakglassMaxValidFor
+}
+
+func validateClusterGlobPatterns(patterns []string, fieldPath *field.Path) field.ErrorList {
+	if len(patterns) == 0 || fieldPath == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+	for i, pattern := range patterns {
+		if pattern == "" {
+			continue
+		}
+		if _, err := path.Match(pattern, ""); err != nil {
+			errs = append(errs, field.Invalid(
+				fieldPath.Index(i),
+				pattern,
+				fmt.Sprintf("invalid cluster glob pattern: %v", err),
+			))
+		}
+	}
+	return errs
+}
+
+func clusterMatchesValidationPattern(cluster string, pattern string) bool {
+	if !strings.ContainsAny(pattern, "*?[") {
+		return pattern == cluster
+	}
+	matched, err := path.Match(pattern, cluster)
+	if err != nil {
+		// Existing malformed escalations should not make new BreakglassSession
+		// admission fail. BreakglassEscalation admission rejects invalid globs.
+		return false
+	}
+	return matched
+}
+
+func escalationMatchesSessionClusterForValidation(escalation *BreakglassEscalation, cluster string) bool {
+	if escalation == nil {
+		return false
+	}
+	for _, allowedCluster := range escalation.Spec.Allowed.Clusters {
+		if clusterMatchesValidationPattern(cluster, allowedCluster) {
+			return true
+		}
+	}
+	for _, clusterConfigRef := range escalation.Spec.ClusterConfigRefs {
+		if clusterMatchesValidationPattern(cluster, clusterConfigRef) {
+			return true
+		}
+	}
+	return false
 }
 
 // the session is allowed by the associated escalation rule.
@@ -549,24 +622,7 @@ func validateSessionIdentityProviderAuthorization(
 			continue
 		}
 
-		// Check if escalation's clusters include this session's cluster
-		clusterMatches := false
-		for _, allowedCluster := range esc.Spec.Allowed.Clusters {
-			if matched, _ := filepath.Match(allowedCluster, sessionCluster); matched || allowedCluster == sessionCluster {
-				clusterMatches = true
-				break
-			}
-		}
-		if !clusterMatches {
-			for _, ref := range esc.Spec.ClusterConfigRefs {
-				if matched, _ := filepath.Match(ref, sessionCluster); matched || ref == sessionCluster {
-					clusterMatches = true
-					break
-				}
-			}
-		}
-
-		if clusterMatches {
+		if escalationMatchesSessionClusterForValidation(esc, sessionCluster) {
 			relevantEscalations = append(relevantEscalations, esc)
 		}
 	}

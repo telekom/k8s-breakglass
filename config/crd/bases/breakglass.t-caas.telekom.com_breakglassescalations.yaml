@@ -67,7 +67,7 @@ spec:
                       clusters is a list of clusters this escalation can be used for.
                       Supports exact string matching and glob patterns (e.g., "prod-*", "*-staging", "*").
                       Use "*" to match all clusters (global escalation).
-                      Glob patterns follow filepath.Match semantics: * matches any sequence of characters, ? matches single character.
+                      Admission validates glob syntax with path.Match. Runtime matching for stored escalations uses filepath.Match semantics on the controller OS.
                     items:
                       type: string
                     maxItems: 50
@@ -144,7 +144,7 @@ spec:
                 description: |-
                   approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
                   If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
-                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                pattern: ^([0-9]+d([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+)$
                 type: string
               approvers:
                 description: approvers specifies who is allowed to approve this escalation.
@@ -208,8 +208,8 @@ spec:
                   idleTimeout is the duration of inactivity (no authorization requests) after which sessions
                   for this escalation are automatically expired with state IdleExpired.
                   If not set, idle timeout is not enforced for sessions created from this escalation.
-                  Must be at least 1m and must not exceed maxValidFor when both are set.
-                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                  Must be at least 1m and must not exceed maxValidFor; when maxValidFor is omitted, admission validates against the default 1h.
+                pattern: ^([0-9]+d([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+)$
                 type: string
               mailProvider:
                 description: |-
@@ -222,7 +222,7 @@ spec:
                 default: 1h
                 description: maxValidFor is the maximum amount of time a session for
                   this escalation will be active for after it is approved.
-                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                pattern: ^([0-9]+d([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+)$
                 type: string
               notificationExclusions:
                 description: |-
@@ -388,7 +388,7 @@ spec:
               retainFor:
                 description: retainFor is the amount of time to wait before removing
                   a session for this escalation after it expired
-                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                pattern: ^([0-9]+d([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+)$
                 type: string
               sessionLimitsOverride:
                 description: |-
