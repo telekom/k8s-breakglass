@@ -43,8 +43,8 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 | `spec.cluster` required | `object.spec.cluster.size() > 0` |
 | `spec.user` required | `object.spec.user.size() > 0` |
 | `spec.grantedGroup` required | `object.spec.grantedGroup.size() > 0` |
-| `spec.reason` ≥ 10 chars | `object.spec.reason.size() >= 10` |
-| Spec immutability on update | `object.spec == oldSelf.spec` |
+| `spec.requestReason` ≥ 10 chars | `oldObject != null || object.spec.requestReason.size() >= 10` |
+| Spec immutability on update | `oldObject == null || object.spec == oldObject.spec` |
 | Valid state transitions | Enumerated allowed transitions |
 
 #### BreakglassEscalation
@@ -55,8 +55,8 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 | `escalatedGroup` identifier format | Regex `^[a-zA-Z0-9._:-]+$` |
 | No empty `allowed.groups` entries | `all(g, g.size() > 0)` |
 | No empty `allowed.clusters` entries | `all(c, c.size() > 0)` |
-| No duplicate `allowed.groups` | Size matches `toSet()` size |
-| No duplicate `allowed.clusters` | Size matches `toSet()` size |
+| No duplicate `allowed.groups` | `all(... exists_one(...))` uniqueness check |
+| No duplicate `allowed.clusters` | `all(... exists_one(...))` uniqueness check |
 | IDP field mutual exclusivity | `allowedIdentityProviders` vs `forRequests`/`forApprovers` |
 
 #### ClusterConfig
@@ -65,7 +65,7 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 |------------|---------------|
 | Auth config mutual exclusivity | Exactly one of `kubeconfigSecretRef` or `oidcAuth` |
 | `kubeconfigSecretRef.name` required | Non-empty when set |
-| No duplicate `identityProviderRefs` | Size matches `toSet()` size |
+| No duplicate `identityProviderRefs` | `all(... exists_one(...))` uniqueness check |
 
 #### IdentityProvider
 
@@ -114,6 +114,17 @@ Build and apply:
 ```bash
 kustomize build config/test-overlays/vap/ | kubectl apply -f -
 ```
+
+### Helm deployments
+
+The `escalation-config` chart can also render these VAP objects through
+`validatingAdmissionPolicy.enabled=true`. The policy and binding names are
+static cluster-scoped names. Enable them from only one release per cluster.
+
+If a cluster already installed the VAP objects through this kustomize component,
+leave the chart value disabled. To move ownership to Helm, first remove or adopt
+the existing `ValidatingAdmissionPolicy` and `ValidatingAdmissionPolicyBinding`
+objects so Helm does not collide with unmanaged cluster-scoped resources.
 
 ### Verify
 
