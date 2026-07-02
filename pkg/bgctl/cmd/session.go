@@ -48,6 +48,13 @@ func newSessionWatchCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Watch session changes",
+		Long: `Watch breakglass session changes by polling the API.
+
+The command prints sessions when they first appear or when their state changes.
+Use filters to reduce noise in busy environments.`,
+		Example: `  bgctl session watch --mine
+  bgctl session watch -C prod -s Pending,Approved -i 5s
+  bgctl session watch --show-full -o json`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -138,15 +145,15 @@ func newSessionWatchCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "Polling interval (Go duration, e.g. 2s, 1m)")
-	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster")
-	cmd.Flags().StringVar(&user, "user", "", "Filter by user")
-	cmd.Flags().StringVar(&group, "group", "", "Filter by group")
-	cmd.Flags().StringVar(&state, "state", "", "Filter by state (comma-separated)")
-	cmd.Flags().BoolVar(&mine, "mine", false, "Only show sessions created by the current user")
+	cmd.Flags().DurationVarP(&interval, "interval", "i", 2*time.Second, "Polling interval (Go duration, e.g. 2s, 1m)")
+	cmd.Flags().StringVarP(&cluster, "cluster", "C", "", "Filter by cluster")
+	cmd.Flags().StringVarP(&user, "user", "u", "", "Filter by user")
+	cmd.Flags().StringVarP(&group, "group", "g", "", "Filter by group")
+	cmd.Flags().StringVarP(&state, "state", "s", "", "Filter by state (comma-separated)")
+	cmd.Flags().BoolVarP(&mine, "mine", "m", false, "Only show sessions created by the current user")
 	cmd.Flags().BoolVar(&approver, "approver", true, "Include sessions where you are an approver")
-	cmd.Flags().BoolVar(&activeOnly, "active", false, "Only show active sessions")
-	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session on change (respects -o json|yaml)")
+	cmd.Flags().BoolVarP(&activeOnly, "active", "A", false, "Only show active sessions")
+	cmd.Flags().BoolVarP(&showFull, "show-full", "f", false, "Show full session JSON on change")
 	return cmd
 }
 
@@ -167,6 +174,13 @@ func newSessionListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List breakglass sessions",
+		Long: `List breakglass sessions visible to the current user.
+
+By default the command includes sessions where you are an approver. Use --mine
+to show only your own requests, or --approved-by-me for sessions you approved.`,
+		Example: `  bgctl session list --mine
+  bgctl session list -C prod -s Pending,Approved -o wide
+  bgctl session list --approved-by-me --all`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -218,17 +232,17 @@ func newSessionListCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().BoolVar(&mine, "mine", false, "Only show sessions created by the current user")
+	cmd.Flags().BoolVarP(&mine, "mine", "m", false, "Only show sessions created by the current user")
 	cmd.Flags().BoolVar(&approver, "approver", true, "Include sessions where you are an approver")
-	cmd.Flags().BoolVar(&approvedByMe, "approved-by-me", false, "Only show sessions approved by you")
-	cmd.Flags().BoolVar(&activeOnly, "active", false, "Only show active sessions")
-	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster name")
-	cmd.Flags().StringVar(&user, "user", "", "Filter by user")
-	cmd.Flags().StringVar(&group, "group", "", "Filter by group")
-	cmd.Flags().StringVar(&state, "state", "", "Filter by state (comma-separated)")
-	cmd.Flags().IntVar(&page, "page", 1, "Page number")
+	cmd.Flags().BoolVarP(&approvedByMe, "approved-by-me", "M", false, "Only show sessions approved by you")
+	cmd.Flags().BoolVarP(&activeOnly, "active", "A", false, "Only show active sessions")
+	cmd.Flags().StringVarP(&cluster, "cluster", "C", "", "Filter by cluster name")
+	cmd.Flags().StringVarP(&user, "user", "u", "", "Filter by user")
+	cmd.Flags().StringVarP(&group, "group", "g", "", "Filter by group")
+	cmd.Flags().StringVarP(&state, "state", "s", "", "Filter by state (comma-separated)")
+	cmd.Flags().IntVarP(&page, "page", "p", 1, "Page number")
 	cmd.Flags().IntVar(&pageSize, "page-size", 0, "Items per page")
-	cmd.Flags().BoolVar(&allPages, "all", false, "Disable pagination")
+	cmd.Flags().BoolVarP(&allPages, "all", "a", false, "Disable pagination")
 	return cmd
 }
 
@@ -280,6 +294,13 @@ func newSessionRequestCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "request",
 		Short: "Request a new breakglass session",
+		Long: `Request a new breakglass session for a cluster and group.
+
+The user defaults to the authenticated token identity when available. Provide a
+reason when the escalation policy requires one.`,
+		Example: `  bgctl session request -C prod -g platform-admin -r "debug incident INC-123"
+  bgctl session request --cluster prod --group read-only --duration 3600
+  bgctl session request -C prod -g platform-admin --scheduled-start 2026-07-02T12:00:00Z`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -315,12 +336,12 @@ func newSessionRequestCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
-	cmd.Flags().StringVar(&cluster, "cluster", "", "Target cluster")
-	cmd.Flags().StringVar(&group, "group", "", "Group to request")
-	cmd.Flags().StringVar(&user, "user", "", "User identifier (defaults to token user)")
-	cmd.Flags().StringVar(&reason, "reason", "", "Reason for request")
-	cmd.Flags().Int64Var(&duration, "duration", 0, "Requested duration in seconds")
-	cmd.Flags().StringVar(&scheduled, "scheduled-start", "", "Scheduled start time (RFC3339)")
+	cmd.Flags().StringVarP(&cluster, "cluster", "C", "", "Target cluster")
+	cmd.Flags().StringVarP(&group, "group", "g", "", "Group to request")
+	cmd.Flags().StringVarP(&user, "user", "u", "", "User identifier (defaults to token user)")
+	cmd.Flags().StringVarP(&reason, "reason", "r", "", "Reason for request")
+	cmd.Flags().Int64VarP(&duration, "duration", "d", 0, "Requested duration in seconds")
+	cmd.Flags().StringVarP(&scheduled, "scheduled-start", "S", "", "Scheduled start time (RFC3339)")
 	_ = cmd.MarkFlagRequired("cluster")
 	_ = cmd.MarkFlagRequired("group")
 	return cmd
@@ -353,7 +374,7 @@ func newSessionApproveCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
-	cmd.Flags().StringVar(&reason, "reason", "", "Approval reason")
+	cmd.Flags().StringVarP(&reason, "reason", "r", "", "Approval reason")
 	return cmd
 }
 
@@ -384,7 +405,7 @@ func newSessionRejectCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatTable, output.FormatJSON, output.FormatYAML)
 		},
 	}
-	cmd.Flags().StringVar(&reason, "reason", "", "Rejection reason")
+	cmd.Flags().StringVarP(&reason, "reason", "r", "", "Rejection reason")
 	return cmd
 }
 

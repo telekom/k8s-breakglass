@@ -71,6 +71,18 @@ func TestFormatBytes(t *testing.T) {
 	assert.Equal(t, "1.0 MB", formatBytes(1024*1024))
 }
 
+func TestUpdateStatusf(t *testing.T) {
+	oldWriter := updateStatusWriter
+	t.Cleanup(func() { updateStatusWriter = oldWriter })
+
+	var buf bytes.Buffer
+	updateStatusWriter = &buf
+
+	updateStatusf("Downloading %s...", "bgctl_linux_amd64.tar.gz")
+
+	assert.Equal(t, "Downloading bgctl_linux_amd64.tar.gz...\n", buf.String())
+}
+
 func TestDownloadFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

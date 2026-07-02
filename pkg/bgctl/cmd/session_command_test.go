@@ -48,6 +48,20 @@ func TestSessionListCommand_DefaultFlags(t *testing.T) {
 	assert.False(t, activeOnly)
 }
 
+func TestSessionListCommand_ShorthandFlags(t *testing.T) {
+	cmd := newSessionListCommand()
+
+	assert.Equal(t, "C", cmd.Flags().Lookup("cluster").Shorthand)
+	assert.Equal(t, "u", cmd.Flags().Lookup("user").Shorthand)
+	assert.Equal(t, "g", cmd.Flags().Lookup("group").Shorthand)
+	assert.Equal(t, "s", cmd.Flags().Lookup("state").Shorthand)
+	assert.Equal(t, "m", cmd.Flags().Lookup("mine").Shorthand)
+	assert.Equal(t, "A", cmd.Flags().Lookup("active").Shorthand)
+	assert.Equal(t, "M", cmd.Flags().Lookup("approved-by-me").Shorthand)
+	assert.Equal(t, "p", cmd.Flags().Lookup("page").Shorthand)
+	assert.Equal(t, "a", cmd.Flags().Lookup("all").Shorthand)
+}
+
 func TestSessionApproverOption(t *testing.T) {
 	t.Run("unset flag omits option", func(t *testing.T) {
 		cmd := newSessionListCommand()
@@ -288,4 +302,33 @@ func TestSessionWatchCommand_ShowFullRejectsUnsupportedOutputFormat(t *testing.T
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `unsupported output format: "xml"`)
+}
+
+func TestSessionWatchCommand_ShorthandFlags(t *testing.T) {
+	cmd := newSessionWatchCommand()
+
+	assert.Equal(t, "i", cmd.Flags().Lookup("interval").Shorthand)
+	assert.Equal(t, "C", cmd.Flags().Lookup("cluster").Shorthand)
+	assert.Equal(t, "u", cmd.Flags().Lookup("user").Shorthand)
+	assert.Equal(t, "g", cmd.Flags().Lookup("group").Shorthand)
+	assert.Equal(t, "s", cmd.Flags().Lookup("state").Shorthand)
+	assert.Equal(t, "m", cmd.Flags().Lookup("mine").Shorthand)
+	assert.Equal(t, "A", cmd.Flags().Lookup("active").Shorthand)
+	assert.Equal(t, "f", cmd.Flags().Lookup("show-full").Shorthand)
+}
+
+func TestSessionRequestCommand_ShorthandFlags(t *testing.T) {
+	cmd := newSessionRequestCommand()
+
+	assert.Equal(t, "C", cmd.Flags().Lookup("cluster").Shorthand)
+	assert.Equal(t, "g", cmd.Flags().Lookup("group").Shorthand)
+	assert.Equal(t, "u", cmd.Flags().Lookup("user").Shorthand)
+	assert.Equal(t, "r", cmd.Flags().Lookup("reason").Shorthand)
+	assert.Equal(t, "d", cmd.Flags().Lookup("duration").Shorthand)
+	assert.Equal(t, "S", cmd.Flags().Lookup("scheduled-start").Shorthand)
+}
+
+func TestSessionDecisionCommand_ShorthandFlags(t *testing.T) {
+	assert.Equal(t, "r", newSessionApproveCommand().Flags().Lookup("reason").Shorthand)
+	assert.Equal(t, "r", newSessionRejectCommand().Flags().Lookup("reason").Shorthand)
 }

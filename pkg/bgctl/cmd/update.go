@@ -39,8 +39,9 @@ const (
 )
 
 var (
-	updateHTTPClient         = &http.Client{Timeout: defaultUpdateAPIHTTPTimeout}
-	updateDownloadHTTPClient = &http.Client{Timeout: defaultUpdateDownloadHTTPTimeout}
+	updateHTTPClient                   = &http.Client{Timeout: defaultUpdateAPIHTTPTimeout}
+	updateDownloadHTTPClient           = &http.Client{Timeout: defaultUpdateDownloadHTTPTimeout}
+	updateStatusWriter       io.Writer = os.Stderr
 )
 
 type githubRelease struct {
@@ -57,6 +58,13 @@ func NewUpdateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update bgctl",
+		Long: `Update bgctl from the k8s-breakglass GitHub releases.
+
+The command downloads the platform-specific archive, verifies a checksum when
+one is published, extracts the bgctl binary, and replaces the current binary.`,
+		Example: `  bgctl update --dry-run
+  bgctl update --yes
+  bgctl update --version v1.2.3 --yes`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUpdate(cmd, "")
 		},
@@ -130,8 +138,10 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	var release *githubRelease
 	var err error
 	if versionTag == "" {
+		updateStatusf("Checking latest bgctl release...")
 		release, err = fetchLatestRelease(ctx)
 	} else {
+		updateStatusf("Fetching bgctl release %s...", versionTag)
 		release, err = fetchReleaseByTag(ctx, versionTag)
 	}
 	if err != nil {
@@ -142,6 +152,7 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	if assetURL == "" {
 		return fmt.Errorf("asset not found for %s", assetName)
 	}
+	updateStatusf("Selected release %s asset %s", release.TagName, assetName)
 
 	if dryRun {
 		_, _ = fmt.Fprintf(os.Stdout, "Would download %s\n", assetURL)
@@ -160,14 +171,17 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	}()
 
 	archivePath := filepath.Join(tmpDir, assetName)
+	updateStatusf("Downloading %s...", assetName)
 	if err := downloadFile(ctx, assetURL, archivePath); err != nil {
 		return err
 	}
 
+	updateStatusf("Verifying checksum...")
 	if err := verifyChecksum(ctx, release.Assets, assetName, archivePath); err != nil {
 		return err
 	}
 
+	updateStatusf("Extracting bgctl...")
 	extracted, err := extractBinary(archivePath, tmpDir)
 	if err != nil {
 		return err
@@ -176,7 +190,19 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	if err != nil {
 		return err
 	}
-	return replaceBinary(exe, extracted)
+	updateStatusf("Installing bgctl to %s...", exe)
+	if err := replaceBinary(exe, extracted); err != nil {
+		return err
+	}
+	updateStatusf("Updated bgctl to %s", release.TagName)
+	return nil
+}
+
+func updateStatusf(format string, args ...interface{}) {
+	if updateStatusWriter == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(updateStatusWriter, format+"\n", args...)
 }
 
 func commandContext(cmd *cobra.Command) context.Context {
