@@ -71,6 +71,7 @@ spec:
 
 - When configured, approvers see the description when approving/rejecting
 - If `mandatory: true`, approval/rejection fails if reason is empty/whitespace; both the pending approvals modal and direct email approval links keep approve/reject actions blocked until a note is entered
+- Direct approval links reload their session details when the same browser tab moves between `/session/{name}/approve` URLs, so approvers do not act on stale request details
 - Reason is stored with the session for audit trail
 
 ### Examples

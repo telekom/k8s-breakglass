@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, inject } from "vue";
+import { ref, computed, onMounted, onUnmounted, inject, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
@@ -32,6 +32,10 @@ type EnrichedApprovalReasonSession = SessionCR & {
 
 // Denial reason categories for specific UI treatment
 type DenialCategory = "self-approval" | "domain-restriction" | "not-approver" | "no-matching-escalation" | "other";
+
+function isPendingSessionState(state?: string): boolean {
+  return state?.toLowerCase() === "pending";
+}
 
 function categorizeDenialReason(reason?: string): DenialCategory {
   if (!reason) return "other";
@@ -70,6 +74,8 @@ const errorDetails = ref<string | null>(null);
 const approverNote = ref("");
 const isApproving = ref(false);
 let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+let loadRequestId = 0;
+let actionRequestId = 0;
 
 // Computed: categorize the denial reason for specialized UI treatment
 const denialCategory = computed<DenialCategory>(() => {
@@ -90,14 +96,43 @@ const isApprovalNoteMissing = computed(() => {
   return !!getApprovalReasonConfig(session.value)?.mandatory && !approverNote.value.trim();
 });
 
-const loadSession = async () => {
-  loading.value = true;
+const clearRedirectTimer = () => {
+  if (redirectTimer) {
+    clearTimeout(redirectTimer);
+    redirectTimer = null;
+  }
+};
+
+const clearSessionState = () => {
+  clearRedirectTimer();
+  ++actionRequestId;
+  session.value = null;
+  approvalMeta.value = null;
   error.value = null;
   errorDetails.value = null;
+  approverNote.value = "";
+  isApproving.value = false;
+};
 
-  debug("SessionApprovalView", "Loading session:", sessionName.value);
+const requestLoginForCurrentRoute = async () => {
+  ++loadRequestId;
+  clearSessionState();
+  loading.value = true;
+  debug("SessionApprovalView", "User not authenticated, initiating login with redirect back");
+  const currentPath = route.fullPath;
+  debug("SessionApprovalView", "Storing path for post-login redirect:", currentPath);
+  await auth.login({ path: currentPath });
+};
 
-  if (!sessionName.value) {
+const loadSession = async () => {
+  const requestId = ++loadRequestId;
+  const requestedSessionName = sessionName.value;
+  loading.value = true;
+  clearSessionState();
+
+  debug("SessionApprovalView", "Loading session:", requestedSessionName);
+
+  if (!requestedSessionName) {
     error.value = "No session name provided in URL";
     loading.value = false;
     return;
@@ -105,7 +140,10 @@ const loadSession = async () => {
 
   try {
     // Use dedicated endpoint GET /breakglassSessions/:name to get the specific session
-    const response = await service.getSessionByName(sessionName.value);
+    const response = await service.getSessionByName(requestedSessionName);
+    if (requestId !== loadRequestId) {
+      return;
+    }
 
     debug("SessionApprovalView", "Response:", response.data);
 
@@ -118,7 +156,7 @@ const loadSession = async () => {
 
     if (!foundSession || !foundSession.metadata) {
       error.value = "Session Not Found";
-      errorDetails.value = `Session "${sessionName.value}" does not exist or has been deleted.`;
+      errorDetails.value = `Session "${requestedSessionName}" does not exist or has been deleted.`;
       debug("SessionApprovalView", "Session not found");
     } else if (meta) {
       // Use approval metadata to determine if user can approve
@@ -157,7 +195,7 @@ const loadSession = async () => {
       // Fallback for old API response format (backward compatibility)
       const found = foundSession as SessionCR;
       debug("SessionApprovalView", "Found session:", found.metadata?.name, "state:", found.status?.state);
-      if (found.status?.state !== "pending") {
+      if (!isPendingSessionState(found.status?.state)) {
         error.value = "Cannot Approve Session";
         errorDetails.value = `Session is ${found.status?.state}. Only pending sessions can be approved.`;
       } else {
@@ -165,11 +203,14 @@ const loadSession = async () => {
       }
     }
   } catch (e: unknown) {
+    if (requestId !== loadRequestId) {
+      return;
+    }
     const axiosLike = e as AxiosLikeError;
     logError("SessionApprovalView", "Failed to load session:", e);
     if (axiosLike.response?.status === 404) {
       error.value = "Session Not Found";
-      errorDetails.value = `Session "${sessionName.value}" does not exist. It may have been deleted or the link is incorrect.`;
+      errorDetails.value = `Session "${requestedSessionName}" does not exist. It may have been deleted or the link is incorrect.`;
     } else if (axiosLike.response?.status === 403) {
       error.value = "Access Denied";
       errorDetails.value = "You are not authorized to view this session.";
@@ -192,7 +233,9 @@ const loadSession = async () => {
       errorDetails.value = message;
     }
   } finally {
-    loading.value = false;
+    if (requestId === loadRequestId) {
+      loading.value = false;
+    }
   }
 };
 
@@ -203,18 +246,26 @@ const handleApprove = async () => {
     return;
   }
 
+  const requestId = ++actionRequestId;
+  const requestedSessionName = session.value.metadata.name;
   isApproving.value = true;
   try {
     await service.approveReview({
-      name: session.value.metadata.name,
+      name: requestedSessionName,
       user: "",
       cluster: "",
       group: "",
       reason: approverNote.value,
     });
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     pushSuccess("Session approved successfully");
     router.push("/sessions");
   } catch (e: unknown) {
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     const axiosLike = e as AxiosLikeError;
     logError("SessionApprovalView", "Failed to approve session:", e);
     if (axiosLike.response?.status === 404) {
@@ -243,18 +294,26 @@ const handleReject = async () => {
     return;
   }
 
+  const requestId = ++actionRequestId;
+  const requestedSessionName = session.value.metadata.name;
   isApproving.value = true;
   try {
     await service.rejectReview({
-      name: session.value.metadata.name,
+      name: requestedSessionName,
       user: "",
       cluster: "",
       group: "",
       reason: approverNote.value,
     });
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     pushSuccess("Session rejected successfully");
     router.push("/sessions");
   } catch (e: unknown) {
+    if (requestId !== actionRequestId || sessionName.value !== requestedSessionName) {
+      return;
+    }
     const axiosLike = e as AxiosLikeError;
     logError("SessionApprovalView", "Failed to reject session:", e);
     if (axiosLike.response?.status === 404) {
@@ -285,12 +344,7 @@ onMounted(async () => {
 
   // Check authentication before attempting to load session
   if (!authenticated.value) {
-    debug("SessionApprovalView", "User not authenticated, initiating login with redirect back");
-    // Initiate login with the current approval path stored in state
-    // After OIDC callback, user will be redirected back to this approval page
-    const currentPath = route.fullPath;
-    debug("SessionApprovalView", "Storing path for post-login redirect:", currentPath);
-    await auth.login({ path: currentPath });
+    await requestLoginForCurrentRoute();
     return;
   }
 
@@ -304,11 +358,21 @@ onMounted(async () => {
   await loadSession();
 });
 
-onUnmounted(() => {
-  if (redirectTimer) {
-    clearTimeout(redirectTimer);
-    redirectTimer = null;
+watch(sessionName, async (newSessionName, previousSessionName) => {
+  if (newSessionName === previousSessionName) {
+    return;
   }
+  if (!authenticated.value) {
+    await requestLoginForCurrentRoute();
+    return;
+  }
+  await loadSession();
+});
+
+onUnmounted(() => {
+  ++loadRequestId;
+  ++actionRequestId;
+  clearRedirectTimer();
 });
 </script>
 
@@ -356,7 +420,7 @@ onUnmounted(() => {
           <p v-if="approvalMeta.isRequester && denialCategory !== 'self-approval'" class="meta-info">
             <strong>Note:</strong> You are the requester of this session.
           </p>
-          <p v-if="approvalMeta.sessionState && approvalMeta.sessionState !== 'pending'" class="meta-info">
+          <p v-if="approvalMeta.sessionState && !isPendingSessionState(approvalMeta.sessionState)" class="meta-info">
             <strong>Session State:</strong> {{ approvalMeta.sessionState }}
           </p>
         </div>
