@@ -61,7 +61,7 @@ spec:
     - expression: >-
         !has(object.spec.allowed) ||
         !has(object.spec.allowed.groups) ||
-        object.spec.allowed.groups.size() == object.spec.allowed.groups.toSet().size()
+        object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))
       message: "spec.allowed.groups must not contain duplicates"
       reason: Invalid
 
@@ -69,7 +69,7 @@ spec:
     - expression: >-
         !has(object.spec.allowed) ||
         !has(object.spec.allowed.clusters) ||
-        object.spec.allowed.clusters.size() == object.spec.allowed.clusters.toSet().size()
+        object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))
       message: "spec.allowed.clusters must not contain duplicates"
       reason: Invalid
 

@@ -1034,6 +1034,20 @@
             "type": "string"
           },
           "minItems": 1,
+          "not": {
+            "allOf": [
+              {
+                "contains": {
+                  "const": "Deny"
+                }
+              },
+              {
+                "contains": {
+                  "const": "Warn"
+                }
+              }
+            ]
+          },
           "type": "array",
           "uniqueItems": true
         }
