@@ -51,12 +51,13 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 | Validation | CEL Expression |
 |------------|---------------|
 | Approvers non-empty | `has(object.spec.approvers) && ((has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) || (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0))` |
-| `escalatedGroup` identifier format | Guarded `has(object.spec.escalatedGroup)` regex check |
+| `escalatedGroup` identifier format | `has(object.spec.escalatedGroup) && object.spec.escalatedGroup.size() > 0 && object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')` |
 | No empty `allowed.groups` entries | `all(g, g.size() > 0)` |
 | No empty `allowed.clusters` entries | `all(c, c.size() > 0)` |
-| No duplicate `allowed.groups` | `all(... exists_one(...))` uniqueness check |
-| No duplicate `allowed.clusters` | `all(... exists_one(...))` uniqueness check |
-| IDP field compatibility | Legacy `allowedIdentityProviders` mutual exclusion plus request/approver split-field symmetry |
+| No duplicate `allowed.groups` | `object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))` |
+| No duplicate `allowed.clusters` | `object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))` |
+| IDP legacy mutual exclusion | `!has(object.spec.allowedIdentityProviders) || object.spec.allowedIdentityProviders.size() == 0 || ((!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) && (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0))` |
+| IDP split-field symmetry | `(!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) == (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)` |
 
 #### ClusterConfig
 
