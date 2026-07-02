@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,20 @@ func TestEffectiveMaxValidForDurationUsesDefaultString(t *testing.T) {
 	duration, label = effectiveMaxValidForDuration("30m", explicitDuration)
 	assert.Equal(t, explicitDuration, duration)
 	assert.Equal(t, "30m", label)
+}
+
+func TestDefaultBreakglassMaxValidForMatchesKubebuilderMarkers(t *testing.T) {
+	defaultMarker := fmt.Sprintf("// +default=%q", defaultBreakglassMaxValidFor)
+
+	for _, file := range []string{"breakglass_escalation_types.go", "breakglass_session_types.go"} {
+		t.Run(file, func(t *testing.T) {
+			content, err := os.ReadFile(file)
+			if !assert.NoError(t, err) {
+				return
+			}
+			assert.Contains(t, string(content), defaultMarker)
+		})
+	}
 }
 
 // TestValidateSessionIdentityProviderAuthorization_EmptyIDPName tests backward compatibility

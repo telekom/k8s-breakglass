@@ -29,6 +29,10 @@ var dayPattern = regexp.MustCompile(`^(\d+)d(.*)$`)
 // integer overflow when converting to time.Duration (int64 nanoseconds).
 const maxDurationDays = 365
 
+// defaultBreakglassMaxValidFor mirrors the +default markers on
+// BreakglassEscalationSpec.MaxValidFor and BreakglassSessionSpec.MaxValidFor.
+// Test coverage pins those markers to this value so admission validation cannot
+// drift from Kubernetes defaulting silently.
 const defaultBreakglassMaxValidFor = "1h"
 
 // ParseDuration parses a duration string with extended support for day units.
