@@ -463,4 +463,15 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
       }
     });
   });
+
+  test.describe("Scale Component Semantics", () => {
+    test("Debug sessions refresh icon button has an accessible name", async ({ page }) => {
+      await performMockLogin(page);
+      await navigateTo(page, "/debug-sessions");
+
+      const refreshButton = page.getByRole("button", { name: "Refresh debug sessions", exact: true });
+      await expect(refreshButton).toHaveCount(1);
+      await expect(refreshButton).toBeVisible();
+    });
+  });
 });

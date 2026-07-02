@@ -262,7 +262,7 @@ function onStateToggle(state: string, event: Event) {
           class="ui-toolbar-icon-control"
           icon-only="true"
           variant="secondary"
-          aria-label="Refresh"
+          inner-aria-label="Refresh debug sessions"
           data-testid="refresh-button"
           @click="refresh()"
         >
