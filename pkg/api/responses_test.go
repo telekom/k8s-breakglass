@@ -64,19 +64,40 @@ func TestRespondNotFoundSimple(t *testing.T) {
 }
 
 func TestRespondError(t *testing.T) {
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	tests := []struct {
+		name         string
+		status       int
+		expectedCode string
+	}{
+		{
+			name:         "not found",
+			status:       http.StatusNotFound,
+			expectedCode: "NOT_FOUND",
+		},
+		{
+			name:         "unprocessable entity",
+			status:       http.StatusUnprocessableEntity,
+			expectedCode: "UNPROCESSABLE_ENTITY",
+		},
+	}
 
-	RespondError(c, http.StatusNotFound, "API endpoint not found", "/api/missing")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+			RespondError(c, tt.status, "API endpoint error", "/api/missing")
 
-	var resp APIError
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, "API endpoint not found", resp.Error)
-	assert.Equal(t, "NOT_FOUND", resp.Code)
-	assert.Equal(t, "/api/missing", resp.Details)
+			assert.Equal(t, tt.status, w.Code)
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, "API endpoint error", resp.Error)
+			assert.Equal(t, tt.expectedCode, resp.Code)
+			assert.Equal(t, "/api/missing", resp.Details)
+		})
+	}
 }
 
 func TestRespondUnauthorized(t *testing.T) {

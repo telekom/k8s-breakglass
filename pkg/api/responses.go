@@ -45,6 +45,8 @@ func errorCodeForStatus(status int) string {
 		return "NOT_FOUND"
 	case http.StatusConflict:
 		return "CONFLICT"
+	case http.StatusUnprocessableEntity:
+		return "UNPROCESSABLE_ENTITY"
 	case http.StatusTooManyRequests:
 		return "TOO_MANY_REQUESTS"
 	case http.StatusBadGateway:

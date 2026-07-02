@@ -203,9 +203,8 @@ The API error response includes the required groups:
 ```json
 {
   "error": "extraDeployValues validation failed",
-  "errors": [
-    "test[hostNetwork]: Forbidden: variable \"hostNetwork\" is restricted; requires membership in one of: [platform_poweruser schiff-admin]"
-  ]
+  "code": "BAD_REQUEST",
+  "details": "test[hostNetwork]: Forbidden: variable \"hostNetwork\" is restricted; requires membership in one of: [platform_poweruser schiff-admin]"
 }
 ```
 
