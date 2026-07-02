@@ -23,31 +23,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type breakglassSessionErrorResponse struct {
-	Error   string                               `json:"error"`
-	Code    string                               `json:"code"`
-	Session breakglassv1alpha1.BreakglassSession `json:"session"`
-}
-
-type breakglassSessionNameErrorResponse struct {
-	Error   string `json:"error"`
-	Code    string `json:"code"`
-	Session string `json:"session"`
-}
-
 func respondBreakglassSessionError(c *gin.Context, status int, message string, session breakglassv1alpha1.BreakglassSession) {
-	c.JSON(status, breakglassSessionErrorResponse{
-		Error:   message,
-		Code:    breakglassSessionErrorCode(status),
-		Session: session,
+	c.JSON(status, gin.H{
+		"error":   message,
+		"code":    breakglassSessionErrorCode(status),
+		"session": session,
 	})
 }
 
 func respondBreakglassSessionNotFound(c *gin.Context, sessionName string) {
-	c.JSON(http.StatusNotFound, breakglassSessionNameErrorResponse{
-		Error:   "session not found",
-		Code:    "NOT_FOUND",
-		Session: sessionName,
+	c.JSON(http.StatusNotFound, gin.H{
+		"error":   "session not found",
+		"code":    "NOT_FOUND",
+		"session": sessionName,
 	})
 }
 

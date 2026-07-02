@@ -28,11 +28,16 @@ func TestRespondBreakglassSessionErrorIncludesSession(t *testing.T) {
 	respondBreakglassSessionError(c, http.StatusConflict, "session already in requested state", session)
 
 	require.Equal(t, http.StatusConflict, w.Code)
-	var response breakglassSessionErrorResponse
+	var response map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	assert.Equal(t, "session already in requested state", response.Error)
-	assert.Equal(t, "CONFLICT", response.Code)
-	assert.Equal(t, "session-1", response.Session.Name)
+	var message, code string
+	require.NoError(t, json.Unmarshal(response["error"], &message))
+	require.NoError(t, json.Unmarshal(response["code"], &code))
+	var responseSession breakglassv1alpha1.BreakglassSession
+	require.NoError(t, json.Unmarshal(response["session"], &responseSession))
+	assert.Equal(t, "session already in requested state", message)
+	assert.Equal(t, "CONFLICT", code)
+	assert.Equal(t, "session-1", responseSession.Name)
 }
 
 func TestRespondBreakglassSessionNotFoundPreservesSessionField(t *testing.T) {
@@ -43,11 +48,11 @@ func TestRespondBreakglassSessionNotFoundPreservesSessionField(t *testing.T) {
 	respondBreakglassSessionNotFound(c, "missing-session")
 
 	require.Equal(t, http.StatusNotFound, w.Code)
-	var response breakglassSessionNameErrorResponse
+	var response map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	assert.Equal(t, "session not found", response.Error)
-	assert.Equal(t, "NOT_FOUND", response.Code)
-	assert.Equal(t, "missing-session", response.Session)
+	assert.Equal(t, "session not found", response["error"])
+	assert.Equal(t, "NOT_FOUND", response["code"])
+	assert.Equal(t, "missing-session", response["session"])
 }
 
 func TestBreakglassSessionErrorCode(t *testing.T) {
