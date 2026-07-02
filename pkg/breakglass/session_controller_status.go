@@ -1042,15 +1042,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.C
 	ses, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
 		reqLog.Warnw("Session not found", "session", sessionName, "error", err)
-		c.JSON(http.StatusNotFound, struct {
-			Error   string `json:"error"`
-			Code    string `json:"code"`
-			Session string `json:"session"`
-		}{
-			Error:   "session not found",
-			Code:    "NOT_FOUND",
-			Session: sessionName,
-		})
+		apiresponses.RespondNotFound(c, "session", sessionName)
 		return
 	}
 

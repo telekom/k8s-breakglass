@@ -1178,10 +1178,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"userGroupCount", len(userGroups),
 				"errors", errMessages,
 			)
-			ctx.JSON(http.StatusBadRequest, gin.H{
-				"error":  "extraDeployValues validation failed",
-				"errors": errMessages,
-			})
+			apiresponses.RespondBadRequestWithDetails(
+				ctx,
+				"extraDeployValues validation failed",
+				strings.Join(errMessages, "; "),
+			)
 			return
 		}
 	}

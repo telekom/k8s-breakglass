@@ -224,6 +224,22 @@ func TestRespondInternalErrorSimple(t *testing.T) {
 	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
 }
 
+func TestRespondTooManyRequestsWithRetryAfter(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	RespondTooManyRequestsWithRetryAfter(c, "3", "session creation rate limit exceeded")
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	assert.Equal(t, "3", w.Header().Get("Retry-After"))
+
+	var resp APIError
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "session creation rate limit exceeded", resp.Error)
+	assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+}
+
 func TestRespondBadGateway(t *testing.T) {
 	tests := []struct {
 		name     string

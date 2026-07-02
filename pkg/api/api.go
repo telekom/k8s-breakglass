@@ -255,7 +255,11 @@ func NewServer(log *zap.Logger, cfg config.Config,
 					log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("error", first.Error()), zap.String("meta", metaStr))
 				}
 				if !c.IsAborted() {
-					c.JSON(c.Writer.Status(), gin.H{"error": first.Error(), "cid": cid, "meta": metaStr})
+					status := c.Writer.Status()
+					if status < http.StatusBadRequest {
+						status = http.StatusInternalServerError
+					}
+					RespondError(c, status, first.Error(), metaStr)
 				}
 			}
 		},
@@ -303,9 +307,9 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 		cid, _ := c.Get("cid")
 		log.Warn("blocked_request_origin", zap.String("origin", originHeader), zap.String("normalized_origin", normalized), zap.String("cid", fmt.Sprintf("%v", cid)))
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error": "origin not allowed",
-			"cid":   cid,
+		c.AbortWithStatusJSON(http.StatusForbidden, APIError{
+			Error: "origin not allowed",
+			Code:  "FORBIDDEN",
 		})
 	})
 
@@ -338,7 +342,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
 	engine.NoRoute(func(c *gin.Context) {
 		if len(c.Request.URL.Path) >= 5 && c.Request.URL.Path[:5] == "/api/" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found", "path": c.Request.URL.Path})
+			RespondError(c, http.StatusNotFound, "API endpoint not found", c.Request.URL.Path)
 		} else {
 			ServeSPA("/", "/frontend/dist/")(c)
 		}

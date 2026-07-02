@@ -63,6 +63,22 @@ func TestRespondNotFoundSimple(t *testing.T) {
 	assert.Equal(t, "NOT_FOUND", resp.Code)
 }
 
+func TestRespondError(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	RespondError(c, http.StatusNotFound, "API endpoint not found", "/api/missing")
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	var resp APIError
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "API endpoint not found", resp.Error)
+	assert.Equal(t, "NOT_FOUND", resp.Code)
+	assert.Equal(t, "/api/missing", resp.Details)
+}
+
 func TestRespondUnauthorized(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -203,6 +219,23 @@ func TestRespondInternalErrorSimple(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "unexpected error", resp.Error)
 	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
+}
+
+func TestRespondTooManyRequestsWithAuthState(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	RespondTooManyRequestsWithAuthState(c, "rate limit exceeded", true)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+
+	var resp APIError
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "rate limit exceeded", resp.Error)
+	assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+	require.NotNil(t, resp.Authenticated)
+	assert.True(t, *resp.Authenticated)
 }
 
 func TestRespondServiceUnavailable(t *testing.T) {

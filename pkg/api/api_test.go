@@ -378,6 +378,11 @@ func TestOriginValidationMiddleware(t *testing.T) {
 	t.Run("blocks disallowed origin", func(t *testing.T) {
 		resp := makeRequest(http.MethodGet, "https://evil.example.com")
 		require.Equal(t, http.StatusForbidden, resp.Code)
+
+		var body map[string]string
+		require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+		require.Equal(t, "origin not allowed", body["error"])
+		require.Equal(t, "FORBIDDEN", body["code"])
 	})
 
 	t.Run("skips when origin header missing", func(t *testing.T) {
@@ -518,13 +523,13 @@ func TestServer_NoRoute_API_Json404(t *testing.T) {
 	server.gin.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
-	// Response should be JSON containing error and path
-	var body map[string]interface{}
+	// Response should use the standard API error shape and include the path as details.
+	var body map[string]string
 	err = json.Unmarshal(w.Body.Bytes(), &body)
 	assert.NoError(t, err)
-	assert.Contains(t, body, "error")
-	assert.Contains(t, body, "path")
-	assert.Equal(t, "/api/unknown/thing", body["path"])
+	assert.Equal(t, "API endpoint not found", body["error"])
+	assert.Equal(t, "NOT_FOUND", body["code"])
+	assert.Equal(t, "/api/unknown/thing", body["details"])
 }
 
 func TestServer_NoRoute_SPA_Fallback(t *testing.T) {

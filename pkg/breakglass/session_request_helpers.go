@@ -37,6 +37,20 @@ type escalationResolutionResult struct {
 	selectedDenyPolicies []string
 }
 
+type duplicateSessionConflictResponse struct {
+	Error   string                               `json:"error"`
+	Code    string                               `json:"code"`
+	Session breakglassv1alpha1.BreakglassSession `json:"session"`
+}
+
+func respondDuplicateSessionConflict(c *gin.Context, message string, ses breakglassv1alpha1.BreakglassSession) {
+	c.JSON(http.StatusConflict, duplicateSessionConflictResponse{
+		Error:   message,
+		Code:    "CONFLICT",
+		Session: ses,
+	})
+}
+
 // sessionCreateParams bundles the inputs needed for session creation and persistence.
 type sessionCreateParams struct {
 	spec           breakglassv1alpha1.BreakglassSessionSpec
@@ -437,18 +451,18 @@ func (wc *BreakglassSessionController) checkDuplicateSession(
 
 	// Approved session -> explicit "already approved" error
 	if ses.Status.State == breakglassv1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero() {
-		c.JSON(http.StatusConflict, gin.H{"error": "already approved", "session": ses})
+		respondDuplicateSessionConflict(c, "already approved", ses)
 		return false
 	}
 
 	// Pending (requested but not yet approved/rejected) -> "already requested" with linked session
 	if IsSessionPendingApproval(ses) {
-		c.JSON(http.StatusConflict, gin.H{"error": "already requested", "session": ses})
+		respondDuplicateSessionConflict(c, "already requested", ses)
 		return false
 	}
 
 	// Fallback: session exists but in another terminal state (e.g. timeout) — return generic conflict with session
-	c.JSON(http.StatusConflict, gin.H{"error": "session exists", "session": ses})
+	respondDuplicateSessionConflict(c, "session exists", ses)
 	return false
 }
 

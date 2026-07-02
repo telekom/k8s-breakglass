@@ -525,6 +525,7 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 			if tt.expectedStatus == http.StatusTooManyRequests {
 				var body map[string]interface{}
 				assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				assert.Equal(t, "TOO_MANY_REQUESTS", body["code"])
 				assert.Equal(t, tt.expectedAuth, body["authenticated"])
 			}
 		})

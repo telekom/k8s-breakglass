@@ -825,10 +825,7 @@ func (a *AuthHandler) MiddlewareWithRateLimiting(rl RateLimiter) gin.HandlerFunc
 			if !isAuthenticated {
 				msg = "Rate limit exceeded. Please authenticate for higher limits."
 			}
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":         msg,
-				"authenticated": isAuthenticated,
-			})
+			RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
 			c.Abort()
 			return
 		}
@@ -858,10 +855,7 @@ func (a *AuthHandler) OptionalAuthRateLimitMiddleware(rl RateLimiter) gin.Handle
 			if !isAuthenticated {
 				msg = "Rate limit exceeded. Please authenticate for higher limits."
 			}
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":         msg,
-				"authenticated": isAuthenticated,
-			})
+			RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
 			c.Abort()
 			return
 		}

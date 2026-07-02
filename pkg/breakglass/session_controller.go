@@ -265,8 +265,11 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
 		if !allowed {
 			retrySecs := int(math.Ceil(retryAfter.Seconds()))
-			c.Header("Retry-After", fmt.Sprintf("%d", retrySecs))
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "session creation rate limit exceeded, please try again later"})
+			apiresponses.RespondTooManyRequestsWithRetryAfter(
+				c,
+				fmt.Sprintf("%d", retrySecs),
+				"session creation rate limit exceeded, please try again later",
+			)
 			return
 		}
 	}
@@ -323,7 +326,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		if _, loaded := wc.inFlightCreates.LoadOrStore(createKey, true); loaded {
 			reqLog.Infow("Concurrent session creation already in-flight, returning conflict",
 				"cluster", request.Clustername, "user", userIdentifier, "group", system.RedactGroupName(request.GroupName))
-			c.JSON(http.StatusConflict, gin.H{"error": "session creation already in progress"})
+			apiresponses.RespondConflict(c, "session creation already in progress")
 			return
 		}
 		defer wc.inFlightCreates.Delete(createKey)
