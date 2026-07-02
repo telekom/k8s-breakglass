@@ -43,7 +43,6 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 | `spec.cluster` required on create | `oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)` |
 | `spec.user` required on create | `oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)` |
 | `spec.grantedGroup` required on create | `oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)` |
-| `spec.requestReason` ≥ 10 chars when supplied | Guarded `has(object.spec.requestReason)` size check |
 | Spec immutability on update | `oldObject == null || object.spec == oldObject.spec` |
 | Valid state transitions | Enumerated allowed transitions |
 
@@ -51,13 +50,13 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 
 | Validation | CEL Expression |
 |------------|---------------|
-| Approvers non-empty | `has(object.spec.approvers) && ((has(groups) && groups.size() > 0) || (has(users) && users.size() > 0))` |
+| Approvers non-empty | `has(object.spec.approvers) && ((has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) || (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0))` |
 | `escalatedGroup` identifier format | Guarded `has(object.spec.escalatedGroup)` regex check |
 | No empty `allowed.groups` entries | `all(g, g.size() > 0)` |
 | No empty `allowed.clusters` entries | `all(c, c.size() > 0)` |
 | No duplicate `allowed.groups` | `all(... exists_one(...))` uniqueness check |
 | No duplicate `allowed.clusters` | `all(... exists_one(...))` uniqueness check |
-| IDP field mutual exclusivity | `allowedIdentityProviders` vs `forRequests`/`forApprovers` |
+| IDP field compatibility | Legacy `allowedIdentityProviders` mutual exclusion plus request/approver split-field symmetry |
 
 #### ClusterConfig
 
@@ -89,6 +88,7 @@ These validations **cannot** be expressed in CEL without cross-resource lookups:
 - **`validateIdentityProviderRefs`** — Requires looking up referenced IdentityProviders
 - **`validateMailProviderReference`** — Requires looking up referenced MailProviders
 - **`validateSessionIdentityProviderAuthorization`** — Requires cross-referencing escalations and IDPs
+- **BreakglassSession request reason policy** — Depends on the matched escalation's stored reason policy
 - **Go template syntax validation** — Cannot validate Go templates via CEL
 - **Template dry-run rendering** — Requires full Go runtime
 
@@ -139,9 +139,9 @@ Expected output:
 ```
 NAME                                       VALIDATIONS   PARAMKIND   MATCHCONDITIONS
 breakglass-clusterconfig-validation        3             <unset>     0
-breakglass-escalation-validation           7             <unset>     0
+breakglass-escalation-validation           8             <unset>     0
 breakglass-identityprovider-validation     8             <unset>     0
-breakglass-session-validation              6             <unset>     0
+breakglass-session-validation              5             <unset>     0
 ```
 
 Check bindings:
