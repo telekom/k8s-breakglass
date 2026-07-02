@@ -135,12 +135,12 @@ func newUpdateRollbackCommand() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would rollback to %s\n", oldPath)
 				return nil
 			}
+			if _, err := os.Stat(oldPath); err != nil {
+				return fmt.Errorf("rollback binary not found: %s", oldPath)
+			}
 			rt := updatePromptRuntime(cmd)
 			if err := confirmAction(cmd, rt, "rollback bgctl to", oldPath, confirm); err != nil {
 				return err
-			}
-			if _, err := os.Stat(oldPath); err != nil {
-				return fmt.Errorf("rollback binary not found: %s", oldPath)
 			}
 			return replaceBinaryFunc(exe, oldPath)
 		},

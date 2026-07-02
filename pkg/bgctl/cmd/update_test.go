@@ -304,13 +304,15 @@ func TestUpdateRollbackPreviousMissingBackupReportsPath(t *testing.T) {
 	currentExecutable = func() (string, error) {
 		return executablePath, nil
 	}
-	updateStatusWriter = io.Discard
+	var status bytes.Buffer
+	updateStatusWriter = &status
 	cmd := NewUpdateCommand()
 	cmd.SetArgs([]string{"rollback", "--yes"})
 
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rollback binary not found: "+executablePath+".old")
+	assert.Empty(t, status.String())
 }
 
 func TestUpdateRollbackPreviousReturnsReplaceError(t *testing.T) {
@@ -347,7 +349,9 @@ func TestUpdateRollbackPreviousRequiresConfirmationInNonInteractiveMode(t *testi
 	t.Cleanup(func() { currentExecutable = oldCurrentExecutable })
 
 	currentExecutable = func() (string, error) {
-		return filepath.Join(t.TempDir(), "bgctl"), nil
+		executablePath := filepath.Join(t.TempDir(), "bgctl")
+		require.NoError(t, os.WriteFile(executablePath+".old", []byte("old binary"), 0o755))
+		return executablePath, nil
 	}
 
 	cmd := NewUpdateCommand()
@@ -371,7 +375,9 @@ func TestUpdateRollbackPreviousPromptUsesStatusWriter(t *testing.T) {
 	})
 
 	currentExecutable = func() (string, error) {
-		return filepath.Join(t.TempDir(), "bgctl"), nil
+		executablePath := filepath.Join(t.TempDir(), "bgctl")
+		require.NoError(t, os.WriteFile(executablePath+".old", []byte("old binary"), 0o755))
+		return executablePath, nil
 	}
 
 	var stdout bytes.Buffer
