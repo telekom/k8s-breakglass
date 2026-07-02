@@ -163,8 +163,14 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would download %s\n", assetURL)
 		return nil
 	}
-	if !confirm {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updating to %s. Use --yes to skip confirmation.\n", release.TagName)
+	rt, err := getRuntime(cmd)
+	if err != nil {
+		rt = &runtimeState{writer: cmd.OutOrStdout()}
+	} else if rt.writer == nil {
+		rt.writer = cmd.OutOrStdout()
+	}
+	if err := confirmAction(cmd, rt, "update bgctl to", release.TagName, confirm); err != nil {
+		return err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "bgctl-update")

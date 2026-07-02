@@ -223,6 +223,36 @@ func TestUpdateRollbackDryRunWritesToCommandOutput(t *testing.T) {
 	assert.Contains(t, output.String(), ".old")
 }
 
+func TestUpdateCommandRequiresConfirmationInNonInteractiveMode(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+
+	cmd := NewUpdateCommand()
+	cmd.SetContext(context.WithValue(context.Background(), runtimeKey{}, &runtimeState{
+		nonInteractive: true,
+		writer:         io.Discard,
+	}))
+	cmd.SetArgs([]string{"--version", "v0.1.0-beta.30"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "confirmation required")
+}
+
 func TestUpdateCommandRunsInstallFlowWithStatusMessages(t *testing.T) {
 	oldClient := updateHTTPClient
 	oldStatusWriter := updateStatusWriter
