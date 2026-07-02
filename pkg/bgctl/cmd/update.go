@@ -42,6 +42,8 @@ var (
 	updateHTTPClient                   = &http.Client{Timeout: defaultUpdateAPIHTTPTimeout}
 	updateDownloadHTTPClient           = &http.Client{Timeout: defaultUpdateDownloadHTTPTimeout}
 	updateStatusWriter       io.Writer = os.Stderr
+	currentExecutable                  = os.Executable
+	replaceBinaryFunc                  = replaceBinary
 )
 
 type githubRelease struct {
@@ -108,7 +110,7 @@ func newUpdateRollbackCommand() *cobra.Command {
 			if versionTag != "" {
 				return runUpdate(cmd, versionTag)
 			}
-			exe, err := os.Executable()
+			exe, err := currentExecutable()
 			if err != nil {
 				return err
 			}
@@ -120,7 +122,7 @@ func newUpdateRollbackCommand() *cobra.Command {
 			if _, err := os.Stat(oldPath); err != nil {
 				return fmt.Errorf("rollback binary not found: %s", oldPath)
 			}
-			return replaceBinary(exe, oldPath)
+			return replaceBinaryFunc(exe, oldPath)
 		},
 	}
 	cmd.Flags().String("version", "", "Rollback to specific version tag")
@@ -188,12 +190,12 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	if err != nil {
 		return err
 	}
-	exe, err := os.Executable()
+	exe, err := currentExecutable()
 	if err != nil {
 		return err
 	}
 	updateStatusf("Installing bgctl to %s...", exe)
-	if err := replaceBinary(exe, extracted); err != nil {
+	if err := replaceBinaryFunc(exe, extracted); err != nil {
 		return err
 	}
 	updateStatusf("Updated bgctl to %s", release.TagName)
