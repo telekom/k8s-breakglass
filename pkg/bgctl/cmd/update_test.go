@@ -335,6 +335,28 @@ func TestDownloadFile(t *testing.T) {
 	assert.Equal(t, "payload", string(content))
 }
 
+func TestDownloadFileWritesProgressToStatusWriter(t *testing.T) {
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() { updateStatusWriter = oldStatusWriter })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "7")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer server.Close()
+
+	var status bytes.Buffer
+	updateStatusWriter = &status
+
+	path := filepath.Join(t.TempDir(), "download.bin")
+	err := downloadFile(context.Background(), server.URL, path)
+	require.NoError(t, err)
+
+	assert.Contains(t, status.String(), "7 B/7 B")
+	assert.Contains(t, status.String(), "100%")
+}
+
 func TestDownloadFileErrorStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

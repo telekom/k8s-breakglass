@@ -333,6 +333,7 @@ func downloadFileWithLimit(ctx context.Context, url, path string, maxBytes int64
 		reader = &progressReader{
 			reader: resp.Body,
 			total:  resp.ContentLength,
+			writer: updateStatusWriter,
 		}
 	}
 
@@ -345,7 +346,9 @@ func downloadFileWithLimit(ctx context.Context, url, path string, maxBytes int64
 
 	// Clear the progress line
 	if resp.ContentLength > 0 {
-		_, _ = fmt.Fprint(os.Stderr, "\r                                                  \r")
+		if updateStatusWriter != nil {
+			_, _ = fmt.Fprint(updateStatusWriter, "\r                                                  \r")
+		}
 	}
 	if err != nil {
 		_ = os.Remove(path)
@@ -383,17 +386,18 @@ func limitedDownloadCopy(dst io.Writer, src io.Reader, maxBytes int64) error {
 	}
 }
 
-// progressReader wraps an io.Reader and prints download progress to stderr.
+// progressReader wraps an io.Reader and prints download progress.
 type progressReader struct {
 	reader      io.Reader
 	total       int64
 	downloaded  int64
 	lastPercent int
+	writer      io.Writer
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
-	if n > 0 {
+	if n > 0 && pr.writer != nil {
 		pr.downloaded += int64(n)
 		percent := int(float64(pr.downloaded) / float64(pr.total) * 100)
 		// Only update display when percent changes to avoid excessive output
@@ -402,7 +406,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 			downloaded := formatBytes(pr.downloaded)
 			total := formatBytes(pr.total)
 			bar := progressBar(percent, 30)
-			_, _ = fmt.Fprintf(os.Stderr, "\r%s %s/%s %d%%", bar, downloaded, total, percent)
+			_, _ = fmt.Fprintf(pr.writer, "\r%s %s/%s %d%%", bar, downloaded, total, percent)
 		}
 	}
 	return n, err
