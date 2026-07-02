@@ -67,6 +67,7 @@ one is published, extracts the bgctl binary, and replaces the current binary.`,
 		Example: `  bgctl update --dry-run
   bgctl update --yes
   bgctl update --version v1.2.3 --yes`,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			versionTag, err := cmd.Flags().GetString("version")
 			if err != nil {
@@ -88,8 +89,9 @@ one is published, extracts the bgctl binary, and replaces the current binary.`,
 
 func newUpdateCheckCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "check",
-		Short: "Check for updates",
+		Use:          "check",
+		Short:        "Check for updates",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			release, err := fetchLatestRelease(commandContext(cmd))
 			if err != nil {
@@ -105,8 +107,9 @@ func newUpdateCheckCommand() *cobra.Command {
 
 func newUpdateRollbackCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "rollback",
-		Short: "Rollback to previous version",
+		Use:          "rollback",
+		Short:        "Rollback to previous version",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			versionTag, err := cmd.Flags().GetString("version")
 			if err != nil {
@@ -132,12 +135,7 @@ func newUpdateRollbackCommand() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would rollback to %s\n", oldPath)
 				return nil
 			}
-			rt, err := getRuntime(cmd)
-			if err != nil {
-				rt = &runtimeState{writer: cmd.OutOrStdout()}
-			} else if rt.writer == nil {
-				rt.writer = cmd.OutOrStdout()
-			}
+			rt := updatePromptRuntime(cmd)
 			if err := confirmAction(cmd, rt, "rollback bgctl to", oldPath, confirm); err != nil {
 				return err
 			}
@@ -190,12 +188,7 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would download %s\n", assetURL)
 		return nil
 	}
-	rt, err := getRuntime(cmd)
-	if err != nil {
-		rt = &runtimeState{writer: cmd.OutOrStdout()}
-	} else if rt.writer == nil {
-		rt.writer = cmd.OutOrStdout()
-	}
+	rt := updatePromptRuntime(cmd)
 	action := "update bgctl to"
 	if cmd.Name() == "rollback" {
 		action = "rollback bgctl to"
@@ -238,6 +231,20 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	}
 	updateStatusf("Updated bgctl to %s", release.TagName)
 	return nil
+}
+
+func updatePromptRuntime(cmd *cobra.Command) *runtimeState {
+	rt, err := getRuntime(cmd)
+	if err != nil {
+		rt = &runtimeState{}
+	}
+	promptRuntime := *rt
+	if updateStatusWriter != nil {
+		promptRuntime.writer = updateStatusWriter
+	} else {
+		promptRuntime.writer = os.Stderr
+	}
+	return &promptRuntime
 }
 
 func updateStatusf(format string, args ...any) {

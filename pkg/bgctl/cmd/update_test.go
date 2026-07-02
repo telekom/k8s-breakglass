@@ -243,6 +243,33 @@ func TestUpdateRollbackPreviousRequiresConfirmationInNonInteractiveMode(t *testi
 	assert.Contains(t, err.Error(), "confirmation required")
 }
 
+func TestUpdateRollbackPreviousPromptUsesStatusWriter(t *testing.T) {
+	oldCurrentExecutable := currentExecutable
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		currentExecutable = oldCurrentExecutable
+		updateStatusWriter = oldStatusWriter
+	})
+
+	currentExecutable = func() (string, error) {
+		return filepath.Join(t.TempDir(), "bgctl"), nil
+	}
+
+	var stdout bytes.Buffer
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetIn(strings.NewReader("n\n"))
+	cmd.SetArgs([]string{"rollback"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canceled")
+	assert.Contains(t, status.String(), "rollback bgctl to")
+	assert.Empty(t, stdout.String())
+}
+
 func TestUpdateCommandRequiresConfirmationInNonInteractiveMode(t *testing.T) {
 	oldClient := updateHTTPClient
 	oldStatusWriter := updateStatusWriter
@@ -273,6 +300,38 @@ func TestUpdateCommandRequiresConfirmationInNonInteractiveMode(t *testing.T) {
 	assert.Contains(t, err.Error(), "confirmation required")
 }
 
+func TestUpdateCommandPromptUsesStatusWriter(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	var stdout bytes.Buffer
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetIn(strings.NewReader("n\n"))
+	cmd.SetArgs([]string{"--version", "v0.1.0-beta.30"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canceled")
+	assert.Contains(t, status.String(), "update bgctl to v0.1.0-beta.30")
+	assert.Empty(t, stdout.String())
+}
+
 func TestUpdateRollbackVersionPromptUsesRollbackAction(t *testing.T) {
 	oldClient := updateHTTPClient
 	oldStatusWriter := updateStatusWriter
@@ -289,13 +348,12 @@ func TestUpdateRollbackVersionPromptUsesRollbackAction(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})}
-	updateStatusWriter = io.Discard
 
 	var prompt bytes.Buffer
+	updateStatusWriter = &prompt
+	var stdout bytes.Buffer
 	cmd := NewUpdateCommand()
-	cmd.SetContext(context.WithValue(context.Background(), runtimeKey{}, &runtimeState{
-		writer: &prompt,
-	}))
+	cmd.SetOut(&stdout)
 	cmd.SetIn(strings.NewReader("n\n"))
 	cmd.SetArgs([]string{"rollback", "--version", "v0.1.0-beta.28"})
 
@@ -303,6 +361,7 @@ func TestUpdateRollbackVersionPromptUsesRollbackAction(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "canceled")
 	assert.Contains(t, prompt.String(), "rollback bgctl to v0.1.0-beta.28")
+	assert.Empty(t, stdout.String())
 }
 
 func TestUpdateCommandRunsInstallFlowWithStatusMessages(t *testing.T) {
