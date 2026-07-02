@@ -5491,6 +5491,30 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
 		},
 	}
+	ambiguousA := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ambiguous-reader-session", Namespace: "team-a"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-read",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+		},
+	}
+	ambiguousB := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ambiguous-reader-session", Namespace: "team-b"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-read",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+		},
+	}
 	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-readable"},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
@@ -5500,7 +5524,7 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 		},
 	}
 
-	cli := builder.WithObjects(pending, approved, usernameRequester, esc).Build()
+	cli := builder.WithObjects(pending, approved, usernameRequester, ambiguousA, ambiguousB, esc).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -5601,6 +5625,11 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	require.Equal(t, "session not found", body["error"])
 	require.Equal(t, "NOT_FOUND", body["code"])
 	require.Equal(t, "missing-reader-session", body["session"])
+
+	status, body = serveAs("alice@example.com", "ambiguous-reader-session")
+	require.Equal(t, http.StatusInternalServerError, status)
+	require.Equal(t, "failed to lookup session", body["error"])
+	require.Equal(t, "INTERNAL_ERROR", body["code"])
 }
 
 func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
