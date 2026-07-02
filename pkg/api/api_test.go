@@ -59,6 +59,33 @@ func TestNewServer(t *testing.T) {
 	}
 }
 
+func TestServerUnifiedErrorMiddlewareRespondsAfterHandlerError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := zaptest.NewLogger(t)
+	server := NewServer(logger, config.Config{
+		Server: config.Server{
+			AllowedOrigins: []string{"https://test.example.com"},
+		},
+	}, true, &AuthHandler{})
+	server.gin.GET("/handler-error", func(c *gin.Context) {
+		_ = c.Error(errors.New("boom")).SetMeta("route failed")
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/handler-error", nil)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+
+	server.gin.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	var response APIError
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Equal(t, "boom", response.Error)
+	assert.Equal(t, "INTERNAL_ERROR", response.Code)
+	assert.Equal(t, "route failed", response.Details)
+}
+
 func TestServer_getConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

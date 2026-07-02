@@ -238,6 +238,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 			log.Info("http_request", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("method", c.Request.Method), zap.String("path", c.FullPath()), zap.Int("status", c.Writer.Status()), zap.Duration("latency", time.Since(start)))
 		},
 		func(c *gin.Context) { // unified error propagation: if handler set context error, respond JSON
+			c.Next()
 			if len(c.Errors) > 0 {
 				cid, _ := c.Get("cid")
 				first := c.Errors[0]
@@ -254,7 +255,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 					// Use zap.String to avoid stacktrace in error logs
 					log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("error", first.Error()), zap.String("meta", metaStr))
 				}
-				if !c.IsAborted() {
+				if !c.IsAborted() && !c.Writer.Written() {
 					status := c.Writer.Status()
 					if status < http.StatusBadRequest {
 						status = http.StatusInternalServerError

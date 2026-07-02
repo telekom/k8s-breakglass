@@ -23,6 +23,50 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+type breakglassSessionErrorResponse struct {
+	Error   string                               `json:"error"`
+	Code    string                               `json:"code"`
+	Session breakglassv1alpha1.BreakglassSession `json:"session"`
+}
+
+type breakglassSessionNameErrorResponse struct {
+	Error   string `json:"error"`
+	Code    string `json:"code"`
+	Session string `json:"session"`
+}
+
+func respondBreakglassSessionError(c *gin.Context, status int, message string, session breakglassv1alpha1.BreakglassSession) {
+	c.JSON(status, breakglassSessionErrorResponse{
+		Error:   message,
+		Code:    breakglassSessionErrorCode(status),
+		Session: session,
+	})
+}
+
+func respondBreakglassSessionNotFound(c *gin.Context, sessionName string) {
+	c.JSON(http.StatusNotFound, breakglassSessionNameErrorResponse{
+		Error:   "session not found",
+		Code:    "NOT_FOUND",
+		Session: sessionName,
+	})
+}
+
+func breakglassSessionErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "BAD_REQUEST"
+	case http.StatusConflict:
+		return "CONFLICT"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	default:
+		if status >= http.StatusInternalServerError {
+			return "INTERNAL_ERROR"
+		}
+		return "ERROR"
+	}
+}
+
 func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition breakglassv1alpha1.BreakglassSessionConditionType) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
@@ -111,15 +155,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 
 	// If the session already has the same last condition, return conflict to avoid repeated transitions.
 	if lastCondition.Type == string(sesCondition) {
-		c.JSON(http.StatusConflict, struct {
-			Error   string                               `json:"error"`
-			Code    string                               `json:"code"`
-			Session breakglassv1alpha1.BreakglassSession `json:"session"`
-		}{
-			Error:   "session already in requested state",
-			Code:    "CONFLICT",
-			Session: bs,
-		})
+		respondBreakglassSessionError(c, http.StatusConflict, "session already in requested state", bs)
 		return
 	}
 
@@ -135,40 +171,16 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
 				action = "rejection"
 			}
-			c.JSON(http.StatusBadRequest, struct {
-				Error   string                               `json:"error"`
-				Code    string                               `json:"code"`
-				Session breakglassv1alpha1.BreakglassSession `json:"session"`
-			}{
-				Error:   fmt.Sprintf("session approval timeout has elapsed; cannot perform %s", action),
-				Code:    "BAD_REQUEST",
-				Session: bs,
-			})
+			respondBreakglassSessionError(c, http.StatusBadRequest, fmt.Sprintf("session approval timeout has elapsed; cannot perform %s", action), bs)
 			return
 		}
 		if currState != breakglassv1alpha1.SessionStatePending {
-			c.JSON(http.StatusBadRequest, struct {
-				Error   string                               `json:"error"`
-				Code    string                               `json:"code"`
-				Session breakglassv1alpha1.BreakglassSession `json:"session"`
-			}{
-				Error:   fmt.Sprintf("session must be pending to perform %s; current state: %s", sesCondition, currState),
-				Code:    "BAD_REQUEST",
-				Session: bs,
-			})
+			respondBreakglassSessionError(c, http.StatusBadRequest, fmt.Sprintf("session must be pending to perform %s; current state: %s", sesCondition, currState), bs)
 			return
 		}
 	} else {
 		if currState == breakglassv1alpha1.SessionStateRejected || currState == breakglassv1alpha1.SessionStateWithdrawn || currState == breakglassv1alpha1.SessionStateExpired || currState == breakglassv1alpha1.SessionStateTimeout || currState == breakglassv1alpha1.SessionStateIdleExpired {
-			c.JSON(http.StatusBadRequest, struct {
-				Error   string                               `json:"error"`
-				Code    string                               `json:"code"`
-				Session breakglassv1alpha1.BreakglassSession `json:"session"`
-			}{
-				Error:   fmt.Sprintf("session is in terminal state %s and cannot be modified", currState),
-				Code:    "BAD_REQUEST",
-				Session: bs,
-			})
+			respondBreakglassSessionError(c, http.StatusBadRequest, fmt.Sprintf("session is in terminal state %s and cannot be modified", currState), bs)
 			return
 		}
 	}
@@ -1042,7 +1054,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.C
 	ses, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
 		reqLog.Warnw("Session not found", "session", sessionName, "error", err)
-		apiresponses.RespondNotFound(c, "session", sessionName)
+		respondBreakglassSessionNotFound(c, sessionName)
 		return
 	}
 
