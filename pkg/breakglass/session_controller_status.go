@@ -55,10 +55,22 @@ func breakglassSessionErrorCode(status int) string {
 	switch status {
 	case http.StatusBadRequest:
 		return "BAD_REQUEST"
+	case http.StatusUnauthorized:
+		return "UNAUTHORIZED"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
 	case http.StatusConflict:
 		return "CONFLICT"
 	case http.StatusNotFound:
 		return "NOT_FOUND"
+	case http.StatusUnprocessableEntity:
+		return "UNPROCESSABLE_ENTITY"
+	case http.StatusTooManyRequests:
+		return "TOO_MANY_REQUESTS"
+	case http.StatusBadGateway:
+		return "BAD_GATEWAY"
+	case http.StatusServiceUnavailable:
+		return "SERVICE_UNAVAILABLE"
 	default:
 		if status >= http.StatusInternalServerError {
 			return "INTERNAL_ERROR"

@@ -62,6 +62,16 @@ func TestBreakglassSessionErrorCode(t *testing.T) {
 			expected: "BAD_REQUEST",
 		},
 		{
+			name:     "unauthorized",
+			status:   http.StatusUnauthorized,
+			expected: "UNAUTHORIZED",
+		},
+		{
+			name:     "forbidden",
+			status:   http.StatusForbidden,
+			expected: "FORBIDDEN",
+		},
+		{
 			name:     "conflict",
 			status:   http.StatusConflict,
 			expected: "CONFLICT",
@@ -72,13 +82,33 @@ func TestBreakglassSessionErrorCode(t *testing.T) {
 			expected: "NOT_FOUND",
 		},
 		{
+			name:     "unprocessable entity",
+			status:   http.StatusUnprocessableEntity,
+			expected: "UNPROCESSABLE_ENTITY",
+		},
+		{
+			name:     "too many requests",
+			status:   http.StatusTooManyRequests,
+			expected: "TOO_MANY_REQUESTS",
+		},
+		{
+			name:     "bad gateway",
+			status:   http.StatusBadGateway,
+			expected: "BAD_GATEWAY",
+		},
+		{
+			name:     "service unavailable",
+			status:   http.StatusServiceUnavailable,
+			expected: "SERVICE_UNAVAILABLE",
+		},
+		{
 			name:     "unknown client status",
 			status:   http.StatusTeapot,
 			expected: "ERROR",
 		},
 		{
 			name:     "unknown server status",
-			status:   http.StatusBadGateway,
+			status:   http.StatusGatewayTimeout,
 			expected: "INTERNAL_ERROR",
 		},
 	}
