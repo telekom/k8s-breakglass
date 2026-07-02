@@ -50,6 +50,46 @@ func TestRespondBreakglassSessionNotFoundPreservesSessionField(t *testing.T) {
 	assert.Equal(t, "missing-session", response.Session)
 }
 
+func TestBreakglassSessionErrorCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		expected string
+	}{
+		{
+			name:     "bad request",
+			status:   http.StatusBadRequest,
+			expected: "BAD_REQUEST",
+		},
+		{
+			name:     "conflict",
+			status:   http.StatusConflict,
+			expected: "CONFLICT",
+		},
+		{
+			name:     "not found",
+			status:   http.StatusNotFound,
+			expected: "NOT_FOUND",
+		},
+		{
+			name:     "unknown client status",
+			status:   http.StatusTeapot,
+			expected: "ERROR",
+		},
+		{
+			name:     "unknown server status",
+			status:   http.StatusBadGateway,
+			expected: "INTERNAL_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, breakglassSessionErrorCode(tt.status))
+		})
+	}
+}
+
 func TestCheckSessionLimits_MissingIDP(t *testing.T) {
 	log := zaptest.NewLogger(t).Sugar()
 	scheme := runtime.NewScheme()

@@ -225,19 +225,40 @@ func TestRespondInternalErrorSimple(t *testing.T) {
 }
 
 func TestRespondTooManyRequestsWithRetryAfter(t *testing.T) {
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	tests := []struct {
+		name     string
+		message  string
+		expected string
+	}{
+		{
+			name:     "custom message",
+			message:  "session creation rate limit exceeded",
+			expected: "session creation rate limit exceeded",
+		},
+		{
+			name:     "default message",
+			message:  "",
+			expected: "too many requests",
+		},
+	}
 
-	RespondTooManyRequestsWithRetryAfter(c, "3", "session creation rate limit exceeded")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
 
-	assert.Equal(t, http.StatusTooManyRequests, w.Code)
-	assert.Equal(t, "3", w.Header().Get("Retry-After"))
+			RespondTooManyRequestsWithRetryAfter(c, "3", tt.message)
 
-	var resp APIError
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, "session creation rate limit exceeded", resp.Error)
-	assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+			assert.Equal(t, http.StatusTooManyRequests, w.Code)
+			assert.Equal(t, "3", w.Header().Get("Retry-After"))
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, resp.Error)
+			assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+		})
+	}
 }
 
 func TestRespondBadGateway(t *testing.T) {
