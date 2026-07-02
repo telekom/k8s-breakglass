@@ -1010,6 +1010,36 @@
       },
       "type": "array"
     },
+    "validatingAdmissionPolicy": {
+      "additionalProperties": false,
+      "description": "Optional cluster-scoped ValidatingAdmissionPolicy resources. Requires Kubernetes 1.30 or newer.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Create ValidatingAdmissionPolicy and ValidatingAdmissionPolicyBinding resources.",
+          "type": "boolean"
+        },
+        "validationActions": {
+          "default": [
+            "Warn",
+            "Audit"
+          ],
+          "description": "Admission actions used by the policy bindings.",
+          "items": {
+            "enum": [
+              "Deny",
+              "Warn",
+              "Audit"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "type": "object"
+    },
     "networkPolicy": {
       "description": "NetworkPolicy for the breakglass controller pods.",
       "properties": {
