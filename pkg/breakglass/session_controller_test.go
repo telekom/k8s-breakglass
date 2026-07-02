@@ -5595,6 +5595,12 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "reader-sess-3", sessionNameFromBody(body))
 	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize requester without email claim")
+
+	status, body = serveAs("alice@example.com", "missing-reader-session")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "session not found", body["error"])
+	require.Equal(t, "NOT_FOUND", body["code"])
+	require.Equal(t, "missing-reader-session", body["session"])
 }
 
 func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
@@ -8680,6 +8686,30 @@ func TestWaitingForScheduledTimeSessionsOccupyRequestSlots(t *testing.T) {
 		require.False(t, ok)
 		require.Equal(t, http.StatusConflict, w.Code)
 		require.Contains(t, w.Body.String(), "already approved")
+	})
+
+	t.Run("duplicate request returns generic conflict for malformed slot-occupying session", func(t *testing.T) {
+		session := waitingSession("malformed-waiting-session")
+		session.Status.ApprovedAt = metav1.Time{}
+		cli := newIndexedClient(session)
+		ctrl := newController(cli)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+
+		ok := ctrl.checkDuplicateSession(
+			c,
+			context.Background(),
+			"user@example.com",
+			"test-cluster",
+			"admin-group",
+			zap.NewNop().Sugar(),
+		)
+
+		require.False(t, ok)
+		require.Equal(t, http.StatusConflict, w.Code)
+		require.Contains(t, w.Body.String(), "session exists")
+		require.Contains(t, w.Body.String(), `"code":"CONFLICT"`)
 	})
 
 	t.Run("per-user limit counts scheduled waiting sessions", func(t *testing.T) {
