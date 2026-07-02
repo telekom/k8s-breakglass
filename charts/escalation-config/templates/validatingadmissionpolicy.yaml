@@ -31,20 +31,23 @@ spec:
         resources: ["breakglasssessions"]
   validations:
     - expression: >-
-        oldObject != null || object.spec.cluster.size() > 0
+        oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)
       message: "spec.cluster is required"
       reason: Invalid
     - expression: >-
-        oldObject != null || object.spec.user.size() > 0
+        oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)
       message: "spec.user is required"
       reason: Invalid
     - expression: >-
-        oldObject != null || object.spec.grantedGroup.size() > 0
+        oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)
       message: "spec.grantedGroup is required"
       reason: Invalid
     - expression: >-
-        oldObject != null || object.spec.requestReason.size() >= 10
-      message: "spec.requestReason must be at least 10 characters"
+        oldObject != null ||
+        !has(object.spec.requestReason) ||
+        object.spec.requestReason.size() == 0 ||
+        object.spec.requestReason.size() >= 10
+      message: "spec.requestReason must be at least 10 characters when supplied"
       reason: Invalid
     - expression: >-
         oldObject == null || object.spec == oldObject.spec
@@ -80,12 +83,16 @@ spec:
         resources: ["breakglassescalations"]
   validations:
     - expression: >-
-        !has(object.spec.approvers) ||
-        (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
-        (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+        has(object.spec.approvers) &&
+        (
+          (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
+          (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+        )
       message: "at least one approver group or user must be specified"
       reason: Invalid
     - expression: >-
+        has(object.spec.escalatedGroup) &&
+        object.spec.escalatedGroup.size() > 0 &&
         object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')
       message: "spec.escalatedGroup must match identifier format [a-zA-Z0-9._:-]+"
       reason: Invalid

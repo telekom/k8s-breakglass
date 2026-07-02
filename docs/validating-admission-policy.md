@@ -40,10 +40,10 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 
 | Validation | CEL Expression |
 |------------|---------------|
-| `spec.cluster` required | `object.spec.cluster.size() > 0` |
-| `spec.user` required | `object.spec.user.size() > 0` |
-| `spec.grantedGroup` required | `object.spec.grantedGroup.size() > 0` |
-| `spec.requestReason` ≥ 10 chars | `oldObject != null || object.spec.requestReason.size() >= 10` |
+| `spec.cluster` required on create | `oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)` |
+| `spec.user` required on create | `oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)` |
+| `spec.grantedGroup` required on create | `oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)` |
+| `spec.requestReason` ≥ 10 chars when supplied | Guarded `has(object.spec.requestReason)` size check |
 | Spec immutability on update | `oldObject == null || object.spec == oldObject.spec` |
 | Valid state transitions | Enumerated allowed transitions |
 
@@ -51,8 +51,8 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 
 | Validation | CEL Expression |
 |------------|---------------|
-| Approvers non-empty | At least one group or user |
-| `escalatedGroup` identifier format | Regex `^[a-zA-Z0-9._:-]+$` |
+| Approvers non-empty | `has(object.spec.approvers) && ((has(groups) && groups.size() > 0) || (has(users) && users.size() > 0))` |
+| `escalatedGroup` identifier format | Guarded `has(object.spec.escalatedGroup)` regex check |
 | No empty `allowed.groups` entries | `all(g, g.size() > 0)` |
 | No empty `allowed.clusters` entries | `all(c, c.size() > 0)` |
 | No duplicate `allowed.groups` | `all(... exists_one(...))` uniqueness check |
