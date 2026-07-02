@@ -156,6 +156,37 @@ func TestUpdateCommandUsesVersionFlagForDryRun(t *testing.T) {
 	assert.Contains(t, output.String(), "Would download https://example.com/bgctl.tar.gz")
 }
 
+func TestUpdateRollbackVersionAcceptsYesFlag(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	var requestedPath string
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedPath = req.URL.EscapedPath()
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.28","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/rollback-bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+
+	var output bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"rollback", "--version", "v0.1.0-beta.28", "--yes", "--dry-run"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.True(t, strings.HasSuffix(requestedPath, "/releases/tags/v0.1.0-beta.28"), "unexpected release lookup path: %s", requestedPath)
+	assert.Contains(t, output.String(), "Would download https://example.com/rollback-bgctl.tar.gz")
+}
+
 func TestUpdateCheckWritesToCommandOutput(t *testing.T) {
 	oldClient := updateHTTPClient
 	t.Cleanup(func() { updateHTTPClient = oldClient })

@@ -126,6 +126,7 @@ func newUpdateRollbackCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("version", "", "Rollback to specific version tag")
+	cmd.Flags().Bool("yes", false, "Skip confirmation")
 	cmd.Flags().Bool("dry-run", false, "Show actions without rollback")
 	return cmd
 }
