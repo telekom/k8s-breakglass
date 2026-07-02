@@ -24,19 +24,11 @@ import (
 )
 
 func respondBreakglassSessionError(c *gin.Context, status int, message string, session breakglassv1alpha1.BreakglassSession) {
-	c.JSON(status, gin.H{
-		"error":   message,
-		"code":    breakglassSessionErrorCode(status),
-		"session": session,
-	})
+	c.JSON(status, gin.H{"error": message, "code": breakglassSessionErrorCode(status), "session": session})
 }
 
 func respondBreakglassSessionNotFound(c *gin.Context, sessionName string) {
-	c.JSON(http.StatusNotFound, gin.H{
-		"error":   "session not found",
-		"code":    "NOT_FOUND",
-		"session": sessionName,
-	})
+	c.JSON(http.StatusNotFound, gin.H{"error": "session not found", "code": "NOT_FOUND", "session": sessionName})
 }
 
 func breakglassSessionErrorCode(status int) string {

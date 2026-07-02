@@ -38,11 +38,7 @@ type escalationResolutionResult struct {
 }
 
 func respondDuplicateSessionConflict(c *gin.Context, message string, ses breakglassv1alpha1.BreakglassSession) {
-	c.JSON(http.StatusConflict, gin.H{
-		"error":   message,
-		"code":    "CONFLICT",
-		"session": ses,
-	})
+	c.JSON(http.StatusConflict, gin.H{"error": message, "code": "CONFLICT", "session": ses})
 }
 
 // sessionCreateParams bundles the inputs needed for session creation and persistence.
