@@ -109,6 +109,6 @@ func WriteObject(w io.Writer, format Format, obj any) error {
 		return fmt.Errorf("wide format requires a specific formatter for type %T", obj)
 
 	default:
-		return fmt.Errorf("unsupported output format: %q (choose from: table, wide, json, yaml)", format)
+		return fmt.Errorf("unsupported output format: %q (choose from: %s, %s, %s, %s)", format, FormatTable, FormatWide, FormatJSON, FormatYAML)
 	}
 }

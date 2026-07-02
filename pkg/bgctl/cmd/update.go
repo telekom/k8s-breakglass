@@ -90,8 +90,9 @@ func newUpdateCheckCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(os.Stdout, "Current version: %s\n", version.Version)
-			_, _ = fmt.Fprintf(os.Stdout, "Latest version:  %s\n", release.TagName)
+			out := cmd.OutOrStdout()
+			_, _ = fmt.Fprintf(out, "Current version: %s\n", version.Version)
+			_, _ = fmt.Fprintf(out, "Latest version:  %s\n", release.TagName)
 			return nil
 		},
 	}
@@ -113,7 +114,7 @@ func newUpdateRollbackCommand() *cobra.Command {
 			}
 			oldPath := exe + ".old"
 			if dryRun {
-				_, _ = fmt.Fprintf(os.Stdout, "Would rollback to %s\n", oldPath)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would rollback to %s\n", oldPath)
 				return nil
 			}
 			if _, err := os.Stat(oldPath); err != nil {
@@ -156,11 +157,11 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	updateStatusf("Selected release %s asset %s", release.TagName, assetName)
 
 	if dryRun {
-		_, _ = fmt.Fprintf(os.Stdout, "Would download %s\n", assetURL)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would download %s\n", assetURL)
 		return nil
 	}
 	if !confirm {
-		_, _ = fmt.Fprintf(os.Stdout, "Updating to %s. Use --yes to skip confirmation.\n", release.TagName)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updating to %s. Use --yes to skip confirmation.\n", release.TagName)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "bgctl-update")
@@ -199,7 +200,7 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	return nil
 }
 
-func updateStatusf(format string, args ...interface{}) {
+func updateStatusf(format string, args ...any) {
 	if updateStatusWriter == nil {
 		return
 	}

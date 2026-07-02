@@ -83,24 +83,6 @@ func TestUpdateStatusf(t *testing.T) {
 	assert.Equal(t, "Downloading bgctl_linux_amd64.tar.gz...\n", buf.String())
 }
 
-func captureStdout(t *testing.T, run func()) string {
-	t.Helper()
-
-	oldStdout := os.Stdout
-	reader, writer, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stdout = writer
-	t.Cleanup(func() { os.Stdout = oldStdout })
-
-	run()
-
-	require.NoError(t, writer.Close())
-	output, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	require.NoError(t, reader.Close())
-	return string(output)
-}
-
 func TestUpdateCommandUsesVersionFlagForDryRun(t *testing.T) {
 	oldClient := updateHTTPClient
 	oldStatusWriter := updateStatusWriter
@@ -121,15 +103,15 @@ func TestUpdateCommandUsesVersionFlagForDryRun(t *testing.T) {
 	})}
 	updateStatusWriter = io.Discard
 
-	output := captureStdout(t, func() {
-		cmd := NewUpdateCommand()
-		cmd.SetArgs([]string{"--version", "v0.1.0-beta.29", "--dry-run"})
+	var output bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--version", "v0.1.0-beta.29", "--dry-run"})
 
-		require.NoError(t, cmd.Execute())
-	})
+	require.NoError(t, cmd.Execute())
 
 	assert.True(t, strings.HasSuffix(requestedPath, "/releases/tags/v0.1.0-beta.29"), "unexpected release lookup path: %s", requestedPath)
-	assert.Contains(t, output, "Would download https://example.com/bgctl.tar.gz")
+	assert.Contains(t, output.String(), "Would download https://example.com/bgctl.tar.gz")
 }
 
 func TestDownloadFile(t *testing.T) {

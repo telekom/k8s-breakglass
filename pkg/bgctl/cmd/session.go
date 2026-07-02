@@ -300,7 +300,7 @@ The user defaults to the authenticated token identity when available. Provide a
 reason when the escalation policy requires one.`,
 		Example: `  bgctl session request -C prod -g platform-admin -r "debug incident INC-123"
   bgctl session request --cluster prod --group read-only --duration 3600
-  bgctl session request -C prod -g platform-admin --scheduled-start 2026-07-02T12:00:00Z`,
+  bgctl session request -C prod -g platform-admin --scheduled-start <RFC3339_TIMESTAMP>`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
