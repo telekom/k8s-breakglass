@@ -21,6 +21,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -605,6 +607,42 @@ func TestNewKeycloakGroupMemberResolver_CustomCacheTTL(t *testing.T) {
 	assert.NotNil(t, resolver.cache)
 	// Cache TTL should be 30 minutes
 	assert.Equal(t, "30m", resolver.cfg.CacheTTL)
+}
+
+func TestKeycloakGroupMemberResolver_Members_GroupSearchForbiddenIsActionable(t *testing.T) {
+	const realm = "t-caas"
+	const group = "dttcaas-platform-poweruser"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/realms/"+realm+"/protocol/openid-connect/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"test-token","expires_in":300,"token_type":"Bearer"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/"+realm+"/groups":
+			http.Error(w, "HTTP 403 Forbidden", http.StatusForbidden)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	resolver := NewKeycloakGroupMemberResolver(zap.NewNop().Sugar(), cfgpkg.KeycloakRuntimeConfig{
+		BaseURL:      server.URL,
+		Realm:        realm,
+		ClientID:     "breakglass",
+		ClientSecret: "secret",
+		CacheTTL:     "1m",
+	})
+
+	_, err := resolver.Members(context.Background(), group)
+
+	if assert.Error(t, err) {
+		errText := err.Error()
+		assert.Contains(t, errText, "403")
+		assert.Contains(t, strings.ToLower(errText), "forbidden")
+		assert.Contains(t, errText, "/admin/realms/"+realm+"/groups")
+		assert.Contains(t, errText, "view-users")
+	}
 }
 
 func TestSetupResolverReturnsQuietNoopWhenGroupSyncDisabled(t *testing.T) {
