@@ -48,6 +48,19 @@ func newSessionWatchCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Watch session changes",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			rt, err := getRuntime(cmd)
+			if err != nil {
+				return err
+			}
+			if err := validateOutputFormat(output.Format(rt.OutputFormat()), output.FormatTable, output.FormatWide, output.FormatJSON, output.FormatYAML); err != nil {
+				return err
+			}
+			if interval <= 0 {
+				return fmt.Errorf("interval must be greater than 0")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -89,9 +102,17 @@ func newSessionWatchCommand() *cobra.Command {
 					if prev, ok := seen[key]; !ok || prev != value {
 						seen[key] = value
 						if showFull {
-							_ = output.WriteObject(rt.Writer(), output.FormatJSON, s)
+							format := output.Format(rt.OutputFormat())
+							if format == output.FormatTable || format == output.FormatWide {
+								format = output.FormatJSON
+							}
+							if err := output.WriteObject(rt.Writer(), format, s); err != nil {
+								return err
+							}
 						} else {
-							_, _ = fmt.Fprintf(rt.Writer(), "%s\t%s\t%s\t%s\n", s.Name, s.Spec.Cluster, s.Spec.User, s.Status.State)
+							if _, err := fmt.Fprintf(rt.Writer(), "%s\t%s\t%s\t%s\n", s.Name, s.Spec.Cluster, s.Spec.User, s.Status.State); err != nil {
+								return err
+							}
 						}
 					}
 				}
@@ -125,7 +146,7 @@ func newSessionWatchCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&mine, "mine", false, "Only show sessions created by the current user")
 	cmd.Flags().BoolVar(&approver, "approver", true, "Include sessions where you are an approver")
 	cmd.Flags().BoolVar(&activeOnly, "active", false, "Only show active sessions")
-	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session JSON on change")
+	cmd.Flags().BoolVar(&showFull, "show-full", false, "Show full session on change (respects -o json|yaml)")
 	return cmd
 }
 
