@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Keycloak group sync diagnostics**: Keycloak group-search failures now include the groups endpoint and `view-users` permission hint in returned errors, and IDP group-sync failure events keep a namespace from the affected escalation.
 - **Frontend direct approval route refresh**: Direct approval pages now reload session details when navigating between `/session/{name}/approve` links within the same mounted view.
 - **Frontend debug refresh accessibility**: The Debug Sessions refresh icon button now exposes a screen-reader label through Scale's `inner-aria-label`.
 - **BreakglassSession ownership filters**: `mine=true` and `approvedByMe=true` no longer implicitly include sessions where the caller is only an approver unless `approver=true` is also requested.

@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +57,24 @@ type noopGroupMemberResolver struct{}
 
 func (noopGroupMemberResolver) Members(context.Context, string) ([]string, error) {
 	return nil, nil
+}
+
+type keycloakGroupSearchError struct {
+	endpoint string
+	status   string
+	cause    error
+}
+
+func (e keycloakGroupSearchError) Error() string {
+	status := e.status
+	if status == "" {
+		status = "request failed"
+	}
+	return fmt.Sprintf("keycloak group search failed at %s: %s; ensure the service account has the realm-management view-users role", e.endpoint, status)
+}
+
+func (e keycloakGroupSearchError) Unwrap() error {
+	return e.cause
 }
 
 type kcCache struct {
@@ -232,6 +253,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 
 	// 1. Search for group by name
+	groupsEndpoint := keycloakGroupsEndpoint(k.cfg.BaseURL, k.cfg.Realm)
 	if log != nil {
 		log.Debugw("Starting group search step", "group", system.RedactGroupName(group))
 		log.Debugw("GetGroups API call details",
@@ -239,7 +261,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 			"realm", k.cfg.Realm,
 			"searchParamHint", system.RedactGroupName(group),
 			"tokenLen", len(token),
-			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups", k.cfg.BaseURL, k.cfg.Realm))
+			"endpoint", groupsEndpoint)
 	}
 	params := gocloak.GetGroupsParams{Search: gocloak.StringP(group)}
 	groups, err := k.gocloak.GetGroups(ctx, token, k.cfg.Realm, params)
@@ -250,10 +272,14 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 				"error", err,
 				"errorType", fmt.Sprintf("%T", err),
 				"tokenLen", len(token),
-				"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups", k.cfg.BaseURL, k.cfg.Realm),
+				"endpoint", groupsEndpoint,
 				"params", fmt.Sprintf("search=%s", system.RedactGroupName(group)))
 		}
-		return nil, err
+		return nil, keycloakGroupSearchError{
+			endpoint: groupsEndpoint,
+			status:   keycloakGroupSearchFailureStatus(err),
+			cause:    err,
+		}
 	}
 	if log != nil {
 		log.Debugw("Keycloak groups search completed", "group", system.RedactGroupName(group), "returnedGroupCount", len(groups))
@@ -826,8 +852,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 			// Emit event on IdentityProvider resource
 			if u.EventRecorder != nil {
-				idp := &breakglassv1alpha1.IdentityProvider{}
-				idp.SetName(idpName)
+				idp := identityProviderEventTarget(idpName, escalation.Namespace)
 				u.EventRecorder.Eventf(idp, nil, "Warning", "GroupSyncConfigLoadFailed", "GroupSyncConfigLoadFailed",
 					"Failed to load IDP config for escalation %s/%s: %v",
 					escalation.Namespace, escalation.Name, err)
@@ -845,8 +870,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 			// Emit event on IdentityProvider resource
 			if u.EventRecorder != nil {
-				idp := &breakglassv1alpha1.IdentityProvider{}
-				idp.SetName(idpName)
+				idp := identityProviderEventTarget(idpName, escalation.Namespace)
 				u.EventRecorder.Eventf(idp, nil, "Warning", "GroupSyncResolverCreationFailed", "GroupSyncResolverCreationFailed",
 					"Failed to create group sync resolver for escalation %s/%s",
 					escalation.Namespace, escalation.Name)
@@ -868,8 +892,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 				// Emit event on IdentityProvider resource
 				if u.EventRecorder != nil {
-					idp := &breakglassv1alpha1.IdentityProvider{}
-					idp.SetName(idpName)
+					idp := identityProviderEventTarget(idpName, escalation.Namespace)
 					u.EventRecorder.Eventf(idp, nil, "Warning", "GroupFetchFailed", "GroupFetchFailed",
 						"Failed to fetch group %s for escalation %s/%s: %v",
 						system.RedactGroupName(g), escalation.Namespace, escalation.Name, err)
@@ -931,6 +954,15 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 	}
 
 	return hierarchy, syncStatus, syncErrors
+}
+
+func identityProviderEventTarget(idpName, eventNamespace string) *breakglassv1alpha1.IdentityProvider {
+	idp := &breakglassv1alpha1.IdentityProvider{}
+	idp.SetName(idpName)
+	if eventNamespace != "" {
+		idp.SetNamespace(eventNamespace)
+	}
+	return idp
 }
 
 func updateNoApproverGroupsCondition(escalation *breakglassv1alpha1.BreakglassEscalation) bool {
@@ -1016,6 +1048,35 @@ func legacyGroupSyncStatus(resolvedGroupCount, failedGroupCount int) string {
 		return groupSyncStatusPartialFailure
 	default:
 		return groupSyncStatusFailed
+	}
+}
+
+func keycloakGroupsEndpoint(baseURL, realm string) string {
+	parsed, err := url.Parse(baseURL)
+	if err == nil && parsed.User != nil {
+		parsed.User = nil
+		baseURL = parsed.String()
+	}
+	return fmt.Sprintf("%s/admin/realms/%s/groups", strings.TrimRight(baseURL, "/"), realm)
+}
+
+func keycloakGroupSearchFailureStatus(err error) string {
+	var apiErr *gocloak.APIError
+	if !errors.As(err, &apiErr) {
+		return ""
+	}
+
+	message := strings.TrimSpace(apiErr.Message)
+	switch {
+	case apiErr.Code > 0 && message == "":
+		if status := http.StatusText(apiErr.Code); status != "" {
+			return fmt.Sprintf("%d %s", apiErr.Code, status)
+		}
+		return fmt.Sprintf("%d", apiErr.Code)
+	case apiErr.Code > 0 && !strings.Contains(message, fmt.Sprintf("%d", apiErr.Code)):
+		return fmt.Sprintf("%d %s", apiErr.Code, message)
+	default:
+		return message
 	}
 }
 
