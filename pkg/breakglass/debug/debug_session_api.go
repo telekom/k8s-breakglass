@@ -705,12 +705,23 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// ClusterConfig readiness and existence errors are returned only after template/binding
 	// and requester authorization succeeds, so unauthorized callers cannot probe cluster state.
 	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
-	var clusterConfigList breakglassv1alpha1.ClusterConfigList
 	if err := authorizationReader.List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
 	}
+	if req.BindingRef == "" &&
+		!c.isDebugSessionRequesterAllowedForTemplateOrBindings(template, bindingList.Items, currentUserStr, userEmail, userGroups) {
+		reqLog.Warnw("User is not allowed to request debug session",
+			"templateRef", req.TemplateRef,
+			"user", currentUserStr,
+			"groupCount", len(userGroups),
+		)
+		apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+		return
+	}
+
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
 	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
 		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
@@ -836,6 +847,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 	if !allowedResult.Allowed {
+		if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), currentUserStr, userEmail, userGroups) {
+			reqLog.Warnw("User is not allowed to request debug session",
+				"templateRef", req.TemplateRef,
+				"user", currentUserStr,
+				"groupCount", len(userGroups),
+			)
+			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+			return
+		}
 		var errDetails string
 		if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
 			errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
@@ -1299,6 +1319,26 @@ func effectiveDebugSessionAllowed(template *breakglassv1alpha1.DebugSessionTempl
 		return nil
 	}
 	return template.Spec.Allowed
+}
+
+func (c *DebugSessionAPIController) isDebugSessionRequesterAllowedForTemplateOrBindings(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	username, email string,
+	userGroups []string,
+) bool {
+	if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), username, email, userGroups) {
+		return true
+	}
+
+	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	for i := range applicableBindings {
+		if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &applicableBindings[i]), username, email, userGroups) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllowed, username, email string, userGroups []string) bool {

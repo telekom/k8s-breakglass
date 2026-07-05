@@ -4336,6 +4336,56 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, 403, w.Code)
 	})
 
+	t.Run("create session hides template cluster patterns from unauthorized requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "cluster-pattern-restricted-debug"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"prod-*", "stage-a"},
+		}
+		devCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "breakglass"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, devCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"cluster-pattern-restricted-debug","cluster":"dev-a","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed to request this debug session")
+		assert.NotContains(t, w.Body.String(), "Template cluster patterns")
+		assert.NotContains(t, w.Body.String(), "prod-*")
+		assert.NotContains(t, w.Body.String(), "stage-a")
+	})
+
 	t.Run("create session accepts requester allowed by binding", func(t *testing.T) {
 		templateViaBinding := template.DeepCopy()
 		templateViaBinding.Name = "binding-debug"
