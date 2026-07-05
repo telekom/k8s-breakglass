@@ -548,6 +548,61 @@ func TestKafkaSink_DefaultValues(t *testing.T) {
 	// Verify sink was created with defaults
 	assert.Equal(t, "kafka", sink.Name()) // Default name
 	assert.True(t, sink.IsConnected())    // Optimistic initial state
+	assert.Equal(t, -1, int(sink.writer.RequiredAcks))
+}
+
+func TestKafkaSink_RequiredAcks(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	tests := []struct {
+		name            string
+		requiredAcks    int
+		requiredAcksSet bool
+		want            int
+	}{
+		{
+			name: "omitted runtime config defaults to all replicas",
+			want: -1,
+		},
+		{
+			name:            "explicit all replicas",
+			requiredAcks:    -1,
+			requiredAcksSet: true,
+			want:            -1,
+		},
+		{
+			name:            "explicit no acks",
+			requiredAcks:    0,
+			requiredAcksSet: true,
+			want:            0,
+		},
+		{
+			name:            "explicit leader only",
+			requiredAcks:    1,
+			requiredAcksSet: true,
+			want:            1,
+		},
+		{
+			name:         "non-zero value without set flag is honored",
+			requiredAcks: 1,
+			want:         1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink, err := NewKafkaSink(KafkaSinkConfig{
+				Brokers:         []string{"localhost:9092"},
+				Topic:           "test",
+				RequiredAcks:    tt.requiredAcks,
+				RequiredAcksSet: tt.requiredAcksSet,
+			}, logger)
+			require.NoError(t, err)
+			defer func() { _ = sink.Close() }()
+
+			assert.Equal(t, tt.want, int(sink.writer.RequiredAcks))
+		})
+	}
 }
 
 func TestKafkaSink_CustomName(t *testing.T) {
