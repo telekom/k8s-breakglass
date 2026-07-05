@@ -847,7 +847,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 	if !allowedResult.Allowed {
-		if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), currentUserStr, userEmail, userGroups) {
+		templateRequesterAllowed := isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), currentUserStr, userEmail, userGroups)
+		if !templateRequesterAllowed && !c.isDebugSessionRequesterAllowedForTemplateOrBindings(template, bindingList.Items, currentUserStr, userEmail, userGroups) {
 			reqLog.Warnw("User is not allowed to request debug session",
 				"templateRef", req.TemplateRef,
 				"user", currentUserStr,
@@ -858,8 +859,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 		var errDetails string
 		if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
-			errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
-				req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
+			if templateRequesterAllowed {
+				errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
+					req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
+			} else {
+				errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. No bindings grant access to this cluster.",
+					req.Cluster, req.TemplateRef)
+			}
 		} else {
 			errDetails = fmt.Sprintf("cluster '%s' is not allowed. Template '%s' has no allowed cluster patterns and no bindings grant access to this cluster.",
 				req.Cluster, req.TemplateRef)
