@@ -224,7 +224,7 @@ npx playwright test --config=playwright.e2e.config.ts
 - If Keycloak connection fails: Check `/etc/hosts` has entry for `breakglass-keycloak.breakglass-system.svc.cluster.local`
 - If proxy errors occur: Set `SKIP_PROXY=true`
 - Check pod status: `kubectl get pods -n breakglass-system`
-- Check controller logs: `kubectl logs -n breakglass-system -l app=breakglass-manager`
+- Check controller logs: `kubectl logs -n breakglass-system -l app=breakglass`
 
 ### E2E Test Session Creation (CRITICAL)
 
@@ -468,7 +468,7 @@ make deploy IMG=$IMG
 kubectl apply -k config/samples/
 
 # Debug:
-kubectl logs -n breakglass-system deployment/breakglass-controller -c manager -f
+kubectl logs -n breakglass-system deployment/breakglass-manager -c breakglass -f
 ```
 
 ### Essential Reading

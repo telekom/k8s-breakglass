@@ -400,7 +400,7 @@ kubectl get breakglassescalation,breakglasssession,clusterconfig,denypolicy
 
 # Check controller health
 kubectl get deployment -n breakglass-system
-kubectl logs -n breakglass-system deployment/breakglass-controller
+kubectl logs -n breakglass-system deployment/breakglass-manager
 
 # Verify webhook configuration
 kubectl get clusterconfig

@@ -871,20 +871,20 @@ docker run \
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: breakglass-controller
+  name: breakglass-manager
   namespace: breakglass-system
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: breakglass-controller
+      app: breakglass
   template:
     metadata:
       labels:
-        app: breakglass-controller
+        app: breakglass
     spec:
       containers:
-      - name: controller
+      - name: breakglass
         image: breakglass:latest
         args:
           - --enable-leader-election=true
@@ -955,7 +955,7 @@ spec:
         secret:
           secretName: webhook-server-cert
       
-      serviceAccountName: breakglass-controller
+      serviceAccountName: breakglass-manager
 ```
 
 ### Helm Values

@@ -440,7 +440,7 @@ Common issues:
 
 ```bash
 # Check logs for health check details
-kubectl logs -n breakglass-system deployment/breakglass-controller-manager | grep mailprovider
+kubectl logs -n breakglass-system deployment/breakglass-manager | grep mailprovider
 
 # Manually test SMTP from pod
 kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -- bash

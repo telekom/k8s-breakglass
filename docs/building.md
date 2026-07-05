@@ -187,7 +187,7 @@ The E2E environment includes:
 
 | Component | Purpose | Port |
 |-----------|---------|------|
-| Breakglass Controller | Main service | 30081 |
+| Breakglass Controller | Main service (`NODEPORT` default) | 31081 |
 | Keycloak | OIDC identity provider | 30083 |
 | MailHog | Email testing | 30084 |
 | Kafka | Audit event streaming | Internal |

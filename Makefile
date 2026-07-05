@@ -72,6 +72,17 @@ lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friend
 verify-release-provenance: ## Verify release image provenance signs the registry digest.
 	bash hack/verify-release-provenance.sh
 
+.PHONY: verify-generated
+verify-generated: generate manifests ## Verify generated API and manifest artifacts are checked in.
+	@git diff --exit-code -- api config || { \
+		echo "Generated files are stale. Run 'make generate manifests' and commit the result."; \
+		exit 1; \
+	}
+
+.PHONY: verify-docs-snippets
+verify-docs-snippets: ## Verify docs and workflow snippets use current dev workload names.
+	bash hack/verify-docs-snippets.sh
+
 .PHONY: vulncheck
 vulncheck: ## Run govulncheck to check for known vulnerabilities.
 	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)

@@ -229,7 +229,7 @@ done | sort | uniq -c
 # Expected: ~50 200s followed by 429s
 
 # Check logs for rate limiting (if using structured logging)
-kubectl logs -n breakglass-system -l app=breakglass-manager | grep -i "rate"
+kubectl logs -n breakglass-system -l app=breakglass | grep -i "rate"
 ```
 
 ### Memory usage concerns

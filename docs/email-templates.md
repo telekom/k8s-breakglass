@@ -143,7 +143,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: breakglass-custom-templates
-  namespace: breakglass  # Match your Breakglass namespace
+  namespace: breakglass-system  # Match your Breakglass namespace
 data:
   approved.html: |
     <!DOCTYPE html>
@@ -171,13 +171,13 @@ Update the Breakglass deployment to mount the custom template ConfigMap:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: breakglass-controller
-  namespace: breakglass
+  name: breakglass-manager
+  namespace: breakglass-system
 spec:
   template:
     spec:
       containers:
-      - name: manager
+      - name: breakglass
         # ... other container config ...
         volumeMounts:
         - name: custom-email-templates
@@ -221,12 +221,12 @@ patchesStrategicMerge:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: breakglass-controller
+  name: breakglass-manager
 spec:
   template:
     spec:
       containers:
-      - name: manager
+      - name: breakglass
         volumeMounts:
         - name: custom-email-templates
           mountPath: /etc/breakglass/templates
@@ -350,19 +350,19 @@ Always include security warnings:
 **Check 1**: Verify ConfigMap is mounted in the pod:
 
 ```bash
-kubectl exec -n breakglass <pod-name> -- ls -la /etc/breakglass/templates/
+kubectl exec -n breakglass-system <pod-name> -- ls -la /etc/breakglass/templates/
 ```
 
 **Check 2**: Verify environment variable is set:
 
 ```bash
-kubectl exec -n breakglass <pod-name> -- env | grep BREAKGLASS_TEMPLATE_PATH
+kubectl exec -n breakglass-system <pod-name> -- env | grep BREAKGLASS_TEMPLATE_PATH
 ```
 
 **Check 3**: Check pod logs for template loading errors:
 
 ```bash
-kubectl logs -n breakglass <pod-name> | grep -i template
+kubectl logs -n breakglass-system <pod-name> | grep -i template
 ```
 
 ### Template Syntax Errors
@@ -384,7 +384,7 @@ go run cmd/template-validator/main.go -template custom-approved.html
 
 ```bash
 # Enable debug logging to see what variables are passed
-BREAKGLASS_LOG_LEVEL=debug kubectl logs -n breakglass <pod-name>
+BREAKGLASS_LOG_LEVEL=debug kubectl logs -n breakglass-system <pod-name>
 ```
 
 ## Real-World Examples
@@ -503,7 +503,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: breakglass-templates-en
-  namespace: breakglass
+  namespace: breakglass-system
 data:
   approved.html: |
     <!DOCTYPE html>
@@ -514,7 +514,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: breakglass-templates-de
-  namespace: breakglass
+  namespace: breakglass-system
 data:
   approved.html: |
     <!DOCTYPE html>

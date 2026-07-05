@@ -705,7 +705,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSession
 metadata:
   name: debug-session-abc123
-  namespace: breakglass
+  namespace: breakglass-system
 spec:
   cluster: prod-cluster-1
   templateRef: standard-debug
@@ -1232,7 +1232,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:
   name: sre-production-access
-  namespace: breakglass
+  namespace: breakglass-system
 spec:
   templateRef:
     name: network-debug

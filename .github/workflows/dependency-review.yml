@@ -16,6 +16,7 @@ jobs:
     name: Review Dependency Licenses
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: write
 
     steps:

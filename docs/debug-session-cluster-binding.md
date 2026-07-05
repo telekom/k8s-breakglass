@@ -36,7 +36,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:
   name: sre-production-access
-  namespace: breakglass
+  namespace: breakglass-system
 spec:
   templateRef:
     name: network-debug
@@ -540,7 +540,7 @@ See [API Reference](api-reference.md#get-template-clusters) for full details.
 
 1. Check binding status:
    ```bash
-   kubectl get debugsessionclusterbinding -n breakglass -o yaml
+   kubectl get debugsessionclusterbinding -n breakglass-system -o yaml
    ```
 
 2. Verify template reference exists:
@@ -757,7 +757,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
   name: production-eu           # Must match the cluster name
-  namespace: breakglass
+  namespace: breakglass-system
   labels:
     environment: production
     region: eu
@@ -1027,7 +1027,7 @@ After binding resolution, the session's status is updated with binding informati
 status:
   resolvedBinding:
     name: sre-production-access       # Binding name
-    namespace: breakglass             # Binding namespace
+    namespace: breakglass-system      # Binding namespace
     displayName: "SRE Production"     # Effective display name
   state: Active
 ```
@@ -1185,7 +1185,7 @@ kubectl get debugsessionclusterbinding -A
 kubectl get debugsessionclusterbinding <name> -n <namespace> -o yaml
 
 # View controller logs for auto-discovery
-kubectl logs -n breakglass-system deployment/breakglass-controller -c manager | grep "Auto-discovered binding"
+kubectl logs -n breakglass-system deployment/breakglass-manager -c breakglass | grep "Auto-discovered binding"
 ```
 
 ## Related Resources
