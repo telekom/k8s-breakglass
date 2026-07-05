@@ -370,7 +370,7 @@ export default class BreakglassService {
     try {
       debug("BreakglassService.fetchHistoricalSessions", "Fetching historical sessions");
       const response = await this.client.get("/breakglassSessions", {
-        params: { state: "rejected,withdrawn", mine: true, approver: false },
+        params: { state: "rejected,withdrawn,expired,idleexpired", mine: true, approver: false },
       });
       const all = normalizeList<SessionCR>(response.data);
       debug("BreakglassService.fetchHistoricalSessions", "Fetched historical sessions", { count: all.length });

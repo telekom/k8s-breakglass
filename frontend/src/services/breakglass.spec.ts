@@ -462,7 +462,7 @@ describe("BreakglassService", () => {
     await expect(service.dropBreakglass({} as unknown as Breakglass)).rejects.toThrow("Missing session name");
   });
 
-  it("merges approved, timed-out and historical sessions for fetchMySessions", async () => {
+  it("merges approved, timed-out, expired, idle-expired and historical sessions for fetchMySessions", async () => {
     const now = Date.now();
     mockClient.get
       .mockResolvedValueOnce({
@@ -473,6 +473,13 @@ describe("BreakglassService", () => {
       })
       .mockResolvedValueOnce({
         data: [
+          { metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Expired" } },
+          { metadata: { name: "expired" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Expired" } },
+          {
+            metadata: { name: "idle-expired" },
+            spec: { grantedGroup: "ops", cluster: "c1" },
+            status: { state: "IdleExpired" },
+          },
           { metadata: { name: "hist" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Rejected" } },
         ],
       });
@@ -480,8 +487,25 @@ describe("BreakglassService", () => {
     const sessions = await service.fetchMySessions();
     const names = sessions.map((s) => s.name);
     expect(names).toContain("dup");
+    expect(names).toContain("expired");
+    expect(names).toContain("idle-expired");
     expect(names).toContain("hist");
+    expect(sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "expired", state: "Expired" }),
+        expect.objectContaining({ name: "idle-expired", state: "IdleExpired" }),
+      ]),
+    );
     expect(new Set(names).size).toBe(names.length);
+    expect(mockClient.get).toHaveBeenNthCalledWith(1, "/breakglassSessions", {
+      params: { mine: true, approver: false, state: "approved" },
+    });
+    expect(mockClient.get).toHaveBeenNthCalledWith(2, "/breakglassSessions", {
+      params: { mine: true, approver: false, state: "timeout" },
+    });
+    expect(mockClient.get).toHaveBeenNthCalledWith(3, "/breakglassSessions", {
+      params: { state: "rejected,withdrawn,expired,idleexpired", mine: true, approver: false },
+    });
   });
 
   it("returns deduplicated sessions approved by the user", async () => {
