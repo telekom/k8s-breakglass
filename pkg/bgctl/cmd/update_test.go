@@ -27,6 +27,16 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func useUpdateDownloadClient(t *testing.T, client *http.Client) {
+	t.Helper()
+
+	oldClient := updateDownloadHTTPClient
+	updateDownloadHTTPClient = client
+	t.Cleanup(func() {
+		updateDownloadHTTPClient = oldClient
+	})
+}
+
 func TestAssetFileName_CurrentPlatform(t *testing.T) {
 	name := assetFileName()
 	if runtime.GOOS == "windows" {
@@ -93,6 +103,27 @@ func TestDownloadFileErrorStatus(t *testing.T) {
 	assert.Contains(t, err.Error(), "download failed")
 }
 
+func TestDownloadFileErrorStatusCapsResponseBody(t *testing.T) {
+	largeBody := strings.Repeat("x", maxUpdateErrorBodyBytes) + "tail"
+	useUpdateDownloadClient(t, &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader("  " + largeBody + "  "))
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})})
+
+	path := filepath.Join(t.TempDir(), "download.bin")
+	err := downloadFile(context.Background(), "https://example.com/archive.tar.gz", path)
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "download failed")
+	assert.Contains(t, err.Error(), strings.Repeat("x", 32))
+	assert.NotContains(t, err.Error(), "tail")
+	assert.LessOrEqual(t, len(err.Error()), maxUpdateErrorBodyBytes+len("download failed: ... (truncated)"))
+}
+
 func TestDownloadFileHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -134,6 +165,101 @@ func TestDownloadFileUsesDedicatedDownloadClient(t *testing.T) {
 	assert.Equal(t, "payload", string(content))
 	assert.Equal(t, 0, apiCalls, "metadata client must not be used for binary download")
 	assert.Equal(t, 1, downloadCalls, "download client should be used exactly once")
+}
+
+func TestDownloadFileRejectsDeclaredOversizedDownloadBeforeCreatingDestination(t *testing.T) {
+	const limit = int64(5)
+	useUpdateDownloadClient(t, &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(""))
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: limit + 1,
+			Body:          body,
+			Header:        make(http.Header),
+		}, nil
+	})})
+
+	path := filepath.Join(t.TempDir(), "download.bin")
+	err := downloadFileWithLimit(context.Background(), "https://example.com/archive.tar.gz", path, limit)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "download exceeds maximum allowed size")
+
+	_, statErr := os.Stat(path)
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestDownloadFileRejectsUnknownLengthOversizedDownloadAndRemovesPartialFile(t *testing.T) {
+	const limit = int64(5)
+	useUpdateDownloadClient(t, &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader("123456"))
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: -1,
+			Body:          body,
+			Header:        make(http.Header),
+		}, nil
+	})})
+
+	path := filepath.Join(t.TempDir(), "download.bin")
+	err := downloadFileWithLimit(context.Background(), "https://example.com/archive.tar.gz", path, limit)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "download exceeds maximum allowed size")
+
+	_, statErr := os.Stat(path)
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestDownloadFileWithNoLimitCopiesCompleteDownload(t *testing.T) {
+	useUpdateDownloadClient(t, &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader("123456"))
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: -1,
+			Body:          body,
+			Header:        make(http.Header),
+		}, nil
+	})})
+
+	path := filepath.Join(t.TempDir(), "download.bin")
+	err := downloadFileWithLimit(context.Background(), "https://example.com/archive.tar.gz", path, 0)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "123456", string(content))
+}
+
+func TestDownloadFileAllowsExactAndUnderLimitDownloads(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		limit   int64
+	}{
+		{name: "under limit", payload: "1234", limit: 5},
+		{name: "exact limit", payload: "12345", limit: 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			useUpdateDownloadClient(t, &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				body := io.NopCloser(strings.NewReader(tt.payload))
+				return &http.Response{
+					StatusCode:    http.StatusOK,
+					ContentLength: int64(len(tt.payload)),
+					Body:          body,
+					Header:        make(http.Header),
+				}, nil
+			})})
+
+			path := filepath.Join(t.TempDir(), "download.bin")
+			err := downloadFileWithLimit(context.Background(), "https://example.com/archive.tar.gz", path, tt.limit)
+			require.NoError(t, err)
+
+			content, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tt.payload, string(content))
+		})
+	}
 }
 
 func TestFetchReleaseByTagEscapesPathSegment(t *testing.T) {
