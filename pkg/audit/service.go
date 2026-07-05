@@ -156,6 +156,8 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	sampleRateConfigured := false
 	var highVolume []EventType
 	var alwaysCapture []EventType
+	var includeEventTypes []string
+	var excludeEventTypes []string
 
 	// Use the first config's queue settings as baseline
 	if len(enabledConfigs) > 0 {
@@ -184,6 +186,10 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 				alwaysCapture = append(alwaysCapture, EventType(ac))
 			}
 		}
+		if len(enabledConfigs) == 1 && config.Spec.Filtering != nil {
+			includeEventTypes = append(includeEventTypes, config.Spec.Filtering.IncludeEventTypes...)
+			excludeEventTypes = append(excludeEventTypes, config.Spec.Filtering.ExcludeEventTypes...)
+		}
 	}
 
 	// Create isolated multi-sink: each sink gets its own queue for isolation
@@ -209,6 +215,8 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 		sampleRateConfigured:    sampleRateConfigured,
 		HighVolumeEventTypes:    highVolume,
 		AlwaysCaptureEventTypes: alwaysCapture,
+		IncludeEventTypes:       includeEventTypes,
+		ExcludeEventTypes:       excludeEventTypes,
 		WriteTimeout:            5 * time.Second,
 		// DirectSinks references the same sink instances stored in s.sinks.
 		// On the next ReloadMultiple call, the Manager is closed (draining all
@@ -459,6 +467,23 @@ func (s *Service) buildSinks(ctx context.Context, config *breakglassv1alpha1.Aud
 				zap.String("type", string(sinkCfg.Type)),
 				zap.Int("failure_threshold", cbCfg.FailureThreshold),
 				zap.Duration("open_timeout", cbCfg.OpenTimeout))
+		}
+
+		sink = NewFilteredSink(sink, EventFilterConfig{
+			IncludeEventTypes: sinkCfg.EventTypes,
+			MinSeverity:       Severity(sinkCfg.MinSeverity),
+		})
+		if config.Spec.Filtering != nil {
+			sink = NewFilteredSink(sink, EventFilterConfig{
+				IncludeEventTypes: config.Spec.Filtering.IncludeEventTypes,
+				ExcludeEventTypes: config.Spec.Filtering.ExcludeEventTypes,
+				IncludeUsers:      config.Spec.Filtering.IncludeUsers,
+				ExcludeUsers:      config.Spec.Filtering.ExcludeUsers,
+				IncludeNamespaces: config.Spec.Filtering.IncludeNamespaces,
+				ExcludeNamespaces: config.Spec.Filtering.ExcludeNamespaces,
+				IncludeResources:  config.Spec.Filtering.IncludeResources,
+				ExcludeResources:  config.Spec.Filtering.ExcludeResources,
+			})
 		}
 
 		sinks = append(sinks, sink)

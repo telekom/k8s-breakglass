@@ -106,6 +106,12 @@ type ManagerConfig struct {
 	// AlwaysCaptureEventTypes are never sampled (always 100%).
 	AlwaysCaptureEventTypes []EventType
 
+	// IncludeEventTypes allows only matching event types. Empty means all.
+	IncludeEventTypes []string
+
+	// ExcludeEventTypes blocks matching event types and takes precedence.
+	ExcludeEventTypes []string
+
 	// WriteTimeout is the timeout for writing to sinks.
 	// Default: 5s
 	WriteTimeout time.Duration
@@ -207,6 +213,10 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 // queue is full, which may block up to WriteTimeout.
 func (m *Manager) Emit(ctx context.Context, event *Event) {
 	if m.closed.Load() {
+		return
+	}
+
+	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return
 	}
 
@@ -322,6 +332,10 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 // EmitSync sends an audit event synchronously.
 // Use sparingly - for critical events only.
 func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
+	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
+		return nil
+	}
+
 	// Assign ID if not set
 	if event.ID == "" {
 		event.ID = uuid.New().String()
